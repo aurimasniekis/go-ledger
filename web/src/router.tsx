@@ -8,6 +8,7 @@ import {
 import type { QueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { ThemeSelect } from '@/components/theme-select'
+import { DesignPage } from '@/routes-design'
 
 export interface RouterContext {
   queryClient: QueryClient
@@ -67,7 +68,9 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 })
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: Overview })
 
-const routeTree = rootRoute.addChildren([indexRoute])
+const designRoute = createRoute({ getParentRoute: () => rootRoute, path: '/design', component: DesignPage })
+
+const routeTree = rootRoute.addChildren([indexRoute, designRoute])
 
 export function makeRouter(context: RouterContext, history?: Parameters<typeof createRouter>[0]['history']) {
   return createRouter({ routeTree, context, history, defaultPreload: 'intent' })

@@ -1,53 +1,97 @@
 @import 'tailwindcss';
 
 /*
- * Design tokens (F7 scaffold). Night Owl-inspired: deep navy surfaces with
- * restrained teal, cyan and violet accents, plus a designed light companion.
- * Components use only these semantic tokens, never raw colours. The full
- * visual design arrives with the UI tasks. Contrast of text pairs targets
- * WCAG AA (4.5:1) in both themes; the unit test in src/lib/contrast.test.ts
- * checks the pairs below.
+ * Design tokens (F8). Night Owl-inspired: deep navy surfaces with restrained
+ * teal, cyan, violet and warm accents, plus a designed light companion.
+ * Components use only these semantic tokens, never raw colours: the Tailwind
+ * default palette is cleared below, ESLint rejects colour literals outside
+ * this file, and src/lib/tokens.test.ts scans the sources. Contrast of every
+ * token pair is checked in src/lib/contrast.test.ts. See docs/design-system.md.
+ *
+ * Contrast rules: text and status colours reach 4.5:1 on background, surface,
+ * surface-raised and muted; --border-control and --ring reach 3:1 (WCAG 1.4.11)
+ * on those surfaces. --border is decorative (dividers, cards) and is exempt.
+ * Status is never colour alone: StatusBadge pairs each status with an icon and
+ * its label.
  */
 :root {
   color-scheme: light;
   --background: #fbfbfb;
   --foreground: #1b2b3a;
   --surface: #ffffff;
+  --surface-raised: #ffffff;
   --muted: #eef1f5;
   --muted-foreground: #4a5b6c;
   --border: #c9d3de;
+  --border-control: #6b7d90;
   --primary: #0b6e63;
   --primary-foreground: #ffffff;
   --secondary: #e4e6f7;
   --secondary-foreground: #3b3a8a;
   --accent: #6b4bb8;
   --ring: #0b6e63;
-  --danger: #b3261e;
-  --warning: #8a5a00;
-  --success: #1b6e3a;
+  --accent-teal: #0b6e63;
+  --accent-cyan: #0a6a86;
+  --accent-violet: #6b4bb8;
+  --accent-warm: #8a5a00;
+  --status-paid: #3a6a10;
+  --status-paid-bg: #e6f0d8;
+  --status-upcoming: #1f5fbf;
+  --status-upcoming-bg: #e3edfb;
+  --status-overdue: #a84a00;
+  --status-overdue-bg: #fbe9d6;
+  --status-deferred: #675f7a;
+  --status-deferred-bg: #e6ebf1;
+  --status-stale: #585200;
+  --status-stale-bg: #f3f0cc;
+  --status-error: #c0155a;
+  --status-error-bg: #fbe1ea;
+  --status-strong-foreground: #ffffff;
+  --elevation-1: 0 1px 2px rgb(27 43 58 / 0.08);
+  --elevation-2: 0 2px 8px rgb(27 43 58 / 0.12);
+  --radius-small: 4px;
   --radius: 6px;
+  --radius-large: 8px;
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
 }
 
-/* Dark is the default for "system" when the OS prefers it, or when chosen explicitly. */
+/* Dark is chosen explicitly here, or by the OS preference in the media block below. */
 :root[data-theme='dark'] {
   color-scheme: dark;
   --background: #011627;
   --foreground: #d6deeb;
   --surface: #0b2942;
+  --surface-raised: #123556;
   --muted: #0e2f4a;
   --muted-foreground: #a3b4c8;
   --border: #1d3b53;
+  --border-control: #6a8aa6;
   --primary: #7fdbca;
   --primary-foreground: #011627;
   --secondary: #1d3a66;
   --secondary-foreground: #c5d4f0;
   --accent: #c792ea;
-  --ring: #82aaff;
-  --danger: #ff8b83;
-  --warning: #ecc48d;
-  --success: #addb67;
+  --ring: #eef3fb;
+  --accent-teal: #7fdbca;
+  --accent-cyan: #5fd3f0;
+  --accent-violet: #c792ea;
+  --accent-warm: #ecc48d;
+  --status-paid: #addb67;
+  --status-paid-bg: #16372f;
+  --status-upcoming: #82aaff;
+  --status-upcoming-bg: #10305a;
+  --status-overdue: #ffa040;
+  --status-overdue-bg: #4a2f12;
+  --status-deferred: #9aabc0;
+  --status-deferred-bg: #1f3550;
+  --status-stale: #f0e46c;
+  --status-stale-bg: #3a3712;
+  --status-error: #ff6b8e;
+  --status-error-bg: #4a1f36;
+  --status-strong-foreground: #011627;
+  --elevation-1: 0 1px 2px rgb(1 10 20 / 0.5);
+  --elevation-2: 0 2px 8px rgb(1 10 20 / 0.6);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -56,38 +100,86 @@
     --background: #011627;
     --foreground: #d6deeb;
     --surface: #0b2942;
+    --surface-raised: #123556;
     --muted: #0e2f4a;
     --muted-foreground: #a3b4c8;
     --border: #1d3b53;
+    --border-control: #6a8aa6;
     --primary: #7fdbca;
     --primary-foreground: #011627;
     --secondary: #1d3a66;
     --secondary-foreground: #c5d4f0;
     --accent: #c792ea;
-    --ring: #82aaff;
-    --danger: #ff8b83;
-    --warning: #ecc48d;
-    --success: #addb67;
+    --ring: #eef3fb;
+    --accent-teal: #7fdbca;
+    --accent-cyan: #5fd3f0;
+    --accent-violet: #c792ea;
+    --accent-warm: #ecc48d;
+    --status-paid: #addb67;
+    --status-paid-bg: #16372f;
+    --status-upcoming: #82aaff;
+    --status-upcoming-bg: #10305a;
+    --status-overdue: #ffa040;
+    --status-overdue-bg: #4a2f12;
+    --status-deferred: #9aabc0;
+    --status-deferred-bg: #1f3550;
+    --status-stale: #f0e46c;
+    --status-stale-bg: #3a3712;
+    --status-error: #ff6b8e;
+    --status-error-bg: #4a1f36;
+    --status-strong-foreground: #011627;
+    --elevation-1: 0 1px 2px rgb(1 10 20 / 0.5);
+    --elevation-2: 0 2px 8px rgb(1 10 20 / 0.6);
   }
 }
 
 @theme inline {
+  /* Clear the default palette so only the semantic colours below exist (no bg-red-500, no bg-white). */
+  --color-*: initial;
+  --shadow-*: initial;
+  --radius-*: initial;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
+  --color-border-control: var(--border-control);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-accent: var(--accent);
   --color-ring: var(--ring);
-  --color-danger: var(--danger);
-  --color-warning: var(--warning);
-  --color-success: var(--success);
+  --color-accent-teal: var(--accent-teal);
+  --color-accent-cyan: var(--accent-cyan);
+  --color-accent-violet: var(--accent-violet);
+  --color-accent-warm: var(--accent-warm);
+  --color-status-paid: var(--status-paid);
+  --color-status-paid-bg: var(--status-paid-bg);
+  --color-status-upcoming: var(--status-upcoming);
+  --color-status-upcoming-bg: var(--status-upcoming-bg);
+  --color-status-overdue: var(--status-overdue);
+  --color-status-overdue-bg: var(--status-overdue-bg);
+  --color-status-deferred: var(--status-deferred);
+  --color-status-deferred-bg: var(--status-deferred-bg);
+  --color-status-stale: var(--status-stale);
+  --color-status-stale-bg: var(--status-stale-bg);
+  --color-status-error: var(--status-error);
+  --color-status-error-bg: var(--status-error-bg);
+  --color-status-strong-foreground: var(--status-strong-foreground);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --radius-sm: var(--radius-small);
   --radius-md: var(--radius);
+  --radius-lg: var(--radius-large);
+  /* Radii stay within 4-8px: larger steps collapse to 8px. rounded-full is for dots and avatars only. */
+  --radius-xl: var(--radius-large);
+  --radius-2xl: var(--radius-large);
+  --radius-3xl: var(--radius-large);
+  --shadow-sm: var(--elevation-1);
+  --shadow-md: var(--elevation-2);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 }

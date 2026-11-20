@@ -7,7 +7,7 @@ export function ThemeSelect() {
     <label className="flex items-center gap-2 text-sm">
       <span>Theme</span>
       <select
-        className="h-8 rounded-md border border-border bg-surface px-2 focus-visible:outline-2 focus-visible:outline-ring"
+        className="h-8 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-ring"
         value={pref}
         onChange={(e) => {
           const next = e.target.value as ThemePreference
