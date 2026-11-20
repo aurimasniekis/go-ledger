@@ -19,13 +19,33 @@ type Server struct {
 	http *http.Server
 }
 
+// Option customises New.
+type Option func(*options)
+
+type options struct{ ui http.Handler }
+
+// WithUI serves h for every path that no registered route and no /api/ path
+// claims (the embedded single-page application). Without it such paths are 404.
+func WithUI(h http.Handler) Option { return func(o *options) { o.ui = h } }
+
 // New builds a server from the HTTP section of the configuration. Register
 // routes with Handle before calling Run.
-func New(cfg config.HTTP, log *slog.Logger) *Server {
+func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	s := &Server{cfg: cfg, log: log, mux: http.NewServeMux()}
-	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	notFound := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, NotFound("no such resource"))
 	})
+	// Unmatched API paths always get the JSON envelope, never the UI.
+	s.mux.Handle("/api/", notFound)
+	if o.ui != nil {
+		s.mux.Handle("/", o.ui)
+	} else {
+		s.mux.Handle("/", notFound)
+	}
 	s.http = &http.Server{
 		Handler:           s.chain(s.mux),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,

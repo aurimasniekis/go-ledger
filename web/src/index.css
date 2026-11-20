@@ -1,0 +1,111 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens (F7 scaffold). Night Owl-inspired: deep navy surfaces with
+ * restrained teal, cyan and violet accents, plus a designed light companion.
+ * Components use only these semantic tokens, never raw colours. The full
+ * visual design arrives with the UI tasks. Contrast of text pairs targets
+ * WCAG AA (4.5:1) in both themes; the unit test in src/lib/contrast.test.ts
+ * checks the pairs below.
+ */
+:root {
+  color-scheme: light;
+  --background: #fbfbfb;
+  --foreground: #1b2b3a;
+  --surface: #ffffff;
+  --muted: #eef1f5;
+  --muted-foreground: #4a5b6c;
+  --border: #c9d3de;
+  --primary: #0b6e63;
+  --primary-foreground: #ffffff;
+  --secondary: #e4e6f7;
+  --secondary-foreground: #3b3a8a;
+  --accent: #6b4bb8;
+  --ring: #0b6e63;
+  --danger: #b3261e;
+  --warning: #8a5a00;
+  --success: #1b6e3a;
+  --radius: 6px;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+}
+
+/* Dark is the default for "system" when the OS prefers it, or when chosen explicitly. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --background: #011627;
+  --foreground: #d6deeb;
+  --surface: #0b2942;
+  --muted: #0e2f4a;
+  --muted-foreground: #a3b4c8;
+  --border: #1d3b53;
+  --primary: #7fdbca;
+  --primary-foreground: #011627;
+  --secondary: #1d3a66;
+  --secondary-foreground: #c5d4f0;
+  --accent: #c792ea;
+  --ring: #82aaff;
+  --danger: #ff8b83;
+  --warning: #ecc48d;
+  --success: #addb67;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --background: #011627;
+    --foreground: #d6deeb;
+    --surface: #0b2942;
+    --muted: #0e2f4a;
+    --muted-foreground: #a3b4c8;
+    --border: #1d3b53;
+    --primary: #7fdbca;
+    --primary-foreground: #011627;
+    --secondary: #1d3a66;
+    --secondary-foreground: #c5d4f0;
+    --accent: #c792ea;
+    --ring: #82aaff;
+    --danger: #ff8b83;
+    --warning: #ecc48d;
+    --success: #addb67;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-ring: var(--ring);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --radius-md: var(--radius);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

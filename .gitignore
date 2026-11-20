@@ -22,5 +22,10 @@ coverage.*
 .vscode/
 .DS_Store
 
-# Frontend (with F7)
+# Frontend (F7): dependencies and test output. The production build lands in
+# internal/web/dist; only its .gitkeep is tracked (ADR-0008).
 node_modules/
+web/playwright-report/
+web/test-results/
+/internal/web/dist/*
+!/internal/web/dist/.gitkeep

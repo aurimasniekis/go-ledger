@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -41,7 +42,8 @@ func TestServeStartsLogsAndShutsDown(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0"}, &errOut,
-			serveEnv{Options: opts, Listening: func(a net.Addr) { addrc <- a }})
+			serveEnv{Options: opts, Listening: func(a net.Addr) { addrc <- a },
+				UI: fstest.MapFS{"index.html": {Data: []byte("<!doctype html><title>Ledger</title>")}}})
 	}()
 	var addr net.Addr
 	select {
@@ -52,7 +54,7 @@ func TestServeStartsLogsAndShutsDown(t *testing.T) {
 		t.Fatal("server did not start")
 	}
 
-	req, _ := http.NewRequest("GET", "http://"+addr.String()+"/missing", nil)
+	req, _ := http.NewRequest("GET", "http://"+addr.String()+"/api/missing", nil)
 	req.Header.Set("X-Request-ID", "serve-test-1")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -62,6 +64,17 @@ func TestServeStartsLogsAndShutsDown(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != 404 || resp.Header.Get("X-Request-ID") != "serve-test-1" || !strings.Contains(string(body), `"request_id":"serve-test-1"`) {
 		t.Fatalf("got %d %v %s", resp.StatusCode, resp.Header, body)
+	}
+
+	// The shell is served at / by the same process, next to the API.
+	resp, err = http.Get("http://" + addr.String() + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "<title>Ledger</title>") {
+		t.Fatalf("shell: got %d %s", resp.StatusCode, body)
 	}
 
 	cancel()

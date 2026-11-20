@@ -8,5 +8,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0004: Configuration system](0004-configuration.md)
 - [ADR-0006: HTTP server, logging and error envelope](0006-http-server-logging-and-errors.md)
 - [ADR-0007: CI validation workflow](0007-ci-validation-workflow.md)
+- [ADR-0008: Frontend skeleton and embedding](0008-frontend-skeleton-and-embedding.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

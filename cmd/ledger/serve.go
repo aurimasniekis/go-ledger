@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
+	"github.com/aurimasniekis/go-ledger/internal/web"
 )
 
 // serveEnv carries what tests replace: the environment and file system, and a
@@ -19,6 +21,8 @@ import (
 type serveEnv struct {
 	Options   config.Options
 	Listening func(net.Addr)
+	// UI replaces the embedded frontend; nil means web.Assets().
+	UI fs.FS
 }
 
 // runServe implements "ledger serve": load the configuration, set up logging,
@@ -83,7 +87,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		env.Listening(ln.Addr())
 	}
 
-	srv := httpapi.New(cfg.HTTP, log)
+	ui := env.UI
+	if ui == nil {
+		ui = web.Assets()
+	}
+	srv := httpapi.New(cfg.HTTP, log, httpapi.WithUI(web.Handler(ui)))
 	// TODO(F4/F5): open the SQLite store here and register /healthz and
 	// /readyz. Per D17, readiness gates only on the database; optional
 	// integrations belong on a status endpoint instead.
