@@ -3,9 +3,12 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/metrics"
@@ -20,7 +23,21 @@ type Server struct {
 	http *http.Server
 	m    *metrics.App
 	ui   http.Handler
+	// api holds every route under /api. It is separate from mux so its own
+	// 404 and 405 answers can be turned into the error envelope (ADR-0011).
+	api       *http.ServeMux
+	apiMW     []func(http.Handler) http.Handler
+	apiRoutes []Route
 }
+
+// Route is a registered API route: an HTTP method and a ServeMux path
+// pattern such as "/api/v1/examples/{id}".
+type Route struct {
+	Method string
+	Path   string
+}
+
+func (r Route) String() string { return r.Method + " " + r.Path }
 
 // Option configures a Server.
 type Option func(*Server)
@@ -32,10 +49,20 @@ func WithMetrics(m *metrics.App) Option { return func(s *Server) { s.m = m } }
 // claims (the embedded single-page application). Without it such paths are 404.
 func WithUI(h http.Handler) Option { return func(s *Server) { s.ui = h } }
 
+// WithAPIMiddleware wraps every handler registered under /api with mw, first
+// one outermost. It runs after route matching (r.Pattern is set) and never for
+// the 404 and 405 answers of unmatched API requests.
+//
+// This is where authentication and grant checks plug in (tasks A1-A4); until
+// then no middleware is installed and the API is unauthenticated.
+func WithAPIMiddleware(mw ...func(http.Handler) http.Handler) Option {
+	return func(s *Server) { s.apiMW = append(s.apiMW, mw...) }
+}
+
 // New builds a server from the HTTP section of the configuration. Register
 // routes with Handle before calling Run.
 func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
-	s := &Server{cfg: cfg, log: log, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, log: log, mux: http.NewServeMux(), api: http.NewServeMux()}
 	for _, o := range opts {
 		o(s)
 	}
@@ -46,10 +73,11 @@ func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
 		}
 		WriteError(w, r, NotFound("no such resource"))
 	})
-	// Unmatched API paths always get the JSON envelope, never the UI. "/api" is
-	// registered exactly too: ServeMux would otherwise redirect it to "/api/".
-	s.Handle("/api", notFound)
-	s.Handle("/api/", notFound)
+	// Every /api path goes to the API mux and never to the UI: unmatched ones
+	// get the JSON envelope (404, or 405 with Allow). "/api" is registered
+	// exactly too: ServeMux would otherwise redirect it to "/api/".
+	s.mux.Handle("/api", http.HandlerFunc(s.serveAPI))
+	s.mux.Handle("/api/", http.HandlerFunc(s.serveAPI))
 	if s.ui != nil {
 		s.Handle("/", s.ui)
 	} else {
@@ -79,8 +107,87 @@ func (s *Server) chain(h http.Handler) http.Handler {
 	return requestIDMiddleware(h)
 }
 
-// Handle registers a route pattern (net/http ServeMux syntax).
-func (s *Server) Handle(pattern string, h http.Handler) { s.mux.Handle(pattern, routed(pattern, h)) }
+// Handle registers a route pattern (net/http ServeMux syntax). A pattern
+// whose path is /api or below goes to the API mux: it must name a method, must
+// not have a host, and its handler is wrapped in the API middleware.
+func (s *Server) Handle(pattern string, h http.Handler) {
+	path := routeOf(pattern)
+	if path != "/api" && !strings.HasPrefix(path, "/api/") {
+		s.mux.Handle(pattern, routed(pattern, h))
+		return
+	}
+	method, rest, ok := strings.Cut(strings.TrimSpace(pattern), " ")
+	if !ok || strings.TrimSpace(rest) != path {
+		panic(fmt.Sprintf("httpapi: API route %q must be \"METHOD /api/...\" without a host", pattern))
+	}
+	for i := len(s.apiMW) - 1; i >= 0; i-- {
+		h = s.apiMW[i](h)
+	}
+	s.api.Handle(pattern, routed(pattern, h))
+	s.apiRoutes = append(s.apiRoutes, Route{Method: method, Path: path})
+}
+
+// APIRoutes returns the registered routes under prefix (for example
+// [APIPrefix]), sorted by path then method.
+func (s *Server) APIRoutes(prefix string) []Route {
+	var out []Route
+	for _, r := range s.apiRoutes {
+		if r.Path == prefix || strings.HasPrefix(r.Path, prefix+"/") {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Method < out[j].Method
+	})
+	return out
+}
+
+// serveAPI dispatches an /api request. A matched route is served as is. For
+// an unmatched one, ServeMux's own plain-text 404 or 405 (which carries the
+// Allow header) is replaced by the error envelope.
+func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
+	if i := infoFrom(r.Context()); i != nil {
+		i.route = routeUnmatched
+	}
+	if _, pattern := s.api.Handler(r); pattern != "" {
+		s.api.ServeHTTP(w, r)
+		return
+	}
+	ew := &envelopeWriter{ResponseWriter: w, r: r}
+	s.api.ServeHTTP(ew, r)
+}
+
+// envelopeWriter turns ServeMux's plain-text 404 and 405 into the error
+// envelope and drops their bodies. Other statuses (a path-cleaning redirect)
+// pass through.
+type envelopeWriter struct {
+	http.ResponseWriter
+	r        *http.Request
+	replaced bool
+}
+
+func (e *envelopeWriter) WriteHeader(code int) {
+	switch code {
+	case http.StatusNotFound:
+		e.replaced = true
+		WriteError(e.ResponseWriter, e.r, NotFound("no such resource"))
+	case http.StatusMethodNotAllowed:
+		e.replaced = true
+		WriteError(e.ResponseWriter, e.r, MethodNotAllowed(e.ResponseWriter.Header().Get("Allow")))
+	default:
+		e.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (e *envelopeWriter) Write(p []byte) (int, error) {
+	if e.replaced {
+		return len(p), nil
+	}
+	return e.ResponseWriter.Write(p)
+}
 
 // Handler returns the full handler, for tests.
 func (s *Server) Handler() http.Handler { return s.http.Handler }

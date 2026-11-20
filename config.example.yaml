@@ -98,3 +98,18 @@ kek:
   # LEDGER_KEK_VALUE; trailing newlines are ignored.
   # Environment: LEDGER_KEK_FILE  Flag: --kek.file
   file: ""
+
+events:
+
+  pulse:
+
+    # Publish events to Pulse. Off by default. While off, nothing is recorded
+    # or published, and turning it on later does not replay changes made while
+    # it was off.
+    # Environment: LEDGER_EVENTS_PULSE_ENABLED  Flag: --events.pulse.enabled
+    enabled: false
+
+    # Event source stamped on every published event (the envelope's source
+    # field): 1 to 128 printable characters.
+    # Environment: LEDGER_EVENTS_PULSE_SOURCE  Flag: --events.pulse.source
+    source: "ledger"

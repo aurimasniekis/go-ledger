@@ -67,7 +67,7 @@ func TestULID(t *testing.T) {
 	if a[0] > '7' {
 		t.Fatalf("first character overflows 128 bits: %s", a)
 	}
-	if strings.Trim(a, crockford) != "" {
+	if strings.Trim(a, "0123456789ABCDEFGHJKMNPQRSTVWXYZ") != "" {
 		t.Fatalf("bad alphabet: %s", a)
 	}
 	if first, second := NewULID(), NewULID(); first == second {

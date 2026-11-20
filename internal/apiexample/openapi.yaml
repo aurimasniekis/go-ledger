@@ -1,0 +1,168 @@
+# OpenAPI description of the example resource (package apiexample). These
+# paths are NOT part of the published API: the example's contract test merges
+# them into the published document to check that the example follows the same
+# conventions. Use them as the template for a real resource.
+paths:
+  /examples:
+    get:
+      operationId: listExamples
+      summary: List examples
+      tags: [example]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: kind
+          in: query
+          description: Only examples of these kinds (repeat for any of several).
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/ExampleKind"
+        - name: name[prefix]
+          in: query
+          description: Only examples whose name starts with this text (case-sensitive).
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: One page of examples in ID order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Example"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createExample
+      summary: Create an example
+      tags: [example]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, kind]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                kind:
+                  $ref: "#/components/schemas/ExampleKind"
+      responses:
+        "201":
+          description: Created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Example"
+        default:
+          $ref: "#/components/responses/Error"
+  /examples/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getExample
+      summary: Get an example
+      tags: [example]
+      responses:
+        "200":
+          description: The example.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Example"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateExample
+      summary: Change an example
+      description: Requires the version in If-Match or the body; a stale version is a 409 with reconciliation.
+      tags: [example]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                kind:
+                  $ref: "#/components/schemas/ExampleKind"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The changed example.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Example"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteExample
+      summary: Delete an example
+      tags: [example]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Deleted.
+        default:
+          $ref: "#/components/responses/Error"
+components:
+  schemas:
+    ExampleKind:
+      type: string
+      enum: [alpha, beta]
+    Example:
+      type: object
+      required: [id, name, kind, version, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+        kind:
+          $ref: "#/components/schemas/ExampleKind"
+        version:
+          $ref: "#/components/schemas/Version"
+        created_at:
+          type: string
+          format: date-time

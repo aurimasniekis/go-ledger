@@ -60,11 +60,13 @@ func TestMetricsUseRouteTemplatesNotRawPaths(t *testing.T) {
 		`ledger_http_requests_total{route="/api/things/{id}",method="GET",status="204"} 2`,
 		`ledger_http_requests_total{route="/api/things/{id}",method="GET",status="400"} 1`,
 		`ledger_http_requests_total{route="unmatched",method="GET",status="404"} 1`,
-		`ledger_http_requests_total{route="unmatched",method="OTHER",status="404"} 1`,
+		// An unknown method on an API route is a 405 (ADR-0011), still under the bounded "unmatched" label.
+		`ledger_http_requests_total{route="unmatched",method="OTHER",status="405"} 1`,
 		`ledger_http_requests_total{route="/boom",method="GET",status="500"} 1`,
 		`ledger_http_request_duration_seconds_count{route="/api/things/{id}",method="GET"} 3`,
 		`ledger_errors_total{kind="validation_failed"} 1`,
-		`ledger_errors_total{kind="not_found"} 2`,
+		`ledger_errors_total{kind="not_found"} 1`,
+		`ledger_errors_total{kind="method_not_allowed"} 1`,
 		`ledger_errors_total{kind="internal_error"} 1`,
 		"ledger_http_requests_in_flight 0",
 	} {
