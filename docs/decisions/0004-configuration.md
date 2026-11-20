@@ -1,4 +1,4 @@
-# ADR-0003: Configuration system
+# ADR-0004: Configuration system
 
 Status: Accepted (2026-11-20)
 

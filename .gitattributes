@@ -1,0 +1,3 @@
+# Migration checksums are taken over the file bytes (with CRLF read as LF);
+# keep SQL files LF everywhere so checkouts agree.
+*.sql text eol=lf

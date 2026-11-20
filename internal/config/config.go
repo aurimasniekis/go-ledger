@@ -1,7 +1,7 @@
 // Package config loads Ledger's configuration: one typed struct filled from
 // built-in defaults, an optional YAML file, environment variables (optionally
 // seeded from a .env file) and command-line flags, in that order of increasing
-// precedence. See docs/decisions/0003-configuration.md.
+// precedence. See docs/decisions/0004-configuration.md.
 //
 // The Config struct is the single source of truth. Every leaf field's tags
 // define its YAML key, environment variable, flag, default and description,
