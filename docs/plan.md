@@ -8,6 +8,10 @@ Last updated: 2026-11-20.
 
 - **F1 Repository skeleton and conventions**: module, `cmd/ledger`, internal package layout (ADR-0001), Apache-2.0 licence, `.gitignore`, golangci-lint v2 config, Makefile, CONTRIBUTING, ADR log (ADR-0002 conventions).
 
+## In review
+
+- **F9 Money and time primitives**: exact `money.Decimal`/`Money`/`Totals` (per-currency, mixed currencies rejected), half-even rounding at presentation only, `calendar.Date`/`YearMonth`/`Zone`, exact TEXT encoding for SQLite (`store/sqlvalue`), float ban test (ADR-0005).
+
 ## Next (first wave)
 
 - **F2 Configuration system**: YAML, environment and `.env` configuration, `.env.example`.
