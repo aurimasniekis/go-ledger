@@ -9,12 +9,12 @@ import (
 // ErrNotFound is returned when a connection or account does not exist.
 var ErrNotFound = errors.New("banking: not found")
 
-// ErrPurgeBlocked is returned when bank facts cannot be purged because user
-// data (a payment match, a correction) still refers to them.
 // ErrRefreshInProgress is returned by StartRefresh while another refresh of
 // the connection is running.
 var ErrRefreshInProgress = errors.New("banking: a refresh of this connection is already running")
 
+// ErrPurgeBlocked is returned when bank facts cannot be purged because user
+// data (a payment match, a correction) still refers to them.
 var ErrPurgeBlocked = errors.New("banking: bank facts are still referenced by user data")
 
 // IDs are ULIDs assigned by the store; they are Ledger's stable identifiers,
