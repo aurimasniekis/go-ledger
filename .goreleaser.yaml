@@ -1,0 +1,77 @@
+# GoReleaser configuration for the release workflow (.github/workflows/release.yml, ADR-0018).
+# The tool version is pinned in the workflow and in the Makefile (GORELEASER_VERSION). Check this file with
+# `goreleaser check`; dry-run locally with `make release-dry-run`.
+version: 2
+
+project_name: ledger
+
+before:
+  hooks:
+    # The web UI is embedded with go:embed, so the frontend is built first (ADR-0008).
+    - make web-install
+    - make web-build
+
+builds:
+  - id: ledger
+    main: ./cmd/ledger
+    binary: ledger
+    env:
+      # Pure Go, as make build requires (ADR-0003).
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -X main.version={{ .Version }}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - id: ledger
+    ids: [ledger]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      # Third-party licence texts must ship with binaries (ADR-0003). They are added once OP4 produces the
+      # licence report; until then this lists only the project's own licence.
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  - id: archives
+    artifacts: archive
+  - id: binaries
+    artifacts: binary
+
+dockers_v2:
+  - ids: [ledger]
+    images:
+      - docker.io/aurimasniekis/ledger
+    tags:
+      - "{{ .Version }}"
+      # Stable releases only (no -rc or other pre-release suffix).
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    dockerfile: Dockerfile
+    # Files the Dockerfile copies from the repository (the build context holds only the binaries and this file).
+    extra_files:
+      - docker/data/.gitkeep
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.source: "https://github.com/aurimasniekis/go-ledger"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: "Apache-2.0"
+
+release:
+  # A draft: a person reviews the artefacts and publishes it (ADR-0018).
+  draft: true
+  prerelease: auto
+  # publish-images sets this to push the images without creating a GitHub Release (ADR-0018).
+  # index, not .Env: an unset variable is an empty string here, not a template error.
+  disable: '{{ index .Env "LEDGER_DISABLE_GITHUB_RELEASE" }}'

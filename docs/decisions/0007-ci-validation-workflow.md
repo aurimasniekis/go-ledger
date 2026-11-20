@@ -1,6 +1,6 @@
 # ADR-0007: CI validation workflow
 
-Status: Accepted (2026-11-20)
+Status: Accepted (2026-11-20); rule 5 is amended for the release workflow by [ADR-0018](0018-release-workflow.md)
 
 ## Context
 
@@ -33,4 +33,4 @@ ADR-0002 left the checks to developers' machines until the CI validation workflo
 - The frontend job is a placeholder until F7. When the UI is embedded with `go:embed`, the Go jobs must depend on the frontend build. F7 owns that wiring. Node's version comes from `web/package.json`; `corepack` must be available on that Node version.
 - The dependency-review job needs the repository's dependency graph enabled. If it is disabled, the action fails with a 403 (its documentation says so).
 - Required status checks are a repository setting that a repository owner must configure. This ADR does not configure them.
-- Open: no release, container or artifact upload job exists here (F10). The validation workflow does not publish binaries.
+- The release workflow (F10, [ADR-0018](0018-release-workflow.md)) is the only file allowed a write scope, and only at job level for a tag push. The validation workflow still publishes nothing.

@@ -17,5 +17,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0014: Design tokens and theme system](0014-design-tokens-and-theme-system.md)
 - [ADR-0015: API conventions amendments](0015-api-conventions-amendments.md)
 - [ADR-0016: Pulse publisher](0016-pulse-publisher.md)
+- [ADR-0018: Release workflow and container image](0018-release-workflow.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.
