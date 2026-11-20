@@ -11,6 +11,7 @@ ledger backup                         # writes <database>.backup-<UTC time>.db
 ledger backup --output /safe/place/ledger-2026-11-20.db
 ```
 
+- The file is flushed to disk (`fsync`) and its directory synced before success is reported; a sync error fails the command.
 - Safe while `ledger serve` is running: it copies one consistent snapshot (`VACUUM INTO`) and does not block writes.
 - The file is created with `O_EXCL` and mode `0600`: an existing file is never overwritten, and the copy is owner-only whatever the umask.
 - The copy is verified before the command reports success (`integrity_check`, `foreign_key_check`, migration ledger). A failed or unverifiable backup is deleted, not left behind.
@@ -36,8 +37,10 @@ ledger backup prune --keep 3          # keeps the 3 newest .pre-v*.bak files; to
    ledger restore --force /path/to/backup.db     # flags first, then the file
    ```
 
-   The backup is verified, copied to a private staging file next to the database and verified again. Only then is the current database moved aside to `<database>.pre-restore-<UTC time>` (with its `-wal`/`-shm` files, so stale WAL frames cannot be replayed into the restored data) and the copy renamed into place. If anything fails before that point the current database is untouched. Without `--force` restore refuses to replace an existing database. The moved-aside database is never deleted by Ledger: delete it yourself once you are satisfied.
+   The backup is verified, copied to a private staging file next to the database and verified again. Only then is the current database moved aside to `<database>.pre-restore-<UTC time>` (with its `-wal`/`-shm` files, so stale WAL frames cannot be replayed into the restored data) and the copy renamed into place. Any `-wal`/`-shm` file next to the database path is moved aside too, even when there is no database file, so leftovers can never be replayed into the restored data. If anything fails before that point the current database is untouched; if a move or the final rename fails afterwards, restore tries to put the previous files back and the error names the moved-aside path. Without `--force` restore refuses to replace an existing database. The moved-aside database is never deleted by Ledger: delete it yourself once you are satisfied.
 3. Start `ledger serve`. If the backup is from an older version, the pending migrations are applied (with an automatic pre-migration backup). A backup from a **newer** binary than the one you run is refused (`schema is newer than this binary`): use the newer binary.
+
+A backup may have its own `-wal` file (a `.pre-restore-*` file that was a live database keeps its WAL next to it as `.pre-restore-*-wal`). Keep the two together: when `<backup>-wal` exists and is not empty, restore (and verification) copies both to a private temporary directory, lets SQLite replay the WAL there and restores that result, so data that was only in the WAL is not lost. The original files are never modified.
 
 What a restore does not do: it does not merge, it replaces the whole database. Anything written after the backup is gone from the active database (it stays in the moved-aside file). Data freshness after a restore is that of the backup: bank data shows its original "last updated" times and is refreshed by the next sync.
 
@@ -68,7 +71,7 @@ Upgrading means starting a newer binary on an existing database. Migrations only
 ## File permissions
 
 - `ledger serve` creates the database directory with mode `0700` and the database, lock file and backups with `0600`. SQLite gives the `-wal` and `-shm` files the database's mode.
-- At startup, `ledger serve` logs a warning (`database file permissions`) for any database, WAL, lock or pre-migration backup file that group or others can access, and for a database directory that others can write to. It does not change modes itself. An existing file keeps its mode, so a database created by hand with a loose umask needs `chmod 600`.
+- At startup, `ledger serve` logs a warning (`database file permissions`) for any database, WAL, lock, pre-migration backup, `ledger backup` output or `.pre-restore-*` file (and their WAL/SHM files) that group or others can access, and for a database directory that others can write to. It does not change modes itself. An existing file keeps its mode, so a database created by hand with a loose umask needs `chmod 600`.
 - Mode bits are not meaningful on Windows; no check is made there (release targets are Linux and macOS).
 
 ## Limits

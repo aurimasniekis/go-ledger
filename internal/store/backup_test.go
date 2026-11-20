@@ -402,3 +402,136 @@ func TestModeWarnings(t *testing.T) {
 		t.Fatalf("warnings = %v, want the file and the directory", w)
 	}
 }
+
+// liveWAL returns a database at path that still has committed data only in
+// its -wal file (the connection stays open): the db and wal bytes.
+func liveWAL(t *testing.T, path, value string) (dbBytes, walBytes []byte) {
+	t.Helper()
+	seeded(t, path, value)
+	db, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wal, err := os.ReadFile(path + "-wal")
+	if err != nil || len(wal) == 0 {
+		t.Fatalf("expected WAL content: %v, %d bytes", err, len(wal))
+	}
+	return db, wal
+}
+
+func TestRestoreIgnoresStaleWALWithoutDatabase(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "good.db")
+	seeded(t, src, "from-backup")
+	backup := filepath.Join(t.TempDir(), "b.db")
+	if _, err := Backup(ctxb, src, backup, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, otherWAL := liveWAL(t, filepath.Join(t.TempDir(), "other.db"), "b-wal")
+
+	path := tempPath(t) // no database file, only a stale WAL and SHM
+	if err := os.WriteFile(path+"-wal", otherWAL, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+"-shm", []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	res, err := Restore(ctxb, backup, path, false, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := settingValue(t, path); got != "from-backup" {
+		t.Fatalf("restored value = %q, want from-backup (stale WAL replayed)", got)
+	}
+	if res.MovedAside == "" {
+		t.Fatal("stale WAL was not moved aside")
+	}
+	if b, err := os.ReadFile(res.MovedAside + "-wal"); err != nil || len(b) != len(otherWAL) {
+		t.Fatalf("stale WAL not kept aside: %v", err)
+	}
+}
+
+func TestRestoreBackupWithOwnWAL(t *testing.T) {
+	// A moved-aside database whose newest data is only in its WAL must
+	// restore with that data.
+	aside := filepath.Join(t.TempDir(), "ledger.db.pre-restore-20261120T120000.000000000Z")
+	dbBytes, wal := liveWAL(t, aside, "new-in-wal")
+	copyDir := t.TempDir()
+	backup := filepath.Join(copyDir, filepath.Base(aside))
+	if err := os.WriteFile(backup, dbBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backup+"-wal", wal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyBackup(ctxb, backup); err != nil {
+		t.Fatal(err)
+	}
+	path := tempPath(t)
+	if _, err := Restore(ctxb, backup, path, false, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := settingValue(t, path); got != "new-in-wal" {
+		t.Fatalf("restored value = %q, want new-in-wal", got)
+	}
+	// The backup files themselves are untouched, and no -shm appeared.
+	if b, _ := os.ReadFile(backup + "-wal"); len(b) != len(wal) {
+		t.Fatal("backup WAL was modified")
+	}
+	if _, err := os.Stat(backup + "-shm"); err == nil {
+		t.Fatal("restore created a -shm next to the backup")
+	}
+}
+
+func TestVacuumIntoRemovesFileWhenChmodFails(t *testing.T) {
+	path := tempPath(t)
+	seeded(t, path, "v")
+	dest := filepath.Join(t.TempDir(), "b.db")
+	chmodFile = func(string, os.FileMode) error { return errors.New("boom") }
+	t.Cleanup(func() { chmodFile = os.Chmod })
+	if _, err := Backup(ctxb, path, dest, 0); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("Backup error = %v, want the chmod error", err)
+	}
+	if _, err := os.Stat(dest); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backup file left behind: %v", err)
+	}
+}
+
+func TestMoveAsideRollsBack(t *testing.T) {
+	path := tempPath(t)
+	db := seeded(t, path, "keep")
+	_ = db.Close()
+	aside := path + ".aside"
+	if err := os.WriteFile(path+"-wal", []byte("w"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty directory in the way makes the -wal rename fail after the
+	// database itself was moved.
+	if err := os.MkdirAll(filepath.Join(aside+"-wal", "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := moveAside(path, aside)
+	if err == nil || !strings.Contains(err.Error(), aside) {
+		t.Fatalf("error = %v, want one naming %s", err, aside)
+	}
+	if got := settingValue(t, path); got != "keep" {
+		t.Fatalf("database not put back: %q", got)
+	}
+}
+
+func TestModeWarningsCoverBackupsAndMovedAside(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "d")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "ledger.db")
+	for _, n := range []string{".backup-x.db", ".pre-restore-x", ".pre-restore-x-wal", ".backup-x.db-wal"} {
+		if err := os.WriteFile(path+n, []byte("d"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Chmod(path+n, 0o644)
+	}
+	if w := ModeWarnings(path); len(w) != 4 {
+		t.Fatalf("warnings = %v, want 4", w)
+	}
+}
