@@ -57,6 +57,9 @@ jobs:
       # Negative fixtures run first, so a broken pattern cannot pass the real workflows silently.
       - name: Permission policy (read-only scopes only)
         run: make workflow-policy
+      # A broken .goreleaser.yaml would otherwise show only on a tag or a dispatch, after merge (ADR-0018).
+      - name: GoReleaser configuration
+        run: make release-check
 
   go-format-lint:
     name: go format and lint

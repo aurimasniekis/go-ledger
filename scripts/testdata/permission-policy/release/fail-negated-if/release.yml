@@ -1,0 +1,19 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo build
+  github-release:
+    if: "!(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: echo release

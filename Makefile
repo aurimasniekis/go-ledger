@@ -5,8 +5,9 @@ BIN_DIR  ?= bin
 BINARY   := $(BIN_DIR)/ledger
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
+GORELEASER_VERSION ?= v2.20.3
 
-.PHONY: help web-install web-lint web-typecheck web-test web-build web-check build-full e2e fmt fmt-check vet lint test test-nocgo build config-examples workflow-policy check clean
+.PHONY: help web-install web-lint web-typecheck web-test web-build web-check build-full e2e fmt fmt-check vet lint test test-nocgo build config-examples workflow-policy release-check release-dry-run check clean
 
 help: ## list the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -40,6 +41,12 @@ config-examples: ## regenerate config.example.yaml and .env.example from the con
 workflow-policy: ## workflow permission policy: the negative fixtures must be rejected, then .github/workflows must pass
 	sh scripts/check-workflow-permissions.sh --self-test
 	sh scripts/check-workflow-permissions.sh .github/workflows
+
+release-check: ## validate .goreleaser.yaml with the version the release workflow pins
+	$(GO) run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) check
+
+release-dry-run: ## snapshot release without publishing (binaries, archives, checksums, SBOMs, images); needs syft on PATH
+	$(GO) run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --clean --skip=publish
 
 web-install: ## install frontend dependencies from the lockfile (pnpm)
 	cd web && pnpm install --frozen-lockfile

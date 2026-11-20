@@ -102,6 +102,17 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		log.Error("cannot create the database directory", "path", cfg.Database.Path, "error", err.Error())
 		return 1
 	}
+	// One Ledger process per database: held until exit, released by the kernel
+	// if the process dies (ADR-0019).
+	lock, err := store.LockInstance(cfg.Database.Path)
+	if err != nil {
+		log.Error("cannot use the database", "path", cfg.Database.Path, "error", err.Error())
+		return 1
+	}
+	defer func() { _ = lock.Close() }()
+	for _, w := range store.ModeWarnings(cfg.Database.Path) {
+		log.Warn("database file permissions", "detail", w)
+	}
 	db, err := store.Open(ctx, cfg.Database.Path, store.Options{BusyTimeout: cfg.Database.BusyTimeout})
 	if err != nil {
 		log.Error("cannot open the database", "path", cfg.Database.Path, "error", err.Error())
