@@ -6,7 +6,7 @@ BINARY   := $(BIN_DIR)/ledger
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: help fmt fmt-check vet lint test test-nocgo build config-examples workflow-policy check clean
+.PHONY: help web-install web-lint web-typecheck web-test web-build web-check build-full e2e fmt fmt-check vet lint test test-nocgo build config-examples workflow-policy check clean
 
 help: ## list the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -41,7 +41,29 @@ workflow-policy: ## workflow permission policy: the negative fixtures must be re
 	sh scripts/check-workflow-permissions.sh --self-test
 	sh scripts/check-workflow-permissions.sh .github/workflows
 
-check: fmt-check vet lint test test-nocgo build workflow-policy ## everything the checks need, in order
+web-install: ## install frontend dependencies from the lockfile (pnpm)
+	cd web && pnpm install --frozen-lockfile
+
+web-lint: ## eslint
+	cd web && pnpm lint
+
+web-typecheck: ## tsc --noEmit
+	cd web && pnpm typecheck
+
+web-test: ## Vitest and Testing Library
+	cd web && pnpm test
+
+web-build: ## build the frontend into internal/web/dist (embedded by the Go binary)
+	cd web && pnpm build
+
+web-check: web-lint web-typecheck web-test web-build ## every frontend check, then the production build
+
+build-full: web-build build ## build the frontend, then bin/ledger with it embedded
+
+e2e: build-full ## Playwright against the built binary (needs: pnpm exec playwright install chromium)
+	cd web && E2E_LEDGER_BIN=../$(BINARY) pnpm test:e2e
+
+check: fmt-check vet lint test test-nocgo web-check build workflow-policy ## everything the checks need, in order
 
 clean: ## remove build output
 	rm -rf $(BIN_DIR)

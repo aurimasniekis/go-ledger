@@ -18,7 +18,8 @@ The repository is at the skeleton stage. It has the module, the package layout, 
 
 ```
 make help     # list the targets
-make check    # fmt-check, vet, lint, test (race), build
+make check    # fmt-check, vet, lint, test (race), frontend checks, build
+make build-full   # build the web UI into internal/web/dist, then bin/ledger with it embedded
 make build    # build bin/ledger
 ```
 

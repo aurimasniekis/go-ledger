@@ -21,6 +21,10 @@ env:
   GOVULNCHECK_VERSION: v1.10.0
   ACTIONLINT_VERSION: v1.7.12
   ZIZMOR_VERSION: 1.32.0
+  # Frontend toolchain (ADR-0008). Corepack is not shipped with Node 25+, so pnpm comes from a SHA-pinned action at an
+  # exact version, which must equal "packageManager" in web/package.json.
+  NODE_VERSION: 24.19.0
+  PNPM_VERSION: 12.21.0
 
 jobs:
   workflow-lint:
@@ -95,9 +99,9 @@ jobs:
         run: make test
 
   go-build:
-    name: go build (pure Go)
+    name: go build (pure Go, with the built frontend embedded)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,8 +111,34 @@ jobs:
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      - name: Build bin/ledger with CGO_ENABLED=0
-        run: make build
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - name: Install dependencies (frozen lockfile)
+        run: make web-install
+      # The frontend is built first so that go:embed picks up the real assets.
+      - name: Build the frontend, then bin/ledger with CGO_ENABLED=0
+        run: make build-full
+      - name: Smoke test the binary serves the embedded UI and the JSON API 404
+        env:
+          LEDGER_HTTP_LISTEN: 127.0.0.1:18080
+          LEDGER_KEK_VALUE: ci-smoke-not-a-secret
+          LEDGER_DATABASE_PATH: ":memory:"
+        run: |
+          bin/ledger serve > "$RUNNER_TEMP/ledger.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 50); do curl -fs http://127.0.0.1:18080/ > "$RUNNER_TEMP/index.html" && break; sleep 0.2; done
+          grep -q '<div id="root">' "$RUNNER_TEMP/index.html"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/commitments/1)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/api/nope)" = 404
+          test "$(curl -s http://127.0.0.1:18080/api/nope | grep -c '"code":"not_found"')" = 1
 
   govulncheck:
     name: govulncheck
@@ -131,8 +161,7 @@ jobs:
         run: govulncheck ./...
 
   frontend:
-    # F7 placeholder: the steps below run only once web/package.json exists. Until then the job passes with a notice.
-    name: frontend (skipped until F7)
+    name: frontend (lint, typecheck, test, build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -140,42 +169,25 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Detect frontend
-        id: detect
-        run: |
-          if [ -f web/package.json ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=frontend::web/package.json not found; frontend checks skipped until F7"
-          fi
-      - name: Set up Node.js from web/package.json
-        if: steps.detect.outputs.present == 'true'
+      - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: web/package.json
-      - name: Install pnpm and dependencies (frozen lockfile)
-        if: steps.detect.outputs.present == 'true'
-        working-directory: web
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - name: Install dependencies (frozen lockfile)
+        run: make web-install
       - name: pnpm lint
-        if: steps.detect.outputs.present == 'true'
-        working-directory: web
-        run: pnpm lint
+        run: make web-lint
       - name: pnpm typecheck
-        if: steps.detect.outputs.present == 'true'
-        working-directory: web
-        run: pnpm typecheck
+        run: make web-typecheck
       - name: pnpm test
-        if: steps.detect.outputs.present == 'true'
-        working-directory: web
-        run: pnpm test
+        run: make web-test
       - name: pnpm build
-        if: steps.detect.outputs.present == 'true'
-        working-directory: web
-        run: pnpm build
+        run: make web-build
 
   dependency-review:
     name: dependency review

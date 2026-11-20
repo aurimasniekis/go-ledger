@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	"github.com/aurimasniekis/go-ledger/internal/web"
 )
 
 // serveEnv carries what tests replace: the environment and file system, and a
@@ -29,6 +31,8 @@ type serveEnv struct {
 	Reporting reporting.Options
 	// AfterOpen, in tests, receives the open store (for example to break it).
 	AfterOpen func(*store.DB)
+	// UI replaces the embedded frontend; nil means web.Assets().
+	UI fs.FS
 	// ManagementListening learns the address of the management listener, when
 	// there is one.
 	ManagementListening func(net.Addr)
@@ -126,12 +130,16 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		env.Listening(ln.Addr())
 	}
 
+	ui := env.UI
+	if ui == nil {
+		ui = web.Assets()
+	}
 	app := metrics.NewApp(version)
 	ready := health.NewReadiness(log)
 	// Per D17, readiness gates only on the database; optional integrations belong on a
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
-	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app))
+	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)))
 
 	// Metrics and health are unauthenticated. They go on a separate
 	// management listener (loopback by default), or on the main one when

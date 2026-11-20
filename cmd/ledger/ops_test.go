@@ -67,7 +67,7 @@ func TestManagementListenerServesOpsEndpoints(t *testing.T) {
 	if mgmt == nil {
 		t.Fatal("no management listener")
 	}
-	fetch(t, main, "/some/user/path-12345") // a 404 on the main listener
+	fetch(t, main, "/api/some/user/path-12345") // a 404 on the main listener
 	if code, body := fetch(t, mgmt, "/metrics"); code != 200 ||
 		!strings.Contains(body, "ledger_build_info{") ||
 		!strings.Contains(body, `ledger_http_requests_total{route="unmatched",method="GET",status="404"} 1`) ||
@@ -80,10 +80,11 @@ func TestManagementListenerServesOpsEndpoints(t *testing.T) {
 	if code, body := fetch(t, mgmt, "/readyz"); code != 200 || !strings.Contains(body, `"database":"ok"`) {
 		t.Errorf("readyz %d %s", code, body)
 	}
-	// The main listener does not expose them.
+	// The main listener does not expose them: the single-page shell answers
+	// instead of the operational payloads.
 	for _, p := range []string{"/metrics", "/healthz", "/readyz"} {
-		if code, _ := fetch(t, main, p); code != 404 {
-			t.Errorf("main listener served %s: %d", p, code)
+		if _, body := fetch(t, main, p); strings.Contains(body, "ledger_build_info") || strings.Contains(body, `"status"`) {
+			t.Errorf("main listener served %s: %s", p, body)
 		}
 	}
 }

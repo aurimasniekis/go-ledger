@@ -19,6 +19,7 @@ type Server struct {
 	mux  *http.ServeMux
 	http *http.Server
 	m    *metrics.App
+	ui   http.Handler
 }
 
 // Option configures a Server.
@@ -27,6 +28,10 @@ type Option func(*Server)
 // WithMetrics records request metrics in m.
 func WithMetrics(m *metrics.App) Option { return func(s *Server) { s.m = m } }
 
+// WithUI serves h for every path that no registered route and no /api path
+// claims (the embedded single-page application). Without it such paths are 404.
+func WithUI(h http.Handler) Option { return func(s *Server) { s.ui = h } }
+
 // New builds a server from the HTTP section of the configuration. Register
 // routes with Handle before calling Run.
 func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
@@ -34,13 +39,22 @@ func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
 	for _, o := range opts {
 		o(s)
 	}
-	s.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The catch-all is labelled "unmatched", not "/", in metrics.
+	// The catch-all is labelled "unmatched", not "/", in metrics.
+	notFound := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if i := infoFrom(r.Context()); i != nil {
 			i.route = routeUnmatched
 		}
 		WriteError(w, r, NotFound("no such resource"))
-	}))
+	})
+	// Unmatched API paths always get the JSON envelope, never the UI. "/api" is
+	// registered exactly too: ServeMux would otherwise redirect it to "/api/".
+	s.Handle("/api", notFound)
+	s.Handle("/api/", notFound)
+	if s.ui != nil {
+		s.Handle("/", s.ui)
+	} else {
+		s.Handle("/", notFound)
+	}
 	s.http = &http.Server{
 		Handler:           s.chain(s.mux),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,

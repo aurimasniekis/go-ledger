@@ -5,3 +5,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Frontend dependencies (web/pnpm-lock.yaml). Proposed as pull requests; CI must pass before a person merges.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly

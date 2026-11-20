@@ -9,6 +9,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0005: Money and time primitives](0005-money-and-time-primitives.md)
 - [ADR-0006: HTTP server, logging and error envelope](0006-http-server-logging-and-errors.md)
 - [ADR-0007: CI validation workflow](0007-ci-validation-workflow.md)
+- [ADR-0008: Frontend skeleton and embedding](0008-frontend-skeleton-and-embedding.md)
 - [ADR-0009: Metrics, health and readiness](0009-metrics-and-health.md)
 - [ADR-0010: ledger serve wiring and reporting-zone capture](0010-serve-wiring-and-reporting-zone.md)
 
