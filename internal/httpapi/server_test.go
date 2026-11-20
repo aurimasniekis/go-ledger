@@ -15,6 +15,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
+	"github.com/aurimasniekis/go-ledger/internal/metrics"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 )
 
@@ -25,6 +26,55 @@ func testConfig() config.HTTP {
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second,
 		WriteTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 		ShutdownTimeout: 5 * time.Second, MaxBodyBytes: 64,
+	}
+}
+
+func TestMetricsUseRouteTemplatesNotRawPaths(t *testing.T) {
+	app := metrics.NewApp("test")
+	log, _ := logging.New(&bytes.Buffer{}, "debug", "json", redact.New())
+	s := New(testConfig(), log, WithMetrics(app))
+	s.Handle("GET /api/things/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") == "bad" {
+			WriteError(w, r, Validation("id", "bad"))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	s.Handle("GET /boom", http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("x") }))
+	do := func(method, path string) {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	}
+	do("GET", "/api/things/alice-12345")
+	do("GET", "/api/things/98765")
+	do("GET", "/api/things/bad")
+	do("GET", "/no/such/path/with-user-id-777")
+	do("BREW", "/api/things/1")
+	do("GET", "/boom")
+
+	var b bytes.Buffer
+	_ = app.Registry.Write(&b)
+	out := b.String()
+	for _, want := range []string{
+		`ledger_http_requests_total{route="/api/things/{id}",method="GET",status="204"} 2`,
+		`ledger_http_requests_total{route="/api/things/{id}",method="GET",status="400"} 1`,
+		`ledger_http_requests_total{route="unmatched",method="GET",status="404"} 1`,
+		`ledger_http_requests_total{route="unmatched",method="OTHER",status="404"} 1`,
+		`ledger_http_requests_total{route="/boom",method="GET",status="500"} 1`,
+		`ledger_http_request_duration_seconds_count{route="/api/things/{id}",method="GET"} 3`,
+		`ledger_errors_total{kind="validation_failed"} 1`,
+		`ledger_errors_total{kind="not_found"} 2`,
+		`ledger_errors_total{kind="internal_error"} 1`,
+		"ledger_http_requests_in_flight 0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("metrics lack %q", want)
+		}
+	}
+	for _, raw := range []string{"alice-12345", "98765", "user-id-777", "/no/such"} {
+		if strings.Contains(out, raw) {
+			t.Errorf("raw path fragment %q leaked into a label", raw)
+		}
 	}
 }
 

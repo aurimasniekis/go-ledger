@@ -47,6 +47,13 @@ func pathErr(err error) error {
 func (c *Config) validate(sources map[string]string) []Problem {
 	var ps []Problem
 	bad := func(key, msg string) { ps = append(ps, Problem{Source: sources[key], Key: key, Msg: msg}) }
+	if c.HTTP.ManagementListen != "" {
+		if _, port, err := net.SplitHostPort(c.HTTP.ManagementListen); err != nil {
+			bad("http.management_listen", "must be host:port, for example 127.0.0.1:9090, or empty to use the main listener")
+		} else if p, err := strconv.Atoi(port); err != nil || p < 0 || p > 65535 {
+			bad("http.management_listen", "port must be a number from 0 to 65535")
+		}
+	}
 	if strings.TrimSpace(c.HTTP.Listen) == "" {
 		bad("http.listen", "must not be empty")
 	} else if _, port, err := net.SplitHostPort(c.HTTP.Listen); err != nil {
