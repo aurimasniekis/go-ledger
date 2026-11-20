@@ -50,22 +50,9 @@ jobs:
       # --offline: static audits only (unpinned uses, permissions, injection). No API token is passed.
       - name: zizmor (unpinned actions and permissions)
         run: zizmor --offline --min-severity low .github/workflows
+      # Negative fixtures run first, so a broken pattern cannot pass the real workflows silently.
       - name: Permission policy (read-only scopes only)
-        run: |
-          set -eu
-          status=0
-          for f in .github/workflows/*.yml .github/workflows/*.yaml; do
-            [ -e "$f" ] || continue
-            if grep -qE ':[[:space:]]*write(-all)?([[:space:]]|$)' "$f"; then
-              echo "::error file=$f::must stay read-only, but a write scope was requested"
-              status=1
-            fi
-            if ! grep -A1 -x 'permissions:' "$f" | grep -qx '  contents: read'; then
-              echo "::error file=$f::top-level permissions must be exactly contents read"
-              status=1
-            fi
-          done
-          exit $status
+        run: make workflow-policy
 
   go-format-lint:
     name: go format and lint

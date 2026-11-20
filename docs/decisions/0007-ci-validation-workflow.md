@@ -10,9 +10,9 @@ ADR-0002 left the checks to developers' machines until the CI validation workflo
 
 1. One workflow, `.github/workflows/ci.yml`, runs on every push and on every pull request. Its top-level `permissions` is `contents: read`. No job requests a write scope.
 2. Every `uses:` is pinned to a full commit SHA, with the release name in a trailing comment. `.github/dependabot.yml` proposes pin updates as pull requests.
-3. CI runs the same Makefile targets that developers run, so `make check` and CI cannot drift: `fmt-check`, `vet`, `lint`, `test` (race) and `build`. `govulncheck ./...` runs as its own job.
+3. CI runs the same Makefile targets that developers run, so `make check` and CI cannot drift: `fmt-check`, `vet`, `lint`, `test` (race), `build` and `workflow-policy`. `govulncheck ./...` runs as its own job.
 4. Tools are pinned by version and installed directly, not through third-party actions: golangci-lint v2.15.0, govulncheck v1.10.0 and actionlint v1.7.12 with `go install`; zizmor 1.32.0 from PyPI with `--only-binary`.
-5. The `workflow-lint` job runs actionlint and zizmor (`--offline`, low severity and up). A permission-policy step fails when any workflow requests a write scope or lacks a top-level `contents: read`. zizmor's `unpinned-uses` audit fails any unpinned action.
+5. The `workflow-lint` job runs actionlint and zizmor (`--offline`, low severity and up). A permission-policy step (`make workflow-policy`, which runs `scripts/check-workflow-permissions.sh`) fails when any workflow requests a write scope or lacks a top-level `contents: read`. A write scope is detected in block, flow (`{contents: write}`), quoted (`"write"`) and `write-all` form. Before the real workflows are checked, the same script runs against negative fixtures in `scripts/testdata/permission-policy/` and must reject each one. zizmor's `unpinned-uses` audit fails any unpinned action.
 6. Dependency review runs on pull requests only, with `fail-on-severity: moderate` and `contents: read`; it does not post comments.
 7. The `frontend` job runs `pnpm lint`, `typecheck`, `test` and `build` in `web/` with a frozen lockfile. It runs only when `web/package.json` exists; otherwise it passes with a notice.
 
@@ -27,7 +27,7 @@ ADR-0002 left the checks to developers' machines until the CI validation workflo
 
 - Pins are maintained by Dependabot and reviewed by a person. A pin that is bumped must match the SHA of the release named in its comment.
 - `zizmor --offline` skips its online audits, including the check that a pinned SHA exists in the upstream action. Those audits need a token that the validation job does not hold.
-- The permission-policy step is a line-based text check, not a YAML parser. It catches the usual forms (`contents: write`, `write-all`) but not every YAML construction. A structured check could replace it later.
+- The permission-policy check is a line-based text check, not a YAML parser. It catches a write scope written as a value after a colon, in block, flow, quoted or `write-all` form. It does not catch constructions that split the value from its key across lines, or that hide it behind YAML anchors, tags or aliases. A structured check could replace it later.
 - The pip install pins the version but not hashes (`--only-binary` only). Hash pinning is open.
 - `go install` builds the three Go tools from source on each run. The Go module cache from `setup-go` speeds this up, but the first run is slow.
 - The frontend job is a placeholder until F7. When the UI is embedded with `go:embed`, the Go jobs must depend on the frontend build. F7 owns that wiring. Node's version comes from `web/package.json`; `corepack` must be available on that Node version.

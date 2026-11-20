@@ -6,7 +6,7 @@ BINARY   := $(BIN_DIR)/ledger
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
 
-.PHONY: help fmt fmt-check vet lint test test-nocgo build config-examples check clean
+.PHONY: help fmt fmt-check vet lint test test-nocgo build config-examples workflow-policy check clean
 
 help: ## list the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -37,7 +37,11 @@ build: ## build every package and bin/ledger with the version from git, pure Go 
 config-examples: ## regenerate config.example.yaml and .env.example from the config definition
 	$(GO) test ./internal/config -run TestExamplesInSync -update
 
-check: fmt-check vet lint test test-nocgo build ## everything the Go checks need, in order
+workflow-policy: ## workflow permission policy: the negative fixtures must be rejected, then .github/workflows must pass
+	sh scripts/check-workflow-permissions.sh --self-test
+	sh scripts/check-workflow-permissions.sh .github/workflows
+
+check: fmt-check vet lint test test-nocgo build workflow-policy ## everything the checks need, in order
 
 clean: ## remove build output
 	rm -rf $(BIN_DIR)
