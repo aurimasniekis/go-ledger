@@ -92,27 +92,38 @@ func accessLogMiddleware(log *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			sw := &statusWriter{ResponseWriter: w}
-			ctx := logging.WithLogger(r.Context(), log)
+			// The request logger carries request_id itself, so a handler that
+			// logs without a context still gets it.
+			reqLog := log.With("request_id", logging.RequestID(r.Context()))
+			ctx := logging.WithLogger(r.Context(), reqLog)
+			// Logged in a defer so a request aborted with http.ErrAbortHandler
+			// (which is re-panicked) still gets its line.
+			completed := false
+			defer func() {
+				aborted := !completed
+				if sw.status == 0 && !aborted {
+					sw.status = http.StatusOK
+				}
+				level := slog.LevelInfo
+				if sw.status >= 500 || aborted {
+					level = slog.LevelError
+				}
+				remote, _, err := net.SplitHostPort(r.RemoteAddr)
+				if err != nil {
+					remote = r.RemoteAddr
+				}
+				reqLog.Log(ctx, level, "request",
+					"method", r.Method,
+					"path", r.URL.Path,
+					"status", sw.status,
+					"bytes", sw.bytes,
+					"duration_ms", float64(time.Since(start).Microseconds())/1000,
+					"remote", remote,
+					"aborted", aborted,
+				)
+			}()
 			next.ServeHTTP(sw, r.WithContext(ctx))
-			if sw.status == 0 {
-				sw.status = http.StatusOK
-			}
-			level := slog.LevelInfo
-			if sw.status >= 500 {
-				level = slog.LevelError
-			}
-			remote, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				remote = r.RemoteAddr
-			}
-			log.Log(ctx, level, "request",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", sw.status,
-				"bytes", sw.bytes,
-				"duration_ms", float64(time.Since(start).Microseconds())/1000,
-				"remote", remote,
-			)
+			completed = true
 		})
 	}
 }

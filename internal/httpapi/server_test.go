@@ -361,3 +361,40 @@ func TestShutdownTimeoutClosesStuckRequests(t *testing.T) {
 		t.Fatal("shutdown did not give up after the timeout")
 	}
 }
+
+func TestRequestIDOnLinesLoggedWithoutContext(t *testing.T) {
+	s, buf := newTestServer(t, testConfig())
+	s.Handle("GET /noctx", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logging.FromContext(r.Context()).Info("no-ctx-line")
+		logging.FromContext(r.Context()).InfoContext(r.Context(), "ctx-line")
+	}))
+	rec := do(s.Handler(), httptest.NewRequest("GET", "/noctx", nil))
+	id := rec.Header().Get(RequestIDHeader)
+	lines := logLines(t, buf)
+	if len(lines) != 3 {
+		t.Fatalf("want 3 lines, got %d: %s", len(lines), buf.String())
+	}
+	for _, l := range lines {
+		if l["request_id"] != id {
+			t.Errorf("line without request_id: %v", l)
+		}
+	}
+	if n := strings.Count(buf.String(), "request_id"); n != 3 {
+		t.Errorf("request_id duplicated: %s", buf.String())
+	}
+}
+
+func TestAbortedRequestStillAccessLogged(t *testing.T) {
+	s, buf := newTestServer(t, testConfig())
+	s.Handle("GET /abort", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+	func() {
+		defer func() { _ = recover() }()
+		do(s.Handler(), httptest.NewRequest("GET", "/abort", nil))
+	}()
+	lines := logLines(t, buf)
+	if len(lines) != 1 || lines[0]["msg"] != "request" || lines[0]["aborted"] != true || lines[0]["request_id"] == nil {
+		t.Fatalf("want one aborted access line, got %s", buf.String())
+	}
+}

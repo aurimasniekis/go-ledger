@@ -37,6 +37,10 @@ func SensitiveKey(name string) bool {
 }
 
 // bearer matches an Authorization-style credential written inside free text.
+// urlSecret matches secret-looking query parameters or key=value pairs in free
+// text, such as an OIDC callback URL in an error string.
+var urlSecret = regexp.MustCompile(`(?i)\b((?:[a-z0-9_]*(?:token|code|secret|password|key))=)[^&\s"']+`)
+
 var bearer = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}`)
 
 // Redactor masks registered secret values. It is safe for concurrent use.
@@ -81,13 +85,21 @@ func (r *Redactor) Text(s string) string {
 		s = strings.ReplaceAll(s, sec, Mask)
 	}
 	r.mu.RUnlock()
+	s = urlSecret.ReplaceAllString(s, "${1}"+Mask)
 	return bearer.ReplaceAllString(s, "$1 "+Mask)
 }
 
 // ReplaceAttr is a slog HandlerOptions.ReplaceAttr function: it masks values
 // under secret-looking keys, and masks registered secrets inside strings,
 // errors and other values (including the log message).
-func (r *Redactor) ReplaceAttr(_ []string, a slog.Attr) slog.Attr {
+func (r *Redactor) ReplaceAttr(groups []string, a slog.Attr) slog.Attr {
+	// slog calls this for a group's members, not for the group itself, so a
+	// secret-named group is caught here through its path.
+	for _, g := range groups {
+		if SensitiveKey(g) {
+			return slog.String(a.Key, Mask)
+		}
+	}
 	if a.Key != "" && SensitiveKey(a.Key) {
 		return slog.String(a.Key, Mask)
 	}

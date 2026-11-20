@@ -47,25 +47,37 @@ func New(w io.Writer, level, format string, r *redact.Redactor) (*slog.Logger, e
 	default:
 		return nil, fmt.Errorf("unknown log format %q", format)
 	}
-	return slog.New(contextHandler{h}), nil
+	return slog.New(contextHandler{Handler: h}), nil
 }
 
 // contextHandler adds the request ID found in the log call's context.
-type contextHandler struct{ slog.Handler }
+// A logger that already carries request_id (see httpapi's access log) is not
+// given a second one.
+type contextHandler struct {
+	slog.Handler
+	hasID bool
+}
 
 func (h contextHandler) Handle(ctx context.Context, rec slog.Record) error {
-	if id := RequestID(ctx); id != "" {
+	if id := RequestID(ctx); id != "" && !h.hasID {
 		rec.AddAttrs(slog.String("request_id", id))
 	}
 	return h.Handler.Handle(ctx, rec)
 }
 
 func (h contextHandler) WithAttrs(a []slog.Attr) slog.Handler {
-	return contextHandler{h.Handler.WithAttrs(a)}
+	has := h.hasID
+	for _, at := range a {
+		if at.Key == "request_id" {
+			has = true
+		}
+	}
+	return contextHandler{h.Handler.WithAttrs(a), has}
 }
 
 func (h contextHandler) WithGroup(n string) slog.Handler {
-	return contextHandler{h.Handler.WithGroup(n)}
+	// Attributes added after a group would nest, so the ID must be added again.
+	return contextHandler{h.Handler.WithGroup(n), false}
 }
 
 type ctxKey int

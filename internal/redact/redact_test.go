@@ -51,3 +51,25 @@ func TestReplaceAttrInSlog(t *testing.T) {
 		t.Fatalf("leaked: %s", buf.String())
 	}
 }
+
+func TestSecretNamedGroupIsMasked(t *testing.T) {
+	var buf bytes.Buffer
+	l := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{ReplaceAttr: New().ReplaceAttr}))
+	l.Info("m", slog.Group("api_token", "value", "abc123"), slog.Group("outer", slog.Group("session", "id", "def456")))
+	if strings.Contains(buf.String(), "abc123") || strings.Contains(buf.String(), "def456") {
+		t.Fatalf("leaked: %s", buf.String())
+	}
+}
+
+func TestTextMasksURLParameters(t *testing.T) {
+	in := "GET https://idp.example.com/cb?code=zzz&access_token=qqq&state=ok&api_key=kkk failed"
+	out := New().Text(in)
+	for _, s := range []string{"zzz", "qqq", "kkk"} {
+		if strings.Contains(out, s) {
+			t.Fatalf("leaked %s: %s", s, out)
+		}
+	}
+	if !strings.Contains(out, "state=ok") {
+		t.Fatalf("over-redacted: %s", out)
+	}
+}
