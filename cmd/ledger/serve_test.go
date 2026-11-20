@@ -63,10 +63,14 @@ func TestServeWithPulseEnabledStartsEvenWhenPulseIsUnreachable(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not start")
 	}
-	resp, err := http.Get("http://" + addr.String() + "/readyz")
+	// One connection per request: an idle keep-alive connection holds
+	// http.Server.Shutdown until its timeout, which made the shutdown check flaky.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	resp, err := client.Get("http://" + addr.String() + "/readyz")
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("readyz %d: Pulse must not gate readiness", resp.StatusCode)
@@ -111,11 +115,14 @@ func TestServeProtectedRoutesAnswer401(t *testing.T) {
 		t.Fatal("server did not start")
 	}
 	// Production wiring installs no authenticator yet: protected routes are denied.
+	// One connection per request, for the reason given in the readyz test.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 	for _, path := range []string{"/api/v1/users", "/api/v1/me"} {
-		resp, err := http.Get("http://" + addr.String() + path)
+		resp, err := client.Get("http://" + addr.String() + path)
 		if err != nil {
 			t.Fatal(err)
 		}
+		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") == "" {
 			t.Fatalf("GET %s: %d", path, resp.StatusCode)

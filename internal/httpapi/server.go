@@ -123,9 +123,9 @@ func (s *Server) Handle(pattern string, h http.Handler) {
 }
 
 // HandleAPI registers an API route: the pattern must be "METHOD /api/..."
-// without a host. Its handler runs only for callers that a allows
-// (authentication, then the grant; ADR-0021), inside the API middleware. A
-// state-changing method guarded by a read grant panics.
+// without a host. Its handler runs only for callers that a allows:
+// authentication and grant checks run first, then the API middleware
+// (ADR-0021). A state-changing method guarded by a read grant panics.
 func (s *Server) HandleAPI(pattern string, a Access, h http.Handler) {
 	path := routeOf(pattern)
 	if path != "/api" && !strings.HasPrefix(path, "/api/") {

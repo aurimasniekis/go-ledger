@@ -1,6 +1,8 @@
 -- Fixture: a database at schema version 4 (migration ledger, settings, the
 -- transactional outbox and bank facts), holding a captured reporting zone,
--- outbox rows and one bank connection. Upgrading it must apply migration 0005.
+-- outbox rows and one imported bank connection with an account, a balance
+-- snapshot, a booked and a pending transaction. Upgrading it must apply
+-- migration 0005. All identifiers are synthetic.
 -- The migration ledger. The migration runner reads and writes this table; its
 -- columns are part of the runner's contract, so change them only through a
 -- later migration together with the runner.
@@ -245,4 +247,8 @@ BEGIN
 END;
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (4, 'bank_facts', '03b8d666f3a3c02bec5f07e98680a825c59844869e32ca9b1d8cc9e400140e91', '2026-01-05T03:04:05.000000000Z');
-INSERT INTO bank_connections (id, provider, application, mode, environment, account_access, institution_id, institution_name, institution_country, status, created_at, updated_at) VALUES ('01JZ0000000000000000000003', 'fake', 'default', 'app', 'sandbox', 'all', 'BANK-1', 'Example Bank', 'LT', 'pending', '2026-01-05T04:00:00.000000000Z', '2026-01-05T04:00:00.000000000Z');
+INSERT INTO bank_connections (id, provider, application, mode, environment, account_access, institution_id, institution_name, institution_country, status, session_reference, consent_expires_at, consent_granted_at, created_at, updated_at, version) VALUES ('01JZ0000000000000000000010', 'fake', 'fake-app', 'app', 'sandbox', 'all', 'Fake Bank', 'Fake Bank', 'FI', 'active', 'fake-session-1', '2026-07-01T00:00:00.000000000Z', '2026-01-05T03:04:05.000000000Z', '2026-01-05T03:04:05.000000000Z', '2026-01-05T03:04:05.000000000Z', 2);
+INSERT INTO bank_accounts (id, connection_id, provider, external_id, provider_handle, iban, name, product, currency, first_seen_at, last_seen_at) VALUES ('01JZ0000000000000000000011', '01JZ0000000000000000000010', 'fake', 'fake-hash-eur-0001', 'fake-session-1-acct-1', 'XX00FAKE0000000000000001', 'Everyday', 'Current account', 'EUR', '2026-01-05T03:04:05.000000000Z', '2026-01-05T03:04:05.000000000Z');
+INSERT INTO bank_balance_snapshots (id, account_id, balance_type, provider_type, amount, currency, reference_date, obtained_at) VALUES ('01JZ0000000000000000000012', '01JZ0000000000000000000011', 'booked', 'CLBD', '1250.40', 'EUR', '2026-01-04', '2026-01-05T03:04:05.000000000Z');
+INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, entry_reference, booking_status, provider_status, source_amount, source_currency, booking_date, value_date, raw_description, imported_at, last_seen_at) VALUES ('01JZ0000000000000000000013', '01JZ0000000000000000000011', 'fake', 'ref:00000000000000000000000000000001#1', 'entry_reference', 'fake-ref-rent', 'booked', 'BOOK', '-800.00', 'EUR', '2026-01-02', '2026-01-02', 'RENT', '2026-01-05T03:04:05.000000000Z', '2026-01-05T03:04:05.000000000Z');
+INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, booking_status, provider_status, source_amount, source_currency, transaction_date, raw_description, imported_at, last_seen_at) VALUES ('01JZ0000000000000000000014', '01JZ0000000000000000000011', 'fake', 'fb:00000000000000000000000000000002#1', 'fallback', 'pending', 'PDNG', '-70.00', 'EUR', '2026-01-04', 'HOTEL HOLD', '2026-01-05T03:04:05.000000000Z', '2026-01-05T03:04:05.000000000Z');

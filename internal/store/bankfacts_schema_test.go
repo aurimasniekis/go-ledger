@@ -49,6 +49,57 @@ func TestNoForeignKeyCascadesFromBankFacts(t *testing.T) {
 }
 
 func init() {
+	fixtureChecks["0004_bank_facts.sql"] = func(t *testing.T, db *DB) {
+		ctx := context.Background()
+		err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
+			for table, want := range map[string]int{"bank_connections": 1, "bank_accounts": 1, "bank_balance_snapshots": 1, "bank_transactions": 2, "outbox": 2} {
+				if n := queryInt(t, tx, "SELECT count(*) FROM "+table); n != want {
+					t.Errorf("%s has %d rows after upgrade, want %d from the fixture", table, n, want)
+				}
+			}
+			for _, table := range []string{"bank_refresh_runs", "bank_account_sync"} {
+				if n := queryInt(t, tx, "SELECT count(*) FROM "+table); n != 0 {
+					t.Errorf("%s has %d rows after upgrade, want an empty table", table, n)
+				}
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM bank_transactions WHERE no_longer_reported_at IS NULL AND superseded_by IS NULL"); n != 2 {
+				t.Errorf("upgrade changed transaction state: %d open rows", n)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fixtureChecks["0005_bank_refresh.sql"] = func(t *testing.T, db *DB) {
+		ctx := context.Background()
+		err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
+			if n := queryInt(t, tx, "SELECT count(*) FROM bank_refresh_runs"); n != 2 {
+				t.Errorf("bank_refresh_runs has %d rows after upgrade, want the 2 from the fixture", n)
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM bank_refresh_runs WHERE outcome = 'succeeded' AND transactions_inserted = 2 AND balances_added = 1"); n != 1 {
+				t.Errorf("the succeeded refresh run changed or is missing: %d matching rows", n)
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM bank_refresh_runs WHERE outcome = 'failed' AND error_kind = 'rate_limited' AND error_code = 'fake-rate-limit'"); n != 1 {
+				t.Errorf("the failed refresh run changed or is missing: %d matching rows", n)
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM bank_account_sync WHERE transactions_through = '2026-01-05' AND last_success_at = '2026-01-06T04:00:05.000000000Z' AND last_error_code = 'fake-rate-limit'"); n != 1 {
+				t.Errorf("bank_account_sync changed or is missing: %d matching rows", n)
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM bank_transactions"); n != 2 {
+				t.Errorf("bank_transactions has %d rows after upgrade, want the 2 from the fixture", n)
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM users"); n != 0 {
+				t.Errorf("users has %d rows after upgrade, want an empty table", n)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	fixtureChecks["0003_outbox.sql"] = func(t *testing.T, db *DB) {
 		ctx := context.Background()
 		err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
