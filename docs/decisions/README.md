@@ -21,5 +21,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0017: Merge patch is RFC 7396](0017-merge-patch-recursion.md)
 - [ADR-0018: Release workflow and container image](0018-release-workflow.md)
 - [ADR-0019: Backup, restore, migration recovery and the instance lock](0019-backup-restore-and-instance-lock.md)
+- [ADR-0020: Bank import engine](0020-bank-import-engine.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.
