@@ -38,6 +38,8 @@ linters:
           deny:
             - pkg: "github.com/aurimasniekis/go-ledger/internal/httpapi"
               desc: store implements domain ports and must not depend on the HTTP layer (ADR-0001)
+            - pkg: "github.com/aurimasniekis/go-ledger/internal/providers"
+              desc: store persists normalized bank facts and must not depend on a provider adapter (ADR-0013)
         httpapi-boundaries:
           list-mode: lax
           files:

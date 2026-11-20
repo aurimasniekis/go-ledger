@@ -62,6 +62,11 @@ paths:
                   maxLength: 100
                 kind:
                   $ref: "#/components/schemas/ExampleKind"
+                note:
+                  description: Optional; null is the same as leaving it out.
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 200
       responses:
         "201":
           description: Created.
@@ -104,10 +109,12 @@ paths:
       operationId: updateExample
       summary: Change an example
       description: |
-        A JSON Merge Patch (RFC 7396, ADR-0015): an absent member is left
-        unchanged, null clears an optional member (note) and is refused on a
-        required one. Requires the version in If-Match or the body; a stale
-        version is a 409 version_conflict with reconciliation. Any other
+        A JSON Merge Patch (RFC 7396, ADR-0015, ADR-0017): an absent member is
+        left unchanged, null clears an optional member (note) and is refused on
+        a required one. Requires the version in If-Match or the body; a stale
+        version is a 409 version_conflict with reconciliation. An empty patch
+        ({}), or one that only names version, is a no-op: the version is
+        checked, nothing changes and the version is not bumped. Any other
         Content-Type is a 415.
       tags: [example]
       parameters:

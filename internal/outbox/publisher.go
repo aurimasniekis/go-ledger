@@ -60,7 +60,6 @@ type PublisherConfig struct {
 	AttemptTimeout time.Duration // per publish attempt; default 5s
 	DialTimeout    time.Duration // per connection attempt; default 10s
 	MaxAge         time.Duration // retry window; default [MaxRetryAge]
-	PurgeEvery     time.Duration // retention purge interval; default 1h
 	BackoffBase    time.Duration // first retry delay; default 5s
 	BackoffMax     time.Duration // retry delay cap; default 15m
 	DialBackoffMax time.Duration // connection retry cap; default 1m
@@ -86,7 +85,6 @@ type Publisher struct {
 	bus          Bus
 	dialFailures int
 	dialAfter    time.Time
-	nextPurge    time.Time
 	timeouts     int // consecutive timed-out attempts
 
 	mu     sync.Mutex
@@ -107,7 +105,6 @@ func NewPublisher(cfg PublisherConfig) (*Publisher, error) {
 	def(&cfg.AttemptTimeout, 5*time.Second)
 	def(&cfg.DialTimeout, 10*time.Second)
 	def(&cfg.MaxAge, MaxRetryAge)
-	def(&cfg.PurgeEvery, time.Hour)
 	def(&cfg.BackoffBase, 5*time.Second)
 	def(&cfg.BackoffMax, 15*time.Minute)
 	def(&cfg.DialBackoffMax, time.Minute)
@@ -175,7 +172,9 @@ type dueRow struct {
 	created  time.Time
 }
 
-// Tick runs one pass: expire old rows, purge when due, publish what is due. It
+// Tick runs one pass: expire old rows and publish what is due, in enqueue order
+// per pass (a row backed off by a failure is overtaken by later ones). Purging
+// is the [Retention] job's, which runs whether or not publishing is enabled. It
 // reports whether it handled any row.
 func (p *Publisher) Tick(ctx context.Context) (worked bool) {
 	start := time.Now()
@@ -189,30 +188,19 @@ func (p *Publisher) Tick(ctx context.Context) (worked bool) {
 	}()
 
 	if n, err := p.expire(ctx, now); err != nil {
-		jl.Error("expiring old events failed", "error", sanitize(err))
+		if ctx.Err() == nil {
+			jl.Error("expiring old events failed", "error", sanitize(err))
+		}
 		ok = false
 	} else if n > 0 {
 		worked = true
 		jl.Warn("events marked failed after the retry window", "count", n, "window", p.cfg.MaxAge.String())
 	}
-	if !now.Before(p.nextPurge) {
-		p.nextPurge = now.Add(p.cfg.PurgeEvery)
-		var res PurgeResult
-		err := p.cfg.DB.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) (err error) {
-			res, err = Purge(ctx, tx, now)
-			return err
-		})
-		if err != nil {
-			jl.Error("purging old events failed", "error", sanitize(err))
-			ok = false
-		} else if res.Published+res.Failed > 0 {
-			jl.Info("old events purged", "published", res.Published, "failed", res.Failed)
-		}
-	}
-
 	rows, err := p.due(ctx, now)
 	if err != nil {
-		jl.Error("reading due events failed", "error", sanitize(err))
+		if ctx.Err() == nil {
+			jl.Error("reading due events failed", "error", sanitize(err))
+		}
 		ok = false
 	}
 	if len(rows) > 0 {
@@ -225,8 +213,28 @@ func (p *Publisher) Tick(ctx context.Context) (worked bool) {
 			}
 		}
 	}
+	p.syncConnected()
 	p.refreshPending(ctx)
 	return worked
+}
+
+// syncConnected drives the connected gauge from the bus's real connection state
+// when it reports one (the client library reconnects by itself).
+func (p *Publisher) syncConnected() {
+	cr, ok := p.bus.(ConnectionReporter)
+	if p.bus == nil || !ok {
+		return
+	}
+	up := cr.Connected()
+	p.meter.SetConnected(up)
+	p.update(func(s *Status) { s.Connected = up })
+}
+
+// dropBus closes a bus whose connection is lost and schedules a new dial.
+func (p *Publisher) dropBus(now time.Time) {
+	p.close()
+	p.dialFailures++
+	p.dialAfter = now.Add(p.backoff(time.Second, p.cfg.DialBackoffMax, p.dialFailures))
 }
 
 func (p *Publisher) refreshPending(ctx context.Context) {
@@ -242,17 +250,7 @@ func (p *Publisher) refreshPending(ctx context.Context) {
 }
 
 func (p *Publisher) expire(ctx context.Context, now time.Time) (n int64, err error) {
-	err = p.cfg.DB.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		r, err := tx.ExecContext(ctx, `UPDATE outbox SET state = 'failed', failed_at = ?,
-			last_error = CASE WHEN last_error = '' THEN 'not delivered within the retry window' ELSE last_error END
-			WHERE state = 'pending' AND created_at <= ?`,
-			store.Timestamp{Time: now}, store.Timestamp{Time: now.Add(-p.cfg.MaxAge)})
-		if err != nil {
-			return err
-		}
-		n, err = r.RowsAffected()
-		return err
-	})
+	n, err = expirePending(ctx, p.cfg.DB, now, p.cfg.MaxAge, "not delivered within the retry window")
 	for i := int64(0); i < n; i++ {
 		p.meter.EventFailed()
 	}
@@ -356,6 +354,10 @@ func (p *Publisher) publishOne(ctx context.Context, jl *slog.Logger, r dueRow) b
 	} else {
 		p.timeouts = 0
 	}
+	if errors.Is(err, ErrDisconnected) {
+		jl.Warn("connection to Pulse lost; reconnecting with backoff", "error", msg)
+		p.dropBus(now)
+	}
 	if now.Sub(r.created) >= p.cfg.MaxAge {
 		p.fail(ctx, jl, r, msg)
 		return false
@@ -379,7 +381,15 @@ func (p *Publisher) fail(ctx context.Context, jl *slog.Logger, r dueRow, msg str
 	jl.Warn("event marked failed", "event_id", r.ID, "subject", r.Subject, "attempts", r.attempts+1, "error", msg)
 }
 
+// recordTimeout bounds the write that records an attempt's outcome.
+const recordTimeout = 5 * time.Second
+
+// mark records an outcome. It ignores cancellation of ctx (shutdown), so an
+// event that is already on the bus is not left pending; serve waits for the
+// publisher before closing the database.
 func (p *Publisher) mark(ctx context.Context, id, q string, args ...any) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
 	return p.cfg.DB.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, q, args...)
 		if err != nil {

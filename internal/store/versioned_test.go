@@ -129,9 +129,12 @@ func TestIDCheckMatchesValidID(t *testing.T) {
 // have no version column, each with the reason. A new table either follows the
 // versioned convention or is added here with its reason.
 var unversionedTables = map[string]string{
-	"schema_migrations": "the migration runner's own ledger",
-	"settings":          "instance bookkeeping written by the server (reporting zone), not edited through the API",
-	"outbox":            "append-only event queue owned by the server (ADR-0012); rows are never edited through the API",
+	"schema_migrations":      "the migration runner's own ledger",
+	"settings":               "instance bookkeeping written by the server (reporting zone), not edited through the API",
+	"bank_accounts":          "provider-owned bank facts (ADR-0013), written only by the import path and never edited through the API",
+	"bank_balance_snapshots": "provider-owned bank facts (ADR-0013), append-only, never edited through the API",
+	"bank_transactions":      "provider-owned bank facts (ADR-0013), written only by the import path and never edited through the API",
+	"outbox":                 "append-only event queue owned by the server (ADR-0012); rows are never edited through the API",
 }
 
 // versionProblems checks the optimistic-concurrency convention: every table

@@ -1,6 +1,6 @@
 # ADR-0015: API conventions amendments (version conflicts, partial updates)
 
-Status: Accepted (2026-11-20)
+Status: Accepted (2026-11-20); supersedes parts of [ADR-0011](0011-api-conventions-and-openapi.md); the sentence on nested objects in §2 is superseded by [ADR-0017](0017-merge-patch-recursion.md)
 
 ## Context
 

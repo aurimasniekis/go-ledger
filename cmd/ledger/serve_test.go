@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/outbox"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
+	"github.com/aurimasniekis/go-ledger/internal/store"
 )
 
 // syncBuffer is a bytes.Buffer safe for the server goroutine and the test.
@@ -81,6 +83,74 @@ func TestServeWithPulseEnabledStartsEvenWhenPulseIsUnreachable(t *testing.T) {
 	out := errOut.String()
 	if !strings.Contains(out, "events leave this machine") || strings.Contains(out, "pulse.creds") {
 		t.Fatalf("logs:\n%s", out)
+	}
+}
+
+func TestServeRunsOutboxRetentionWhilePublishingIsDisabled(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "ledger.db")
+	env := map[string]string{
+		"LEDGER_KEK_VALUE":          cmdSentinel,
+		"LEDGER_DATABASE_PATH":      dbPath,
+		"LEDGER_REPORTING_TIMEZONE": "UTC",
+	}
+	db, err := store.Open(context.Background(), dbPath, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-outbox.FailedRetention - time.Hour)
+	err = db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO outbox (id, subject, type, source, occurred_at, payload, state, failed_at, next_attempt_at, created_at)
+			VALUES ('01JD0000000000000000000OLD', 'evt.ledger.widget.created', 'ledger.widget.created.v1', 'ledger', ?, '{}', 'failed', ?, ?, ?)`,
+			store.Timestamp{Time: old}, store.Timestamp{Time: old}, store.Timestamp{Time: old}, store.Timestamp{Time: old})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var errOut syncBuffer
+	addrc := make(chan net.Addr, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() {
+		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0", "--http.management_listen="}, &errOut,
+			serveEnv{Options: testOpts(env, nil), Listening: func(a net.Addr) { addrc <- a },
+				UI: fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}})
+	}()
+	select {
+	case <-addrc:
+	case code := <-done:
+		t.Fatalf("exited %d: %s", code, errOut.String())
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not start")
+	}
+	chk, err := store.Open(context.Background(), dbPath, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = chk.Close() }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var n int
+		_ = chk.ReadTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox").Scan(&n)
+		})
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("retention did not purge the old failed row while publishing is disabled")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no graceful shutdown")
 	}
 }
 

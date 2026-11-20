@@ -129,6 +129,9 @@ func (o *Outbox) Enqueue(ctx context.Context, tx *sql.Tx, ev Event) (Enqueued, e
 	if err != nil {
 		return Enqueued{}, fmt.Errorf("outbox: encode payload: %w", err)
 	}
+	if len(body) > MaxPayloadBytes {
+		return Enqueued{}, fmt.Errorf("outbox: event %s payload is %d bytes, over the %d byte limit", def.id(), len(body), MaxPayloadBytes)
+	}
 	if !o.enabled {
 		return Enqueued{}, nil
 	}
@@ -143,6 +146,10 @@ func (o *Outbox) Enqueue(ctx context.Context, tx *sql.Tx, ev Event) (Enqueued, e
 	}
 	return Enqueued{Recorded: true, ID: id, Subject: subject, Type: typ, OccurredAt: now}, nil
 }
+
+// MaxPayloadBytes bounds an encoded event payload, well under the 1 MiB message
+// limit of the bus, so a published event can never exceed it.
+const MaxPayloadBytes = 256 << 10
 
 // PurgeResult counts the rows Purge deleted.
 type PurgeResult struct {

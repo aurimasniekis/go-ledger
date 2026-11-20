@@ -15,12 +15,23 @@ import (
 )
 
 // moneyPackages are the packages that must not use binary floating point:
-// the money and calendar primitives and their SQL encoding. Paths are
+// the money and calendar primitives, their SQL encoding, and the bank-fact
+// boundary (ADR-0013) with its fake provider. Paths are
 // relative to this package's directory.
 var moneyPackages = []string{
 	".",
 	"../calendar",
 	"../../store/sqlvalue",
+	"../banking",
+	"../banking/bankingtest",
+}
+
+// scanOnlyPackages are money packages that link the SQLite driver, so they
+// are scanned for float type names and literals (every file, test files
+// included) instead of being type-checked: type-checking them from source
+// would mean type-checking the whole driver.
+var scanOnlyPackages = []string{
+	"../../store/bankfacts",
 }
 
 // TestNoFloatInMoneyPackages is the float ban the plan asks for (F9). It
@@ -39,6 +50,40 @@ func TestNoFloatInMoneyPackages(t *testing.T) {
 			t.Errorf("binary floating point in a money package: %s", f)
 		}
 	}
+	for _, dir := range scanOnlyPackages {
+		findings, err := floatNamesIn(dir)
+		if err != nil {
+			t.Fatalf("%s: %v", dir, err)
+		}
+		for _, f := range findings {
+			t.Errorf("binary floating point in a money package: %s", f)
+		}
+	}
+}
+
+// floatNamesIn scans every Go file in dir with scanFloatNames.
+func floatNamesIn(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var findings []string
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, e.Name()), nil, parser.SkipObjectResolution)
+		if err != nil {
+			return nil, err
+		}
+		n++
+		findings = append(findings, scanFloatNames(fset, f)...)
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("no Go files in %s", dir)
+	}
+	return findings, nil
 }
 
 // TestNoFloatCheckerCatchesFloats proves the checker is not vacuous.

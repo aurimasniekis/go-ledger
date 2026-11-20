@@ -33,16 +33,21 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
    - `build` (no secrets, no write scope): on a tag, a tagged build; on a dispatch, a snapshot. Both use
      `--skip=publish`, so nothing is pushed or released. It uploads `dist/` as a workflow artefact.
    - `registry-access` (tag pushes): records only whether the token secret is set. The value is never printed.
-   - `publish-images` (tag pushes, secret set): logs in to Docker Hub with the token on stdin and runs
+   - `publish-images` (tag pushes, secret set, `environment: release`): waits for environment approval, then logs in to Docker Hub with the token on stdin and runs
      `goreleaser release --skip=announce` with `LEDGER_DISABLE_GITHUB_RELEASE=true`, which turns off the GitHub Release
      (`release.disable` in `.goreleaser.yaml`). `--skip=publish` cannot be used here: it also skips the image push, and
      `--skip=release` is not a valid option.
-   - `github-release` (tag pushes): `contents: write`, the only write scope in the repository. It runs
-     `goreleaser release --skip=docker,announce`.
+   - `github-release` (tag pushes, `environment: release`): waits for environment approval, then runs
+     `goreleaser release --skip=docker,announce` with `contents: write`, the only write scope in the repository.
 6. **Policy amendment.** A write scope is allowed only in `release.yml`, only as `contents: write` under a job-level
-   `permissions:` block, and only in a job whose `if:` names both `github.event_name == 'push'` and `refs/tags/`. Any other
+   `permissions:` block, and only in the job named `github-release`, whose `if:` line equals exactly
+   `github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')` (so no `|| true`, no negation, no second job). Any other
    write scope, in any file or at top level, fails `make workflow-policy`. The self-test has fixtures for each case.
-7. **Human gate.** The GitHub Release is a draft (`release.draft: true`). A person reviews the artefacts and publishes it.
+7. **Human gates.** `publish-images` and `github-release` run in the GitHub Environment `release`, which requires a
+   reviewer's approval: the images are not pushed and the draft release is not created until a person approves. The
+   release is also a draft (`release.draft: true`), which a person reviews and publishes. `DOCKERHUB_TOKEN` is an
+   environment secret of `release`, so a tag push alone cannot reach it. The check job `registry-access` reads the
+   secret before approval, so with an environment-scoped secret it sees it as unset in a tag run; see Open.
 8. **Actions.** `actions/upload-artifact` (an official GitHub action, pinned to v7.0.2) is added to the official set that
    ADR-0007 lists. Caches are off in the release jobs (`setup-go cache: false`, `package-manager-cache: false`), so a cache
    written by one run cannot reach a published artefact.
@@ -57,7 +62,12 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
 - **A narrow policy exception**, not a relaxed policy. The alternatives were a write scope at top level (rejected), a
   release job outside `.github/workflows` (it would bypass the check), and no GitHub Release (the binaries would exist
   only as run artefacts).
-- **Draft by default**: nothing becomes public until a person publishes it.
+- **Environment approval plus a draft**: neither the images nor the release become public until a person approves the
+  `release` environment, and the release itself stays a draft until a person publishes it.
+- **Three builds of one commit.** `build`, `publish-images` and `github-release` each build from source. The dry-run
+  artefact is not what is released, and the images do not contain the binaries covered by the release's checksums. To
+  make the bytes agree, `.goreleaser.yaml` sets `mod_timestamp` and the archive entry times to the commit time. This
+  makes them reproducible in intent; it is not verified across runners.
 
 ## Consequences
 
@@ -72,7 +82,15 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
 - A tag build with `--skip=publish` builds no images (GoReleaser builds and pushes them in one step). A tag dry run
   therefore produces the binaries, archives, checksums and SBOMs; the images are built by the dispatch snapshot and pushed
   only by `publish-images`.
+- **Owner-side prerequisites** (repository settings, requested from the infrastructure owner, not in this repository):
+  - A GitHub Environment named `release` with a required reviewer and an environment-scoped `DOCKERHUB_TOKEN`.
+  - A tag ruleset for `v*` that limits who can create tags. Without it, anyone who can push a tag starts the workflow.
+  - **If the environment does not exist, GitHub creates it on first use without protection**, and the jobs run with no
+    approval. The operator must confirm the environment, its reviewer and the ruleset before the first tag.
 - **Open:**
+  - `registry-access` runs outside the environment, so an environment-scoped `DOCKERHUB_TOKEN` is not visible to it and
+    `publish-images` would be skipped. This needs a follow-up before the first tag: move the check into `publish-images`
+    (a step condition) or keep a repository-level secret for the check only.
   - ADR-0003 requires third-party licence texts to ship with binaries and images. The archives and the image contain only
     LICENSE and README until OP4 produces the licence report.
   - The base image is pinned by digest, and nothing updates that digest automatically yet.

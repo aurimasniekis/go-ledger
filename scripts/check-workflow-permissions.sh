@@ -8,12 +8,16 @@
 #
 # Every workflow must have a top-level `permissions: contents: read`. No file may request a write scope, with one
 # exception: release.yml may request `contents: write` at job level, only as a block entry, and only in a job that
-# runs for a tag push (and never for a dispatch or a pull request). This is a text check, not a YAML parser (ADR-0007,
+# is named github-release and whose `if:` equals the exact tag-push expression (never a dispatch or a pull request).
+# This is a text check, not a YAML parser (ADR-0007,
 # Consequences).
 set -eu
 
 FIXTURES=scripts/testdata/permission-policy
 RELEASE_FILE=release.yml
+RELEASE_JOB=github-release
+# The whole `if:` line the release job must have, compared as a string (no `|| true`, no negation, nothing added).
+RELEASE_IF="    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
 
 # A write scope: a colon, blanks, an optional quote, write or write-all, an optional closing quote, then a blank,
 # a comma, a closing brace or the end of the line.
@@ -29,10 +33,10 @@ top_level_read_only() {
 
 # release_write_violations FILE: prints one error per write scope in a release workflow that the exception does not
 # allow, and exits 1 if there is any. Allowed: `      contents: write` as a block entry of a job-level `permissions:`
-# block (job keys at indent 2, job permissions at indent 4, entries at indent 6), in a job whose `if:` names both
-# `github.event_name == 'push'` and `refs/tags/`.
+# block (job keys at indent 2, job permissions at indent 4, entries at indent 6), in the job named by RELEASE_JOB
+# whose `if:` line equals RELEASE_IF.
 release_write_violations() {
-  awk -v scope="$WRITE_SCOPE" -v file="$1" '
+  awk -v scope="$WRITE_SCOPE" -v file="$1" -v reljob="$RELEASE_JOB" -v relif="$RELEASE_IF" '
     function indent(s) { match(s, /^ */); return RLENGTH }
     /^[[:space:]]*(#.*)?$/ { next }
     {
@@ -43,7 +47,7 @@ release_write_violations() {
       }
       else if (section == "jobs" && ind == 4 && $0 ~ /^    permissions:[[:space:]]*$/) { inperm = 1 }
       else if (ind <= 4 && $0 !~ /^    permissions:/) { inperm = 0 }
-      if (section == "jobs" && ind == 4 && $0 ~ /^    if:/ && index($0, "refs/tags/") && index($0, "github.event_name == '\''push'\''")) {
+      if (section == "jobs" && ind == 4 && $0 == relif) {
         tagged[job] = 1
       }
       if ($0 ~ scope) {
@@ -56,9 +60,14 @@ release_write_violations() {
       }
     }
     END {
-      for (j in writes) if (!tagged[j]) {
-        printf "::error file=%s::job %s requests contents: write but its if: does not limit it to a tag push\n", file, j
-        bad = 1
+      for (j in writes) {
+        if (j != reljob) {
+          printf "::error file=%s::job %s requests contents: write, only the %s job may\n", file, j, reljob
+          bad = 1
+        } else if (!tagged[j]) {
+          printf "::error file=%s::job %s requests contents: write but its if: is not exactly the tag-push expression\n", file, j
+          bad = 1
+        }
       }
       exit bad
     }

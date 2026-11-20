@@ -101,6 +101,8 @@ jobs:
     name: publish container images (Docker Hub)
     needs: [build, registry-access]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.registry-access.outputs.dockerhub == 'true'
+    # Waits for approval (required reviewers); DOCKERHUB_TOKEN is an environment secret (ADR-0018).
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -143,6 +145,8 @@ jobs:
     name: create the draft GitHub Release
     needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Waits for approval (required reviewers) before the draft release is created (ADR-0018).
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

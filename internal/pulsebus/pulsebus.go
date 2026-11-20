@@ -33,14 +33,18 @@ func Dialer(cfg Config) outbox.Dialer {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		opts := []pulse.Option{pulse.WithCredsFile(cfg.CredsFile), pulse.WithSource(cfg.Source)}
+		opts := []pulse.Option{pulse.WithCredsFile(cfg.CredsFile), pulse.WithSource(cfg.Source),
+			// The only NATS option passed, and not configurable: with no reconnect
+			// buffer a publish while disconnected fails at once instead of being
+			// queued and sent after its row was marked failed (ADR-0016 §6).
+			pulse.WithNATSOptions(nats.ReconnectBufSize(-1))}
 		if cfg.CAFile != "" {
 			opts = append(opts, pulse.WithCAFile(cfg.CAFile))
 		}
 		if cfg.Name != "" {
 			opts = append(opts, pulse.WithName(cfg.Name))
 		}
-		// No WithNATSOptions: TLS verification is never weakened.
+		// No other NATS options: TLS verification is never weakened.
 		c, err := pulse.Connect(cfg.URL, opts...)
 		if err != nil {
 			return nil, scrub(err, cfg)
@@ -56,18 +60,30 @@ type bus struct {
 
 func (b *bus) Close() { b.c.Close() }
 
+// Connected reports the real connection state (false while reconnecting).
+func (b *bus) Connected() bool { return b.c.Conn().IsConnected() }
+
 func (b *bus) Publish(ctx context.Context, m outbox.Message) (outbox.Ack, error) {
 	ack, err := b.c.Publish(ctx, m.Subject, m.Type, m.Payload,
 		pulse.WithID(m.ID), pulse.WithTime(m.Time), pulse.WithEventSource(m.Source))
 	if err != nil {
-		return outbox.Ack{}, scrub(classify(err), b.cfg)
+		err = classify(err)
+		if !errors.Is(err, outbox.ErrPermanent) && !errors.Is(err, outbox.ErrDisconnected) && b.c.Conn().IsClosed() {
+			err = fmt.Errorf("%w: %w", outbox.ErrDisconnected, err)
+		}
+		return outbox.Ack{}, scrub(err, b.cfg)
 	}
 	return outbox.Ack{Duplicate: ack.Duplicate}, nil
 }
 
 func classify(err error) error {
 	switch {
-	case errors.Is(err, envelope.ErrSubject):
+	case errors.Is(err, nats.ErrConnectionClosed):
+		// Closed for good (for example repeated auth errors after the creds
+		// expired). A connection that is merely reconnecting is not this: the
+		// library recovers by itself and the attempt is retried as usual.
+		return fmt.Errorf("%w: %w", outbox.ErrDisconnected, err)
+	case errors.Is(err, envelope.ErrSubject), errors.Is(err, nats.ErrMaxPayload):
 		return fmt.Errorf("%w: %w", outbox.ErrPermanent, err)
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, nats.ErrTimeout):
 		return fmt.Errorf("%w: %w", outbox.ErrTimeout, err)
