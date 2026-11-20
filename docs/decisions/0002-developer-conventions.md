@@ -8,7 +8,7 @@ The repository had no `go.mod`, lint or build configuration, licence, or contrib
 
 ## Decision
 
-- **Module and toolchain.** Module `github.com/aurimasniekis/go-ledger`. The `go` line in `go.mod` (1.27.1) is the minimum language version. It is not a toolchain pin: `go.mod` has no `toolchain` line, and builds use the installed toolchain, which must be at least that version. The module has no required dependencies yet, so the build downloads no modules.
+- **Module and toolchain.** Module `github.com/aurimasniekis/go-ledger`. The `go` line in `go.mod` (1.27.4, the latest 1.27.x patch release) is the minimum language version. It is not a toolchain pin: `go.mod` has no `toolchain` line, and builds use the installed toolchain, which must be at least that version. The module has no required dependencies yet, so the build downloads no modules.
 - **Formatting.** `gofmt -s`, via `make fmt` (rewrite) and `make fmt-check` (fail).
 - **Lint.** golangci-lint v2, configured in `.golangci.yml`. It runs the standard linters plus depguard, errorlint, misspell and unconvert, and gofmt as a formatter. depguard enforces the ADR-0001 boundaries: domain packages import no HTTP, SQL, `httpapi`, `store` or provider code, and `store` and `httpapi` do not import each other. The local version is 2.15.0.
 - **Tests.** `go test -race ./...` via `make test`. Tests run offline: no test may need the network, a bank, a model API, a rate API or a real credential. Fixtures are synthetic.
