@@ -32,9 +32,10 @@ info:
       `version` (DELETE: `If-Match` only): missing is 428, stale is 409
       `version_conflict` with `reconciliation` (the current version and,
       where allowed, the current object). `conflict` is any other 409.
-    - **Partial updates** are JSON Merge Patch (RFC 7396, ADR-0015):
+    - **Partial updates** are JSON Merge Patch (RFC 7396, ADR-0015, ADR-0017):
       `PATCH` with `Content-Type: application/merge-patch+json`; an absent
-      member is unchanged, `null` clears an optional member.
+      member is unchanged, `null` clears an optional member, and nested
+      objects merge member by member.
     - **Errors** use the `Error` envelope with a stable `code`.
   license:
     name: Apache-2.0

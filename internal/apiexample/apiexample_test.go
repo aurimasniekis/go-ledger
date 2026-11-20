@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -325,12 +326,31 @@ func TestMergePatchSemantics(t *testing.T) {
 	if got.Note == nil || *got.Note != "renewal in May" || got.Name != "Hosting EU" {
 		t.Fatalf("absent note changed: %+v", got)
 	}
-	// An empty patch changes nothing but still bumps the version.
-	if got = patch(3, `{}`); got.Version != 4 || got.Name != "Hosting EU" || got.Note == nil {
+	// An empty patch is a no-op: no version bump, precondition still checked.
+	if got = patch(3, `{}`); got.Version != 3 || got.Name != "Hosting EU" || got.Note == nil {
 		t.Fatalf("empty patch: %+v", got)
 	}
+	if got = patch(3, `{"version":3}`); got.Version != 3 {
+		t.Fatalf("version-only patch: %+v", got)
+	}
+	if r := call(t, srv, "PATCH", item, `{}`, "If-Match", `"2"`); r.Code != 409 || r.errBody(t).Code != httpapi.CodeVersionConflict {
+		t.Fatalf("empty patch, stale version: %d %s", r.Code, r.Body.String())
+	}
+	if r := call(t, srv, "PATCH", item, `{}`); r.Code != 428 {
+		t.Fatalf("empty patch, no version: %d", r.Code)
+	}
+	if r := call(t, srv, "PATCH", Path+"/01JD3Y4C8V9M2Q7W5R6T0XZBNA", `{}`, "If-Match", `"1"`); r.Code != 404 {
+		t.Fatalf("empty patch, missing object: %d", r.Code)
+	}
+	if r := call(t, srv, "GET", item, ""); r.Header().Get("ETag") != `"3"` {
+		t.Fatalf("etag after empty patch: %q", r.Header().Get("ETag"))
+	}
+	// A non-object patch says what it must be.
+	if r := call(t, srv, "PATCH", item, `[1]`, "If-Match", `"3"`); r.Code != 400 || !strings.Contains(r.errBody(t).Message, "must be a JSON object") {
+		t.Fatalf("array patch: %d %s", r.Code, r.Body.String())
+	}
 	// null = clear.
-	got = patch(4, `{"note":null}`)
+	got = patch(3, `{"note":null}`)
 	if got.Note != nil || got.Name != "Hosting EU" {
 		t.Fatalf("clear note: %+v", got)
 	}
@@ -340,13 +360,13 @@ func TestMergePatchSemantics(t *testing.T) {
 		t.Fatalf("a cleared note is sent as null: %v", raw)
 	}
 	// null on a required member, wrong content type, unknown member.
-	if r := call(t, srv, "PATCH", item, `{"name":null}`, "If-Match", `"5"`); r.Code != 400 || r.errBody(t).Field != "name" {
+	if r := call(t, srv, "PATCH", item, `{"name":null}`, "If-Match", `"4"`); r.Code != 400 || r.errBody(t).Field != "name" {
 		t.Fatalf("null name: %d %s", r.Code, r.Body.String())
 	}
-	if r := call(t, srv, "PATCH", item, `{"name":"x"}`, "If-Match", `"5"`, "Content-Type", "application/json"); r.Code != 415 || r.errBody(t).Code != httpapi.CodeUnsupportedType {
+	if r := call(t, srv, "PATCH", item, `{"name":"x"}`, "If-Match", `"4"`, "Content-Type", "application/json"); r.Code != 415 || r.errBody(t).Code != httpapi.CodeUnsupportedType {
 		t.Fatalf("json content type: %d %s", r.Code, r.Body.String())
 	}
-	if r := call(t, srv, "PATCH", item, `{"id":"x"}`, "If-Match", `"5"`); r.Code != 400 || r.errBody(t).Field != "id" {
+	if r := call(t, srv, "PATCH", item, `{"id":"x"}`, "If-Match", `"4"`); r.Code != 400 || r.errBody(t).Field != "id" {
 		t.Fatalf("unknown member: %d %s", r.Code, r.Body.String())
 	}
 	// DELETE takes If-Match only: a body version does not count (ADR-0015).
@@ -396,6 +416,32 @@ func TestCreateValidation(t *testing.T) {
 		r := call(t, srv, "POST", Path, body)
 		if b := r.errBody(t); r.Code != 400 || b.Field != field {
 			t.Errorf("%s: %d %+v", body, r.Code, b)
+		}
+	}
+}
+
+func TestCreateWithNote(t *testing.T) {
+	srv, _ := newServer(t)
+	r := call(t, srv, "POST", Path, `{"name":"Rent","kind":"beta","note":"due on the 1st"}`)
+	var e Example
+	r.decode(t, &e)
+	if r.Code != 201 || e.Note == nil || *e.Note != "due on the 1st" {
+		t.Fatalf("create with note: %d %s", r.Code, r.Body.String())
+	}
+	var got Example
+	call(t, srv, "GET", Path+"/"+e.ID, "").decode(t, &got)
+	if got.Note == nil || *got.Note != "due on the 1st" {
+		t.Fatalf("stored note: %+v", got)
+	}
+	// null is the same as leaving it out; an empty or oversized note is refused.
+	r = call(t, srv, "POST", Path, `{"name":"Rent","kind":"beta","note":null}`)
+	r.decode(t, &e)
+	if r.Code != 201 || e.Note != nil {
+		t.Fatalf("null note: %d %s", r.Code, r.Body.String())
+	}
+	for _, n := range []string{`""`, `"` + strings.Repeat("x", 201) + `"`, `5`} {
+		if r := call(t, srv, "POST", Path, `{"name":"Rent","kind":"beta","note":`+n+`}`); r.Code != 400 {
+			t.Errorf("note %.10s: %d", n, r.Code)
 		}
 	}
 }
