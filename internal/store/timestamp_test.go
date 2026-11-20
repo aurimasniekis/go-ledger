@@ -3,9 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aurimasniekis/go-ledger/internal/store/sqlvalue"
 )
 
 func TestTimestampsAreStoredInUTC(t *testing.T) {
@@ -113,32 +116,85 @@ func TestSchemaConventions(t *testing.T) {
 			if err != nil {
 				return err
 			}
+			var names []string
 			for cols.Next() {
 				var col, typ string
 				if err := cols.Scan(&col, &typ); err != nil {
 					return err
 				}
 				if strings.EqualFold(typ, "REAL") || strings.EqualFold(typ, "FLOAT") || strings.EqualFold(typ, "DOUBLE") {
-					t.Errorf("%s.%s is %s: money and quantities must be exact (integer minor units or TEXT decimals), never binary floating point", table, col, typ)
+					t.Errorf("%s.%s is %s: money and quantities must be exact (TEXT decimals through store/sqlvalue (ADR-0005)), never binary floating point", table, col, typ)
 				}
-				if !strings.HasSuffix(col, "_at") {
+				names = append(names, col)
+				check := conventionCheck(col)
+				if check == "" {
 					continue
 				}
 				if typ != "TEXT" {
-					t.Errorf("%s.%s is %s, timestamps are TEXT", table, col, typ)
+					t.Errorf("%s.%s is %s, *_at, *_date, *_amount and *_currency columns are TEXT", table, col, typ)
 				}
-				if !strings.Contains(ddl, TimestampCheck(col)) {
-					t.Errorf("%s.%s lacks CHECK (%s)", table, col, TimestampCheck(col))
+				if !strings.Contains(ddl, check) {
+					t.Errorf("%s.%s lacks CHECK (%s)", table, col, check)
 				}
 			}
 			if err := cols.Close(); err != nil {
 				return err
+			}
+			for _, col := range names {
+				sibling, ok := "currency", col == "amount"
+				if base, found := strings.CutSuffix(col, "_amount"); found {
+					sibling, ok = base+"_currency", true
+				}
+				if ok && !slices.Contains(names, sibling) {
+					t.Errorf("%s.%s has no sibling %s_currency column: an amount without a currency is meaningless", table, col, strings.TrimSuffix(sibling, "_currency"))
+				}
 			}
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// conventionCheck returns the CHECK expression a column must carry by its
+// name, or "" when the name carries no convention. Migrations are static SQL,
+// so the expression is copied into them by hand; this keeps the copy honest.
+//
+// Convention: the bare names amount, currency and date count as *_amount,
+// *_currency and *_date. *_at is a UTC timestamp (this package), *_date a date-only
+// value, *_amount an exact decimal and *_currency its ISO 4217 code (all
+// three in store/sqlvalue). Every *_amount has a sibling *_currency.
+func conventionCheck(col string) string {
+	switch {
+	case strings.HasSuffix(col, "_at"):
+		return TimestampCheck(col)
+	case col == "date" || strings.HasSuffix(col, "_date"):
+		return sqlvalue.DateCheck(col)
+	case col == "amount" || strings.HasSuffix(col, "_amount"):
+		return sqlvalue.AmountCheck(col)
+	case col == "currency" || strings.HasSuffix(col, "_currency"):
+		return sqlvalue.CurrencyCheck(col)
+	}
+	return ""
+}
+
+func TestConventionCheckByName(t *testing.T) {
+	for col, want := range map[string]string{
+		"due_date":       sqlvalue.DateCheck("due_date"),
+		"paid_amount":    sqlvalue.AmountCheck("paid_amount"),
+		"paid_currency":  sqlvalue.CurrencyCheck("paid_currency"),
+		"created_at":     TimestampCheck("created_at"),
+		"amount":         sqlvalue.AmountCheck("amount"),
+		"currency":       sqlvalue.CurrencyCheck("currency"),
+		"date":           sqlvalue.DateCheck("date"),
+		"display_name":   "",
+		"update":         "",
+		"amount_in_text": "",
+	} {
+		if got := conventionCheck(col); got != want {
+			t.Errorf("conventionCheck(%q) = %q, want %q", col, got, want)
+		}
 	}
 }
 

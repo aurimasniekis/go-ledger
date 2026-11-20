@@ -59,7 +59,7 @@ type Log struct {
 
 // Reporting configures how dates are reported.
 type Reporting struct {
-	Timezone string `cfg:"timezone" desc:"IANA time zone used for due dates and monthly views, for example Europe/Vilnius. Empty uses the host's local zone."`
+	Timezone string `cfg:"timezone" desc:"IANA time zone used for due dates and monthly views, for example Europe/Vilnius. Empty means the zone stored in the database; on first start against a new database the host's IANA zone is captured once and stored, and startup is refused if the host has no IANA name. A value that differs from the stored zone is applied with a warning and an audit entry, because it reclassifies dates. 'Local' is not accepted."`
 }
 
 // KEK configures the key-encryption key that protects stored credentials. It
