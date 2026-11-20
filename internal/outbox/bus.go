@@ -18,6 +18,11 @@ type Bus interface {
 	Close()
 }
 
+// ConnectionReporter is optionally implemented by a [Bus] that knows whether its
+// connection is up right now (it can be reconnecting). The publisher drives the
+// connected gauge from it.
+type ConnectionReporter interface{ Connected() bool }
+
 // Dialer opens a [Bus]. The publisher calls it lazily and again after a failure,
 // with its own backoff; a failing Dialer never stops the application.
 type Dialer func(ctx context.Context) (Bus, error)
@@ -44,6 +49,10 @@ var (
 	// ErrTimeout marks an attempt that hit its deadline. The broker also answers
 	// a publish outside the credentials' grants with a timeout, not a refusal.
 	ErrTimeout = errors.New("outbox: publish timed out")
+	// ErrDisconnected marks a failure because the connection is gone (closed for
+	// good by the client library, or not connected and not buffering). The
+	// publisher drops the bus and dials again with its own backoff.
+	ErrDisconnected = errors.New("outbox: connection to the bus is lost")
 	// ErrPermanent marks an event that can never be published as it is (for
 	// example a malformed subject); the row fails at once instead of retrying.
 	ErrPermanent = errors.New("outbox: event cannot be published")

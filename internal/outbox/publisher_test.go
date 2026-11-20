@@ -370,18 +370,120 @@ func TestCancelledPublishLeavesRowUntouched(t *testing.T) {
 	}
 }
 
-func TestPurgeRunsPeriodically(t *testing.T) {
-	e := newPubEnv(t, nil)
-	q := e.enqueue(t)
-	e.pub.Tick(context.Background()) // published
-	e.now = e.now.Add(PublishedRetention + 2*time.Hour)
-	e.pub.Tick(context.Background())
-	var n int
+func (e *pubEnv) count(t *testing.T, id string) (n int) {
+	t.Helper()
 	_ = e.db.ReadTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE id = ?", q.ID).Scan(&n)
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM outbox WHERE id = ?", id).Scan(&n)
 	})
-	if n != 0 {
-		t.Fatal("published row was not purged")
+	return n
+}
+
+func TestRetentionPurgesWhetherOrNotPublishing(t *testing.T) {
+	for _, publishing := range []bool{true, false} {
+		e := newPubEnv(t, nil)
+		q := e.enqueue(t)
+		e.pub.Tick(context.Background()) // published
+		old := e.enqueue(t)              // stays pending
+		e.now = e.now.Add(PublishedRetention + 2*time.Hour)
+		// No publisher pass here: the retention job alone does the work.
+		NewRetention(RetentionConfig{DB: e.db, Publishing: publishing, Now: func() time.Time { return e.now }, Meter: e.meter}).Pass(context.Background())
+		if e.count(t, q.ID) != 0 {
+			t.Fatalf("publishing=%v: published row was not purged", publishing)
+		}
+		r := e.row(t, old.ID)
+		if r.State != StateFailed {
+			t.Fatalf("publishing=%v: pending row past the window = %+v", publishing, r)
+		}
+	}
+}
+
+func TestRetentionWithPublishingDisabledFailsLeftoverPendingRows(t *testing.T) {
+	e := newPubEnv(t, nil)
+	q := e.enqueue(t) // left over from an earlier enabled period, well inside 24h
+	NewRetention(RetentionConfig{DB: e.db, Publishing: false, Now: func() time.Time { return e.now }}).Pass(context.Background())
+	if r := e.row(t, q.ID); r.State != StateFailed || r.LastError != "publishing disabled" {
+		t.Fatalf("row %+v", r)
+	}
+	// With publishing on, a young pending row is left for the publisher.
+	q2 := e.enqueue(t)
+	NewRetention(RetentionConfig{DB: e.db, Publishing: true, Now: func() time.Time { return e.now }}).Pass(context.Background())
+	if r := e.row(t, q2.ID); r.State != StatePending {
+		t.Fatalf("row %+v", r)
+	}
+}
+
+func TestOutcomeIsRecordedEvenWhenShutdownArrivesAfterPublish(t *testing.T) {
+	e := newPubEnv(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	e.pub.cfg.Dial = func(context.Context) (Bus, error) {
+		// The publish succeeds, then shutdown is requested before it is recorded.
+		return busFunc(func(context.Context, Message) (Ack, error) { cancel(); return Ack{}, nil }), nil
+	}
+	q := e.enqueue(t)
+	e.pub.Tick(ctx)
+	if r := e.row(t, q.ID); r.State != StatePublished || r.Attempts != 1 {
+		t.Fatalf("row %+v", r)
+	}
+}
+
+func TestClosedConnectionIsRedialledWithBackoff(t *testing.T) {
+	e := newPubEnv(t, nil)
+	var buses []*fakeBus
+	e.pub.cfg.Dial = func(context.Context) (Bus, error) {
+		e.dials++
+		b := &fakeBus{}
+		if len(buses) == 0 {
+			b.errs = []error{fmt.Errorf("%w: connection closed", ErrDisconnected)}
+		}
+		buses = append(buses, b)
+		return b, nil
+	}
+	q := e.enqueue(t)
+	e.pub.Tick(context.Background())
+	if e.dials != 1 || !buses[0].closed || e.pub.bus != nil || e.meter.connected {
+		t.Fatalf("dials=%d closed=%v bus=%v connected=%v", e.dials, buses[0].closed, e.pub.bus, e.meter.connected)
+	}
+	if r := e.row(t, q.ID); r.State != StatePending || r.Attempts != 1 {
+		t.Fatalf("row %+v", r)
+	}
+	e.now = e.now.Add(time.Hour) // past the row backoff and the dial backoff
+	e.pub.Tick(context.Background())
+	if e.dials != 2 || len(buses[1].sent) != 1 || e.row(t, q.ID).State != StatePublished {
+		t.Fatalf("dials=%d row=%+v", e.dials, e.row(t, q.ID))
+	}
+}
+
+type reportingBus struct {
+	fakeBus
+	up bool
+}
+
+func (b *reportingBus) Connected() bool { return b.up }
+
+func TestConnectedGaugeFollowsBusStatus(t *testing.T) {
+	e := newPubEnv(t, nil)
+	rb := &reportingBus{up: true}
+	e.pub.cfg.Dial = func(context.Context) (Bus, error) { return rb, nil }
+	e.enqueue(t)
+	e.pub.Tick(context.Background())
+	if !e.meter.connected || !e.pub.Status().Connected {
+		t.Fatal("expected connected")
+	}
+	rb.up = false // the library is reconnecting
+	e.pub.Tick(context.Background())
+	if e.meter.connected || e.pub.Status().Connected {
+		t.Fatal("gauge must follow the real connection state")
+	}
+}
+
+func TestShutdownCancelDoesNotLogErrors(t *testing.T) {
+	e := newPubEnv(t, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	e.enqueue(t)
+	e.pub.Tick(ctx)
+	if strings.Contains(e.logs.String(), "level=ERROR") {
+		t.Fatalf("logs:\n%s", e.logs.String())
 	}
 }
 
