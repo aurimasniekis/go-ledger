@@ -72,8 +72,12 @@ type Events struct {
 
 // Pulse configures publishing events to Pulse (NATS JetStream).
 type Pulse struct {
-	Enabled bool   `cfg:"enabled" default:"false" desc:"Publish events to Pulse. Off by default. While off, nothing is recorded or published, and turning it on later does not replay changes made while it was off."`
-	Source  string `cfg:"source" default:"ledger" desc:"Event source stamped on every published event (the envelope's source field): 1 to 128 printable characters."`
+	Enabled   bool   `cfg:"enabled" default:"false" desc:"Publish events to Pulse. Off by default. While off, nothing is recorded or published, and turning it on later does not replay changes made while it was off."`
+	Source    string `cfg:"source" default:"ledger" desc:"Event source stamped on every published event (the envelope's source field): 1 to 128 printable characters."`
+	URL       string `cfg:"url" desc:"Pulse server URL; must use the tls:// scheme, for example tls://pulse.example.com:4222. Required when events.pulse.enabled is true. Nothing connects while publishing is off."`
+	CredsFile string `cfg:"creds_file" desc:"Path of the Pulse .creds file (user JWT and key seed). Required when events.pulse.enabled is true. Only the path is configuration: the file is read by the Pulse client, never copied, and its path and content are never logged."`
+	CAFile    string `cfg:"ca_file" desc:"Optional PEM file with an extra CA to trust for the Pulse server, added to the system roots. Certificate verification is never disabled."`
+	Name      string `cfg:"name" default:"ledger" desc:"Connection name shown on the Pulse server."`
 }
 
 // KEK configures the key-encryption key that protects stored credentials. It

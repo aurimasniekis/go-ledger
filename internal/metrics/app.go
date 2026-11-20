@@ -22,6 +22,13 @@ type App struct {
 	JobRuns   *Counter // job, outcome
 	JobLast   *Gauge   // job: Unix time of the last run
 	JobLength *Histogram
+
+	eventsPublished *Counter
+	eventsDuplicate *Counter
+	eventsFailed    *Counter
+	eventsRetries   *Counter
+	eventsPending   *Gauge
+	pulseConnected  *Gauge
 }
 
 // NewApp registers the standard metrics, including build information.
@@ -41,9 +48,41 @@ func NewApp(version string) *App {
 		"Unix time the job last finished, by job name.", "job")
 	a.JobLength = r.NewHistogram("ledger_job_duration_seconds",
 		"Background job run duration in seconds by job name.", nil, "job")
+	a.eventsPublished = r.NewCounter("ledger_events_published_total", "Events acknowledged by Pulse.")
+	a.eventsDuplicate = r.NewCounter("ledger_events_duplicate_total", "Published events Pulse reported as already stored (deduplicated by event id); a subset of published.")
+	a.eventsFailed = r.NewCounter("ledger_events_failed_total", "Events given up on: not delivered within the retry window, or never publishable.")
+	a.eventsRetries = r.NewCounter("ledger_events_retries_total", "Failed publish attempts that were scheduled for a retry.")
+	a.eventsPending = r.NewGauge("ledger_events_pending", "Events waiting to be published (outbox rows in the pending state).")
+	a.pulseConnected = r.NewGauge("ledger_pulse_connected", "1 while the publisher holds a Pulse connection, else 0. Pulse is optional and never gates readiness.")
 	r.NewGauge("ledger_build_info", "Build information; the value is always 1.", "version", "go_version").
 		Set(1, version, runtime.Version())
 	return a
+}
+
+// The Event* methods implement outbox.Meter.
+
+// EventPublished counts an acknowledged event.
+func (a *App) EventPublished() { a.eventsPublished.Inc() }
+
+// EventDuplicate counts an acknowledged event the broker had already stored.
+func (a *App) EventDuplicate() { a.eventsDuplicate.Inc() }
+
+// EventFailed counts an event given up on.
+func (a *App) EventFailed() { a.eventsFailed.Inc() }
+
+// EventRetry counts a scheduled retry.
+func (a *App) EventRetry() { a.eventsRetries.Inc() }
+
+// SetPending sets the pending-events gauge.
+func (a *App) SetPending(n int) { a.eventsPending.Set(float64(n)) }
+
+// SetConnected sets the Pulse connection gauge.
+func (a *App) SetConnected(up bool) {
+	v := 0.0
+	if up {
+		v = 1
+	}
+	a.pulseConnected.Set(v)
 }
 
 // JobDone records one finished run of the named job. The name is the job's

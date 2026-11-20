@@ -96,6 +96,7 @@ func (c *Config) validate(sources map[string]string) []Problem {
 			bad("reporting.timezone", err.Error())
 		}
 	}
+	c.Events.Pulse.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {
 		ps = append(ps, Problem{Key: "kek", Msg: "required: set " + EnvName("kek.value") + " or " + EnvName("kek.file")})
 	}

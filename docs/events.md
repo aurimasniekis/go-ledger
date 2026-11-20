@@ -10,7 +10,7 @@ Payloads are stored **in plain form on the bus**. They never carry secrets, cred
 | --- | --- |
 | id | ULID generated at enqueue; also the idempotency key. Every retry reuses it. |
 | type | `<domain>.<entity>.<action>.v<N>`, for example `ledger.<entity>.<action>.v1`. The domain is always `ledger`. The version belongs to the type; add fields compatibly, a breaking change gets `v2`. |
-| source | `events.pulse.source` (default `ledger`), wired into the outbox writer with `events.pulse.enabled`. |
+| source | `events.pulse.source` (default `ledger`), passed to the outbox writer together with `events.pulse.enabled` when `ledger serve` starts. |
 | time | `occurred_at`, UTC, set at enqueue (inside the state-changing transaction) and kept for every retry. |
 | subject | `evt.ledger.<entity>.<action>[.<key>]`. |
 | payload | A JSON object holding only the allow-listed fields of the event. |
@@ -22,6 +22,22 @@ Delivery is at-least-once: the Pulse `EVENTS` stream deduplicates a repeated id 
 ## Outbox lifecycle
 
 An event row is inserted in the same transaction as the change it announces, so a rolled-back change leaves no event. Rows are append-only: the envelope never changes; only `state` (`pending` → `published` or `failed`), `attempts`, `next_attempt_at`, `published_at`, `failed_at` and `last_error` do. Retries run with backoff for up to 24 hours. Published rows are kept 7 days, failed rows 30 days, pending rows are never purged or deleted. A row in a terminal state (`published` or `failed`) is immutable: a trigger rejects any further update, so delivery history cannot be rewritten or its purge postponed.
+
+## Operator setup
+
+Publishing is off until you turn it on. **Turning it on sends event data off this machine to the Pulse server you configure, in plain form on the bus**; do it only if you accept that. Event payloads are limited to the allow-listed fields in the catalog below (no secrets, IBANs or account numbers, raw bank data or free text).
+
+1. Obtain a `.creds` file for Ledger from your Pulse administrator, with the publish grant for `evt.ledger.>` only. Keep it outside the repository, readable only by the Ledger user. Ledger stores only its path.
+2. Configure (YAML, `LEDGER_*` environment or `.env`; see `config.example.yaml`):
+   - `events.pulse.enabled: true`
+   - `events.pulse.url: tls://pulse.example.com:4222` (`tls://` is required)
+   - `events.pulse.creds_file: /path/to/ledger.creds`
+   - `events.pulse.ca_file` (optional): a PEM file with an extra CA when the server uses a private CA. Verification is never turned off.
+   - `events.pulse.source` (default `ledger`) and `events.pulse.name` (default `ledger`)
+3. Restart. A bad or missing creds file, an unreachable server or a missing grant never stops Ledger or its readiness: events queue in the outbox and are retried with backoff for up to 24 hours, then marked failed (kept 30 days). Watch the logs (`job=outbox-publisher`) and the metrics `ledger_events_published_total`, `ledger_events_failed_total`, `ledger_events_pending`, `ledger_events_duplicate_total`, `ledger_events_retries_total` and `ledger_pulse_connected`. Repeated timeouts usually mean the publish grant is missing.
+4. Only changes made while enabled are published; enabling does not replay history.
+
+See [ADR-0016](decisions/0016-pulse-publisher.md).
 
 ## Events
 
