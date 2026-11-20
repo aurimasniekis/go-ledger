@@ -1,0 +1,54 @@
+# golangci-lint v2 configuration. Run with: make lint
+version: "2"
+
+run:
+  go: "1.27"
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - errorlint
+    - misspell
+    - unconvert
+  settings:
+    depguard:
+      # Package boundaries from ADR-0001: domain packages hold business rules
+      # only and must not reach HTTP, SQL, storage or provider code.
+      rules:
+        domain-boundaries:
+          list-mode: lax
+          files:
+            - "**/internal/domain/**"
+          deny:
+            - pkg: "net/http"
+              desc: domain packages must not handle HTTP; that belongs in internal/httpapi
+            - pkg: "database/sql"
+              desc: domain packages must not run SQL; declare a port and implement it in internal/store
+            - pkg: "github.com/aurimasniekis/go-ledger/internal/httpapi"
+              desc: domain packages must not depend on the HTTP layer
+            - pkg: "github.com/aurimasniekis/go-ledger/internal/store"
+              desc: domain packages declare ports; internal/store implements them
+            - pkg: "github.com/aurimasniekis/go-ledger/internal/providers"
+              desc: finance packages reach providers only through ports they declare
+        store-boundaries:
+          list-mode: lax
+          files:
+            - "**/internal/store/**"
+          deny:
+            - pkg: "github.com/aurimasniekis/go-ledger/internal/httpapi"
+              desc: store implements domain ports and must not depend on the HTTP layer (ADR-0001)
+        httpapi-boundaries:
+          list-mode: lax
+          files:
+            - "**/internal/httpapi/**"
+          deny:
+            - pkg: "github.com/aurimasniekis/go-ledger/internal/store"
+              desc: HTTP handlers call domain packages directly and must not import store (ADR-0001)
+
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true
