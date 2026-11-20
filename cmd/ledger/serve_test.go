@@ -158,8 +158,7 @@ func TestServeUsageErrors(t *testing.T) {
 	}
 }
 
-// startServe runs "ledger serve" against a temp database and returns what a
-// test needs to probe and stop it. dbPath is the database file.
+// served is what a test needs to probe and stop a running "ledger serve".
 type served struct {
 	addr   net.Addr
 	cancel context.CancelFunc
@@ -167,6 +166,8 @@ type served struct {
 	logs   *syncBuffer
 }
 
+// startServe runs "ledger serve" against a temp database and returns what a
+// test needs to probe and stop it. dbPath is the database file.
 func startServe(t *testing.T, dbPath string, extraEnv map[string]string, host func() (string, bool)) *served {
 	t.Helper()
 	env := map[string]string{"LEDGER_KEK_VALUE": cmdSentinel, "LEDGER_DATABASE_PATH": dbPath}

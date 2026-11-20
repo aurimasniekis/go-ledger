@@ -25,6 +25,16 @@ const (
 		"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 )
 
+// hasDotSegment reports whether any segment of the cleaned path p starts with a dot.
+func hasDotSegment(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
+}
+
 type file struct {
 	data []byte
 	etag string
@@ -41,6 +51,8 @@ type file struct {
 //     JSON error envelope, never index.html.
 //   - /api and everything under it is a 404 in the envelope too: the UI never
 //     answers for the API.
+//   - dot-named files and directories (such as .gitkeep) are never served, and a
+//     request that names one gets a 404 envelope.
 //   - only GET and HEAD are allowed.
 //
 // If assets has no index.html (the frontend was not built) page requests get a
@@ -48,8 +60,18 @@ type file struct {
 func Handler(assets fs.FS) http.Handler {
 	files := map[string]file{}
 	_ = fs.WalkDir(assets, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil //nolint:nilerr // an unreadable file is simply not served
+		if err != nil {
+			return nil //nolint:nilerr // an unreadable entry is simply not served
+		}
+		// Dot-named entries (.gitkeep, stray OS or editor files) are never served.
+		if p != "." && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			return nil
 		}
 		data, rerr := fs.ReadFile(assets, p)
 		if rerr != nil {
@@ -67,6 +89,11 @@ func Handler(assets fs.FS) http.Handler {
 		}
 		p := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 		if p == "api" || strings.HasPrefix(p, "api/") {
+			httpapi.WriteError(w, r, httpapi.NotFound("no such resource"))
+			return
+		}
+		// A request that names a dot-entry is a 404, never the shell.
+		if hasDotSegment(p) {
 			httpapi.WriteError(w, r, httpapi.NotFound("no such resource"))
 			return
 		}
