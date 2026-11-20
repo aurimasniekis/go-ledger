@@ -124,6 +124,11 @@ func TestYearRangeErrors(t *testing.T) {
 	if _, err := first.YearMonth().AddMonths(math.MaxInt); !errors.Is(err, ErrInvalidDate) {
 		t.Errorf("MaxInt months: %v", err)
 	}
+	for _, n := range []int{math.MaxInt, math.MinInt, math.MaxInt / 2, 3652060, -3652060} {
+		if _, err := MustDate(2026, time.January, 1).AddDays(n); !errors.Is(err, ErrInvalidDate) {
+			t.Errorf("AddDays(%d): %v", n, err)
+		}
+	}
 	z := MustLoadZone("UTC")
 	if _, _, err := z.DayRange(last); !errors.Is(err, ErrInvalidDate) {
 		t.Errorf("DayRange(9999-12-31): %v", err)

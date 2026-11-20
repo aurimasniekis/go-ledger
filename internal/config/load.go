@@ -31,7 +31,12 @@ func (p Problem) String() string {
 }
 
 // Error reports every problem found, not just the first.
-type Error struct{ Problems []Problem }
+type Error struct {
+	Problems []Problem
+	// UnknownEnv names (never values) the unrecognised LEDGER_ variables, so a
+	// caller can warn about likely typos even when validation fails.
+	UnknownEnv []string
+}
 
 func (e *Error) Error() string {
 	var b strings.Builder
@@ -219,7 +224,7 @@ func Load(opts Options) (*Result, error) {
 	problems = append(problems, resolveSecretFiles(&res.Config, res.Sources, readFile)...)
 	problems = append(problems, res.Config.validate(res.Sources)...)
 	if len(problems) > 0 {
-		return nil, &Error{Problems: problems}
+		return nil, &Error{Problems: problems, UnknownEnv: res.UnknownEnv}
 	}
 	return res, nil
 }

@@ -91,9 +91,17 @@ func (d Date) midnightUTC() time.Time {
 	return time.Date(d.year, d.month, d.day, 0, 0, 0, 0, time.UTC)
 }
 
+// maxDaySpan is the number of days between 0001-01-01 and 9999-12-31.
+const maxDaySpan = 3652059
+
 // AddDays returns d plus n days (n may be negative). It returns
 // ErrInvalidDate if the result falls outside years 1..9999.
 func (d Date) AddDays(n int) (Date, error) {
+	// Years 1..9999 span 3,652,059 days; anything larger cannot land in range
+	// and would overflow inside time.AddDate.
+	if n > maxDaySpan || n < -maxDaySpan {
+		return Date{}, fmt.Errorf("%w: %d days out of range", ErrInvalidDate, n)
+	}
 	t := d.midnightUTC().AddDate(0, 0, n)
 	return NewDate(t.Year(), t.Month(), t.Day())
 }
@@ -260,6 +268,16 @@ func (m YearMonth) MarshalText() ([]byte, error) {
 		return nil, fmt.Errorf("%w: zero month", ErrInvalidDate)
 	}
 	return []byte(m.String()), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler: only a JSON string is accepted,
+// so null is an error instead of silently leaving the zero month.
+func (m *YearMonth) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil || bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return fmt.Errorf("%w: a month must be a JSON string", ErrInvalidDate)
+	}
+	return m.UnmarshalText([]byte(s))
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler with [ParseYearMonth].

@@ -3,9 +3,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 )
@@ -28,6 +31,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version":
 		say(stdout, "ledger", version)
 		return 0
+	case "serve":
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		// Once shutdown starts, restore default signal handling so a second
+		// Ctrl-C ends the process instead of being swallowed during the drain.
+		go func() { <-ctx.Done(); stop() }()
+		return runServe(ctx, args[1:], stderr, serveEnv{Options: config.Options{}})
 	case "config":
 		return runConfig(args[1:], stdout, stderr, config.Options{})
 	case "help", "-h", "--help":
@@ -44,6 +54,7 @@ func usage(w io.Writer) {
 	say(w, "usage: ledger <command>")
 	say(w)
 	say(w, "commands:")
+	say(w, "  serve     start the HTTP server")
 	say(w, "  config    check or document the configuration (config check, config env)")
 	say(w, "  version   print the build version")
 	say(w, "  help      print this message")

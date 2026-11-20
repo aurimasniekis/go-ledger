@@ -141,8 +141,12 @@ func TestSchemaConventions(t *testing.T) {
 				return err
 			}
 			for _, col := range names {
-				if base, ok := strings.CutSuffix(col, "_amount"); ok && !slices.Contains(names, base+"_currency") {
-					t.Errorf("%s.%s has no sibling %s_currency column: an amount without a currency is meaningless", table, col, base)
+				sibling, ok := "currency", col == "amount"
+				if base, found := strings.CutSuffix(col, "_amount"); found {
+					sibling, ok = base+"_currency", true
+				}
+				if ok && !slices.Contains(names, sibling) {
+					t.Errorf("%s.%s has no sibling %s_currency column: an amount without a currency is meaningless", table, col, strings.TrimSuffix(sibling, "_currency"))
 				}
 			}
 		}
@@ -157,18 +161,19 @@ func TestSchemaConventions(t *testing.T) {
 // name, or "" when the name carries no convention. Migrations are static SQL,
 // so the expression is copied into them by hand; this keeps the copy honest.
 //
-// Convention: *_at is a UTC timestamp (this package), *_date a date-only
+// Convention: the bare names amount, currency and date count as *_amount,
+// *_currency and *_date. *_at is a UTC timestamp (this package), *_date a date-only
 // value, *_amount an exact decimal and *_currency its ISO 4217 code (all
 // three in store/sqlvalue). Every *_amount has a sibling *_currency.
 func conventionCheck(col string) string {
 	switch {
 	case strings.HasSuffix(col, "_at"):
 		return TimestampCheck(col)
-	case strings.HasSuffix(col, "_date"):
+	case col == "date" || strings.HasSuffix(col, "_date"):
 		return sqlvalue.DateCheck(col)
-	case strings.HasSuffix(col, "_amount"):
+	case col == "amount" || strings.HasSuffix(col, "_amount"):
 		return sqlvalue.AmountCheck(col)
-	case strings.HasSuffix(col, "_currency"):
+	case col == "currency" || strings.HasSuffix(col, "_currency"):
 		return sqlvalue.CurrencyCheck(col)
 	}
 	return ""
@@ -180,6 +185,9 @@ func TestConventionCheckByName(t *testing.T) {
 		"paid_amount":    sqlvalue.AmountCheck("paid_amount"),
 		"paid_currency":  sqlvalue.CurrencyCheck("paid_currency"),
 		"created_at":     TimestampCheck("created_at"),
+		"amount":         sqlvalue.AmountCheck("amount"),
+		"currency":       sqlvalue.CurrencyCheck("currency"),
+		"date":           sqlvalue.DateCheck("date"),
 		"display_name":   "",
 		"update":         "",
 		"amount_in_text": "",

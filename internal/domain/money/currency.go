@@ -1,6 +1,8 @@
 package money
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -76,6 +78,16 @@ func (c Currency) MarshalText() ([]byte, error) {
 		return nil, fmt.Errorf("%w: empty", ErrInvalidCurrency)
 	}
 	return []byte(c.code), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler: only a JSON string is accepted,
+// so null is an error instead of silently leaving the zero currency.
+func (c *Currency) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil || bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return fmt.Errorf("%w: a currency must be a JSON string", ErrInvalidCurrency)
+	}
+	return c.UnmarshalText([]byte(s))
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler with [ParseCurrency].
