@@ -117,7 +117,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		log.Error("cannot determine the reporting time zone", "error", err.Error())
 		return 1
 	}
-	// TODO: hand zone to the services that need it (monthly view, recurrence).
+	// TODO(monthly-view task): hand zone to the services that need it (monthly view, recurrence).
 	_ = zone
 
 	ln, err := net.Listen("tcp", cfg.HTTP.Listen)
