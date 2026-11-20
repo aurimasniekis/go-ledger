@@ -34,11 +34,14 @@ var (
 		"credential": true, "credentials": true, "apikey": true, "totp": true, "cookie": true, "session": true,
 		"iban": true, "bban": true, "swift": true,
 		"raw": true, "payload": true, "description": true, "memo": true, "remittance": true,
+		// Free text and people: any field that names one of these is refused, whatever the prefix.
+		"note": true, "notes": true, "text": true, "body": true, "freetext": true,
+		"counterparty": true, "holder": true, "debtor": true, "creditor": true, "card": true,
 	}
 	forbiddenNames = map[string]bool{
-		"api_key": true, "account_number": true, "card_number": true, "pan": true, "cvv": true,
-		"note": true, "notes": true, "text": true, "message": true, "body": true,
-		"counterparty": true, "counterparty_name": true, "debtor_name": true, "creditor_name": true,
+		"api_key": true, "account_number": true, "account_no": true, "pan": true, "cvv": true,
+		// Too common as suffixes (merchant_name, error_message) to refuse as tokens.
+		"name": true, "message": true,
 	}
 )
 
