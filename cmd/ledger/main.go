@@ -38,6 +38,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// Ctrl-C ends the process instead of being swallowed during the drain.
 		go func() { <-ctx.Done(); stop() }()
 		return runServe(ctx, args[1:], stderr, serveEnv{Options: config.Options{}})
+	case "backup":
+		return runBackup(args[1:], stdout, stderr, opsEnv{})
+	case "restore":
+		return runRestore(args[1:], stdout, stderr, opsEnv{})
 	case "config":
 		return runConfig(args[1:], stdout, stderr, config.Options{})
 	case "help", "-h", "--help":
@@ -55,6 +59,8 @@ func usage(w io.Writer) {
 	say(w)
 	say(w, "commands:")
 	say(w, "  serve     start the HTTP server")
+	say(w, "  backup    write a verified copy of the database (backup, backup prune)")
+	say(w, "  restore   replace the database with a backup (stop serve first)")
 	say(w, "  config    check or document the configuration (config check, config env)")
 	say(w, "  version   print the build version")
 	say(w, "  help      print this message")
