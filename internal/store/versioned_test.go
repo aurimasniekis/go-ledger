@@ -135,6 +135,7 @@ var unversionedTables = map[string]string{
 	"bank_balance_snapshots": "provider-owned bank facts (ADR-0013), append-only, never edited through the API",
 	"bank_transactions":      "provider-owned bank facts (ADR-0013), written only by the import path and never edited through the API",
 	"outbox":                 "append-only event queue owned by the server (ADR-0012); rows are never edited through the API",
+	"fx_rates":               "provider-reported currency rates (ADR-0022), written only by the rate service and never edited through the API",
 }
 
 // versionProblems checks the optimistic-concurrency convention: every table
