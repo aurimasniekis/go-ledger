@@ -8,10 +8,13 @@ Last updated: 2026-11-20.
 
 - **F1 Repository skeleton and conventions**: module, `cmd/ledger`, internal package layout (ADR-0001), Apache-2.0 licence, `.gitignore`, golangci-lint v2 config, Makefile, CONTRIBUTING, ADR log (ADR-0002 conventions).
 
+## In review
+
+- **F5 SQLite store and migrations**: `modernc.org/sqlite` (ADR-0003), one writer and query-only readers, WAL, foreign keys, busy timeout, embedded forward-only migrations with checksums, UTC timestamp convention, migration fixture harness. Not yet wired into `cmd/ledger` (needs the configuration task's database path).
+
 ## Next (first wave)
 
 - **F2 Configuration system**: YAML, environment and `.env` configuration, `.env.example`.
-- **F5 SQLite store and migrations**: driver choice recorded as an ADR, WAL, foreign keys, migration harness.
 - **F6 CI validation workflow**: pinned actions, read-only permissions, Go and frontend checks, `govulncheck`.
 - **F7 Frontend skeleton and embedding**: React, TypeScript, Vite, embedded into `internal/web`.
 
