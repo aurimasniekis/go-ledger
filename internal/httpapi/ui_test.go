@@ -20,9 +20,11 @@ func TestWithUIServesFallbackButNotUnderAPI(t *testing.T) {
 			t.Fatalf("%s: got %d %q, want %q", path, rec.Code, rec.Body.String(), want)
 		}
 	}
-	rec := httptest.NewRecorder()
-	srv2.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/nope", nil))
-	if rec.Code != 404 || !strings.Contains(rec.Body.String(), `"code":"not_found"`) {
-		t.Fatalf("unknown API path: %d %q", rec.Code, rec.Body.String())
+	for _, c := range [][2]string{{"GET", "/api/v1/nope"}, {"GET", "/api"}, {"POST", "/api"}, {"GET", "/api/"}} {
+		rec := httptest.NewRecorder()
+		srv2.Handler().ServeHTTP(rec, httptest.NewRequest(c[0], c[1], nil))
+		if rec.Code != 404 || !strings.Contains(rec.Body.String(), `"code":"not_found"`) {
+			t.Fatalf("%s %s: %d %q", c[0], c[1], rec.Code, rec.Body.String())
+		}
 	}
 }

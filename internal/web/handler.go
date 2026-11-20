@@ -98,6 +98,8 @@ func Handler(assets fs.FS) http.Handler {
 		}
 		// A zero modification time: embedded files have none, and validation
 		// is by ETag.
+		// The shell needs no ranges; ignoring them avoids multi-range parsing cost.
+		r.Header.Del("Range")
 		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(f.data))
 	})
 }

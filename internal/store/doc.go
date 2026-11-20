@@ -42,6 +42,11 @@
 // Tables are STRICT. Timestamps are TEXT columns named *_at, written with
 // [FormatTime] or [Timestamp] as fixed-width UTC (2006-01-02T15:04:05.000000000Z),
 // and guarded by a CHECK constraint (see [TimestampCheck]). Tests enforce both.
-// Money is not stored here yet: decision D5 requires an exact decimal with a
-// stored scale, and that encoding belongs to the money primitives task.
+// Dates and money have their own encodings in the sub-package sqlvalue (it
+// imports only the domain packages, so it cannot depend on this one):
+// *_date columns are date-only TEXT ([sqlvalue.DateCheck]), *_amount columns
+// are exact decimal TEXT with their own scale ([sqlvalue.AmountCheck]) next to
+// a *_currency column ([sqlvalue.CurrencyCheck]). Timestamp and TimestampCheck
+// stay here because they are part of the store's own conventions. Tests enforce
+// the name-based rules for all of them; see ADR-0005.
 package store

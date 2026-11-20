@@ -41,7 +41,7 @@ func TestServeStartsLogsAndShutsDown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	go func() {
-		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0"}, &errOut,
+		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0", "--http.management_listen=127.0.0.1:0"}, &errOut,
 			serveEnv{Options: opts, Listening: func(a net.Addr) { addrc <- a },
 				UI: fstest.MapFS{"index.html": {Data: []byte("<!doctype html><title>Ledger</title>")}}})
 	}()

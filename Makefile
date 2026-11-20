@@ -61,7 +61,7 @@ web-check: web-lint web-typecheck web-test web-build ## every frontend check, th
 build-full: web-build build ## build the frontend, then bin/ledger with it embedded
 
 e2e: build-full ## Playwright against the built binary (needs: pnpm exec playwright install chromium)
-	cd web && LEDGER_E2E_BIN=../$(BINARY) pnpm test:e2e
+	cd web && E2E_LEDGER_BIN=../$(BINARY) pnpm test:e2e
 
 check: fmt-check vet lint test test-nocgo web-check build workflow-policy ## everything the checks need, in order
 

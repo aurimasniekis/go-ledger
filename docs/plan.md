@@ -11,6 +11,9 @@ Last updated: 2026-11-20.
 ## In review
 
 - **F5 SQLite store and migrations**: `modernc.org/sqlite` (ADR-0003), one writer and query-only readers, WAL, foreign keys, busy timeout, embedded forward-only migrations with checksums, UTC timestamp convention, migration fixture harness. Not yet wired into `cmd/ledger` (needs the configuration task's database path).
+- **F9 Money and time primitives**: exact `money.Decimal`/`Money`/`Totals` (per-currency, mixed currencies rejected), half-even rounding at presentation only, `calendar.Date`/`YearMonth`/`Zone`, exact TEXT encoding for SQLite (`store/sqlvalue`), float ban test (ADR-0005).
+  - Follow-up: the float ban (`internal/domain/money/nofloat_test.go`) covers only the money, calendar and sqlvalue packages. Add the commitments, matching, outlook and FX packages to `moneyPackages` as they land (or move the check repo-wide).
+  - Follow-up (separate wiring task): persist the reporting zone captured on first start, per the control default in decisions.md; F2's `reporting.timezone` description already states it.
 
 ## Next (first wave)
 

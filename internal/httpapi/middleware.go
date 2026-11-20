@@ -140,6 +140,10 @@ func recoverMiddleware(next http.Handler) http.Handler {
 			if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 				panic(rec)
 			}
+			// Counted as an internal error even when the response has started.
+			if i := infoFrom(r.Context()); i != nil {
+				i.kind = string(CodeInternal)
+			}
 			logging.FromContext(r.Context()).ErrorContext(r.Context(), "panic in handler",
 				"panic", rec, "stack", string(debug.Stack()))
 			if sw, ok := w.(*statusWriter); ok && sw.status != 0 {
