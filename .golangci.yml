@@ -31,6 +31,20 @@ linters:
               desc: domain packages declare ports; internal/store implements them
             - pkg: "github.com/aurimasniekis/go-ledger/internal/providers"
               desc: finance packages reach providers only through ports they declare
+        store-boundaries:
+          list-mode: lax
+          files:
+            - "**/internal/store/**"
+          deny:
+            - pkg: "github.com/aurimasniekis/go-ledger/internal/httpapi"
+              desc: store implements domain ports and must not depend on the HTTP layer (ADR-0001)
+        httpapi-boundaries:
+          list-mode: lax
+          files:
+            - "**/internal/httpapi/**"
+          deny:
+            - pkg: "github.com/aurimasniekis/go-ledger/internal/store"
+              desc: HTTP handlers call domain packages directly and must not import store (ADR-0001)
 
 formatters:
   enable:

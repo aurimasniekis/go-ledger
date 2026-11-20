@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func TestUnknownCommandMessageHasNoBlankLine(t *testing.T) {
+	var out, errOut bytes.Buffer
+	run([]string{"bogus"}, &out, &errOut)
+	lines := strings.Split(errOut.String(), "\n")
+	if lines[0] != `ledger: unknown command "bogus"` {
+		t.Fatalf("first stderr line = %q", lines[0])
+	}
+	if lines[1] == "" {
+		t.Errorf("blank line after the unknown-command error: %q", errOut.String())
+	}
+}
+
 func TestRun(t *testing.T) {
 	tests := []struct {
 		name     string

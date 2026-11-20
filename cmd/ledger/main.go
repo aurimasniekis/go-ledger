@@ -30,7 +30,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		usage(stdout)
 		return 0
 	default:
-		say(stderr, fmt.Sprintf("ledger: unknown command %q\n", args[0]))
+		say(stderr, fmt.Sprintf("ledger: unknown command %q", args[0]))
 		usage(stderr)
 		return 2
 	}

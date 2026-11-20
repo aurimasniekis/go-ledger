@@ -26,8 +26,9 @@ lint: ## golangci-lint with .golangci.yml
 test: ## offline unit tests with the race detector
 	$(GO) test -race ./...
 
-build: ## build bin/ledger with the version from git
-	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/ledger
+build: ## build bin/ledger with the version from git, pure Go (CGO_ENABLED=0)
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/ledger
+	@$(GO) version -m $(BINARY) | grep -q 'CGO_ENABLED=0' || { echo "$(BINARY) was not built with CGO_ENABLED=0"; exit 1; }
 
 check: fmt-check vet lint test build ## everything the Go checks need, in order
 
