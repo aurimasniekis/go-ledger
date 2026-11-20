@@ -6,6 +6,7 @@ paths:
   /examples:
     get:
       operationId: listExamples
+      x-ledger-access: public
       summary: List examples
       tags: [example]
       parameters:
@@ -45,6 +46,7 @@ paths:
           $ref: "#/components/responses/Error"
     post:
       operationId: createExample
+      x-ledger-access: public
       summary: Create an example
       tags: [example]
       requestBody:
@@ -91,6 +93,7 @@ paths:
           $ref: "#/components/schemas/ID"
     get:
       operationId: getExample
+      x-ledger-access: public
       summary: Get an example
       tags: [example]
       responses:
@@ -107,6 +110,7 @@ paths:
           $ref: "#/components/responses/Error"
     patch:
       operationId: updateExample
+      x-ledger-access: public
       summary: Change an example
       description: |
         A JSON Merge Patch (RFC 7396, ADR-0015, ADR-0017): an absent member is
@@ -153,6 +157,7 @@ paths:
           $ref: "#/components/responses/Error"
     delete:
       operationId: deleteExample
+      x-ledger-access: public
       summary: Delete an example
       description: The version is taken from If-Match only (there is no body); without it the request is a 428.
       tags: [example]

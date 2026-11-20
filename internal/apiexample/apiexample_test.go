@@ -39,7 +39,7 @@ func newServer(t *testing.T) (*httpapi.Server, *Store) {
 		t.Fatal(err)
 	}
 	srv := httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log)
-	httpapi.RegisterAPI(srv)
+	httpapi.RegisterAPI(srv, httpapi.Deps{})
 	st := &Store{DB: db, Now: time.Now}
 	Register(srv, st)
 	return srv, st
@@ -123,8 +123,8 @@ func TestExampleContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	routes := srv.APIRoutes(httpapi.APIPrefix)
-	if len(routes) != 7 {
-		t.Fatalf("routes: %v", routes)
+	if n := len(srv.APIRoutes(Path)); n != 5 {
+		t.Fatalf("example routes: %d in %v", n, routes)
 	}
 	for _, p := range httpapi.CheckContract(merged, routes) {
 		t.Error(p)

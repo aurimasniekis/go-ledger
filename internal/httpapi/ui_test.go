@@ -11,7 +11,7 @@ func TestWithUIServesFallbackButNotUnderAPI(t *testing.T) {
 	srv, _ := newTestServer(t, testConfig())
 	ui := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("shell")) })
 	srv2 := New(srv.cfg, srv.log, WithUI(ui))
-	srv2.Handle("GET /api/v1/ping", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("pong")) }))
+	srv2.HandleAPI("GET /api/v1/ping", Public(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("pong")) }))
 
 	for path, want := range map[string]string{"/": "shell", "/some/page": "shell", "/api/v1/ping": "pong"} {
 		rec := httptest.NewRecorder()

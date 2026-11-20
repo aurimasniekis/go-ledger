@@ -21,6 +21,9 @@ Last updated: 2026-11-20.
   - Follow-up (B2): whole-window keying, staleness and attempt timestamps, no-longer-reported marking, `superseded_by` links, retry policy by error kind.
   - Merge note: the outbox migration is 0003, so this one is 0004.
 
+- **A1 Users, roles and grants model** (ADR-0019, first increment; D4 chosen): grant vocabulary `resource:action` in `internal/domain/authz` shared by HTTP, tokens and MCP; administrator and read-only roles; every API route declares its access (`HandleAPI`, documented as `x-ledger-access`); pluggable authenticators (none yet, so protected routes answer 401); migration `0005_users`; `/api/v1/users` list/create/get/merge-patch (disable, role change), `/me`, `/grants`; last enabled administrator protected; audit events through `store.AuditWriter`, logged until A5; permission matrix test over every route.
+  - Remaining: A5 audit table implements `store.AuditWriter` and `serve` uses it; A2/A4 install authenticators (and the first-administrator bootstrap); recent re-authentication for user management (A2); OIDC provisioning policy (A6, D16); A7 admin screens; Terraform coverage of users (D18).
+
 ## Next (first wave)
 
 - **F2 Configuration system**: YAML, environment and `.env` configuration, `.env.example`.

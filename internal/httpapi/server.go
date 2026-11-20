@@ -28,13 +28,15 @@ type Server struct {
 	api       *http.ServeMux
 	apiMW     []func(http.Handler) http.Handler
 	apiRoutes []Route
+	authn     []Authenticator
 }
 
-// Route is a registered API route: an HTTP method and a ServeMux path
-// pattern such as "/api/v1/examples/{id}".
+// Route is a registered API route: an HTTP method, a ServeMux path pattern
+// such as "/api/v1/examples/{id}", and who may call it.
 type Route struct {
 	Method string
 	Path   string
+	Access Access
 }
 
 func (r Route) String() string { return r.Method + " " + r.Path }
@@ -53,8 +55,9 @@ func WithUI(h http.Handler) Option { return func(s *Server) { s.ui = h } }
 // one outermost. It runs after route matching (r.Pattern is set) and never for
 // the 404 and 405 answers of unmatched API requests.
 //
-// This is where authentication and grant checks plug in (tasks A1-A4); until
-// then no middleware is installed and the API is unauthenticated.
+// Authentication and grant checks are not middleware: they come from the
+// access rule of each route ([Server.HandleAPI], [WithAuthenticators]) and run
+// before these.
 func WithAPIMiddleware(mw ...func(http.Handler) http.Handler) Option {
 	return func(s *Server) { s.apiMW = append(s.apiMW, mw...) }
 }
@@ -107,24 +110,36 @@ func (s *Server) chain(h http.Handler) http.Handler {
 	return requestIDMiddleware(h)
 }
 
-// Handle registers a route pattern (net/http ServeMux syntax). A pattern
-// whose path is /api or below goes to the API mux: it must name a method, must
-// not have a host, and its handler is wrapped in the API middleware.
+// Handle registers a route pattern (net/http ServeMux syntax) outside /api.
+// API routes are registered with [Server.HandleAPI]; Handle panics on them.
 func (s *Server) Handle(pattern string, h http.Handler) {
 	path := routeOf(pattern)
+	if path == "/api" || strings.HasPrefix(path, "/api/") {
+		panic(fmt.Sprintf("httpapi: API route %q must be registered with HandleAPI and an access rule", pattern))
+	}
+	s.mux.Handle(pattern, routed(pattern, h))
+}
+
+// HandleAPI registers an API route: the pattern must be "METHOD /api/..."
+// without a host. Its handler runs only for callers that a allows
+// (authentication, then the grant; ADR-0019), inside the API middleware. A
+// state-changing method guarded by a read grant panics.
+func (s *Server) HandleAPI(pattern string, a Access, h http.Handler) {
+	path := routeOf(pattern)
 	if path != "/api" && !strings.HasPrefix(path, "/api/") {
-		s.mux.Handle(pattern, routed(pattern, h))
-		return
+		panic(fmt.Sprintf("httpapi: HandleAPI route %q is not under /api", pattern))
 	}
 	method, rest, ok := strings.Cut(strings.TrimSpace(pattern), " ")
 	if !ok || strings.TrimSpace(rest) != path {
 		panic(fmt.Sprintf("httpapi: API route %q must be \"METHOD /api/...\" without a host", pattern))
 	}
+	checkAccess(method, a)
+	h = s.authorize(a, h)
 	for i := len(s.apiMW) - 1; i >= 0; i-- {
 		h = s.apiMW[i](h)
 	}
 	s.api.Handle(pattern, routed(pattern, h))
-	s.apiRoutes = append(s.apiRoutes, Route{Method: method, Path: path})
+	s.apiRoutes = append(s.apiRoutes, Route{Method: method, Path: path, Access: a})
 }
 
 // APIRoutes returns the registered routes under prefix (for example

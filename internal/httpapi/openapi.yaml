@@ -37,6 +37,17 @@ info:
       member is unchanged, `null` clears an optional member, and nested
       objects merge member by member.
     - **Errors** use the `Error` envelope with a stable `code`.
+    - **Access** (ADR-0019). Each operation states in `x-ledger-access`
+      who may call it: `public` (no credentials), `authenticated` (any
+      signed-in user or API token) or a grant `resource:action` such as
+      `users:write`. A write grant also allows reading the same resource.
+      No credentials, or wrong ones, is 401 `unauthenticated`; a missing
+      grant is 403 `forbidden`. The `administrator` role holds every
+      grant; `read-only` holds read on every resource that is not
+      administrative and never a write. API tokens carry their own grants,
+      limited by their owner's current role. `GET /grants` lists the
+      vocabulary. Sign-in sessions and API tokens are not available yet, so
+      every operation that is not `public` currently answers 401.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -46,6 +57,7 @@ paths:
   /openapi.json:
     get:
       operationId: getOpenAPIJSON
+      x-ledger-access: public
       summary: This document as JSON
       tags: [meta]
       responses:
@@ -60,6 +72,7 @@ paths:
   /openapi.yaml:
     get:
       operationId: getOpenAPIYAML
+      x-ledger-access: public
       summary: This document as YAML
       tags: [meta]
       responses:
@@ -71,9 +84,209 @@ paths:
                 type: string
         default:
           $ref: "#/components/responses/Error"
+  /me:
+    get:
+      operationId: getMe
+      x-ledger-access: authenticated
+      summary: Who the request acts as
+      description: The principal of the request and its effective grants, as evaluated for this request.
+      tags: [access]
+      responses:
+        "200":
+          description: The principal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        default:
+          $ref: "#/components/responses/Error"
+  /grants:
+    get:
+      operationId: getGrantVocabulary
+      x-ledger-access: authenticated
+      summary: The grant vocabulary and roles
+      description: Every resource with its actions, and every role with the grants it holds. API tokens and MCP tools use the same grants.
+      tags: [access]
+      responses:
+        "200":
+          description: The vocabulary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrantVocabulary"
+        default:
+          $ref: "#/components/responses/Error"
+  /users:
+    get:
+      operationId: listUsers
+      x-ledger-access: users:read
+      summary: List users
+      tags: [users]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: role
+          in: query
+          description: Only users with these roles (repeat for any of several).
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/Role"
+        - name: disabled
+          in: query
+          description: Only disabled (true) or enabled (false) users.
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: username[prefix]
+          in: query
+          description: Only users whose username starts with this text.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: One page of users in ID order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/User"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createUser
+      x-ledger-access: users:write
+      summary: Create a user
+      description: |
+        Creates an enabled user with a role. Audited (user.created). A taken
+        username is a 409 conflict. Credentials (password, 2FA, OIDC link) are
+        set up separately.
+      tags: [users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, role]
+              properties:
+                username:
+                  $ref: "#/components/schemas/Username"
+                display_name:
+                  description: Optional; null is the same as leaving it out.
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 100
+                role:
+                  $ref: "#/components/schemas/Role"
+      responses:
+        "201":
+          description: Created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        default:
+          $ref: "#/components/responses/Error"
+  /users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getUser
+      x-ledger-access: users:read
+      summary: Get a user
+      tags: [users]
+      responses:
+        "200":
+          description: The user.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateUser
+      x-ledger-access: users:write
+      summary: Change, disable or re-enable a user, or change their role
+      description: |
+        A JSON Merge Patch (RFC 7396, ADR-0015, ADR-0017). display_name is
+        optional (null clears it); username, role and disabled are required
+        and cannot be null. Requires the version in If-Match or the body; a
+        stale version is a 409 version_conflict with reconciliation. An empty
+        patch is a no-op. Role changes (user.role_changed with from and to),
+        disabling (user.disabled), re-enabling (user.enabled) and profile
+        changes (user.updated) are audited. A change that would leave no
+        enabled administrator is a 409 conflict. Users are never deleted:
+        disable them instead, which keeps audit history and token ownership
+        intact. A disabled user's sessions and tokens stop working on their
+        next request.
+      tags: [users]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                username:
+                  $ref: "#/components/schemas/Username"
+                display_name:
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 100
+                role:
+                  $ref: "#/components/schemas/Role"
+                disabled:
+                  type: boolean
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The changed user.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: meta
     description: The API description itself.
+  - name: access
+    description: Who the caller is and the grant vocabulary.
+  - name: users
+    description: User accounts and roles (administrative).
 components:
   parameters:
     Limit:
@@ -110,6 +323,99 @@ components:
       schema:
         type: string
   schemas:
+    Role:
+      type: string
+      enum: [administrator, read-only]
+      description: A user's role. administrator holds every grant; read-only holds read on non-administrative resources only.
+    Grant:
+      type: string
+      description: A grant, "resource:action". See GET /grants.
+      pattern: "^[a-z][a-z0-9_]*:[a-z]+$"
+      examples: ["users:read"]
+    Username:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: "^[a-z0-9][a-z0-9._-]*$"
+    User:
+      type: object
+      required: [id, username, display_name, role, disabled, disabled_at, version, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        username:
+          $ref: "#/components/schemas/Username"
+        display_name:
+          type: [string, "null"]
+        role:
+          $ref: "#/components/schemas/Role"
+        disabled:
+          type: boolean
+        disabled_at:
+          type: [string, "null"]
+          format: date-time
+        version:
+          $ref: "#/components/schemas/Version"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Principal:
+      type: object
+      required: [kind, user_id, token_id, role, grants]
+      properties:
+        kind:
+          type: string
+          enum: [user, token]
+        user_id:
+          $ref: "#/components/schemas/ID"
+        token_id:
+          description: Set for API tokens only.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        role:
+          $ref: "#/components/schemas/Role"
+        grants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Grant"
+    GrantVocabulary:
+      type: object
+      required: [resources, roles]
+      properties:
+        resources:
+          type: array
+          items:
+            type: object
+            required: [name, description, actions, admin_only]
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+              actions:
+                type: array
+                items:
+                  type: string
+                  enum: [read, write]
+              admin_only:
+                type: boolean
+                description: Not readable by the read-only role.
+        roles:
+          type: array
+          items:
+            type: object
+            required: [name, grants]
+            properties:
+              name:
+                $ref: "#/components/schemas/Role"
+              grants:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Grant"
     ID:
       type: string
       description: A ULID.

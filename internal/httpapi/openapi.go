@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
 // APIPrefix is the base path of version 1 of the Management API. A
@@ -40,15 +42,22 @@ func yamlToJSON(doc []byte) ([]byte, error) {
 	return out, nil
 }
 
+// Deps are what the API handlers call. Every field must be set to serve
+// requests; TestOpenAPIContract registers the routes with zero Deps and never
+// calls them.
+type Deps struct {
+	Users users.Store
+}
+
 // RegisterAPI registers every route of the Management API under [APIPrefix].
 // ledger serve calls it, and TestOpenAPIContract compares what it registers
 // with openapi.yaml, so every /api/v1 route must be registered here.
 //
-// Authentication and grants (tasks A1-A4) plug in through
-// [WithAPIMiddleware]; until then these routes are unauthenticated. The API
-// description is public: it is the same document as in the source repository.
-func RegisterAPI(s *Server) {
-	s.Handle("GET "+APIPrefix+"/openapi.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// Every route declares its access (ADR-0019) and openapi.yaml documents it as
+// x-ledger-access. The API description is public: it is the same document as
+// in the source repository.
+func RegisterAPI(s *Server, d Deps) {
+	s.HandleAPI("GET "+APIPrefix+"/openapi.json", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		doc, err := OpenAPIJSON()
 		if err != nil {
 			WriteError(w, r, Internal(err))
@@ -56,9 +65,11 @@ func RegisterAPI(s *Server) {
 		}
 		writeDoc(w, "application/json", doc)
 	}))
-	s.Handle("GET "+APIPrefix+"/openapi.yaml", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s.HandleAPI("GET "+APIPrefix+"/openapi.yaml", Public(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeDoc(w, "application/yaml", OpenAPIYAML())
 	}))
+	registerAuthz(s)
+	registerUsers(s, d.Users)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {
@@ -75,8 +86,9 @@ var pathParam = regexp.MustCompile(`\{([^}]*)\}`)
 // CheckContract compares an OpenAPI document with registered routes. It
 // returns one line per problem: a route the document lacks, a documented
 // operation with no route, an unresolvable $ref, a missing or duplicate
-// operationId, an undeclared path parameter, or an operation without the
-// shared error response. Routes must lie under the document's first server URL.
+// operationId, an undeclared path parameter, an operation without the
+// shared error response, or an x-ledger-access that differs from the route's
+// access rule (ADR-0019). Routes must lie under the document's first server URL.
 func CheckContract(doc []byte, routes []Route) []string {
 	var problems []string
 	var root map[string]any
@@ -107,6 +119,7 @@ func CheckContract(doc []byte, routes []Route) []string {
 	})
 
 	documented := map[string]bool{}
+	access := map[string]string{}
 	opIDs := map[string]string{}
 	paths, _ := root["paths"].(map[string]any)
 	for p, item := range paths {
@@ -118,6 +131,7 @@ func CheckContract(doc []byte, routes []Route) []string {
 			}
 			key := strings.ToUpper(m) + " " + base + p
 			documented[key] = true
+			access[key], _ = op["x-ledger-access"].(string)
 			id, _ := op["operationId"].(string)
 			switch {
 			case id == "":
@@ -163,6 +177,8 @@ func CheckContract(doc []byte, routes []Route) []string {
 		registered[r.String()] = true
 		if !documented[r.String()] {
 			problems = append(problems, r.String()+": registered but not documented in the OpenAPI document")
+		} else if got, want := access[r.String()], r.Access.String(); got != want {
+			problems = append(problems, fmt.Sprintf("%s: x-ledger-access is %q, the route requires %q", r, got, want))
 		}
 	}
 	for key := range documented {

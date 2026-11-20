@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	"github.com/aurimasniekis/go-ledger/internal/store/users"
 	"github.com/aurimasniekis/go-ledger/internal/web"
 )
 
@@ -153,7 +155,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)))
-	httpapi.RegisterAPI(srv)
+	registerAPI(srv, db, log)
+	// Sign-in sessions and API tokens arrive with their own tasks; until an
+	// authenticator is installed, every non-public API route answers 401.
+	log.Warn("no API authentication method is available yet; API routes other than the API description answer 401")
 
 	// Metrics and health are unauthenticated. They go on a separate
 	// management listener (loopback by default), or on the main one when
@@ -233,6 +238,15 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		<-pulseDone
 	}
 	return code
+}
+
+// registerAPI registers the Management API with its dependencies. The audit
+// log table does not exist yet, so audit events go to the structured log
+// (store.LogAudit) until it does.
+func registerAPI(srv *httpapi.Server, db *store.DB, log *slog.Logger) {
+	httpapi.RegisterAPI(srv, httpapi.Deps{
+		Users: users.New(db, store.LogAudit(log), nil, nil),
+	})
 }
 
 // registerOps adds /metrics, /healthz and /readyz.
