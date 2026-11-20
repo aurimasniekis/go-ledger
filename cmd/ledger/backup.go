@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
@@ -139,16 +140,25 @@ func runRestore(args []string, stdout, stderr io.Writer, env opsEnv) int {
 	}
 	defer func() { _ = lock.Close() }()
 	res, err := store.Restore(context.Background(), backup, cfg.Database.Path, *force, env.now())
-	if err != nil {
+	if err != nil && !res.Placed {
 		say(stderr, "ledger restore: "+err.Error())
 		if errors.Is(err, store.ErrRestoreTargetExists) {
 			say(stderr, "ledger restore: re-run with --force to move the current database aside and restore")
 		}
 		return 1
 	}
+	// The restored database is in place. A later error (the directory sync)
+	// still gets the report of what was moved aside, then exits non-zero.
 	say(stdout, fmt.Sprintf("restored %s (schema version %04d) to %s", res.Backup.Path, res.Backup.SchemaVersion, cfg.Database.Path))
 	if res.MovedAside != "" {
 		say(stdout, "previous database kept at "+res.MovedAside)
+	}
+	if len(res.StaleMoved) > 0 {
+		say(stdout, "stale WAL/SHM/journal moved to "+strings.Join(res.StaleMoved, ", ")+" (there was no database)")
+	}
+	if err != nil {
+		say(stderr, "ledger restore: "+err.Error())
+		return 1
 	}
 	say(stdout, "start ledger serve to apply any newer migrations (an automatic pre-migration backup is written first)")
 	return 0
