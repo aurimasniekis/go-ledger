@@ -9,7 +9,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 )
 
-// Access is what an API route requires (ADR-0019). Every /api route declares
+// Access is what an API route requires (ADR-0021). Every /api route declares
 // one when it is registered ([Server.HandleAPI]); there is no default, so a
 // route cannot be added without deciding who may call it.
 type Access struct {

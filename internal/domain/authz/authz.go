@@ -1,4 +1,4 @@
-// Package authz is Ledger's permission vocabulary (ADR-0019): resources,
+// Package authz is Ledger's permission vocabulary (ADR-0021): resources,
 // actions, grants, roles and the principal a request acts as.
 //
 // One vocabulary serves every entry point. HTTP routes declare the grant they

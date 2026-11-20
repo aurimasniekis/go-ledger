@@ -10,7 +10,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 )
 
-// AuditWriter records audit events (ADR-0019). Writes call it inside their
+// AuditWriter records audit events (ADR-0021). Writes call it inside their
 // own transaction, after the change and before commit, so a change and its
 // audit entry are kept or lost together once the audit log has a table (task
 // A5 implements this port with an append-only table).

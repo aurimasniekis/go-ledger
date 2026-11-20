@@ -1,4 +1,4 @@
-// Package users persists user accounts (task A1, ADR-0019) in the table of
+// Package users persists user accounts (task A1, ADR-0021) in the table of
 // migration 0005_users. It implements [users.Store]: every write runs in one
 // transaction that checks the last-administrator invariant and records its
 // audit events through a [store.AuditWriter].

@@ -53,7 +53,7 @@ type Deps struct {
 // ledger serve calls it, and TestOpenAPIContract compares what it registers
 // with openapi.yaml, so every /api/v1 route must be registered here.
 //
-// Every route declares its access (ADR-0019) and openapi.yaml documents it as
+// Every route declares its access (ADR-0021) and openapi.yaml documents it as
 // x-ledger-access. The API description is public: it is the same document as
 // in the source repository.
 func RegisterAPI(s *Server, d Deps) {
@@ -88,7 +88,7 @@ var pathParam = regexp.MustCompile(`\{([^}]*)\}`)
 // operation with no route, an unresolvable $ref, a missing or duplicate
 // operationId, an undeclared path parameter, an operation without the
 // shared error response, or an x-ledger-access that differs from the route's
-// access rule (ADR-0019). Routes must lie under the document's first server URL.
+// access rule (ADR-0021). Routes must lie under the document's first server URL.
 func CheckContract(doc []byte, routes []Route) []string {
 	var problems []string
 	var root map[string]any

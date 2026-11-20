@@ -37,7 +37,7 @@ info:
       member is unchanged, `null` clears an optional member, and nested
       objects merge member by member.
     - **Errors** use the `Error` envelope with a stable `code`.
-    - **Access** (ADR-0019). Each operation states in `x-ledger-access`
+    - **Access** (ADR-0021). Each operation states in `x-ledger-access`
       who may call it: `public` (no credentials), `authenticated` (any
       signed-in user or API token) or a grant `resource:action` such as
       `users:write`. A write grant also allows reading the same resource.

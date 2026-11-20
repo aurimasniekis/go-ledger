@@ -1,4 +1,4 @@
-// Package users holds the rules for user accounts (task A1, ADR-0019):
+// Package users holds the rules for user accounts (task A1, ADR-0021):
 // usernames, roles, disabling, and the invariant that an instance never loses
 // its last active administrator. Credentials (passwords, TOTP, OIDC links,
 // sessions) belong to later tasks and live in their own tables.

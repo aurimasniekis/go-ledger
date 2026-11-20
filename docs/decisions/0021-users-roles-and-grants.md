@@ -1,4 +1,4 @@
-# ADR-0019: Users, roles and the grant vocabulary
+# ADR-0021: Users, roles and the grant vocabulary
 
 Status: Accepted (2026-11-20)
 

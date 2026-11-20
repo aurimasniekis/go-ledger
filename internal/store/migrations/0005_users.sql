@@ -1,4 +1,4 @@
--- Users and roles (A1, ADR-0019). One row per user account. Credentials
+-- Users and roles (A1, ADR-0021). One row per user account. Credentials
 -- (password hashes, TOTP, OIDC links, sessions, API tokens) live in their own
 -- tables, added by later migrations. Users are disabled, never deleted, so
 -- audit entries and token ownership keep pointing at a real row.

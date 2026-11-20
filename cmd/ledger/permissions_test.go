@@ -25,7 +25,7 @@ import (
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
 
-// permissionMatrix is the access every /api route must have (ADR-0019). It is
+// permissionMatrix is the access every /api route must have (ADR-0021). It is
 // written out by hand, so adding a route or changing its access needs a
 // deliberate change here; TestPermissionMatrixCoversEveryRoute fails otherwise.
 var permissionMatrix = map[string]string{

@@ -1,4 +1,4 @@
-// Package audit defines audit events (ADR-0019): who did what to which
+// Package audit defines audit events (ADR-0021): who did what to which
 // object. The audit log itself (table, writer, read API) is task A5; until it
 // lands, store.AuditWriter is the port features write through, in the same
 // transaction as the change they record.
