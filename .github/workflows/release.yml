@@ -1,0 +1,174 @@
+# Release pipeline (F10, ADR-0018). A tag push (v*) builds, publishes the container images (publish-images fails if the
+# Docker Hub secret is missing), and creates a draft GitHub Release. A workflow_dispatch run is a dry run: it builds the artefacts and never
+# publishes. Top-level permissions are read-only. Only github-release requests a write scope (contents: write), and
+# scripts/check-workflow-permissions.sh enforces that it stays a job-level block limited to a tag push.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Tool versions are pinned here and changed deliberately (ADR-0018), installed from source as in ci.yml (ADR-0007).
+  GORELEASER_VERSION: v2.20.3
+  SYFT_VERSION: v1.57.2
+  # Frontend toolchain (ADR-0008), the same versions as ci.yml.
+  NODE_VERSION: 24.19.0
+  PNPM_VERSION: 12.21.0
+
+jobs:
+  build:
+    name: build release artefacts (dry run unless tagged)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # GoReleaser reads the tag and the commit history.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          # No dependency cache in a release job: a cache written by one run must never feed a published artefact.
+          cache: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - name: Install GoReleaser and syft (pinned, from source)
+        run: |
+          GOBIN="$RUNNER_TEMP/tools" go install "github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}"
+          GOBIN="$RUNNER_TEMP/tools" go install "github.com/anchore/syft/cmd/syft@${SYFT_VERSION}"
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+      - name: Check the GoReleaser configuration
+        run: goreleaser check
+      # Without a tag (a dispatch) the run is a snapshot. --skip=publish keeps the images local and pushes nothing.
+      - name: Build binaries, archives, checksums, SBOMs and images (no publishing)
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            goreleaser release --clean --skip=publish
+          else
+            goreleaser release --snapshot --clean --skip=publish
+          fi
+      - name: Upload the artefacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ledger-release-${{ github.run_id }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-images:
+    name: publish container images (Docker Hub)
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Waits for approval (required reviewers); DOCKERHUB_TOKEN is an environment secret (ADR-0018). The token check
+    # runs here, inside the environment, so it sees the secret; a missing token fails the job instead of skipping it.
+    environment: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check that DOCKERHUB_TOKEN is set (its value is never printed)
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::DOCKERHUB_TOKEN is not set in the release environment, so no container image was published"
+            exit 1
+          fi
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - name: Install GoReleaser and syft (pinned, from source)
+        run: |
+          GOBIN="$RUNNER_TEMP/tools" go install "github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}"
+          GOBIN="$RUNNER_TEMP/tools" go install "github.com/anchore/syft/cmd/syft@${SYFT_VERSION}"
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: printf '%s' "$DOCKERHUB_TOKEN" | docker login --username aurimasniekis --password-stdin docker.io
+      # The same tag builds the same binaries again. The env turns off the GitHub Release (.goreleaser.yaml, release.disable).
+      - name: Build and push the images
+        env:
+          LEDGER_DISABLE_GITHUB_RELEASE: "true"
+        run: goreleaser release --clean --skip=announce
+
+  github-release:
+    name: create the draft GitHub Release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Waits for approval (required reviewers) before the draft release is created (ADR-0018).
+    environment: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      # The only write scope in the repository (ADR-0018). It is a job-level block, limited to tag pushes.
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go from go.mod
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - name: Install GoReleaser and syft (pinned, from source)
+        run: |
+          GOBIN="$RUNNER_TEMP/tools" go install "github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}"
+          GOBIN="$RUNNER_TEMP/tools" go install "github.com/anchore/syft/cmd/syft@${SYFT_VERSION}"
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+      # The release is a draft (.goreleaser.yaml): a person reviews the artefacts and publishes it.
+      - name: Create the draft release with binaries and checksums
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: goreleaser release --clean --skip=docker,announce
