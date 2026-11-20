@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 )
 
 // resolveSecretFiles reads a secret named by a *_file key into its value field.
@@ -83,8 +85,8 @@ func (c *Config) validate(sources map[string]string) []Problem {
 		bad("database.path", "must not be empty")
 	}
 	if tz := c.Reporting.Timezone; tz != "" {
-		if _, err := time.LoadLocation(tz); err != nil {
-			bad("reporting.timezone", fmt.Sprintf("unknown IANA time zone %q", tz))
+		if _, err := calendar.LoadZone(tz); err != nil { // same rules as the zone the app builds: "Local" is refused
+			bad("reporting.timezone", err.Error())
 		}
 	}
 	if c.KEK.Value == "" && c.KEK.File == "" {
