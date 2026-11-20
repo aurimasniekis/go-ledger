@@ -19,5 +19,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0015: API conventions amendments](0015-api-conventions-amendments.md)
 - [ADR-0016: Pulse publisher](0016-pulse-publisher.md)
 - [ADR-0017: Merge patch is RFC 7396](0017-merge-patch-recursion.md)
+- [ADR-0018: Release workflow and container image](0018-release-workflow.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.
