@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/health"
@@ -14,6 +16,8 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/metrics"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
+	"github.com/aurimasniekis/go-ledger/internal/reporting"
+	"github.com/aurimasniekis/go-ledger/internal/store"
 )
 
 // serveEnv carries what tests replace: the environment and file system, and a
@@ -21,6 +25,10 @@ import (
 type serveEnv struct {
 	Options   config.Options
 	Listening func(net.Addr)
+	// Reporting replaces the reporting-zone host lookup in tests.
+	Reporting reporting.Options
+	// AfterOpen, in tests, receives the open store (for example to break it).
+	AfterOpen func(*store.DB)
 	// ManagementListening learns the address of the management listener, when
 	// there is one.
 	ManagementListening func(net.Addr)
@@ -78,6 +86,36 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		log.Warn("unknown LEDGER_ variable is ignored; check the spelling", "variable", n)
 	}
 
+	// Open the database first: a store or zone problem must stop startup
+	// before the port is bound.
+	if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0o700); err != nil {
+		log.Error("cannot create the database directory", "path", cfg.Database.Path, "error", err.Error())
+		return 1
+	}
+	db, err := store.Open(ctx, cfg.Database.Path, store.Options{BusyTimeout: cfg.Database.BusyTimeout})
+	if err != nil {
+		log.Error("cannot open the database", "path", cfg.Database.Path, "error", err.Error())
+		return 1
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Warn("closing the database failed", "error", err.Error())
+		}
+	}()
+	log.Info("database ready", "path", db.Path(), "schema_version", db.SchemaVersion())
+
+	if env.AfterOpen != nil {
+		env.AfterOpen(db)
+	}
+
+	zone, err := reporting.Resolve(ctx, db, cfg.Reporting.Timezone, log, env.Reporting)
+	if err != nil {
+		log.Error("cannot determine the reporting time zone", "error", err.Error())
+		return 1
+	}
+	// TODO: hand zone to the services that need it (monthly view, recurrence).
+	_ = zone
+
 	ln, err := net.Listen("tcp", cfg.HTTP.Listen)
 	if err != nil {
 		log.Error("cannot listen", "address", cfg.HTTP.Listen, "error", err.Error())
@@ -90,11 +128,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 
 	app := metrics.NewApp(version)
 	ready := health.NewReadiness(log)
-	// TODO(F11: wire store into serve): open the SQLite store before this point and register its
-	// check: ready.Add(health.Func("database", db.PingContext)). Per D17,
-	// readiness gates only on the database; optional integrations belong on a
-	// status endpoint, never here. Until then the list is empty and /readyz
-	// reports ready with no checks.
+	// Per D17, readiness gates only on the database; optional integrations belong on a
+	// status endpoint, never here.
+	ready.Add(health.Func("database", db.Ping))
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app))
 
 	// Metrics and health are unauthenticated. They go on a separate

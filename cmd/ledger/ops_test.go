@@ -5,22 +5,27 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aurimasniekis/go-ledger/internal/reporting"
+	"github.com/aurimasniekis/go-ledger/internal/store"
 )
 
 // startServe runs "ledger serve" with args and returns the main and management
 // addresses (management is nil when there is no such listener).
-func startServe(t *testing.T, args ...string) (main, mgmt net.Addr, errOut *syncBuffer) {
+func startOps(t *testing.T, args ...string) (main, mgmt net.Addr, errOut *syncBuffer) {
 	t.Helper()
-	opts := testOpts(map[string]string{"LEDGER_KEK_VALUE": cmdSentinel}, nil)
+	opts := testOpts(map[string]string{"LEDGER_KEK_VALUE": cmdSentinel,
+		"LEDGER_DATABASE_PATH": filepath.Join(t.TempDir(), "ledger.db")}, nil)
 	errOut = &syncBuffer{}
 	mainc, mgmtc := make(chan net.Addr, 1), make(chan net.Addr, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	go func() {
-		done <- runServe(ctx, args, errOut, serveEnv{Options: opts,
+		done <- runServe(ctx, args, errOut, serveEnv{Options: opts, Reporting: reporting.Options{HostZoneName: hostIs("UTC")},
 			Listening:           func(a net.Addr) { mainc <- a },
 			ManagementListening: func(a net.Addr) { mgmtc <- a }})
 	}()
@@ -58,7 +63,7 @@ func fetch(t *testing.T, addr net.Addr, path string) (int, string) {
 }
 
 func TestManagementListenerServesOpsEndpoints(t *testing.T) {
-	main, mgmt, _ := startServe(t, "--http.listen=127.0.0.1:0", "--http.management_listen=127.0.0.1:0")
+	main, mgmt, _ := startOps(t, "--http.listen=127.0.0.1:0", "--http.management_listen=127.0.0.1:0")
 	if mgmt == nil {
 		t.Fatal("no management listener")
 	}
@@ -72,8 +77,8 @@ func TestManagementListenerServesOpsEndpoints(t *testing.T) {
 	if code, _ := fetch(t, mgmt, "/healthz"); code != 200 {
 		t.Errorf("healthz %d", code)
 	}
-	if code, _ := fetch(t, mgmt, "/readyz"); code != 200 {
-		t.Errorf("readyz %d", code)
+	if code, body := fetch(t, mgmt, "/readyz"); code != 200 || !strings.Contains(body, `"database":"ok"`) {
+		t.Errorf("readyz %d %s", code, body)
 	}
 	// The main listener does not expose them.
 	for _, p := range []string{"/metrics", "/healthz", "/readyz"} {
@@ -84,7 +89,7 @@ func TestManagementListenerServesOpsEndpoints(t *testing.T) {
 }
 
 func TestEmptyManagementListenUsesMainListener(t *testing.T) {
-	main, mgmt, errOut := startServe(t, "--http.listen=127.0.0.1:0", "--http.management_listen=")
+	main, mgmt, errOut := startOps(t, "--http.listen=127.0.0.1:0", "--http.management_listen=")
 	if mgmt != nil {
 		t.Fatal("unexpected management listener")
 	}
@@ -99,11 +104,48 @@ func TestEmptyManagementListenUsesMainListener(t *testing.T) {
 }
 
 func TestNonLoopbackManagementListenerWarns(t *testing.T) {
-	_, mgmt, errOut := startServe(t, "--http.listen=127.0.0.1:0", "--http.management_listen=0.0.0.0:0")
+	_, mgmt, errOut := startOps(t, "--http.listen=127.0.0.1:0", "--http.management_listen=0.0.0.0:0")
 	if mgmt == nil {
 		t.Fatal("no management listener")
 	}
 	if !strings.Contains(errOut.String(), "keep it off public interfaces") {
 		t.Errorf("no warning in log:\n%s", errOut.String())
+	}
+}
+
+func TestReadyzNamesDatabaseAndFailsWhenUnreachable(t *testing.T) {
+	opts := testOpts(map[string]string{"LEDGER_KEK_VALUE": cmdSentinel,
+		"LEDGER_DATABASE_PATH": filepath.Join(t.TempDir(), "ledger.db")}, nil)
+	errOut := &syncBuffer{}
+	addrc := make(chan net.Addr, 1)
+	var db *store.DB
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() {
+		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0", "--http.management_listen="}, errOut, serveEnv{
+			Options: opts, Reporting: reporting.Options{HostZoneName: hostIs("UTC")},
+			Listening: func(a net.Addr) { addrc <- a },
+			AfterOpen: func(d *store.DB) { db = d },
+		})
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+	var addr net.Addr
+	select {
+	case addr = <-addrc:
+	case code := <-done:
+		t.Fatalf("exited %d: %s", code, errOut.String())
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not start")
+	}
+	if code, body := fetch(t, addr, "/readyz"); code != 200 || !strings.Contains(body, `"database":"ok"`) {
+		t.Fatalf("readyz %d %s", code, body)
+	}
+	_ = db.Close() // the database becomes unreachable
+	code, body := fetch(t, addr, "/readyz")
+	if code != 503 || !strings.Contains(body, `"database":"failed"`) {
+		t.Errorf("readyz with a closed database: %d %s", code, body)
+	}
+	if code, _ := fetch(t, addr, "/healthz"); code != 200 {
+		t.Errorf("healthz must not depend on the database: %d", code)
 	}
 }
