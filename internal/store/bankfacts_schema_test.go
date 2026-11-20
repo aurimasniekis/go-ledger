@@ -49,6 +49,29 @@ func TestNoForeignKeyCascadesFromBankFacts(t *testing.T) {
 }
 
 func init() {
+	fixtureChecks["0004_bank_facts.sql"] = func(t *testing.T, db *DB) {
+		ctx := context.Background()
+		err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
+			for table, want := range map[string]int{"bank_connections": 1, "bank_accounts": 1, "bank_balance_snapshots": 1, "bank_transactions": 2, "outbox": 2} {
+				if n := queryInt(t, tx, "SELECT count(*) FROM "+table); n != want {
+					t.Errorf("%s has %d rows after upgrade, want %d from the fixture", table, n, want)
+				}
+			}
+			for _, table := range []string{"bank_refresh_runs", "bank_account_sync"} {
+				if n := queryInt(t, tx, "SELECT count(*) FROM "+table); n != 0 {
+					t.Errorf("%s has %d rows after upgrade, want an empty table", table, n)
+				}
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM bank_transactions WHERE no_longer_reported_at IS NULL AND superseded_by IS NULL"); n != 2 {
+				t.Errorf("upgrade changed transaction state: %d open rows", n)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	fixtureChecks["0003_outbox.sql"] = func(t *testing.T, db *DB) {
 		ctx := context.Background()
 		err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {

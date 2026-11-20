@@ -34,6 +34,8 @@ type Provider struct {
 	fail   []error
 	down   error
 	calls  []Call
+	gate   chan struct{}
+	raw    []fx.Quote
 }
 
 var _ fx.Provider = (*Provider)(nil)
@@ -86,10 +88,36 @@ func (p *Provider) Calls() []Call {
 	return append([]Call(nil), p.calls...)
 }
 
-func (p *Provider) answer(c Call) ([]fx.Quote, error) {
+// SetRaw makes every call answer with quotes verbatim (until SetRaw(nil)),
+// for malformed answers the normal publishing rules cannot produce, such as
+// two values for one rate.
+func (p *Provider) SetRaw(quotes []fx.Quote) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.raw = quotes
+}
+
+// Hold makes every call block after it is recorded until release is called,
+// so a test can hold concurrent conversions inside one provider call.
+func (p *Provider) Hold() (release func()) {
+	gate := make(chan struct{})
+	p.mu.Lock()
+	p.gate = gate
+	p.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(gate) }) }
+}
+
+func (p *Provider) answer(c Call) ([]fx.Quote, error) {
+	p.mu.Lock()
 	p.calls = append(p.calls, c)
+	gate := p.gate
+	p.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if len(p.fail) > 0 {
 		err := p.fail[0]
 		p.fail = p.fail[1:]
@@ -97,6 +125,9 @@ func (p *Provider) answer(c Call) ([]fx.Quote, error) {
 	}
 	if p.down != nil {
 		return nil, p.down
+	}
+	if p.raw != nil {
+		return append([]fx.Quote(nil), p.raw...), nil
 	}
 	// Per pair and source, the newest rate on or before the date.
 	var out []fx.Quote
@@ -160,29 +191,33 @@ var _ fx.Cache = (*Cache)(nil)
 func NewCache() *Cache { return &Cache{rates: map[cacheKey]fx.Rate{}} }
 
 // Save implements [fx.Cache].
-func (c *Cache) Save(_ context.Context, rates []fx.Rate) error {
+func (c *Cache) Save(_ context.Context, rates []fx.Rate) ([]fx.Saved, error) {
 	for _, r := range rates {
 		if err := r.Validate(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	out := make([]fx.Saved, 0, len(rates))
 	for _, r := range rates {
+		r.RetrievedAt, r.FirstRetrievedAt = r.RetrievedAt.UTC(), r.FirstRetrievedAt.UTC()
 		k := cacheKey{r.Provider, r.Source, r.Pair, r.Date}
 		old, ok := c.rates[k]
-		if ok && r.RetrievedAt.Before(old.RetrievedAt) {
+		var s fx.Saved
+		switch {
+		case ok && r.RetrievedAt.Before(old.RetrievedAt):
+			out = append(out, fx.Saved{Rate: old})
 			continue
+		case ok:
+			s = fx.MergeRate(old, r)
+		default:
+			s = fx.Saved{Rate: fx.NewRate(r)}
 		}
-		if ok {
-			r.FirstRetrievedAt = old.FirstRetrievedAt
-		} else if r.FirstRetrievedAt.IsZero() || r.FirstRetrievedAt.After(r.RetrievedAt) {
-			r.FirstRetrievedAt = r.RetrievedAt
-		}
-		r.RetrievedAt, r.FirstRetrievedAt = r.RetrievedAt.UTC(), r.FirstRetrievedAt.UTC()
-		c.rates[k] = r
+		c.rates[k] = s.Rate
+		out = append(out, s)
 	}
-	return nil
+	return out, nil
 }
 
 // Find implements [fx.Cache].

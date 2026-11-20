@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -28,6 +29,11 @@ type Freshness struct {
 // DefaultFreshness is decision D11: refresh daily; a rate is stale after
 // 5 days.
 var DefaultFreshness = Freshness{RefreshAfter: 24 * time.Hour, StaleAfter: 5 * 24 * time.Hour}
+
+// DefaultFailurePause is how long provider calls pause after an unavailable
+// or rate-limited failure that names no delay of its own (bounded by
+// Freshness.RefreshAfter).
+const DefaultFailurePause = 5 * time.Minute
 
 // Validate checks the policy.
 func (f Freshness) Validate() error {
@@ -94,7 +100,9 @@ type Conversion struct {
 	// left exact for a currency without them). Set only for StatusOK.
 	Value money.Money
 	// Exact is the unrounded product From × Rate.Value. Set only for
-	// StatusOK.
+	// StatusOK. Its scale is the amount's plus the rate's (up to 48), beyond
+	// the 24 digits of scale the SQL amount encoding accepts: store the rate
+	// and Value, not Exact.
 	Exact money.Money
 	// Identity is true when From is already in To: no rate was used.
 	Identity bool
@@ -131,6 +139,13 @@ type Options struct {
 	// the service then serves the cache only. Ignored when Provider is set.
 	ProviderName string
 	Source       string
+	// FailurePause is the pause after an unavailable or rate_limited
+	// failure without a RetryAfter: provider calls stop for this long, so an
+	// outage costs one timeout per pause, not one per conversion. Defaults
+	// to [DefaultFailurePause]; never longer than Freshness.RefreshAfter.
+	FailurePause time.Duration
+	// Log receives provider revisions of cached rates; defaults to discard.
+	Log *slog.Logger
 }
 
 // Service converts money using cached rates, refreshing them from the
@@ -143,9 +158,27 @@ type Service struct {
 	fresh    Freshness
 	now      func() time.Time
 
+	failPause time.Duration
+	log       *slog.Logger
+
 	mu         sync.Mutex
 	pauseUntil time.Time
 	pauseErr   error
+	flights    map[flightKey]*flight
+}
+
+// flightKey identifies one provider question: single-flight shares the
+// answer among concurrent callers asking the same pair (and date).
+type flightKey struct {
+	pair Pair
+	date calendar.Date
+}
+
+type flight struct {
+	done chan struct{}
+	rate *Rate
+	perr error
+	err  error
 }
 
 // NewService returns a Service. provider may be nil (cache only).
@@ -153,7 +186,7 @@ func NewService(cache Cache, provider Provider, opts Options) (*Service, error) 
 	if cache == nil {
 		return nil, errors.New("fx: service needs a cache")
 	}
-	s := &Service{cache: cache, provider: provider, fresh: opts.Freshness, now: opts.Now, name: opts.ProviderName, source: opts.Source}
+	s := &Service{cache: cache, provider: provider, fresh: opts.Freshness, now: opts.Now, name: opts.ProviderName, source: opts.Source, failPause: opts.FailurePause, log: opts.Log, flights: map[flightKey]*flight{}}
 	if provider != nil {
 		s.name, s.source = provider.Name(), provider.Source()
 	}
@@ -169,6 +202,13 @@ func NewService(cache Cache, provider Provider, opts Options) (*Service, error) 
 	if s.now == nil {
 		s.now = time.Now
 	}
+	if s.log == nil {
+		s.log = slog.New(slog.DiscardHandler)
+	}
+	if s.failPause <= 0 {
+		s.failPause = DefaultFailurePause
+	}
+	s.failPause = min(s.failPause, s.fresh.RefreshAfter)
 	return s, nil
 }
 
@@ -181,11 +221,6 @@ func (s *Service) Source() string { return s.source }
 func today(now time.Time) calendar.Date {
 	y, m, d := now.UTC().Date()
 	return calendar.MustDate(y, m, d)
-}
-
-// startOfNextDay is midnight UTC after d.
-func startOfNextDay(d calendar.Date) time.Time {
-	return time.Date(d.Year(), d.Month(), d.Day()+1, 0, 0, 0, 0, time.UTC)
 }
 
 func (s *Service) start(from money.Money, to money.Currency) (Conversion, Pair, error) {
@@ -214,7 +249,9 @@ func (s *Service) Convert(ctx context.Context, from money.Money, to money.Curren
 	if err != nil {
 		return Conversion{}, err
 	}
-	if ok && now.Sub(cached.RetrievedAt) < s.fresh.RefreshAfter {
+	// Fresh: retrieved recently, and by a retrieval of the latest rate (it
+	// confirmed the rate through its own day), not a dated one for the past.
+	if ok && now.Sub(cached.RetrievedAt) < s.fresh.RefreshAfter && !cached.Confirmed().Before(today(cached.RetrievedAt)) {
 		return s.result(c, cached, today(now), now, true, nil), nil
 	}
 	fetched, perr, err := s.fetch(ctx, pair, calendar.Date{})
@@ -263,10 +300,11 @@ func (s *Service) ConvertOn(ctx context.Context, from money.Money, to money.Curr
 	if err != nil {
 		return Conversion{}, err
 	}
-	// A cached rate is final for date when it is dated that day, or when the
-	// provider returned it after the day was over: nothing between its date
-	// and date was published.
-	if ok && (cached.Date == date || !cached.RetrievedAt.Before(startOfNextDay(date))) {
+	// A cached rate is final for date when it is dated that day, or when a
+	// retrieval confirmed it through that day (nothing newer was published
+	// up to date). When it was retrieved says nothing about which dates it
+	// covered.
+	if ok && cached.FinalFor(date) {
 		return s.result(c, cached, date, now, true, nil), nil
 	}
 	fetched, perr, err := s.fetch(ctx, pair, date)
@@ -303,7 +341,14 @@ func (s *Service) Refresh(ctx context.Context, base money.Currency, quotes []mon
 	if err != nil {
 		return nil, s.failed(ctx, "latest", err)
 	}
-	return s.store(ctx, q, base, calendar.Date{})
+	rates, err := s.store(ctx, q, base, calendar.Date{})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.mismatch(rates); err != nil {
+		return nil, err
+	}
+	return rates, nil
 }
 
 func (s *Service) notCachedReason() Reason {
@@ -316,11 +361,43 @@ func (s *Service) notCachedReason() Reason {
 // fetch asks the provider for one pair (latest when date is zero) and caches
 // what it returns. perr is a provider failure (the caller serves the cache);
 // err is a cache failure or cancellation. A nil rate with nil errors means
-// the provider publishes nothing for the pair.
+// the provider publishes nothing for the pair. Concurrent calls for the same
+// pair and date share one provider call.
 func (s *Service) fetch(ctx context.Context, pair Pair, date calendar.Date) (rate *Rate, perr, err error) {
 	if s.provider == nil {
 		return nil, errors.New("fx: no rate provider configured"), nil
 	}
+	key := flightKey{pair, date}
+	for {
+		s.mu.Lock()
+		if f, ok := s.flights[key]; ok {
+			s.mu.Unlock()
+			select {
+			case <-f.done:
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+			// The leader's own context ended: ask again for this caller.
+			if f.err != nil && ctx.Err() == nil && (errors.Is(f.err, context.Canceled) || errors.Is(f.err, context.DeadlineExceeded)) {
+				continue
+			}
+			return f.rate, f.perr, f.err
+		}
+		f := &flight{done: make(chan struct{})}
+		s.flights[key] = f
+		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			delete(s.flights, key)
+			s.mu.Unlock()
+			close(f.done)
+		}()
+		f.rate, f.perr, f.err = s.fetchOnce(ctx, pair, date)
+		return f.rate, f.perr, f.err
+	}
+}
+
+func (s *Service) fetchOnce(ctx context.Context, pair Pair, date calendar.Date) (rate *Rate, perr, err error) {
 	if perr := s.paused(); perr != nil {
 		return nil, perr, nil
 	}
@@ -339,6 +416,9 @@ func (s *Service) fetch(ctx context.Context, pair Pair, date calendar.Date) (rat
 		return nil, s.failed(ctx, op, err), nil
 	}
 	rates, err := s.store(ctx, quotes, pair.Base, date)
+	if err == nil {
+		err = s.mismatch(rates)
+	}
 	if err != nil {
 		var pe *ProviderError
 		if errors.As(err, &pe) {
@@ -354,12 +434,33 @@ func (s *Service) fetch(ctx context.Context, pair Pair, date calendar.Date) (rat
 	return nil, nil, nil
 }
 
-// store validates and caches what the provider returned. A malformed answer
-// (wrong base, non-positive rate, a date after the one asked for) is a
-// permanent provider error and nothing from it is cached.
+// mismatch reports an answer that holds rates but none under the configured
+// source: an adapter misconfiguration, which must not look like "the provider
+// publishes no such pair". The rates stay cached under their own source.
+func (s *Service) mismatch(rates []Rate) error {
+	if len(rates) == 0 {
+		return nil
+	}
+	for _, r := range rates {
+		if r.Source == s.source {
+			return nil
+		}
+	}
+	return &ProviderError{Kind: KindPermanent, Provider: s.name, Op: "validate", Code: "source_mismatch",
+		Err: fmt.Errorf("%w: configured source %q, answer holds %q", ErrInvalidRate, s.source, rates[0].Source)}
+}
+
+// store validates and caches what the provider returned and returns the
+// rates as stored. A malformed answer (wrong base, non-positive rate, a date
+// after the one asked for, two different values for one rate) is a permanent
+// provider error and nothing from it is cached. Quotes for currencies that
+// were not asked for are cached too: they are real published rates.
 func (s *Service) store(ctx context.Context, quotes []Quote, base money.Currency, date calendar.Date) ([]Rate, error) {
 	now := s.now().UTC()
 	limit := date
+	// What a retrieval confirms: a dated one, the date asked; a latest one,
+	// today (UTC) as of the retrieval.
+	confirmed := date
 	if limit.IsZero() {
 		// The provider's calendar may run ahead of UTC (a rate dated in its
 		// own zone): allow one day, never more.
@@ -367,17 +468,39 @@ func (s *Service) store(ctx context.Context, quotes []Quote, base money.Currency
 		if limit, err = today(now).AddDays(1); err != nil {
 			return nil, err
 		}
+		confirmed = today(now)
 	}
+	type key struct {
+		source string
+		pair   Pair
+		date   calendar.Date
+	}
+	seen := make(map[key]money.Decimal, len(quotes))
 	rates := make([]Rate, 0, len(quotes))
 	for _, q := range quotes {
-		r := Rate{Provider: s.name, Source: q.Source, Pair: q.Pair, Value: q.Value, Date: q.Date, RetrievedAt: now, FirstRetrievedAt: now}
+		r := Rate{Provider: s.name, Source: q.Source, Pair: q.Pair, Value: q.Value, Date: q.Date, RetrievedAt: now, FirstRetrievedAt: now, ConfirmedThrough: confirmed}
+		if r.ConfirmedThrough.Before(r.Date) {
+			r.ConfirmedThrough = r.Date
+		}
 		err := r.Validate()
+		k := key{q.Source, q.Pair, q.Date}
 		switch {
 		case err != nil:
 		case q.Pair.Base != base:
 			err = fmt.Errorf("%w: asked for base %s, got %s", ErrInvalidRate, base, q.Pair)
 		case q.Date.After(limit):
 			err = fmt.Errorf("%w: %s rate dated %s, after %s", ErrInvalidRate, q.Pair, q.Date, limit)
+		default:
+			if prev, dup := seen[k]; dup {
+				if prev.Cmp(q.Value) != 0 {
+					err = fmt.Errorf("%w: two values for the %s rate of %s", ErrInvalidRate, q.Pair, q.Date)
+				}
+				// An exact repeat adds nothing.
+				if err == nil {
+					continue
+				}
+			}
+			seen[k] = q.Value
 		}
 		if err != nil {
 			return nil, &ProviderError{Kind: KindPermanent, Provider: s.name, Op: "validate", Code: "invalid_rate", Err: err}
@@ -387,10 +510,20 @@ func (s *Service) store(ctx context.Context, quotes []Quote, base money.Currency
 	if len(rates) == 0 {
 		return nil, nil
 	}
-	if err := s.cache.Save(ctx, rates); err != nil {
+	saved, err := s.cache.Save(ctx, rates)
+	if err != nil {
 		return nil, err
 	}
-	return rates, nil
+	out := make([]Rate, len(saved))
+	for i, sv := range saved {
+		out[i] = sv.Rate
+		if rev := sv.Revised; rev != nil {
+			s.log.Warn("fx: provider revised a published rate",
+				"provider", rev.Provider, "source", rev.Source, "pair", rev.Pair.String(), "rate_date", rev.Date.String(),
+				"old", rev.Old.String(), "new", rev.New.String())
+		}
+	}
+	return out, nil
 }
 
 func (s *Service) paused() error {
@@ -402,16 +535,27 @@ func (s *Service) paused() error {
 	return nil
 }
 
-// failed classifies a provider failure and, for a rate limit with a
-// RetryAfter, pauses provider calls until then.
+// failed classifies a provider failure and, for an unavailable or
+// rate-limited one, pauses provider calls: until the provider's RetryAfter
+// (capped at StaleAfter, so a hostile or mistaken value cannot silence
+// refreshes until restart), else for the default failure pause. A permanent
+// failure is specific to the request and pauses nothing.
 func (s *Service) failed(ctx context.Context, op string, err error) error {
 	if cerr := ctx.Err(); cerr != nil {
 		return cerr
 	}
 	pe := classify(s.name, op, err)
-	if pe.Kind == KindRateLimited && pe.RetryAfter > 0 {
+	var pause time.Duration
+	switch pe.Kind {
+	case KindRateLimited, KindUnavailable:
+		pause = s.failPause
+		if pe.Kind == KindRateLimited && pe.RetryAfter > 0 {
+			pause = min(pe.RetryAfter, s.fresh.StaleAfter)
+		}
+	}
+	if pause > 0 {
 		s.mu.Lock()
-		s.pauseUntil = s.now().Add(pe.RetryAfter)
+		s.pauseUntil = s.now().Add(pause)
 		s.pauseErr = pe
 		s.mu.Unlock()
 	}

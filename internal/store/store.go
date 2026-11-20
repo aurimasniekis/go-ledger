@@ -194,11 +194,8 @@ func runMigrations(ctx context.Context, path string, opts Options, known []Migra
 // owner-only permissions. A failed backup fails Open: the migrations do not run.
 func backupBeforeMigrate(ctx context.Context, conn *sql.Conn, path string, from int, at time.Time) error {
 	dest := fmt.Sprintf("%s.pre-v%04d-%s.bak", path, from, at.UTC().Format("20060102T150405.000000000Z"))
-	if _, err := conn.ExecContext(ctx, "VACUUM INTO ?", dest); err != nil {
+	if err := vacuumInto(ctx, conn, dest); err != nil {
 		return fmt.Errorf("store: pre-migration backup to %s: %w", dest, err)
-	}
-	if err := os.Chmod(dest, 0o600); err != nil {
-		return fmt.Errorf("store: pre-migration backup %s: %w", dest, err)
 	}
 	return nil
 }

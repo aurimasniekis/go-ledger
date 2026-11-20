@@ -1,8 +1,11 @@
 package fxtest
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -42,16 +45,17 @@ type rig struct {
 	p     *Provider
 	clock *Clock
 	svc   *fx.Service
+	logs  *bytes.Buffer
 }
 
 func newRig(t *testing.T, cache fx.Cache, withProvider bool) *rig {
 	t.Helper()
-	r := &rig{t: t, ctx: context.Background(), cache: cache, p: NewProvider("frankfurter", "ECB"), clock: NewClock(T0)}
+	r := &rig{t: t, ctx: context.Background(), cache: cache, p: NewProvider("frankfurter", "ECB"), clock: NewClock(T0), logs: &bytes.Buffer{}}
 	var p fx.Provider
 	if withProvider {
 		p = r.p
 	}
-	svc, err := fx.NewService(cache, p, fx.Options{Now: r.clock.Now, ProviderName: "frankfurter", Source: "ECB"})
+	svc, err := fx.NewService(cache, p, fx.Options{Now: r.clock.Now, ProviderName: "frankfurter", Source: "ECB", Log: slog.New(slog.NewTextHandler(r.logs, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +66,7 @@ func newRig(t *testing.T, cache fx.Cache, withProvider bool) *rig {
 // seed caches a frankfurter rate retrieved at "at".
 func (r *rig) seed(pair, value, date string, at time.Time) {
 	r.t.Helper()
-	if err := r.cache.Save(r.ctx, []fx.Rate{rate("frankfurter", pair, value, date, at)}); err != nil {
+	if _, err := r.cache.Save(r.ctx, []fx.Rate{rate("frankfurter", pair, value, date, at)}); err != nil {
 		r.t.Fatal(err)
 	}
 }
@@ -264,7 +268,13 @@ func ServiceSuite(t *testing.T, newCache func(t *testing.T) fx.Cache) {
 		r := newRig(t, newCache(t), true)
 		r.p.Publish("EUR", "USD", "1.1072", "2026-11-16", "blended")
 		c := r.convert("1", "EUR", "USD")
-		expect(t, c, fx.StatusMissing, fx.ReasonNotPublished)
+		// An answer under a source other than the configured one is a
+		// provider error, not "the pair is not published".
+		expect(t, c, fx.StatusMissing, fx.ReasonNotCached)
+		var pe *fx.ProviderError
+		if !errors.As(c.RefreshError, &pe) || pe.Kind != fx.KindPermanent || pe.Code != "source_mismatch" {
+			t.Errorf("RefreshError = %v, want a permanent source_mismatch", c.RefreshError)
+		}
 		got, ok, err := r.cache.Find(r.ctx, "frankfurter", "blended", Pair("EUR", "USD"), calendar.Date{})
 		if err != nil || !ok || got.Value.String() != "1.1072" {
 			t.Errorf("blended rate not cached with its source: %+v ok %v err %v", got, ok, err)
@@ -344,6 +354,194 @@ func ServiceSuite(t *testing.T, newCache func(t *testing.T) fx.Cache) {
 				t.Errorf("err = %v, want ErrFutureDate", err)
 			}
 		})
+	})
+
+	t.Run("finality of dated rates", func(t *testing.T) {
+		t.Run("an earlier rate confirmed for an earlier date is not final for a later one", func(t *testing.T) {
+			// Two published dates fewer than StaleAfter days apart. Converting
+			// the earlier date first must not make its rate stand in for the
+			// later date, however long after both days it was retrieved.
+			r := newRig(t, newCache(t), true)
+			r.p.Publish("EUR", "USD", "1.05", "2026-11-05", "ECB")
+			r.p.Publish("EUR", "USD", "1.09", "2026-11-09", "ECB")
+			c := r.convertOn("100", "EUR", "USD", "2026-11-05")
+			expect(t, c, fx.StatusOK, fx.ReasonNone)
+			expectValue(t, c, "105.00 USD", "105.00 USD")
+			c = r.convertOn("100", "EUR", "USD", "2026-11-09")
+			expect(t, c, fx.StatusOK, fx.ReasonNone)
+			expectValue(t, c, "109.00 USD", "109.00 USD")
+			if c.Rate.Date.String() != "2026-11-09" || c.FromCache {
+				t.Errorf("later date used %+v from cache %v, want the 2026-11-09 rate from the provider", c.Rate, c.FromCache)
+			}
+			r.calls(2)
+			// A day in between is final from the first retrieval's
+			// confirmation only up to the date that was asked.
+			r.convertOn("100", "EUR", "USD", "2026-11-05")
+			r.convertOn("100", "EUR", "USD", "2026-11-09")
+			r.calls(2)
+		})
+		t.Run("a dated retrieval does not make the rate current", func(t *testing.T) {
+			r := newRig(t, newCache(t), true)
+			r.p.Publish("EUR", "USD", "1.05", "2026-11-12", "ECB")
+			r.convertOn("1", "EUR", "USD", "2026-11-12")
+			r.calls(1)
+			r.p.Publish("EUR", "USD", "1.10", "2026-11-16", "ECB")
+			c := r.convert("1", "EUR", "USD")
+			r.calls(2)
+			if c.Rate.Value.String() != "1.10" {
+				t.Errorf("latest conversion used %s, want 1.10", c.Rate.Value)
+			}
+		})
+	})
+
+	t.Run("a revised rate is kept, logged and given truthful provenance", func(t *testing.T) {
+		r := newRig(t, newCache(t), true)
+		r.seed("EUR/USD", "1.08", "2026-11-13", T0.Add(-30*time.Hour))
+		r.p.Publish("EUR", "USD", "1.18", "2026-11-13", "ECB")
+		c := r.convert("100", "EUR", "USD")
+		expect(t, c, fx.StatusOK, fx.ReasonNone)
+		expectValue(t, c, "118.00 USD", "118.00 USD")
+		if !c.Rate.FirstRetrievedAt.Equal(T0) || c.Rate.Previous == nil || c.Rate.Previous.Value.String() != "1.08" || !c.Rate.Previous.RevisedAt.Equal(T0) {
+			t.Errorf("provenance after a revision: %+v previous %+v", c.Rate, c.Rate.Previous)
+		}
+		for _, want := range []string{"revised", "provider=frankfurter", "pair=EUR/USD", "rate_date=2026-11-13", "old=1.08", "new=1.18"} {
+			if !strings.Contains(r.logs.String(), want) {
+				t.Errorf("revision log lacks %q: %s", want, r.logs.String())
+			}
+		}
+		// The same number in another form is not a revision.
+		r.clock.Advance(25 * time.Hour)
+		r.logs.Reset()
+		r.p = NewProvider("frankfurter", "ECB")
+		r.p.Publish("EUR", "USD", "1.1800", "2026-11-13", "ECB")
+		r.svc, _ = fx.NewService(r.cache, r.p, fx.Options{Now: r.clock.Now, Log: slog.New(slog.NewTextHandler(r.logs, nil))})
+		c = r.convert("100", "EUR", "USD")
+		if r.logs.Len() != 0 || c.Rate.Value.String() != "1.18" || !c.Rate.FirstRetrievedAt.Equal(T0) {
+			t.Errorf("an equal number was treated as a revision: %q %+v", r.logs.String(), c.Rate)
+		}
+	})
+
+	t.Run("outage backoff", func(t *testing.T) {
+		for name, perr := range map[string]error{
+			"unavailable":            down,
+			"rate limited, no delay": &fx.ProviderError{Kind: fx.KindRateLimited, Provider: "frankfurter", Op: "latest"},
+			"unclassified error":     errors.New("connection refused"),
+		} {
+			t.Run(name, func(t *testing.T) {
+				r := newRig(t, newCache(t), true)
+				r.seed("EUR/USD", "1.0834", "2026-11-13", T0.Add(-30*time.Hour))
+				r.p.SetDown(perr)
+				for range 10 {
+					expect(t, r.convert("1", "EUR", "USD"), fx.StatusOK, fx.ReasonNone)
+				}
+				r.calls(1)
+				// The pause is short (default 5 minutes): the provider is
+				// asked again after it, and once more only after another.
+				r.clock.Advance(6 * time.Minute)
+				for range 10 {
+					r.convert("1", "EUR", "USD")
+				}
+				r.calls(2)
+			})
+		}
+		t.Run("permanent failures do not pause", func(t *testing.T) {
+			r := newRig(t, newCache(t), true)
+			r.seed("EUR/USD", "1.0834", "2026-11-13", T0.Add(-30*time.Hour))
+			r.p.SetDown(&fx.ProviderError{Kind: fx.KindPermanent, Provider: "frankfurter", Op: "latest", Code: "unsupported"})
+			r.convert("1", "EUR", "USD")
+			r.convert("1", "EUR", "USD")
+			r.calls(2)
+		})
+		t.Run("dated conversions back off too", func(t *testing.T) {
+			r := newRig(t, newCache(t), true)
+			r.p.SetDown(down)
+			for range 5 {
+				expect(t, r.convertOn("1", "EUR", "USD", "2026-11-10"), fx.StatusMissing, fx.ReasonNotCached)
+			}
+			r.calls(1)
+		})
+		t.Run("the pause never outlasts RefreshAfter", func(t *testing.T) {
+			svc, err := fx.NewService(NewCache(), NewProvider("frankfurter", "ECB"), fx.Options{
+				Freshness:    fx.Freshness{RefreshAfter: time.Minute, StaleAfter: 24 * time.Hour},
+				FailurePause: time.Hour,
+			})
+			if err != nil || svc == nil {
+				t.Fatal(err)
+			}
+			r := newRig(t, newCache(t), true)
+			r.svc, _ = fx.NewService(r.cache, r.p, fx.Options{
+				Now: r.clock.Now, Freshness: fx.Freshness{RefreshAfter: time.Minute, StaleAfter: 24 * time.Hour}, FailurePause: time.Hour,
+			})
+			r.p.SetDown(down)
+			r.convert("1", "EUR", "USD")
+			r.convert("1", "EUR", "USD")
+			r.calls(1)
+			r.clock.Advance(61 * time.Second)
+			r.convert("1", "EUR", "USD")
+			r.calls(2)
+		})
+		t.Run("a huge RetryAfter is capped", func(t *testing.T) {
+			r := newRig(t, newCache(t), true)
+			r.seed("EUR/USD", "1.0834", "2026-11-13", T0.Add(-30*time.Hour))
+			r.p.FailNext(&fx.ProviderError{Kind: fx.KindRateLimited, Provider: "frankfurter", Op: "latest", RetryAfter: 30 * 24 * time.Hour})
+			r.convert("1", "EUR", "USD")
+			r.clock.Advance(5*24*time.Hour + time.Minute)
+			r.p.Publish("EUR", "USD", "1.1000", "2026-11-20", "ECB")
+			c := r.convert("1", "EUR", "USD")
+			r.calls(2)
+			expect(t, c, fx.StatusOK, fx.ReasonNone)
+			if c.FromCache || c.Rate.Value.String() != "1.1000" {
+				t.Errorf("after the capped pause: %+v", c)
+			}
+		})
+		t.Run("concurrent conversions of one pair share one provider call", func(t *testing.T) {
+			r := newRig(t, newCache(t), true)
+			r.p.Publish("EUR", "USD", "1.0834", "2026-11-16", "ECB")
+			release := r.p.Hold()
+			defer release()
+			var wg sync.WaitGroup
+			results := make([]fx.Conversion, 8)
+			for i := range results {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					c, err := r.svc.Convert(r.ctx, money.MustParse("1", "EUR"), money.MustParseCurrency("USD"))
+					if err != nil {
+						t.Error(err)
+					}
+					results[i] = c
+				}()
+			}
+			for deadline := time.Now().Add(5 * time.Second); len(r.p.Calls()) == 0 && time.Now().Before(deadline); {
+				time.Sleep(time.Millisecond)
+			}
+			time.Sleep(50 * time.Millisecond)
+			release()
+			wg.Wait()
+			r.calls(1)
+			for i, c := range results {
+				if c.Status != fx.StatusOK || c.Rate == nil || c.Rate.Value.String() != "1.0834" {
+					t.Errorf("result %d: %+v", i, c)
+				}
+			}
+		})
+	})
+
+	t.Run("a malformed answer with duplicate quotes is refused whole", func(t *testing.T) {
+		r := newRig(t, newCache(t), true)
+		q := fx.Quote{Source: "ECB", Pair: Pair("EUR", "USD"), Value: money.MustParseDecimal("1.08"), Date: mustDate("2026-11-16")}
+		dup := q
+		dup.Value = money.MustParseDecimal("9.99")
+		r.p.SetRaw([]fx.Quote{q, dup})
+		c := r.convert("1", "EUR", "USD")
+		expect(t, c, fx.StatusMissing, fx.ReasonNotCached)
+		var pe *fx.ProviderError
+		if !errors.As(c.RefreshError, &pe) || pe.Kind != fx.KindPermanent || pe.Code != "invalid_rate" {
+			t.Errorf("RefreshError = %v, want permanent invalid_rate", c.RefreshError)
+		}
+		if _, ok, _ := r.cache.Find(r.ctx, "frankfurter", "ECB", Pair("EUR", "USD"), calendar.Date{}); ok {
+			t.Error("a rate from the refused answer was cached")
+		}
 	})
 
 	t.Run("refresh caches every published quote", func(t *testing.T) {

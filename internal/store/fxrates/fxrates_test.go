@@ -40,7 +40,7 @@ func TestSchemaRefusesBadRates(t *testing.T) {
 	const ts = "2026-11-16T09:00:00.000000000Z"
 	insert := func(rate, base, quote, first string) error {
 		return db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			_, err := tx.ExecContext(ctx, "INSERT INTO fx_rates (provider, base_currency, quote_currency, rate, rate_date, first_retrieved_at, retrieved_at) VALUES ('p', ?, ?, ?, '2026-11-13', ?, ?)", base, quote, rate, first, ts)
+			_, err := tx.ExecContext(ctx, "INSERT INTO fx_rates (provider, base_currency, quote_currency, rate, rate_date, first_retrieved_at, retrieved_at, confirmed_through) VALUES ('p', ?, ?, ?, '2026-11-13', ?, ?, '2026-11-13')", base, quote, rate, first, ts)
 			return err
 		})
 	}

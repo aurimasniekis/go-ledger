@@ -61,8 +61,95 @@ type Rate struct {
 	// this date. Asking again and getting the same date back moves it
 	// forward: it says how recently Ledger confirmed the rate is current.
 	RetrievedAt time.Time
-	// FirstRetrievedAt is when Ledger first received this rate.
+	// FirstRetrievedAt is when Ledger first received this value. When the
+	// provider revises the value it restarts at the revision's retrieval, so
+	// it never claims Ledger held a value earlier than it did.
 	FirstRetrievedAt time.Time
+	// ConfirmedThrough is the latest date up to which a retrieval confirmed
+	// this rate is the one that applies: the date asked for by a dated
+	// retrieval, the retrieval's UTC date for a latest one. Between Date and
+	// ConfirmedThrough the provider published nothing newer. Zero on input
+	// means Date; caches always return a value of at least Date.
+	ConfirmedThrough calendar.Date
+	// Previous is the value this one replaced, when the provider revised
+	// the rate; nil when it never did.
+	Previous *Superseded
+}
+
+// Superseded is a value a provider revised away.
+type Superseded struct {
+	Value money.Decimal
+	// RevisedAt is when Ledger received the replacing value.
+	RevisedAt time.Time
+}
+
+// Revision records that a provider changed the value of a rate it had
+// already published for a date.
+type Revision struct {
+	Provider string
+	Source   string
+	Pair     Pair
+	Date     calendar.Date
+	Old, New money.Decimal
+	At       time.Time
+}
+
+// Confirmed is ConfirmedThrough, or Date when none was recorded.
+func (r Rate) Confirmed() calendar.Date {
+	if r.ConfirmedThrough.IsZero() || r.ConfirmedThrough.Before(r.Date) {
+		return r.Date
+	}
+	return r.ConfirmedThrough
+}
+
+// FinalFor reports whether this rate is known to be the one that applies on
+// date: it is dated that day, or a retrieval confirmed it through that day.
+// A retrieval time alone proves nothing about which dates it covered.
+func (r Rate) FinalFor(date calendar.Date) bool {
+	return r.Date == date || !r.Confirmed().Before(date)
+}
+
+// Saved is the outcome of caching one rate: the row as stored after the
+// merge, and the revision when the value changed.
+type Saved struct {
+	Rate    Rate
+	Revised *Revision
+}
+
+// MergeRate combines a stored rate with a retrieval of the same key made at
+// the same time or later; both caches use it so they agree. The value is
+// compared numerically: a different representation of the same number is no
+// revision. A changed value replaces the old one, restarts FirstRetrievedAt,
+// records the old value and returns the revision. An unchanged value keeps
+// its first retrieval and history and moves RetrievedAt and ConfirmedThrough
+// forward (ConfirmedThrough never moves back).
+func MergeRate(old, in Rate) Saved {
+	if in.Value.Cmp(old.Value) != 0 {
+		in.FirstRetrievedAt = in.RetrievedAt
+		in.ConfirmedThrough = in.Confirmed()
+		in.Previous = &Superseded{Value: old.Value, RevisedAt: in.RetrievedAt}
+		return Saved{Rate: in, Revised: &Revision{Provider: in.Provider, Source: in.Source, Pair: in.Pair, Date: in.Date, Old: old.Value, New: in.Value, At: in.RetrievedAt}}
+	}
+	out := old
+	out.RetrievedAt = in.RetrievedAt
+	if c := in.Confirmed(); c.After(old.Confirmed()) {
+		out.ConfirmedThrough = c
+	} else {
+		out.ConfirmedThrough = old.Confirmed()
+	}
+	return Saved{Rate: out}
+}
+
+// NewRate normalizes a rate that has no stored predecessor: FirstRetrievedAt
+// defaults to RetrievedAt, ConfirmedThrough to at least Date, and Previous
+// is dropped.
+func NewRate(in Rate) Rate {
+	if in.FirstRetrievedAt.IsZero() || in.FirstRetrievedAt.After(in.RetrievedAt) {
+		in.FirstRetrievedAt = in.RetrievedAt
+	}
+	in.ConfirmedThrough = in.Confirmed()
+	in.Previous = nil
+	return in
 }
 
 // Validate checks a rate before it is cached.
@@ -81,6 +168,9 @@ func (r Rate) Validate() error {
 	}
 	if r.RetrievedAt.IsZero() {
 		return fmt.Errorf("%w: %s rate without a retrieval time", ErrInvalidRate, r.Pair)
+	}
+	if !r.ConfirmedThrough.IsZero() && r.ConfirmedThrough.Before(r.Date) {
+		return fmt.Errorf("%w: %s rate confirmed through %s, before its date %s", ErrInvalidRate, r.Pair, r.ConfirmedThrough, r.Date)
 	}
 	return nil
 }
@@ -123,10 +213,12 @@ type Provider interface {
 
 // Cache is the port the rate store implements.
 type Cache interface {
-	// Save stores rates keyed by (provider, source, pair, date). A rate already
-	// stored for the key is replaced only by one retrieved at the same time
-	// or later; FirstRetrievedAt is kept.
-	Save(ctx context.Context, rates []Rate) error
+	// Save stores rates keyed by (provider, source, pair, date) and returns
+	// each as stored, in order. A rate already stored for the key is merged
+	// with one retrieved at the same time or later (see [MergeRate]); an
+	// older retrieval changes nothing and the stored row is returned. All
+	// rates are validated before any is written.
+	Save(ctx context.Context, rates []Rate) ([]Saved, error)
 	// Find returns the cached rate of provider and source for pair with the
 	// latest date on or before onOrBefore (no bound when onOrBefore is zero).
 	// ok is false when there is none.
