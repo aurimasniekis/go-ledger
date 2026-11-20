@@ -151,3 +151,31 @@ func TestEmbeddedAssetsAreReadable(t *testing.T) {
 		t.Fatalf("got %d", rec.Code)
 	}
 }
+
+func TestDotEntriesAreNeverServed(t *testing.T) {
+	assets := fstest.MapFS{
+		"index.html":        {Data: []byte("<title>shell</title>")},
+		"assets/app.js":     {Data: []byte("console.log(1)")},
+		".gitkeep":          {},
+		".env":              {Data: []byte("LEDGER_KEK_VALUE=not-real")},
+		".hidden/secret.js": {Data: []byte("x")},
+		"assets/.keep":      {},
+	}
+	h := Handler(assets)
+	for _, p := range []string{"/.gitkeep", "/.env", "/.hidden", "/.hidden/secret.js", "/assets/.keep", "/.well-known/x"} {
+		rec := get(h, "GET", p)
+		if rec.Code != 404 || envelopeCode(t, rec) != "not_found" {
+			t.Fatalf("%s: got %d %q", p, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "<title>") || strings.Contains(rec.Body.String(), "not-real") {
+			t.Fatalf("%s: leaked content", p)
+		}
+	}
+	// Dot-entries do not affect the rest of the UI.
+	if rec := get(h, "GET", "/"); rec.Code != 200 || !strings.Contains(rec.Body.String(), "<title>") {
+		t.Fatalf("/: %d", rec.Code)
+	}
+	if rec := get(h, "GET", "/assets/app.js"); rec.Code != 200 {
+		t.Fatalf("/assets/app.js: %d", rec.Code)
+	}
+}

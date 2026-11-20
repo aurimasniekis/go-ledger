@@ -82,8 +82,9 @@ reporting:
   # Europe/Vilnius. Empty means the zone stored in the database; on first
   # start against a new database the host's IANA zone is captured once and
   # stored, and startup is refused if the host has no IANA name. A value that
-  # differs from the stored zone is applied with a warning and an audit entry,
-  # because it reclassifies dates. 'Local' is not accepted.
+  # differs from the stored zone is applied with a warning, because it
+  # reclassifies dates; its audit entry is recorded once the audit log exists.
+  # 'Local' is not accepted.
   # Environment: LEDGER_REPORTING_TIMEZONE  Flag: --reporting.timezone
   timezone: ""
 

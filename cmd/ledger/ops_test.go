@@ -14,7 +14,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/store"
 )
 
-// startServe runs "ledger serve" with args and returns the main and management
+// startOps runs "ledger serve" with args and returns the main and management
 // addresses (management is nil when there is no such listener).
 func startOps(t *testing.T, args ...string) (main, mgmt net.Addr, errOut *syncBuffer) {
 	t.Helper()

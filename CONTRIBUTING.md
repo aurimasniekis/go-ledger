@@ -7,7 +7,7 @@ Ledger is a personal finance application for one maintainer. Changes arrive as p
 - Go, as set in `go.mod`.
 - `make`.
 - Node.js 24 and pnpm 12.21.0 (the version in `web/package.json`) for the UI. pnpm is installed explicitly; Corepack is not assumed.
-- Optional: `pnpm exec playwright install chromium` (never `--with-deps`) for `make e2e`.
+- Optional: `pnpm exec playwright install chromium` (never `--with-deps`) for `make e2e`. On a sandboxed host where Chromium crashes, run `PLAYWRIGHT_SINGLE_PROCESS=1 make e2e`: it starts Chromium with `--single-process`. This is an opt-in workaround, not the default, because single-process Chromium is unstable.
 - golangci-lint v2.15.0, for `make lint`.
 - Go modules, downloaded once (`go mod download`). After that, no network access is needed for tests.
 
