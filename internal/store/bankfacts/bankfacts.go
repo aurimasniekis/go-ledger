@@ -533,7 +533,8 @@ func sameMutableFacts(old banking.StoredTransaction, t banking.Transaction) bool
 		old.ProviderTransactionID == t.ProviderTransactionID &&
 		old.InstructedAmount.Identical(t.InstructedAmount) &&
 		old.BookingDate == t.BookingDate && old.ValueDate == t.ValueDate && old.TransactionDate == t.TransactionDate &&
-		old.Description == t.Description && old.Counterparty == t.Counterparty && old.NoLongerReportedAt.IsZero()
+		old.Description == t.Description && old.Counterparty == t.Counterparty && old.NoLongerReportedAt.IsZero() &&
+		old.SupersededBy == ""
 }
 
 func checkKey(t banking.KeyedTransaction) error {
@@ -561,70 +562,89 @@ func instructed(m money.Money) (amount, currency any) {
 //     counterparty and detail id (pending to booked happens here), and
 //     last_seen_at = seenAt, and loses any no-longer-reported mark;
 //   - a known booked row reported as anything but booked keeps its booked
-//     facts (only last_seen_at moves): [banking.OutcomeKeptBooked].
+//     facts (only last_seen_at moves): [banking.OutcomeKeptBooked];
+//   - a known row reported again loses any no-longer-reported mark and
+//     superseded link.
 //
 // Identity and source amount never change (a database trigger enforces it).
 func (s *Store) UpsertTransactions(ctx context.Context, id banking.AccountID, txs []banking.KeyedTransaction, seenAt time.Time) ([]banking.TransactionUpsert, error) {
 	if err := requireTime("seen", seenAt); err != nil {
 		return nil, err
 	}
-	keys := map[string]bool{}
-	for i, t := range txs {
-		if err := checkKey(t); err != nil {
-			return nil, fmt.Errorf("bankfacts: transaction %d: %w", i, err)
-		}
-		if keys[t.Key] {
-			return nil, fmt.Errorf("bankfacts: transaction %d repeats a key in one call", i)
-		}
-		keys[t.Key] = true
+	if err := checkBatch(txs); err != nil {
+		return nil, err
 	}
-	out := make([]banking.TransactionUpsert, len(txs))
+	var out []banking.TransactionUpsert
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		provider, err := accountProvider(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		for i, t := range txs {
-			iamt, icur := instructed(t.InstructedAmount)
-			old, err := scanTransaction(tx.QueryRowContext(ctx, "SELECT "+transactionColumns+" FROM bank_transactions WHERE account_id = ? AND dedupe_key = ?", id, t.Key))
-			switch {
-			case errors.Is(err, sql.ErrNoRows):
-				tid := banking.TransactionID(s.newID())
-				_, err = tx.ExecContext(ctx, "INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, entry_reference, provider_transaction_id, booking_status, provider_status, source_amount, source_currency, instructed_amount, instructed_currency, booking_date, value_date, transaction_date, raw_description, counterparty_name, imported_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-					tid, id, provider, t.Key, t.KeyKind, nullText(t.EntryReference), nullText(t.ProviderTransactionID), t.Status, t.ProviderStatus,
-					sqlvalue.Amount{Decimal: t.Amount.Amount()}, sqlvalue.Currency{Currency: t.Amount.Currency()}, iamt, icur,
-					nullDate(t.BookingDate), nullDate(t.ValueDate), nullDate(t.TransactionDate), t.Description, t.Counterparty, ts(seenAt), ts(seenAt))
-				if err != nil {
-					return fmt.Errorf("bankfacts: insert transaction %d: %w", i, err)
-				}
-				out[i] = banking.TransactionUpsert{ID: tid, Outcome: banking.OutcomeInserted}
-				continue
-			case err != nil:
-				return fmt.Errorf("bankfacts: read transaction %d: %w", i, err)
-			}
-			if old.Status == banking.StatusBooked && t.Status != banking.StatusBooked {
-				if _, err := tx.ExecContext(ctx, "UPDATE bank_transactions SET last_seen_at = ?, no_longer_reported_at = NULL WHERE id = ?", ts(seenAt), old.ID); err != nil {
-					return fmt.Errorf("bankfacts: update transaction %s: %w", old.ID, err)
-				}
-				out[i] = banking.TransactionUpsert{ID: old.ID, Outcome: banking.OutcomeKeptBooked}
-				continue
-			}
-			outcome := banking.OutcomeUnchanged
-			if !sameMutableFacts(old, t.Transaction) {
-				outcome = banking.OutcomeUpdated
-			}
-			_, err = tx.ExecContext(ctx, "UPDATE bank_transactions SET provider_transaction_id = ?, booking_status = ?, provider_status = ?, instructed_amount = ?, instructed_currency = ?, booking_date = ?, value_date = ?, transaction_date = ?, raw_description = ?, counterparty_name = ?, last_seen_at = ?, no_longer_reported_at = NULL WHERE id = ?",
-				nullText(t.ProviderTransactionID), t.Status, t.ProviderStatus, iamt, icur,
-				nullDate(t.BookingDate), nullDate(t.ValueDate), nullDate(t.TransactionDate), t.Description, t.Counterparty, ts(seenAt), old.ID)
-			if err != nil {
-				return fmt.Errorf("bankfacts: update transaction %s: %w", old.ID, err)
-			}
-			out[i] = banking.TransactionUpsert{ID: old.ID, Outcome: outcome}
-		}
-		return nil
+		out, err = s.upsertTransactionsTx(ctx, tx, id, provider, txs, seenAt)
+		return err
 	})
 	if err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// checkBatch validates the keys of one call.
+func checkBatch(txs []banking.KeyedTransaction) error {
+	keys := map[string]bool{}
+	for i, t := range txs {
+		if err := checkKey(t); err != nil {
+			return fmt.Errorf("bankfacts: transaction %d: %w", i, err)
+		}
+		if keys[t.Key] {
+			return fmt.Errorf("bankfacts: transaction %d repeats a key in one call", i)
+		}
+		keys[t.Key] = true
+	}
+	return nil
+}
+
+// upsertTransactionsTx is the per-item upsert of UpsertTransactions inside
+// an open write transaction. A row reported again loses any no-longer-
+// reported mark and superseded link.
+func (s *Store) upsertTransactionsTx(ctx context.Context, tx *sql.Tx, id banking.AccountID, provider string, txs []banking.KeyedTransaction, seenAt time.Time) ([]banking.TransactionUpsert, error) {
+	out := make([]banking.TransactionUpsert, len(txs))
+	for i, t := range txs {
+		iamt, icur := instructed(t.InstructedAmount)
+		old, err := scanTransaction(tx.QueryRowContext(ctx, "SELECT "+transactionColumns+" FROM bank_transactions WHERE account_id = ? AND dedupe_key = ?", id, t.Key))
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			tid := banking.TransactionID(s.newID())
+			_, err = tx.ExecContext(ctx, "INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, entry_reference, provider_transaction_id, booking_status, provider_status, source_amount, source_currency, instructed_amount, instructed_currency, booking_date, value_date, transaction_date, raw_description, counterparty_name, imported_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				tid, id, provider, t.Key, t.KeyKind, nullText(t.EntryReference), nullText(t.ProviderTransactionID), t.Status, t.ProviderStatus,
+				sqlvalue.Amount{Decimal: t.Amount.Amount()}, sqlvalue.Currency{Currency: t.Amount.Currency()}, iamt, icur,
+				nullDate(t.BookingDate), nullDate(t.ValueDate), nullDate(t.TransactionDate), t.Description, t.Counterparty, ts(seenAt), ts(seenAt))
+			if err != nil {
+				return nil, fmt.Errorf("bankfacts: insert transaction %d: %w", i, err)
+			}
+			out[i] = banking.TransactionUpsert{ID: tid, Outcome: banking.OutcomeInserted}
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("bankfacts: read transaction %d: %w", i, err)
+		}
+		if old.Status == banking.StatusBooked && t.Status != banking.StatusBooked {
+			if _, err := tx.ExecContext(ctx, "UPDATE bank_transactions SET last_seen_at = ?, no_longer_reported_at = NULL, superseded_by = NULL WHERE id = ?", ts(seenAt), old.ID); err != nil {
+				return nil, fmt.Errorf("bankfacts: update transaction %s: %w", old.ID, err)
+			}
+			out[i] = banking.TransactionUpsert{ID: old.ID, Outcome: banking.OutcomeKeptBooked}
+			continue
+		}
+		outcome := banking.OutcomeUnchanged
+		if !sameMutableFacts(old, t.Transaction) {
+			outcome = banking.OutcomeUpdated
+		}
+		_, err = tx.ExecContext(ctx, "UPDATE bank_transactions SET provider_transaction_id = ?, booking_status = ?, provider_status = ?, instructed_amount = ?, instructed_currency = ?, booking_date = ?, value_date = ?, transaction_date = ?, raw_description = ?, counterparty_name = ?, last_seen_at = ?, no_longer_reported_at = NULL, superseded_by = NULL WHERE id = ?",
+			nullText(t.ProviderTransactionID), t.Status, t.ProviderStatus, iamt, icur,
+			nullDate(t.BookingDate), nullDate(t.ValueDate), nullDate(t.TransactionDate), t.Description, t.Counterparty, ts(seenAt), old.ID)
+		if err != nil {
+			return nil, fmt.Errorf("bankfacts: update transaction %s: %w", old.ID, err)
+		}
+		out[i] = banking.TransactionUpsert{ID: old.ID, Outcome: outcome}
 	}
 	return out, nil
 }
@@ -661,7 +681,8 @@ func (s *Store) Transactions(ctx context.Context, id banking.AccountID) ([]banki
 // at version expected. Every table that refers to bank facts does so with ON
 // DELETE RESTRICT, so while user data (a payment match, a correction) refers
 // to any of them the purge fails with [banking.ErrPurgeBlocked] and nothing
-// is deleted. superseded_by links between the purged transactions are
+// is deleted. The connection's refresh runs and account refresh state
+// (ADR-0019) go with it. superseded_by links between the purged transactions are
 // cleared first: SQLite checks that self-reference per row, so the delete
 // order would otherwise decide whether the purge fails. Ending the provider
 // session is the caller's job and should happen first.
@@ -681,6 +702,8 @@ func (s *Store) PurgeConnection(ctx context.Context, id banking.ConnectionID, ex
 			count *int
 		}{
 			{"UPDATE bank_transactions SET superseded_by = NULL WHERE superseded_by IS NOT NULL AND account_id IN (" + accounts + ")", nil},
+			{"DELETE FROM bank_account_sync WHERE account_id IN (" + accounts + ")", nil},
+			{"DELETE FROM bank_refresh_runs WHERE connection_id = ?", nil},
 			{"DELETE FROM bank_transactions WHERE account_id IN (" + accounts + ")", &res.Transactions},
 			{"DELETE FROM bank_balance_snapshots WHERE account_id IN (" + accounts + ")", &res.Balances},
 			{"DELETE FROM bank_accounts WHERE connection_id = ?", &res.Accounts},

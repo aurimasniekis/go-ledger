@@ -21,6 +21,9 @@ Last updated: 2026-11-20.
   - Follow-up (B2): whole-window keying, staleness and attempt timestamps, no-longer-reported marking, `superseded_by` links, retry policy by error kind.
   - Merge note: the outbox migration is 0003, so this one is 0004.
 
+- **B2 Import engine** (ADR-0019): `internal/domain/bankimport`; whole-day windows stored atomically with a per-account resume cursor and overlap; every page fetched; no-longer-reported marking; `superseded_by` on a shared entry reference; D17 retries; migration `0005_bank_refresh` (refresh runs, per-account last attempt/success/error); computed freshness (24 h); unknown balances dropped, never zero; `StoredTransaction.Countable`.
+  - Follow-up: refresh and freshness endpoints with the connection API (B4, auth tasks); scheduler (B6); serve wiring after B3; reversal, split and supersession handling in matching (X1/X2); retention of refresh runs.
+
 ## Next (first wave)
 
 - **F2 Configuration system**: YAML, environment and `.env` configuration, `.env.example`.

@@ -101,6 +101,16 @@ type StoredTransaction struct {
 	SupersededBy TransactionID
 }
 
+// Countable reports whether the transaction may count as money moved:
+// booked, still reported by the provider and not superseded. Pending,
+// cancelled, superseded and no-longer-reported rows are kept as facts but
+// must stay out of totals, balances projections and automatic payment
+// confirmation (ADR-0013 limitations, decision D8), so a pending hold that
+// later books under another key is never counted twice.
+func (t StoredTransaction) Countable() bool {
+	return t.Status == StatusBooked && t.NoLongerReportedAt.IsZero() && t.SupersededBy == ""
+}
+
 // Outcome is what an upsert did with one item.
 type Outcome string
 
@@ -174,6 +184,44 @@ type FactStore interface {
 	// concurrency, M1), failing with a *resource.VersionConflictError
 	// otherwise. Ending the provider session is the caller's job.
 	DisconnectConnection(ctx context.Context, id ConnectionID, expected int64, at time.Time) (Connection, error)
+
+	// StartRefresh records the start of a refresh run of a connection. A run
+	// of the connection still marked running (its process stopped) is first
+	// finished as [RefreshInterrupted].
+	StartRefresh(ctx context.Context, id ConnectionID, at time.Time) (RefreshRun, error)
+	// FinishRefresh records how run ended: its outcome (not running), error
+	// kind and code, counts and FinishedAt.
+	FinishRefresh(ctx context.Context, run RefreshRun) (RefreshRun, error)
+	// RefreshRuns lists a connection's runs, newest first, at most limit
+	// (limit <= 0: all).
+	RefreshRuns(ctx context.Context, id ConnectionID, limit int) ([]RefreshRun, error)
+
+	// MarkAccountsNoLongerReported marks the connection's accounts that are
+	// not in reported as no longer reported (decision D8: never deleted),
+	// and returns how many it newly marked.
+	MarkAccountsNoLongerReported(ctx context.Context, id ConnectionID, reported []AccountID, at time.Time) (int, error)
+
+	// BeginAccountRefresh records the start of an account's refresh and
+	// returns its refresh state.
+	BeginAccountRefresh(ctx context.Context, id AccountID, at time.Time) (AccountSync, error)
+	// EndAccountRefresh records the end of an account's refresh: with a nil
+	// cause a success at at (clearing the last error), otherwise the
+	// cause's kind and provider code. Bank facts are not touched, so a
+	// failure leaves the last good data in place.
+	EndAccountRefresh(ctx context.Context, id AccountID, cause error, at time.Time) (AccountSync, error)
+	// AccountSync returns an account's refresh state; zero timestamps if it
+	// was never refreshed.
+	AccountSync(ctx context.Context, id AccountID) (AccountSync, error)
+
+	// ImportTransactionWindow stores one complete window in one write
+	// transaction: it upserts every transaction like
+	// [FactStore.UpsertTransactions] (also clearing a superseded link of a
+	// row that is reported again), marks the account's other transactions
+	// dated inside the window no longer reported, links a newly unreported
+	// pending transaction to the one booked transaction of the window with
+	// the same entry reference, and advances the account's
+	// TransactionsThrough to w.To. Nothing is written if any step fails.
+	ImportTransactionWindow(ctx context.Context, id AccountID, w TransactionWindow, seenAt time.Time) (WindowResult, error)
 
 	// PurgeConnection deletes a connection and every bank fact under it. It
 	// is the only path that deletes bank facts (decision D8: explicit purge),
