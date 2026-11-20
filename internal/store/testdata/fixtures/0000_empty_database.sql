@@ -1,0 +1,2 @@
+-- Fixture: a database file that exists but has no tables (version 0), as a
+-- first start leaves it. Upgrading it must apply every migration.
