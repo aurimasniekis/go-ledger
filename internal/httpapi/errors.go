@@ -27,6 +27,8 @@ const (
 	CodeTooLarge        Code = "payload_too_large"      // 413
 	CodeMethod          Code = "method_not_allowed"     // 405
 	CodePrecondition    Code = "precondition_required"  // 428: a write did not say which version it applies to
+	CodeVersionConflict Code = "version_conflict"       // 409: the write was based on a stale version; carries reconciliation
+	CodeUnsupportedType Code = "unsupported_media_type" // 415: the request body's media type is not accepted here
 )
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.
@@ -89,6 +91,8 @@ func NotFound(message string) *Error {
 	return &Error{Status: http.StatusNotFound, Code: CodeNotFound, Message: message}
 }
 
+// Conflict is a 409 for a state conflict other than a stale version, such as
+// a name that is already taken. A stale version is [VersionConflict].
 func Conflict(message string) *Error {
 	return &Error{Status: http.StatusConflict, Code: CodeConflict, Message: message}
 }
@@ -114,6 +118,10 @@ func Unavailable(message string, cause error) *Error {
 // Internal wraps an unexpected failure. The client sees a generic message.
 func Internal(cause error) *Error {
 	return &Error{Status: http.StatusInternalServerError, Code: CodeInternal, Message: "internal error", Cause: cause}
+}
+
+func unsupportedMediaType(message string) *Error {
+	return &Error{Status: http.StatusUnsupportedMediaType, Code: CodeUnsupportedType, Message: message}
 }
 
 func tooLarge(limit int64) *Error {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
@@ -45,7 +46,7 @@ func UpdateVersioned(ctx context.Context, tx *sql.Tx, table, set string, id stri
 		return 0, fmt.Errorf("store: UpdateVersioned: invalid table %q or empty SET", table)
 	}
 	q := "UPDATE " + table + " SET " + set + ", version = version + 1 WHERE id = ? AND version = ?"
-	res, err := tx.ExecContext(ctx, q, append(args, id, expected)...)
+	res, err := tx.ExecContext(ctx, q, slices.Concat(args, []any{id, expected})...)
 	if err != nil {
 		return 0, err
 	}

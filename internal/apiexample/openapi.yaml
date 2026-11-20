@@ -103,14 +103,19 @@ paths:
     patch:
       operationId: updateExample
       summary: Change an example
-      description: Requires the version in If-Match or the body; a stale version is a 409 with reconciliation.
+      description: |
+        A JSON Merge Patch (RFC 7396, ADR-0015): an absent member is left
+        unchanged, null clears an optional member (note) and is refused on a
+        required one. Requires the version in If-Match or the body; a stale
+        version is a 409 version_conflict with reconciliation. Any other
+        Content-Type is a 415.
       tags: [example]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
         content:
-          application/json:
+          application/merge-patch+json:
             schema:
               type: object
               additionalProperties: false
@@ -121,6 +126,10 @@ paths:
                   maxLength: 100
                 kind:
                   $ref: "#/components/schemas/ExampleKind"
+                note:
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 200
                 version:
                   $ref: "#/components/schemas/Version"
       responses:
@@ -138,6 +147,7 @@ paths:
     delete:
       operationId: deleteExample
       summary: Delete an example
+      description: The version is taken from If-Match only (there is no body); without it the request is a 428.
       tags: [example]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
@@ -153,7 +163,7 @@ components:
       enum: [alpha, beta]
     Example:
       type: object
-      required: [id, name, kind, version, created_at]
+      required: [id, name, kind, note, version, created_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -161,6 +171,8 @@ components:
           type: string
         kind:
           $ref: "#/components/schemas/ExampleKind"
+        note:
+          type: [string, "null"]
         version:
           $ref: "#/components/schemas/Version"
         created_at:

@@ -20,15 +20,21 @@ info:
       stable for the life of the object and never reused.
     - **Lists** return `{"items": [...], "next_cursor": "..."|null}`. Pass
       `limit` (1-200, default 50) and `cursor` (the previous
-      `next_cursor`, valid only with the same filters). Filters are
+      `next_cursor`, valid only with the same filters). A walk is exact for
+      items that existed when it began; items created during a walk may or
+      may not appear (no snapshot; ID order holds to the millisecond). Filters are
       `field=value` (repeat for any of several values) and
       `field[op]=value` with `op` one of `prefix`, `gt`, `gte`, `lt`,
       `lte` where an endpoint documents it. Unknown parameters are rejected.
     - **Optimistic concurrency.** Mutable objects carry `version` (from 1)
       and the strong ETag `"<version>"`. Changing or deleting one requires
-      that version in `If-Match` or the body's `version`: missing is 428, stale
-      is 409 with `reconciliation` (the current version and, where allowed,
-      the current object).
+      that version in `If-Match` or, for a partial update, the body's
+      `version` (DELETE: `If-Match` only): missing is 428, stale is 409
+      `version_conflict` with `reconciliation` (the current version and,
+      where allowed, the current object). `conflict` is any other 409.
+    - **Partial updates** are JSON Merge Patch (RFC 7396, ADR-0015):
+      `PATCH` with `Content-Type: application/merge-patch+json`; an absent
+      member is unchanged, `null` clears an optional member.
     - **Errors** use the `Error` envelope with a stable `code`.
   license:
     name: Apache-2.0
@@ -88,7 +94,7 @@ components:
     IfMatch:
       name: If-Match
       in: header
-      description: The ETag of the version this change is based on. Required unless the body carries version.
+      description: The ETag of the version this change is based on. Required for DELETE; for a PATCH it may be given as the body's version instead.
       schema:
         type: string
         pattern: '^"[1-9][0-9]*"$'
@@ -127,6 +133,8 @@ components:
             - not_found
             - method_not_allowed
             - conflict
+            - version_conflict
+            - unsupported_media_type
             - payload_too_large
             - precondition_required
             - rate_limited

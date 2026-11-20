@@ -55,6 +55,9 @@ func call(t *testing.T, srv *httpapi.Server, method, path, body string, header .
 		r = bytes.NewBufferString(body)
 	}
 	req := httptest.NewRequest(method, path, r)
+	if method == "PATCH" {
+		req.Header.Set("Content-Type", httpapi.MergePatchType)
+	}
 	for i := 0; i+1 < len(header); i += 2 {
 		req.Header.Set(header[i], header[i+1])
 	}
@@ -253,7 +256,7 @@ func TestOptimisticConcurrency(t *testing.T) {
 		} `json:"reconciliation"`
 	}
 	r.decode(t, &conflict)
-	if conflict.Code != "conflict" || conflict.Reconciliation.CurrentVersion != 2 ||
+	if conflict.Code != "version_conflict" || conflict.Reconciliation.CurrentVersion != 2 ||
 		conflict.Reconciliation.Current.Name != "Hosting EU" || conflict.Reconciliation.Current.Kind != "alpha" {
 		t.Fatalf("reconciliation: %+v", conflict)
 	}
@@ -296,6 +299,59 @@ func TestOptimisticConcurrency(t *testing.T) {
 	}
 	if r := call(t, srv, "GET", item, ""); r.Code != 404 {
 		t.Fatalf("after delete: %d", r.Code)
+	}
+}
+
+func TestMergePatchSemantics(t *testing.T) {
+	srv, _ := newServer(t)
+	e := create(t, srv, "Hosting", "alpha")
+	item := Path + "/" + e.ID
+	patch := func(version int, body string) Example {
+		t.Helper()
+		r := call(t, srv, "PATCH", item, body, "If-Match", fmt.Sprintf(`"%d"`, version))
+		if r.Code != 200 {
+			t.Fatalf("%s: %d %s", body, r.Code, r.Body.String())
+		}
+		var got Example
+		r.decode(t, &got)
+		return got
+	}
+	got := patch(1, `{"note":"renewal in May"}`)
+	if got.Note == nil || *got.Note != "renewal in May" || got.Name != "Hosting" {
+		t.Fatalf("set note: %+v", got)
+	}
+	// Absent = unchanged: the note survives a change to another member.
+	got = patch(2, `{"name":"Hosting EU"}`)
+	if got.Note == nil || *got.Note != "renewal in May" || got.Name != "Hosting EU" {
+		t.Fatalf("absent note changed: %+v", got)
+	}
+	// An empty patch changes nothing but still bumps the version.
+	if got = patch(3, `{}`); got.Version != 4 || got.Name != "Hosting EU" || got.Note == nil {
+		t.Fatalf("empty patch: %+v", got)
+	}
+	// null = clear.
+	got = patch(4, `{"note":null}`)
+	if got.Note != nil || got.Name != "Hosting EU" {
+		t.Fatalf("clear note: %+v", got)
+	}
+	var raw map[string]any
+	call(t, srv, "GET", item, "").decode(t, &raw)
+	if v, ok := raw["note"]; !ok || v != nil {
+		t.Fatalf("a cleared note is sent as null: %v", raw)
+	}
+	// null on a required member, wrong content type, unknown member.
+	if r := call(t, srv, "PATCH", item, `{"name":null}`, "If-Match", `"5"`); r.Code != 400 || r.errBody(t).Field != "name" {
+		t.Fatalf("null name: %d %s", r.Code, r.Body.String())
+	}
+	if r := call(t, srv, "PATCH", item, `{"name":"x"}`, "If-Match", `"5"`, "Content-Type", "application/json"); r.Code != 415 || r.errBody(t).Code != httpapi.CodeUnsupportedType {
+		t.Fatalf("json content type: %d %s", r.Code, r.Body.String())
+	}
+	if r := call(t, srv, "PATCH", item, `{"id":"x"}`, "If-Match", `"5"`); r.Code != 400 || r.errBody(t).Field != "id" {
+		t.Fatalf("unknown member: %d %s", r.Code, r.Body.String())
+	}
+	// DELETE takes If-Match only: a body version does not count (ADR-0015).
+	if r := call(t, srv, "DELETE", item, `{"version":5}`); r.Code != 428 {
+		t.Fatalf("delete with body version: %d", r.Code)
 	}
 }
 

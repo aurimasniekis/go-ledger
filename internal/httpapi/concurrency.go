@@ -65,6 +65,9 @@ func parseETag(s string) (int64, bool) {
 		return 0, false
 	}
 	digits := s[1 : len(s)-1]
+	if digits[0] == '0' { // canonical spelling only: "0", "01" are refused (RFC 9110 strong comparison is byte-exact)
+		return 0, false
+	}
 	for i := 0; i < len(digits); i++ {
 		if digits[i] < '0' || digits[i] > '9' {
 			return 0, false
@@ -84,7 +87,7 @@ func parseETag(s string) (int64, bool) {
 func VersionConflict(currentVersion int64, current any) *Error {
 	return &Error{
 		Status:  http.StatusConflict,
-		Code:    CodeConflict,
+		Code:    CodeVersionConflict,
 		Message: "the object was changed by another request; review the current version and retry with it",
 		Reconciliation: &Reconciliation{
 			CurrentVersion: currentVersion,

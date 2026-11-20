@@ -157,8 +157,8 @@ func CheckContract(doc []byte, routes []Route) []string {
 
 	registered := map[string]bool{}
 	for _, r := range routes {
-		if strings.Contains(r.Path, "...}") || strings.HasSuffix(r.Path, "{$}") {
-			problems = append(problems, r.String()+": API routes must not use {name...} or {$} wildcards")
+		if strings.Contains(r.Path, "...}") || strings.HasSuffix(r.Path, "{$}") || strings.HasSuffix(r.Path, "/") {
+			problems = append(problems, r.String()+": API routes must not use {name...} or {$} wildcards or end in / (a trailing slash matches every deeper path)")
 		}
 		registered[r.String()] = true
 		if !documented[r.String()] {
