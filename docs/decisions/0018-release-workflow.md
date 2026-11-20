@@ -32,8 +32,7 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
    are `contents: read`.
    - `build` (no secrets, no write scope): on a tag, a tagged build; on a dispatch, a snapshot. Both use
      `--skip=publish`, so nothing is pushed or released. It uploads `dist/` as a workflow artefact.
-   - `registry-access` (tag pushes): records only whether the token secret is set. The value is never printed.
-   - `publish-images` (tag pushes, secret set, `environment: release`): waits for environment approval, then logs in to Docker Hub with the token on stdin and runs
+   - `publish-images` (tag pushes, `environment: release`): waits for environment approval, then checks that `DOCKERHUB_TOKEN` is set (the value is never printed; a missing token fails the job with `::error::`), logs in to Docker Hub with the token on stdin and runs
      `goreleaser release --skip=announce` with `LEDGER_DISABLE_GITHUB_RELEASE=true`, which turns off the GitHub Release
      (`release.disable` in `.goreleaser.yaml`). `--skip=publish` cannot be used here: it also skips the image push, and
      `--skip=release` is not a valid option.
@@ -46,8 +45,8 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
 7. **Human gates.** `publish-images` and `github-release` run in the GitHub Environment `release`, which requires a
    reviewer's approval: the images are not pushed and the draft release is not created until a person approves. The
    release is also a draft (`release.draft: true`), which a person reviews and publishes. `DOCKERHUB_TOKEN` is an
-   environment secret of `release`, so a tag push alone cannot reach it. The check job `registry-access` reads the
-   secret before approval, so with an environment-scoped secret it sees it as unset in a tag run; see Open.
+   environment secret of `release`, so a tag push alone cannot reach it. The token check runs inside `publish-images`,
+   after approval, so it sees the environment-scoped secret; no second approval gate is added (see Open).
 8. **Actions.** `actions/upload-artifact` (an official GitHub action, pinned to v7.0.2) is added to the official set that
    ADR-0007 lists. Caches are off in the release jobs (`setup-go cache: false`, `package-manager-cache: false`), so a cache
    written by one run cannot reach a published artefact.
@@ -88,9 +87,11 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
   - **If the environment does not exist, GitHub creates it on first use without protection**, and the jobs run with no
     approval. The operator must confirm the environment, its reviewer and the ruleset before the first tag.
 - **Open:**
-  - `registry-access` runs outside the environment, so an environment-scoped `DOCKERHUB_TOKEN` is not visible to it and
-    `publish-images` would be skipped. This needs a follow-up before the first tag: move the check into `publish-images`
-    (a step condition) or keep a repository-level secret for the check only.
+  - Resolved (F10c): the token check moved into `publish-images`, which runs in the `release` environment, so an
+    environment-scoped `DOCKERHUB_TOKEN` is visible to it. A tag push without the token now fails `publish-images` with an
+    `::error::` instead of skipping it silently. The alternative, `registry-access` in `release`, would have added a second
+    approval per release, so it was not chosen. Still needed before the first tag: the operator creates the `release`
+    environment with the secret; the approver sees the token check only after approving the run.
   - ADR-0003 requires third-party licence texts to ship with binaries and images. The archives and the image contain only
     LICENSE and README until OP4 produces the licence report.
   - The base image is pinned by digest, and nothing updates that digest automatically yet.

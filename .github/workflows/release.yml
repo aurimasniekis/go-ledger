@@ -1,5 +1,5 @@
-# Release pipeline (F10, ADR-0018). A tag push (v*) builds, publishes the container images when the Docker Hub secret
-# is set, and creates a draft GitHub Release. A workflow_dispatch run is a dry run: it builds the artefacts and never
+# Release pipeline (F10, ADR-0018). A tag push (v*) builds, publishes the container images (publish-images fails if the
+# Docker Hub secret is missing), and creates a draft GitHub Release. A workflow_dispatch run is a dry run: it builds the artefacts and never
 # publishes. Top-level permissions are read-only. Only github-release requests a write scope (contents: write), and
 # scripts/check-workflow-permissions.sh enforces that it stays a job-level block limited to a tag push.
 name: release
@@ -77,35 +77,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  registry-access:
-    name: check Docker Hub access (is the secret set?)
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      dockerhub: ${{ steps.check.outputs.dockerhub }}
-    steps:
-      - name: Record whether DOCKERHUB_TOKEN is set (its value is never printed)
-        id: check
-        env:
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          if [ -n "$DOCKERHUB_TOKEN" ]; then
-            echo "dockerhub=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "dockerhub=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::DOCKERHUB_TOKEN is not set, so no container images are published"
-          fi
-
   publish-images:
     name: publish container images (Docker Hub)
-    needs: [build, registry-access]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.registry-access.outputs.dockerhub == 'true'
-    # Waits for approval (required reviewers); DOCKERHUB_TOKEN is an environment secret (ADR-0018).
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Waits for approval (required reviewers); DOCKERHUB_TOKEN is an environment secret (ADR-0018). The token check
+    # runs here, inside the environment, so it sees the secret; a missing token fails the job instead of skipping it.
     environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Check that DOCKERHUB_TOKEN is set (its value is never printed)
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::DOCKERHUB_TOKEN is not set in the release environment, so no container image was published"
+            exit 1
+          fi
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
