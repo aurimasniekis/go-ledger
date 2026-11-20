@@ -30,6 +30,7 @@ type Config struct {
 	Log       Log       `cfg:"log"`
 	Reporting Reporting `cfg:"reporting"`
 	KEK       KEK       `cfg:"kek"`
+	Events    Events    `cfg:"events"`
 }
 
 // HTTP configures the HTTP server that serves the API and the embedded UI.
@@ -62,6 +63,17 @@ type Reporting struct {
 	// TODO(audit-log task): the desc below promises an audit entry for a zone change;
 	// until the audit log exists the change is only logged with a warning.
 	Timezone string `cfg:"timezone" desc:"IANA time zone used for due dates and monthly views, for example Europe/Vilnius. Empty means the zone stored in the database; on first start against a new database the host's IANA zone is captured once and stored, and startup is refused if the host has no IANA name. A value that differs from the stored zone is applied with a warning, because it reclassifies dates; its audit entry is recorded once the audit log exists. 'Local' is not accepted."`
+}
+
+// Events configures event publishing.
+type Events struct {
+	Pulse Pulse `cfg:"pulse"`
+}
+
+// Pulse configures publishing events to Pulse (NATS JetStream).
+type Pulse struct {
+	Enabled bool   `cfg:"enabled" default:"false" desc:"Publish events to Pulse. Off by default. While off, nothing is recorded or published, and turning it on later does not replay changes made while it was off."`
+	Source  string `cfg:"source" default:"ledger" desc:"Event source stamped on every published event (the envelope's source field): 1 to 128 printable characters."`
 }
 
 // KEK configures the key-encryption key that protects stored credentials. It
