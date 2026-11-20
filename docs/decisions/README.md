@@ -12,5 +12,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0008: Frontend skeleton and embedding](0008-frontend-skeleton-and-embedding.md)
 - [ADR-0009: Metrics, health and readiness](0009-metrics-and-health.md)
 - [ADR-0010: ledger serve wiring and reporting-zone capture](0010-serve-wiring-and-reporting-zone.md)
+- [ADR-0013: Banking provider boundary and normalized bank facts](0013-banking-provider-boundary-and-bank-facts.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

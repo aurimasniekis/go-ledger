@@ -15,6 +15,10 @@ Last updated: 2026-11-20.
   - Follow-up: the float ban (`internal/domain/money/nofloat_test.go`) covers only the money, calendar and sqlvalue packages. Add the commitments, matching, outlook and FX packages to `moneyPackages` as they land (or move the check repo-wide).
   - Follow-up (separate wiring task): persist the reporting zone captured on first start, per the control default in decisions.md; F2's `reporting.timezone` description already states it.
 
+- **B1 Banking provider boundary and bank facts** (ADR-0013): `internal/domain/banking` provider port, capabilities with the D10 access mode per connection, error taxonomy, sensitive-value type, idempotency keys; migration `0003_bank_facts` (connections, accounts, balance snapshots, transactions; RESTRICT-only references; explicit purge); `internal/store/bankfacts`; deterministic fake provider `bankingtest`; transitive "no provider import" test; float ban extended. No HTTP endpoints yet.
+  - Follow-up (B2): whole-window keying, staleness and attempt timestamps, no-longer-reported marking, `superseded_by` links, retry policy by error kind.
+  - Merge note: the outbox pull request also adds migration 0003; the second to merge renumbers.
+
 ## Next (first wave)
 
 - **F2 Configuration system**: YAML, environment and `.env` configuration, `.env.example`.
