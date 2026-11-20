@@ -101,3 +101,43 @@ func TestConfigUsageErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigCheckWarnsAboutUnknownVariablesOnSuccessAndFailure(t *testing.T) {
+	environ := func() []string { return []string{"LEDGER_LOG_LEVL=debug", "PATH=/bin"} }
+
+	opts := testOpts(map[string]string{"LEDGER_KEK_VALUE": cmdSentinel}, nil)
+	opts.Environ = environ
+	var out, errOut bytes.Buffer
+	if code := runConfig([]string{"check"}, &out, &errOut, opts); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	const warning = "warning: unknown variable LEDGER_LOG_LEVL is ignored (check the spelling)"
+	if !strings.Contains(out.String(), warning) {
+		t.Errorf("success output lacks the warning:\n%s", out.String())
+	}
+
+	// Validation fails (no KEK): the warning is still printed, before the error.
+	opts = testOpts(nil, nil)
+	opts.Environ = environ
+	out.Reset()
+	errOut.Reset()
+	if code := runConfig([]string{"check"}, &out, &errOut, opts); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	w, e := strings.Index(errOut.String(), warning), strings.Index(errOut.String(), "kek: required")
+	if w < 0 || e < 0 || w > e {
+		t.Errorf("want the warning before the error:\n%s", errOut.String())
+	}
+}
+
+func TestConfigCheckUsageShowsDefaults(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := runConfig([]string{"check", "-h"}, &out, &errOut, testOpts(nil, nil)); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	for _, want := range []string{"(default 127.0.0.1:8080)", "(default 15s)", "(default json)", "(default info)"} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("usage lacks %q:\n%s", want, errOut.String())
+		}
+	}
+}

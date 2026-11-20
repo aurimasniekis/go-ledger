@@ -5,5 +5,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0001: Repository layout and package boundaries](0001-repository-layout.md)
 - [ADR-0002: Developer conventions](0002-developer-conventions.md)
 - [ADR-0003: Configuration system](0003-configuration.md)
+- [ADR-0006: HTTP server, logging and error envelope](0006-http-server-logging-and-errors.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.
