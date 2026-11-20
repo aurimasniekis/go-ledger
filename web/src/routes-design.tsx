@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Mono } from '@/components/mono'
-import { STATUSES, StatusBadge, type Status } from '@/components/status-badge'
+import { COMMITMENT_STATUSES, DATA_STATES, STATUSES, StatusBadge, type Status } from '@/components/status-badge'
 import { TOKEN_GROUPS } from '@/lib/tokens'
 
 // /design: the token and component showcase. It shows nothing but static samples.
@@ -38,14 +38,28 @@ export function DesignPage() {
         <h2 id="tok-status-badges" className="text-lg font-semibold">
           Status badges
         </h2>
-        <p className="text-sm text-muted-foreground">Icon and label always travel together; colour is reinforcement only.</p>
-        <ul className="flex flex-wrap gap-2">
-          {(Object.keys(STATUSES) as Status[]).map((s) => (
-            <li key={s}>
-              <StatusBadge status={s} />
-            </li>
-          ))}
-        </ul>
+        <p className="text-sm text-muted-foreground">
+          Icon and label always travel together; colour is reinforcement only. Emphasis tiers: strong (solid), default
+          (tint), quiet (plain). Commitment status and data state are separate axes.
+        </p>
+        {(
+          [
+            ['Commitment status', COMMITMENT_STATUSES],
+            ['Data state', DATA_STATES],
+          ] as const
+        ).map(([title, group]) => (
+          <div key={title} className="space-y-2">
+            <h3 className="text-sm font-semibold">{title}</h3>
+            <ul className="flex flex-wrap gap-2">
+              {(Object.keys(group) as Status[]).map((s) => (
+                <li key={s}>
+                  <StatusBadge status={s} />{' '}
+                  <span className="text-xs text-muted-foreground">{STATUSES[s].tier}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </section>
 
       <section aria-labelledby="tok-controls" className="space-y-3">

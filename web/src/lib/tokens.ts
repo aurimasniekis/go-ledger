@@ -48,6 +48,7 @@ export const TOKEN_GROUPS: { id: string; title: string; tokens: TokenInfo[] }[] 
       { name: 'status-deferred', swatch: 'bg-status-deferred', note: 'Text and icon colour; pair with a label' },
       { name: 'status-stale', swatch: 'bg-status-stale', note: 'Text and icon colour; pair with a label' },
       { name: 'status-error', swatch: 'bg-status-error', note: 'Text and icon colour; pair with a label' },
+      { name: 'status-strong-foreground', swatch: 'bg-status-strong-foreground', note: 'Label on the solid fill of strong badges (overdue, error)' },
     ],
   },
 ]

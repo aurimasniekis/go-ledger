@@ -9,7 +9,7 @@ ADR-0008 scaffolded colour tokens for a dark and a light theme with a text-contr
 ## Decision
 
 1. **Tokens** live in `web/src/index.css` as CSS variables per theme, mapped into Tailwind with `@theme inline`: surfaces (incl. `surface-raised`), text, `border` (decorative), `border-control` and `ring` (both at least 3:1), accents (teal, cyan, violet, warm), six statuses each with a tint, radii 4/6/8px, two elevations, sans and mono fonts. The unused `danger`, `warning` and `success` tokens are replaced by `status-error`, `status-stale` and `status-paid`.
-2. **Status never relies on colour**: `StatusBadge` pairs a distinct icon with a label.
+2. **Status never relies on colour**: `StatusBadge` pairs a distinct icon with a label. Status hues are kept visibly distinct (delta-E tested) from accents, the focus ring and each other; overdue (amber, triangle) and error (red, octagon) are clearly separated. Badges have emphasis tiers (strong solid, default tint, quiet plain) and the types split commitment status from data state. `/design` is a route only, not in the main navigation.
 3. **Token-only enforcement** in three layers: the Tailwind default colour, shadow and radius scales are cleared; an ESLint rule rejects colour literals and default-palette classes in `src/`; a Vitest scan checks the same over all sources. Raw colours remain legal only in `index.css`.
 4. **Contrast** is tested for every token pair in both themes (4.5:1 text, 3:1 control border and focus ring), with an explicit exemption list; a coverage test fails when a token is added without a pair.
 5. **Radii** above 8px collapse to 8px so a stray `rounded-3xl` cannot break the 4-8px rule.

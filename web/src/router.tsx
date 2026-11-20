@@ -29,9 +29,6 @@ function Shell() {
           <Link to="/" className="rounded-md px-2 py-1 hover:bg-muted [&.active]:font-semibold">
             Overview
           </Link>
-          <Link to="/design" className="rounded-md px-2 py-1 hover:bg-muted [&.active]:font-semibold">
-            Design
-          </Link>
           <ThemeSelect />
         </nav>
       </header>

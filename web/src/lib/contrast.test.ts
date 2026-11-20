@@ -35,6 +35,9 @@ const textPairs: [string, string][] = [
   ['foreground', 'muted'],
   ['primary-foreground', 'primary'],
   ['secondary-foreground', 'secondary'],
+  // Solid (strong-tier) badges: overdue and error carry their label in the strong foreground.
+  ['status-strong-foreground', 'status-overdue'],
+  ['status-strong-foreground', 'status-error'],
   ...ACCENT.flatMap((a) => SURFACES.map((s): [string, string] => [a, s])),
   ...STATUS.flatMap((s) => [...SURFACES.map((b): [string, string] => [s, b]), [s, s + '-bg'] as [string, string]]),
 ]
@@ -70,6 +73,39 @@ describe('theme tokens meet WCAG 2.2 AA', () => {
       const covered = new Set([...textPairs, ...uiPairs].flat())
       const missing = Object.keys(t).filter((k) => !covered.has(k) && !(k in exempt))
       expect(missing).toEqual([])
+    })
+  }
+
+  // Status hues must stay distinguishable from the accents, the focus ring and each other,
+  // so a violet or focused element never reads as a commitment or freshness state.
+  const lab = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const v = parseInt(hex.slice(i, i + 2), 16) / 255
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+    }) as [number, number, number]
+    const f = (x: number) => (x > 0.008856 ? Math.cbrt(x) : 7.787 * x + 16 / 116)
+    const fx = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047)
+    const fy = f(0.2126 * r + 0.7152 * g + 0.0722 * b)
+    const fz = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883)
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)] as const
+  }
+  const deltaE = (a: string, b: string) => {
+    const [p, q] = [lab(a), lab(b)]
+    return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+  }
+  for (const [name, t] of Object.entries(themes)) {
+    it(`${name}: status tokens never equal and stay visibly distinct from accent and ring tokens`, () => {
+      const others = ['ring', 'accent-teal', 'accent-cyan', 'accent-violet', 'accent-warm', 'primary', 'accent']
+      for (const s of STATUS) {
+        for (const o of others) {
+          expect(t[s], `${s} must not equal ${o}`).not.toBe(t[o])
+          expect(deltaE(t[s]!, t[o]!), `${s} vs ${o}`).toBeGreaterThanOrEqual(20)
+        }
+      }
+    })
+    it(`${name}: status hues are distinct from each other, overdue and error clearly apart`, () => {
+      for (const a of STATUS) for (const b of STATUS) if (a < b) expect(deltaE(t[a]!, t[b]!), `${a} vs ${b}`).toBeGreaterThanOrEqual(20)
+      expect(deltaE(t['status-overdue']!, t['status-error']!)).toBeGreaterThanOrEqual(35)
     })
   }
 
