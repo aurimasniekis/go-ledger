@@ -7,7 +7,8 @@
 -- how it ended and what it changed. A run left 'running' by a stopped
 -- process is marked 'interrupted' by the next run of that connection.
 -- error_kind and error_code are the classified provider failure (banking
--- error taxonomy); they never hold a payload.
+-- error taxonomy); they never hold a payload. transactions_rejected counts
+-- bank rows dropped because they failed validation.
 CREATE TABLE bank_refresh_runs (
     id                              TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     connection_id                   TEXT NOT NULL REFERENCES bank_connections (id) ON DELETE RESTRICT,
@@ -28,6 +29,7 @@ CREATE TABLE bank_refresh_runs (
     transactions_kept_booked        INTEGER NOT NULL DEFAULT 0 CHECK (transactions_kept_booked >= 0),
     transactions_no_longer_reported INTEGER NOT NULL DEFAULT 0 CHECK (transactions_no_longer_reported >= 0),
     transactions_superseded         INTEGER NOT NULL DEFAULT 0 CHECK (transactions_superseded >= 0),
+    transactions_rejected           INTEGER NOT NULL DEFAULT 0 CHECK (transactions_rejected >= 0),
     CHECK ((outcome = 'running') = (finished_at IS NULL)),
     CHECK (finished_at IS NULL OR finished_at >= started_at),
     CHECK (outcome NOT IN ('running', 'succeeded') OR (error_kind = '' AND error_code = ''))
@@ -51,6 +53,9 @@ END;
 -- error (balances and every transaction window). last_error_* describe the
 -- latest attempt's failure and are cleared by a success, so a failed attempt
 -- after a success stays visible next to the data it could not replace.
+-- last_notice_code is a code for something the latest attempt dropped without
+-- failing (for example 'transactions_rejected'); an attempt without one
+-- clears it.
 -- transactions_through is the last day of the newest transaction window
 -- imported completely: the next refresh resumes from it, minus an overlap.
 CREATE TABLE bank_account_sync (
@@ -59,6 +64,7 @@ CREATE TABLE bank_account_sync (
     last_success_at      TEXT CHECK (last_success_at IS NULL OR (length(last_success_at) = 30 AND last_success_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z')),
     last_error_kind      TEXT NOT NULL DEFAULT '' CHECK (last_error_kind IN ('', 'reconnect_required', 'rate_limited', 'retryable', 'permanent', 'canceled')),
     last_error_code      TEXT NOT NULL DEFAULT '',
+    last_notice_code     TEXT NOT NULL DEFAULT '',
     transactions_through TEXT CHECK (transactions_through IS NULL OR (length(transactions_through) = 10 AND transactions_through GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(transactions_through) = transactions_through)),
     CHECK (last_error_kind <> '' OR last_error_code = '')
 ) STRICT;

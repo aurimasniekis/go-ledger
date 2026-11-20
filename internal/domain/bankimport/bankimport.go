@@ -62,7 +62,7 @@ const (
 
 // ErrRefreshInProgress is returned when the connection is already being
 // refreshed by this engine.
-var ErrRefreshInProgress = errors.New("bankimport: a refresh of this connection is already running")
+var ErrRefreshInProgress = fmt.Errorf("bankimport: %w", banking.ErrRefreshInProgress)
 
 // ErrNotRefreshable is returned for a connection that is not active.
 var ErrNotRefreshable = errors.New("bankimport: connection is not active")
@@ -105,6 +105,11 @@ type Options struct {
 	// MaxRetryWait is the longest delay the engine waits in a run; a
 	// provider asking for more (Retry-After) ends the call with its error.
 	MaxRetryWait time.Duration
+	// RunLease is how long a running run blocks another engine's refresh of
+	// the connection; an older one is taken as left by a stopped process and
+	// marked interrupted. It must exceed the longest refresh. Zero means
+	// banking.DefaultRunLease.
+	RunLease time.Duration
 }
 
 // Engine refreshes connections. It is safe for concurrent use; one
@@ -213,7 +218,10 @@ func (e *Engine) Refresh(ctx context.Context, id banking.ConnectionID, p banking
 	defer e.unlock(id)
 
 	start := time.Now()
-	run, err := e.facts.StartRefresh(ctx, id, e.now())
+	run, err := e.facts.StartRefresh(ctx, id, e.now(), e.opts.RunLease)
+	if errors.Is(err, banking.ErrRefreshInProgress) {
+		return Result{}, ErrRefreshInProgress
+	}
 	if err != nil {
 		return Result{}, err
 	}
@@ -416,7 +424,7 @@ func (r *refresh) updateStatus(book context.Context, cause error) {
 }
 
 func (r *refresh) recordFailure(book context.Context, id banking.AccountID, cause error) {
-	if _, err := r.e.facts.EndAccountRefresh(book, id, cause, r.e.now()); err != nil {
+	if _, err := r.e.facts.EndAccountRefresh(book, id, cause, "", r.e.now()); err != nil {
 		r.log.Error("recording the account refresh failure failed", "account_id", string(id), "error", err)
 	}
 }
@@ -436,7 +444,11 @@ func (r *refresh) account(id banking.AccountID, a banking.Account, c *banking.Re
 			first = err
 		}
 	}
-	if _, err := r.e.facts.EndAccountRefresh(book, id, first, r.e.now()); err != nil {
+	notice := ""
+	if c.TransactionsRejected > 0 {
+		notice = banking.NoticeTransactionsRejected
+	}
+	if _, err := r.e.facts.EndAccountRefresh(book, id, first, notice, r.e.now()); err != nil {
 		return errors.Join(first, err)
 	}
 	return first
@@ -490,11 +502,23 @@ func (r *refresh) transactions(id banking.AccountID, a banking.Account, sync ban
 		if err != nil {
 			return err
 		}
-		keyed, err := banking.KeyTransactions(txs)
+		// A row that fails validation is dropped and counted, like an
+		// unknown balance: failing the window would stop the account's
+		// imports for good, since the cursor could never pass it. The window
+		// is then incomplete and marks nothing as no longer reported.
+		valid := txs[:0:0]
+		for _, t := range txs {
+			if t.Validate() != nil {
+				c.TransactionsRejected++
+				continue
+			}
+			valid = append(valid, t)
+		}
+		keyed, err := banking.KeyTransactions(valid)
 		if err != nil {
 			return &banking.Error{Kind: banking.KindPermanent, Provider: r.conn.Provider, Op: "transactions", Code: "invalid_transaction", Err: err}
 		}
-		wr, err := r.e.facts.ImportTransactionWindow(r.ctx, id, banking.TransactionWindow{From: w.From, To: w.To, Transactions: keyed}, r.e.now())
+		wr, err := r.e.facts.ImportTransactionWindow(r.ctx, id, banking.TransactionWindow{From: w.From, To: w.To, Transactions: keyed, Incomplete: len(valid) != len(txs)}, r.e.now())
 		if err != nil {
 			return err
 		}

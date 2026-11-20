@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
@@ -16,7 +17,7 @@ import (
 // Refresh bookkeeping (migration 0005_bank_refresh, ADR-0020): refresh runs,
 // per-account refresh state and the window import of the B2 import engine.
 
-const runColumns = "id, connection_id, started_at, finished_at, outcome, error_kind, error_code, accounts_reported, accounts_succeeded, accounts_failed, accounts_no_longer_reported, balances_added, balances_rejected, transactions_inserted, transactions_updated, transactions_unchanged, transactions_kept_booked, transactions_no_longer_reported, transactions_superseded"
+const runColumns = "id, connection_id, started_at, finished_at, outcome, error_kind, error_code, accounts_reported, accounts_succeeded, accounts_failed, accounts_no_longer_reported, balances_added, balances_rejected, transactions_inserted, transactions_updated, transactions_unchanged, transactions_kept_booked, transactions_no_longer_reported, transactions_superseded, transactions_rejected"
 
 func scanRun(r rowScanner) (banking.RefreshRun, error) {
 	var run banking.RefreshRun
@@ -26,7 +27,7 @@ func scanRun(r rowScanner) (banking.RefreshRun, error) {
 	err := r.Scan(&run.ID, &run.ConnectionID, &started, &finished, &run.Outcome, &run.ErrorKind, &run.ErrorCode,
 		&c.AccountsReported, &c.AccountsSucceeded, &c.AccountsFailed, &c.AccountsNoLongerReported, &c.BalancesAdded, &c.BalancesRejected,
 		&c.TransactionsInserted, &c.TransactionsUpdated, &c.TransactionsUnchanged, &c.TransactionsKeptBooked,
-		&c.TransactionsNoLongerReported, &c.TransactionsSuperseded)
+		&c.TransactionsNoLongerReported, &c.TransactionsSuperseded, &c.TransactionsRejected)
 	if err != nil {
 		return banking.RefreshRun{}, err
 	}
@@ -46,7 +47,10 @@ func runTx(ctx context.Context, tx *sql.Tx, id banking.RefreshRunID) (banking.Re
 }
 
 // StartRefresh implements [banking.FactStore].
-func (s *Store) StartRefresh(ctx context.Context, id banking.ConnectionID, at time.Time) (banking.RefreshRun, error) {
+func (s *Store) StartRefresh(ctx context.Context, id banking.ConnectionID, at time.Time, lease time.Duration) (banking.RefreshRun, error) {
+	if lease <= 0 {
+		lease = banking.DefaultRunLease
+	}
 	if err := requireTime("refresh start", at); err != nil {
 		return banking.RefreshRun{}, err
 	}
@@ -55,6 +59,13 @@ func (s *Store) StartRefresh(ctx context.Context, id banking.ConnectionID, at ti
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := connectionTx(ctx, tx, "id = ?", id); err != nil {
 			return err
+		}
+		var live int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM bank_refresh_runs WHERE connection_id = ? AND outcome = 'running' AND started_at > ?", id, ts(at.Add(-lease))).Scan(&live); err != nil {
+			return fmt.Errorf("bankfacts: read running refresh runs: %w", err)
+		}
+		if live > 0 {
+			return banking.ErrRefreshInProgress
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE bank_refresh_runs SET outcome = 'interrupted', finished_at = max(?, started_at) WHERE connection_id = ? AND outcome = 'running'", ts(at), id); err != nil {
 			return fmt.Errorf("bankfacts: close unfinished refresh runs: %w", err)
@@ -80,11 +91,11 @@ func (s *Store) FinishRefresh(ctx context.Context, run banking.RefreshRun) (bank
 	c := run.RefreshCounts
 	var out banking.RefreshRun
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, "UPDATE bank_refresh_runs SET finished_at = max(?, started_at), outcome = ?, error_kind = ?, error_code = ?, accounts_reported = ?, accounts_succeeded = ?, accounts_failed = ?, accounts_no_longer_reported = ?, balances_added = ?, balances_rejected = ?, transactions_inserted = ?, transactions_updated = ?, transactions_unchanged = ?, transactions_kept_booked = ?, transactions_no_longer_reported = ?, transactions_superseded = ? WHERE id = ? AND outcome = 'running'",
+		res, err := tx.ExecContext(ctx, "UPDATE bank_refresh_runs SET finished_at = max(?, started_at), outcome = ?, error_kind = ?, error_code = ?, accounts_reported = ?, accounts_succeeded = ?, accounts_failed = ?, accounts_no_longer_reported = ?, balances_added = ?, balances_rejected = ?, transactions_inserted = ?, transactions_updated = ?, transactions_unchanged = ?, transactions_kept_booked = ?, transactions_no_longer_reported = ?, transactions_superseded = ?, transactions_rejected = ? WHERE id = ? AND outcome = 'running'",
 			ts(run.FinishedAt), run.Outcome, run.ErrorKind, run.ErrorCode,
 			c.AccountsReported, c.AccountsSucceeded, c.AccountsFailed, c.AccountsNoLongerReported, c.BalancesAdded, c.BalancesRejected,
 			c.TransactionsInserted, c.TransactionsUpdated, c.TransactionsUnchanged, c.TransactionsKeptBooked,
-			c.TransactionsNoLongerReported, c.TransactionsSuperseded, run.ID)
+			c.TransactionsNoLongerReported, c.TransactionsSuperseded, c.TransactionsRejected, run.ID)
 		if err != nil {
 			return fmt.Errorf("bankfacts: finish refresh run %s: %w", run.ID, err)
 		}
@@ -169,8 +180,8 @@ func syncTx(ctx context.Context, tx *sql.Tx, id banking.AccountID) (banking.Acco
 	var attempt store.Timestamp
 	var success sql.Null[store.Timestamp]
 	var through, pending sql.Null[sqlvalue.Date]
-	err := tx.QueryRowContext(ctx, "SELECT last_attempt_at, last_success_at, last_error_kind, last_error_code, transactions_through FROM bank_account_sync WHERE account_id = ?", id).
-		Scan(&attempt, &success, &out.LastErrorKind, &out.LastErrorCode, &through)
+	err := tx.QueryRowContext(ctx, "SELECT last_attempt_at, last_success_at, last_error_kind, last_error_code, last_notice_code, transactions_through FROM bank_account_sync WHERE account_id = ?", id).
+		Scan(&attempt, &success, &out.LastErrorKind, &out.LastErrorCode, &out.LastNoticeCode, &through)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 	case err != nil:
@@ -207,7 +218,7 @@ func (s *Store) BeginAccountRefresh(ctx context.Context, id banking.AccountID, a
 }
 
 // EndAccountRefresh implements [banking.FactStore].
-func (s *Store) EndAccountRefresh(ctx context.Context, id banking.AccountID, cause error, at time.Time) (banking.AccountSync, error) {
+func (s *Store) EndAccountRefresh(ctx context.Context, id banking.AccountID, cause error, notice string, at time.Time) (banking.AccountSync, error) {
 	if err := requireTime("refresh end", at); err != nil {
 		return banking.AccountSync{}, err
 	}
@@ -223,13 +234,13 @@ func (s *Store) EndAccountRefresh(ctx context.Context, id banking.AccountID, cau
 		}
 		var err error
 		if cause == nil {
-			_, err = tx.ExecContext(ctx, "UPDATE bank_account_sync SET last_success_at = ?, last_error_kind = '', last_error_code = '' WHERE account_id = ?", ts(at), id)
+			_, err = tx.ExecContext(ctx, "UPDATE bank_account_sync SET last_success_at = ?, last_error_kind = '', last_error_code = '', last_notice_code = ? WHERE account_id = ?", ts(at), notice, id)
 		} else {
 			kind, code := banking.Classify(cause), ""
 			if e, ok := errors.AsType[*banking.Error](cause); ok {
 				code = e.Code
 			}
-			_, err = tx.ExecContext(ctx, "UPDATE bank_account_sync SET last_error_kind = ?, last_error_code = ? WHERE account_id = ?", kind, code, id)
+			_, err = tx.ExecContext(ctx, "UPDATE bank_account_sync SET last_error_kind = ?, last_error_code = ?, last_notice_code = ? WHERE account_id = ?", kind, code, notice, id)
 		}
 		if err != nil {
 			return fmt.Errorf("bankfacts: record refresh end %s: %w", id, err)
@@ -283,22 +294,15 @@ func (s *Store) ImportTransactionWindow(ctx context.Context, id banking.AccountI
 		if err != nil {
 			return err
 		}
-		marked, err := markUnreported(ctx, tx, id, w, list, seenAt)
-		if err != nil {
-			return err
-		}
-		superseded := 0
-		for _, m := range marked {
-			if m.status != banking.StatusPending || m.ref == "" {
-				continue
-			}
-			ok, err := linkSuperseded(ctx, tx, id, m.id, m.ref, list)
-			if err != nil {
+		var marked []markedRow
+		if !w.Incomplete {
+			if marked, err = markUnreported(ctx, tx, id, w, list, seenAt); err != nil {
 				return err
 			}
-			if ok {
-				superseded++
-			}
+		}
+		superseded, err := linkSupersededByWindow(ctx, tx, id, w, list)
+		if err != nil {
+			return err
 		}
 		_, err = tx.ExecContext(ctx, "INSERT INTO bank_account_sync (account_id, last_attempt_at, transactions_through) VALUES (?, ?, ?) ON CONFLICT (account_id) DO UPDATE SET transactions_through = CASE WHEN bank_account_sync.transactions_through IS NULL OR bank_account_sync.transactions_through < excluded.transactions_through THEN excluded.transactions_through ELSE bank_account_sync.transactions_through END",
 			id, ts(seenAt), sqlvalue.Date{Date: w.To})
@@ -318,6 +322,59 @@ type markedRow struct {
 	id     banking.TransactionID
 	status banking.BookingStatus
 	ref    string
+}
+
+// linkSupersededByWindow links every pending transaction that is no longer
+// reported and not yet linked to the booked transaction of the window that
+// carries its entry reference. That covers a pending row marked by this very
+// window, one marked by an earlier refresh (a hold that vanished before its
+// booking appeared) and one dated in another chunk. It returns how many were
+// linked.
+func linkSupersededByWindow(ctx context.Context, tx *sql.Tx, id banking.AccountID, w banking.TransactionWindow, seen string) (int, error) {
+	var refs []string
+	for _, k := range w.Transactions {
+		if k.Status == banking.StatusBooked && k.EntryReference != "" && !slices.Contains(refs, k.EntryReference) {
+			refs = append(refs, k.EntryReference)
+		}
+	}
+	if len(refs) == 0 {
+		return 0, nil
+	}
+	list, err := idList(refs)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT id, entry_reference FROM bank_transactions WHERE account_id = ? AND booking_status = 'pending' AND no_longer_reported_at IS NOT NULL AND superseded_by IS NULL AND entry_reference IN (SELECT value FROM json_each(?))", id, list)
+	if err != nil {
+		return 0, fmt.Errorf("bankfacts: find unlinked pending transactions: %w", err)
+	}
+	type cand struct {
+		id  banking.TransactionID
+		ref string
+	}
+	var cands []cand
+	for rows.Next() {
+		var c cand
+		if err := rows.Scan(&c.id, &c.ref); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("bankfacts: find unlinked pending transactions: %w", err)
+		}
+		cands = append(cands, c)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return 0, fmt.Errorf("bankfacts: find unlinked pending transactions: %w", err)
+	}
+	n := 0
+	for _, c := range cands {
+		ok, err := linkSuperseded(ctx, tx, id, c.id, c.ref, seen)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // markUnreported marks the account's reported transactions dated inside the

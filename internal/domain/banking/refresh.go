@@ -10,6 +10,15 @@ import (
 // be before its data counts as stale (decision D17: 24 hours).
 const DefaultStaleAfter = 24 * time.Hour
 
+// NoticeTransactionsRejected is the account notice code of a refresh that
+// dropped transactions failing [Transaction.Validate] and imported the rest.
+const NoticeTransactionsRejected = "transactions_rejected"
+
+// DefaultRunLease is how long a running refresh run blocks another refresh
+// of the same connection; an older running run is taken as abandoned by a
+// stopped process.
+const DefaultRunLease = 30 * time.Minute
+
 // RefreshRunID identifies one refresh attempt of a connection.
 type RefreshRunID string
 
@@ -58,6 +67,10 @@ type RefreshCounts struct {
 	TransactionsKeptBooked       int
 	TransactionsNoLongerReported int
 	TransactionsSuperseded       int
+	// TransactionsRejected counts transactions the provider reported that
+	// failed validation. They are dropped, never stored, and never fail the
+	// window they came in.
+	TransactionsRejected int
 }
 
 // Add adds o to c.
@@ -74,6 +87,7 @@ func (c *RefreshCounts) Add(o RefreshCounts) {
 	c.TransactionsKeptBooked += o.TransactionsKeptBooked
 	c.TransactionsNoLongerReported += o.TransactionsNoLongerReported
 	c.TransactionsSuperseded += o.TransactionsSuperseded
+	c.TransactionsRejected += o.TransactionsRejected
 }
 
 // RefreshRun is one refresh attempt of a connection.
@@ -104,6 +118,9 @@ type AccountSync struct {
 	// a success clears them.
 	LastErrorKind ErrorKind
 	LastErrorCode string
+	// LastNoticeCode names something the latest attempt dropped without
+	// failing, such as [NoticeTransactionsRejected]; empty if nothing.
+	LastNoticeCode string
 	// TransactionsThrough is the last day of the newest transaction window
 	// imported completely; zero if none was.
 	TransactionsThrough calendar.Date
@@ -119,6 +136,10 @@ type AccountSync struct {
 type TransactionWindow struct {
 	From, To     calendar.Date
 	Transactions []KeyedTransaction
+	// Incomplete is true when the provider returned rows that were dropped
+	// (they failed validation). The window then marks nothing as no longer
+	// reported: a dropped row's stored version must not be taken as gone.
+	Incomplete bool
 }
 
 // WindowResult is what importing one [TransactionWindow] did.
@@ -165,6 +186,9 @@ type Freshness struct {
 	LastAttemptAt time.Time
 	LastErrorKind ErrorKind
 	LastErrorCode string
+	// NoticeCode is the account's LastNoticeCode: the latest refresh dropped
+	// something (bank rows that failed validation) and still completed.
+	NoticeCode string
 }
 
 // AccountFreshness derives an account's freshness from its connection
@@ -179,6 +203,7 @@ func AccountFreshness(conn ConnectionStatus, s AccountSync, now time.Time, stale
 		Stale:         true,
 		LastSuccessAt: s.LastSuccessAt, LastAttemptAt: s.LastAttemptAt,
 		LastErrorKind: s.LastErrorKind, LastErrorCode: s.LastErrorCode,
+		NoticeCode: s.LastNoticeCode,
 	}
 	switch {
 	case conn == ConnectionReconnectRequired:

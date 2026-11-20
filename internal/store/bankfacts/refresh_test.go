@@ -306,11 +306,16 @@ func TestCancelledRefreshIsInterruptedAndResumes(t *testing.T) {
 
 func TestRunLeftRunningIsMarkedInterrupted(t *testing.T) {
 	e := newEngineEnv(t, banking.ModeApp)
-	stale, err := e.facts.StartRefresh(e.ctx, e.conn.ID, e.clock.now) // the process "stopped" here
+	stale, err := e.facts.StartRefresh(e.ctx, e.conn.ID, e.clock.now, 0) // the process "stopped" here
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Within the lease the run may still be alive in another engine.
 	e.clock.now = e.clock.now.Add(time.Minute)
+	if _, err := e.refresh(); !errors.Is(err, bankimport.ErrRefreshInProgress) {
+		t.Fatalf("refresh within the lease: %v", err)
+	}
+	e.clock.now = e.clock.now.Add(banking.DefaultRunLease)
 	e.mustRefresh()
 	runs, err := e.facts.RefreshRuns(e.ctx, e.conn.ID, 0)
 	if err != nil {
@@ -707,6 +712,171 @@ func TestOneRefreshPerConnection(t *testing.T) {
 	if !errors.Is(inner, bankimport.ErrRefreshInProgress) {
 		t.Errorf("concurrent refresh: %v", inner)
 	}
+}
+
+func TestSecondEngineCannotRefreshWhileARunIsLive(t *testing.T) {
+	e := newEngineEnv(t, banking.ModeApp)
+	other := bankimport.New(e.facts, bankimport.Options{Now: e.clock.Now})
+	var inner error
+	e.h.onAccounts = func() {
+		e.h.onAccounts = nil
+		_, inner = other.Refresh(e.ctx, e.conn.ID, e.h)
+	}
+	res := e.mustRefresh()
+	if !errors.Is(inner, bankimport.ErrRefreshInProgress) {
+		t.Fatalf("second engine: %v", inner)
+	}
+	runs, err := e.facts.RefreshRuns(e.ctx, e.conn.ID, 0)
+	if err != nil || len(runs) != 1 || runs[0].ID != res.Run.ID || runs[0].Outcome != banking.RefreshSucceeded {
+		t.Errorf("runs = %+v, %v", runs, err)
+	}
+	// Once the run finished the other engine may refresh.
+	if _, err := other.Refresh(e.ctx, e.conn.ID, e.h); err != nil {
+		t.Errorf("second engine after the first finished: %v", err)
+	}
+}
+
+func TestInvalidTransactionIsDroppedNotFatal(t *testing.T) {
+	e := newEngineEnv(t, banking.ModeApp)
+	e.mustRefresh()
+	eur := e.eurAccount(e.conn)
+	// The bank now sends a row without a provider status, dated inside the
+	// overlap, plus a valid new transaction; and a stored pending row turns
+	// invalid too.
+	e.p.Mutate(func(d *bankingtest.Dataset) {
+		a := &d.Accounts[0]
+		a.Transactions = append(a.Transactions, banking.Transaction{
+			EntryReference: "bad-row", Status: banking.StatusBooked, Amount: money.MustParse("-1.00", "EUR"),
+			BookingDate: calendar.MustDate(2026, time.October, 30), Description: "BROKEN",
+		})
+		for i := range a.Transactions {
+			if a.Transactions[i].EntryReference == bankingtest.RefPendingThenBooks {
+				a.Transactions[i].ProviderStatus = ""
+			}
+		}
+	})
+	for i := range 3 {
+		e.p.Mutate(func(d *bankingtest.Dataset) {
+			d.Accounts[0].Transactions = append(d.Accounts[0].Transactions, banking.Transaction{
+				EntryReference: "new-" + string(rune('a'+i)), Status: banking.StatusBooked, ProviderStatus: "BOOK",
+				Amount: money.MustParse("-2.00", "EUR"), BookingDate: calendar.MustDate(2026, time.October, 31), Description: "NEW",
+			})
+		})
+		e.clock.now = e.clock.now.Add(time.Hour)
+		res, err := e.refresh()
+		if err != nil || res.Run.Outcome != banking.RefreshSucceeded {
+			t.Fatalf("refresh %d: %v, %+v", i, err, res.Run)
+		}
+		wantRejected := 2
+		if res.Run.TransactionsRejected != wantRejected || res.Run.TransactionsInserted != 1 {
+			t.Fatalf("refresh %d counts = %+v", i, res.Run.RefreshCounts)
+		}
+		s := e.sync(eur.ID)
+		if s.LastNoticeCode != banking.NoticeTransactionsRejected || s.LastErrorKind != "" {
+			t.Errorf("refresh %d sync = %+v", i, s)
+		}
+		if f := e.freshness(eur.ID); f.NoticeCode != banking.NoticeTransactionsRejected {
+			t.Errorf("freshness notice = %q", f.NoticeCode)
+		}
+	}
+	if _, ok := byRef(e.eurTransactions(e.conn), "bad-row"); ok {
+		t.Error("an invalid row was stored")
+	}
+	pending, _ := byRef(e.eurTransactions(e.conn), bankingtest.RefPendingThenBooks)
+	if !pending.NoLongerReportedAt.IsZero() {
+		t.Error("a row whose new version failed validation was marked no longer reported")
+	}
+	// The bank corrects itself: a clean refresh clears the notice.
+	e.p.Mutate(func(d *bankingtest.Dataset) {
+		a := &d.Accounts[0]
+		a.Transactions = slices.DeleteFunc(a.Transactions, func(t banking.Transaction) bool { return t.EntryReference == "bad-row" })
+		for i := range a.Transactions {
+			if a.Transactions[i].EntryReference == bankingtest.RefPendingThenBooks {
+				a.Transactions[i].ProviderStatus = "PDNG"
+			}
+		}
+	})
+	e.clock.now = e.clock.now.Add(time.Hour)
+	e.mustRefresh()
+	if s := e.sync(eur.ID); s.LastNoticeCode != "" {
+		t.Errorf("notice after a clean refresh = %q", s.LastNoticeCode)
+	}
+}
+
+func TestBookedRowLinksAnAlreadyUnreportedHold(t *testing.T) {
+	const ref = "fake-ref-hold-0003"
+	hold := banking.Transaction{
+		EntryReference: ref, Status: banking.StatusPending, ProviderStatus: "PDNG",
+		Amount: money.MustParse("-40.00", "EUR"), TransactionDate: calendar.MustDate(2026, time.October, 29), Description: "FUEL HOLD",
+	}
+	booked := banking.Transaction{
+		EntryReference: ref, Status: banking.StatusBooked, ProviderStatus: "BOOK",
+		Amount: money.MustParse("-47.50", "EUR"), BookingDate: calendar.MustDate(2026, time.October, 31), Description: "FUEL",
+	}
+	find := func(e *engineEnv) (old, now banking.StoredTransaction) {
+		for _, tx := range e.eurTransactions(e.conn) {
+			switch {
+			case tx.EntryReference == ref && tx.Status == banking.StatusPending:
+				old = tx
+			case tx.EntryReference == ref:
+				now = tx
+			}
+		}
+		return old, now
+	}
+
+	t.Run("hold disappears before the booking appears", func(t *testing.T) {
+		e := newEngineEnv(t, banking.ModeApp)
+		e.p.Mutate(func(d *bankingtest.Dataset) { d.Accounts[0].Transactions = append(d.Accounts[0].Transactions, hold) })
+		e.mustRefresh()
+		e.p.Mutate(func(d *bankingtest.Dataset) {
+			d.Accounts[0].Transactions = slices.DeleteFunc(d.Accounts[0].Transactions, func(t banking.Transaction) bool { return t.EntryReference == ref })
+		})
+		e.clock.now = e.clock.now.Add(time.Hour)
+		e.mustRefresh()
+		if old, _ := find(e); old.NoLongerReportedAt.IsZero() || old.SupersededBy != "" {
+			t.Fatalf("hold = gone %v, superseded %q", old.NoLongerReportedAt, old.SupersededBy)
+		}
+		e.p.Mutate(func(d *bankingtest.Dataset) { d.Accounts[0].Transactions = append(d.Accounts[0].Transactions, booked) })
+		e.clock.now = e.clock.now.Add(time.Hour)
+		res := e.mustRefresh()
+		old, now := find(e)
+		if now.ID == "" || old.SupersededBy != now.ID || res.Run.TransactionsSuperseded != 1 || old.Countable() || !now.Countable() {
+			t.Errorf("old superseded by %q, booked %q, counts %+v", old.SupersededBy, now.ID, res.Run.RefreshCounts)
+		}
+		// A further refresh changes nothing.
+		e.clock.now = e.clock.now.Add(time.Hour)
+		if res := e.mustRefresh(); res.Run.TransactionsSuperseded != 0 {
+			t.Errorf("relinked: %+v", res.Run.RefreshCounts)
+		}
+	})
+
+	t.Run("hold and booking are in different windows", func(t *testing.T) {
+		e := newEngineEnv(t, banking.ModeApp)
+		e.mustRefresh()
+		eur := e.eurAccount(e.conn)
+		window := func(from, to int, txs ...banking.Transaction) banking.WindowResult {
+			t.Helper()
+			keyed, err := banking.KeyTransactions(txs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := e.facts.ImportTransactionWindow(e.ctx, eur.ID, banking.TransactionWindow{
+				From: calendar.MustDate(2026, time.October, from), To: calendar.MustDate(2026, time.October, to), Transactions: keyed,
+			}, e.clock.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return res
+		}
+		window(29, 29, hold)
+		window(29, 29) // the hold stops being reported
+		res := window(30, 31, booked)
+		old, now := find(e)
+		if res.Superseded != 1 || old.SupersededBy != now.ID || now.ID == "" {
+			t.Errorf("superseded %d, old linked to %q, booked %q", res.Superseded, old.SupersededBy, now.ID)
+		}
+	})
 }
 
 func TestRefreshNeedsTheConnectionsProvider(t *testing.T) {

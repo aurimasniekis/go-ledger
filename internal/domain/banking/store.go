@@ -11,6 +11,10 @@ var ErrNotFound = errors.New("banking: not found")
 
 // ErrPurgeBlocked is returned when bank facts cannot be purged because user
 // data (a payment match, a correction) still refers to them.
+// ErrRefreshInProgress is returned by StartRefresh while another refresh of
+// the connection is running.
+var ErrRefreshInProgress = errors.New("banking: a refresh of this connection is already running")
+
 var ErrPurgeBlocked = errors.New("banking: bank facts are still referenced by user data")
 
 // IDs are ULIDs assigned by the store; they are Ledger's stable identifiers,
@@ -185,10 +189,12 @@ type FactStore interface {
 	// otherwise. Ending the provider session is the caller's job.
 	DisconnectConnection(ctx context.Context, id ConnectionID, expected int64, at time.Time) (Connection, error)
 
-	// StartRefresh records the start of a refresh run of a connection. A run
-	// of the connection still marked running (its process stopped) is first
-	// finished as [RefreshInterrupted].
-	StartRefresh(ctx context.Context, id ConnectionID, at time.Time) (RefreshRun, error)
+	// StartRefresh records the start of a refresh run of a connection. While
+	// a run of the connection is running and started less than lease ago it
+	// fails with [ErrRefreshInProgress] (another engine is refreshing). A
+	// running run older than lease (its process stopped) is first finished as
+	// [RefreshInterrupted]. lease <= 0 means [DefaultRunLease].
+	StartRefresh(ctx context.Context, id ConnectionID, at time.Time, lease time.Duration) (RefreshRun, error)
 	// FinishRefresh records how run ended: its outcome (not running), error
 	// kind and code, counts and FinishedAt.
 	FinishRefresh(ctx context.Context, run RefreshRun) (RefreshRun, error)
@@ -206,9 +212,11 @@ type FactStore interface {
 	BeginAccountRefresh(ctx context.Context, id AccountID, at time.Time) (AccountSync, error)
 	// EndAccountRefresh records the end of an account's refresh: with a nil
 	// cause a success at at (clearing the last error), otherwise the
-	// cause's kind and provider code. Bank facts are not touched, so a
-	// failure leaves the last good data in place.
-	EndAccountRefresh(ctx context.Context, id AccountID, cause error, at time.Time) (AccountSync, error)
+	// cause's kind and provider code. notice is the account's notice code
+	// ([NoticeTransactionsRejected]) or empty; it replaces the previous one.
+	// Bank facts are not touched, so a failure leaves the last good data in
+	// place.
+	EndAccountRefresh(ctx context.Context, id AccountID, cause error, notice string, at time.Time) (AccountSync, error)
 	// AccountSync returns an account's refresh state; zero timestamps if it
 	// was never refreshed.
 	AccountSync(ctx context.Context, id AccountID) (AccountSync, error)
@@ -219,7 +227,8 @@ type FactStore interface {
 	// row that is reported again), marks the account's other transactions
 	// dated inside the window no longer reported, links a newly unreported
 	// pending transaction to the one booked transaction of the window with
-	// the same entry reference, and advances the account's
+	// the same entry reference (also one that stopped being reported in an
+	// earlier window or refresh and is still unlinked), and advances the account's
 	// TransactionsThrough to w.To. Nothing is written if any step fails.
 	ImportTransactionWindow(ctx context.Context, id AccountID, w TransactionWindow, seenAt time.Time) (WindowResult, error)
 
