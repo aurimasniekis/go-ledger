@@ -10,8 +10,9 @@ import (
 // a version, starting at 1 and incremented by each change. Reads return it in
 // the body ("version") and as a strong ETag ("\"<version>\""). A write to an
 // existing object must name the version it was based on, in If-Match or in
-// the body's "version"; a stale version is a 409 with reconciliation details,
-// and a write that names none is a 428.
+// the body's "version" (PATCH and PUT; DELETE has no body and takes If-Match
+// only); a stale version is a 409 with reconciliation details, and a write
+// that names none is a 428.
 
 // ETag returns the entity tag for an object version: the decimal version in
 // double quotes.
@@ -56,8 +57,11 @@ func ExpectedVersion(r *http.Request, bodyVersion *int64) (int64, error) {
 	case bodyVersion != nil:
 		return *bodyVersion, nil
 	}
-	return 0, &Error{Status: http.StatusPreconditionRequired, Code: CodePrecondition,
-		Message: "this change must name the version it is based on, in If-Match or the version field"}
+	msg := "this change must name the version it is based on in If-Match or the version member"
+	if r.Method == http.MethodDelete { // no body: the version member does not apply
+		msg = "this change must name the version it is based on in If-Match"
+	}
+	return 0, &Error{Status: http.StatusPreconditionRequired, Code: CodePrecondition, Message: msg}
 }
 
 func parseETag(s string) (int64, bool) {

@@ -306,6 +306,19 @@ func TestResourceErrorsMapToEnvelope(t *testing.T) {
 	}
 }
 
+func TestPreconditionRequiredWording(t *testing.T) {
+	for method, wantBody := range map[string]bool{"PATCH": true, "PUT": true, "DELETE": false} {
+		_, err := ExpectedVersion(httptest.NewRequest(method, "/x", nil), nil)
+		var apiErr *Error
+		if !errors.As(err, &apiErr) || apiErr.Status != 428 {
+			t.Fatalf("%s: %v", method, err)
+		}
+		if got := strings.Contains(apiErr.Message, "version member"); got != wantBody {
+			t.Errorf("%s: message %q", method, apiErr.Message)
+		}
+	}
+}
+
 func TestExpectedVersion(t *testing.T) {
 	five, zero := int64(5), int64(0)
 	for _, c := range []struct {

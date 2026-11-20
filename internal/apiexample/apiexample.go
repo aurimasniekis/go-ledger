@@ -91,11 +91,11 @@ func scan(row interface{ Scan(...any) error }) (Example, error) {
 }
 
 // Create inserts a new example at version 1.
-func (s *Store) Create(ctx context.Context, name, kind string) (Example, error) {
-	e := Example{ID: resource.NewID(), Name: name, Kind: kind, Version: 1, CreatedAt: s.Now().UTC()}
+func (s *Store) Create(ctx context.Context, name, kind string, note *string) (Example, error) {
+	e := Example{ID: resource.NewID(), Name: name, Kind: kind, Note: note, Version: 1, CreatedAt: s.Now().UTC()}
 	err := s.DB.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO "+table+" (id, name, kind, created_at) VALUES (?, ?, ?, ?)",
-			e.ID, e.Name, e.Kind, store.Timestamp{Time: e.CreatedAt})
+		_, err := tx.ExecContext(ctx, "INSERT INTO "+table+" (id, name, kind, note, created_at) VALUES (?, ?, ?, ?, ?)",
+			e.ID, e.Name, e.Kind, e.Note, store.Timestamp{Time: e.CreatedAt})
 		return err
 	})
 	return e, err
@@ -176,6 +176,20 @@ func (s *Store) Update(ctx context.Context, id string, expected int64, p Patch) 
 	return e, err
 }
 
+// CheckVersion returns the example when it still has version expected, with
+// the same errors as [Store.Update], and changes nothing. An empty patch uses
+// it: the precondition is checked but the version is not bumped.
+func (s *Store) CheckVersion(ctx context.Context, id string, expected int64) (Example, error) {
+	e, err := s.Get(ctx, id)
+	if err != nil {
+		return Example{}, err
+	}
+	if e.Version != expected {
+		return Example{}, &resource.VersionConflictError{Expected: expected, Current: e.Version}
+	}
+	return e, nil
+}
+
 // Delete removes the example when it still has version expected.
 func (s *Store) Delete(ctx context.Context, id string, expected int64) error {
 	return s.DB.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -215,6 +229,7 @@ func Register(srv *httpapi.Server, st *Store) {
 		var in struct {
 			Name *string `json:"name"`
 			Kind *string `json:"kind"`
+			Note *string `json:"note"` // optional; null is the same as absent
 		}
 		if err := httpapi.DecodeJSON(r, &in); err != nil {
 			httpapi.WriteError(w, r, err)
@@ -232,7 +247,11 @@ func Register(srv *httpapi.Server, st *Store) {
 			httpapi.WriteError(w, r, err)
 			return
 		}
-		e, err := st.Create(r.Context(), *in.Name, *in.Kind)
+		if err := validateNote(in.Note); err != nil {
+			httpapi.WriteError(w, r, err)
+			return
+		}
+		e, err := st.Create(r.Context(), *in.Name, *in.Kind, in.Note)
 		if err != nil {
 			httpapi.WriteError(w, r, err)
 			return
@@ -280,7 +299,14 @@ func Register(srv *httpapi.Server, st *Store) {
 			return
 		}
 		id := r.PathValue("id")
-		e, err := st.Update(r.Context(), id, expected, in)
+		var e Example
+		if len(patch) == 0 || len(patch) == 1 && patch.Has("version") {
+			// An empty patch is a no-op (ADR-0017): the precondition is
+			// checked, nothing is written and the version stays.
+			e, err = st.CheckVersion(r.Context(), id, expected)
+		} else {
+			e, err = st.Update(r.Context(), id, expected, in)
+		}
 		if err != nil {
 			writeWriteError(w, r, st, id, err)
 			return
@@ -343,8 +369,8 @@ func parsePatch(p httpapi.MergePatch) (Patch, error) {
 			if err := p.Decode("note", &v); err != nil {
 				return Patch{}, err
 			}
-			if n := utf8.RuneCountInString(v); n < 1 || n > 200 || !utf8.ValidString(v) {
-				return Patch{}, httpapi.Validation("note", fmt.Sprintf("note must be 1 to 200 characters, or null to clear it, got %d", n))
+			if err := validateNote(&v); err != nil {
+				return Patch{}, err
 			}
 			out.Note = &v
 		}
@@ -353,6 +379,16 @@ func parsePatch(p httpapi.MergePatch) (Patch, error) {
 		return Patch{}, err
 	}
 	return out, nil
+}
+
+func validateNote(note *string) error {
+	if note == nil {
+		return nil
+	}
+	if n := utf8.RuneCountInString(*note); n < 1 || n > 200 || !utf8.ValidString(*note) {
+		return httpapi.Validation("note", fmt.Sprintf("note must be 1 to 200 characters, got %d", n))
+	}
+	return nil
 }
 
 func validate(name, kind *string) error {
