@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"mime"
 	"net/http"
 )
@@ -37,10 +39,14 @@ func (p MergePatch) Decode(field string, dst any) error {
 // (nil or JSON null when the target has no value yet), with the full RFC 7396
 // MergePatch algorithm, and returns the merged document. Use it for a member
 // that holds a nested object: objects merge recursively and null deletes a
-// member, while arrays and scalars replace the target whole. It reports a
+// member, while arrays and scalars replace the target whole. When the patch
+// does not name field at all, current is returned unchanged. It reports a
 // validation error naming field when the patch value or current is not valid
 // JSON.
 func (p MergePatch) Apply(field string, current json.RawMessage) (json.RawMessage, error) {
+	if !p.Has(field) {
+		return current, nil
+	}
 	out, err := ApplyMergePatch(current, p[field])
 	if err != nil {
 		return nil, Validation(field, field+" is not valid JSON")
@@ -54,18 +60,38 @@ func (p MergePatch) Apply(field string, current json.RawMessage) (json.RawMessag
 // recursively otherwise. When patch is anything else (array, scalar, null) it
 // replaces target. An empty target means "no value" (JSON null). Keys come out
 // sorted (encoding/json map order); duplicate keys in a document take the last.
+// Numbers are kept as their literal text (json.Number), never converted to
+// float64: an untouched member round-trips exactly, so 10000000000000001,
+// 12345678901234567890 and 1.10 come back as written, and 1e400 is not an
+// error.
 func ApplyMergePatch(target, patch json.RawMessage) (json.RawMessage, error) {
 	if len(bytes.TrimSpace(target)) == 0 {
 		target = json.RawMessage("null")
 	}
-	var t, p any
-	if err := json.Unmarshal(target, &t); err != nil {
+	t, err := decodeValue(target)
+	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(patch, &p); err != nil {
+	p, err := decodeValue(patch)
+	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(mergeValue(t, p))
+}
+
+// decodeValue parses one JSON value, keeping numbers as json.Number, and
+// refuses trailing data after it.
+func decodeValue(raw json.RawMessage) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("invalid JSON: data after the value")
+	}
+	return v, nil
 }
 
 func mergeValue(target, patch any) any {

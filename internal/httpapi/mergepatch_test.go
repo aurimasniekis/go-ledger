@@ -86,6 +86,49 @@ func TestApplyMergePatch(t *testing.T) {
 	if _, err := ApplyMergePatch(nil, json.RawMessage(`{`)); err == nil {
 		t.Error("invalid patch accepted")
 	}
+	if _, err := ApplyMergePatch(nil, json.RawMessage(`{} {}`)); err == nil {
+		t.Error("trailing data in patch accepted")
+	}
+}
+
+func TestApplyMergePatchKeepsNumbers(t *testing.T) {
+	// Numbers must round-trip as written: float64 would turn 10000000000000001
+	// into ...000 and 12345678901234567890 into ...567000, and drop 1.10's zero.
+	for _, c := range []struct{ name, target, patch, want string }{
+		{"untouched large integer", `{"a":1,"b":10000000000000001}`, `{"a":2}`, `{"a":2,"b":10000000000000001}`},
+		{"untouched big integer", `{"a":1,"b":12345678901234567890}`, `{"a":2}`, `{"a":2,"b":12345678901234567890}`},
+		{"untouched trailing-zero decimal", `{"a":1,"b":1.10}`, `{"a":2}`, `{"a":2,"b":1.10}`},
+		{"untouched nested numbers", `{"s":{"n":12345678901234567890,"d":1.10}}`, `{"s":{"x":1}}`, `{"s":{"d":1.10,"n":12345678901234567890,"x":1}}`},
+		{"patch large integer", `{}`, `{"a":10000000000000001}`, `{"a":10000000000000001}`},
+		{"patch big integer", `{"a":1}`, `{"a":12345678901234567890}`, `{"a":12345678901234567890}`},
+		{"patch trailing-zero decimal", `{"a":1}`, `{"a":1.10}`, `{"a":1.10}`},
+		{"patch nested numbers", `{}`, `{"s":{"n":12345678901234567890,"d":1.10}}`, `{"s":{"d":1.10,"n":12345678901234567890}}`},
+		{"patch exponent kept as written", `{}`, `{"a":1e400}`, `{"a":1e400}`},
+		{"untouched exponent", `{"b":1E+2}`, `{"a":1}`, `{"a":1,"b":1E+2}`},
+	} {
+		got, err := ApplyMergePatch(json.RawMessage(c.target), json.RawMessage(c.patch))
+		if err != nil || string(got) != c.want {
+			t.Errorf("%s: got %s, %v; want %s", c.name, got, err, c.want)
+		}
+	}
+}
+
+func TestMergePatchApplyAbsentMember(t *testing.T) {
+	r := httptest.NewRequest("PATCH", "/x", strings.NewReader(`{"a":1}`))
+	r.Header.Set("Content-Type", MergePatchType)
+	p, err := DecodeMergePatch(r, "a", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := json.RawMessage(`{"x":1}`)
+	got, err := p.Apply("s", current)
+	if err != nil || string(got) != string(current) {
+		t.Errorf("absent member: got %s, %v; want %s unchanged", got, err, current)
+	}
+	got, err = p.Apply("s", nil)
+	if err != nil || got != nil {
+		t.Errorf("absent member, no target: got %s, %v; want nil", got, err)
+	}
 }
 
 func TestMergePatchApplyMember(t *testing.T) {

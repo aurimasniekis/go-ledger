@@ -269,9 +269,9 @@ func Register(srv *httpapi.Server, st *Store) {
 		httpapi.SetVersion(w, e.Version)
 		httpapi.WriteJSON(w, http.StatusOK, e)
 	}))
-	// PATCH is a JSON Merge Patch (RFC 7396, ADR-0015): an absent member is
-	// unchanged, null clears an optional member (note), and null on a required
-	// member is a 400. The optional "version" member is the precondition, not
+	// PATCH is a JSON Merge Patch (RFC 7396, ADR-0015, ADR-0017): an absent
+	// member is unchanged, null clears an optional member (note), and null on a
+	// required member is a 400. The optional "version" member is the precondition, not
 	// data, and is not stored.
 	srv.Handle("PATCH "+Path+"/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		patch, err := httpapi.DecodeMergePatch(r, "name", "kind", "note", "version")
