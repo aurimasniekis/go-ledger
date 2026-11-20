@@ -1,4 +1,4 @@
-// Package bankimport is the import engine (task B2, ADR-0019): it refreshes
+// Package bankimport is the import engine (task B2, ADR-0020): it refreshes
 // one bank connection from its provider into the bank-fact store.
 //
 // A refresh lists the connection's accounts, then for each account fetches

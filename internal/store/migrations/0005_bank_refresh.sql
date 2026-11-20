@@ -1,4 +1,4 @@
--- Bank refresh bookkeeping for the import engine (B2, ADR-0019). Both tables
+-- Bank refresh bookkeeping for the import engine (B2, ADR-0020). Both tables
 -- are Ledger-managed operational state, not bank facts and not user data:
 -- refresh never writes user data, and these rows are deleted only by the
 -- explicit purge of their connection.

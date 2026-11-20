@@ -1,4 +1,4 @@
-# ADR-0019: Bank import engine
+# ADR-0020: Bank import engine
 
 Status: Proposed (2026-11-20)
 

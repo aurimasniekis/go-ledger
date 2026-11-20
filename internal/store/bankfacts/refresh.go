@@ -13,7 +13,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/store/sqlvalue"
 )
 
-// Refresh bookkeeping (migration 0005_bank_refresh, ADR-0019): refresh runs,
+// Refresh bookkeeping (migration 0005_bank_refresh, ADR-0020): refresh runs,
 // per-account refresh state and the window import of the B2 import engine.
 
 const runColumns = "id, connection_id, started_at, finished_at, outcome, error_kind, error_code, accounts_reported, accounts_succeeded, accounts_failed, accounts_no_longer_reported, balances_added, balances_rejected, transactions_inserted, transactions_updated, transactions_unchanged, transactions_kept_booked, transactions_no_longer_reported, transactions_superseded"

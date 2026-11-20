@@ -682,7 +682,7 @@ func (s *Store) Transactions(ctx context.Context, id banking.AccountID) ([]banki
 // DELETE RESTRICT, so while user data (a payment match, a correction) refers
 // to any of them the purge fails with [banking.ErrPurgeBlocked] and nothing
 // is deleted. The connection's refresh runs and account refresh state
-// (ADR-0019) go with it. superseded_by links between the purged transactions are
+// (ADR-0020) go with it. superseded_by links between the purged transactions are
 // cleared first: SQLite checks that self-reference per row, so the delete
 // order would otherwise decide whether the purge fails. Ending the provider
 // session is the caller's job and should happen first.
