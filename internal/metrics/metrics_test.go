@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func render(t *testing.T, r *Registry) string {
@@ -100,4 +101,75 @@ func TestHandlerContentType(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain; version=0.0.4") {
 		t.Errorf("content type %q", ct)
 	}
+}
+
+func TestLabelValueCutKeepsWholeRunes(t *testing.T) {
+	r := NewRegistry(0)
+	// The e-acute is two bytes and straddles byte 64, so the cut must back off to 63.
+	r.NewCounter("c_total", "h", "v").Inc(strings.Repeat("a", 63) + "é" + "z")
+	out := render(t, r)
+	if want := "c_total{v=\"" + strings.Repeat("a", 63) + "\"} 1\n"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
+	if !utf8.ValidString(out) {
+		t.Errorf("output is not valid UTF-8")
+	}
+}
+
+func TestInvalidUTF8LabelValueIsReplaced(t *testing.T) {
+	r := NewRegistry(0)
+	r.NewCounter("c_total", "h", "v").Inc("a\xffb")
+	out := render(t, r)
+	if want := "c_total{v=\"a" + "\uFFFD" + "b\"} 1\n"; !strings.Contains(out, want) {
+		t.Errorf("invalid byte not replaced; output:\n%s", out)
+	}
+	if !utf8.ValidString(out) {
+		t.Errorf("output is not valid UTF-8")
+	}
+}
+
+func TestLongValuesWithSharedPrefixShareASeries(t *testing.T) {
+	r := NewRegistry(0)
+	c := r.NewCounter("p_total", "h", "v")
+	c.Inc(strings.Repeat("a", 64) + "one")
+	c.Inc(strings.Repeat("a", 64) + "two")
+	if out := render(t, r); !strings.Contains(out, "p_total{v=\""+strings.Repeat("a", 64)+"\"} 2\n") {
+		t.Errorf("values sharing their first 64 bytes did not merge:\n%s", out)
+	}
+}
+
+func mustPanic(t *testing.T, f func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Error("no panic")
+		}
+	}()
+	f()
+}
+
+func TestInvalidNamesPanic(t *testing.T) {
+	cases := []struct {
+		name string
+		f    func(*Registry)
+	}{
+		{"metric name with a dash", func(r *Registry) { r.NewCounter("bad-name", "h") }},
+		{"empty metric name", func(r *Registry) { r.NewCounter("", "h") }},
+		{"metric name starting with a digit", func(r *Registry) { r.NewCounter("9lives", "h") }},
+		{"reserved metric prefix", func(r *Registry) { r.NewCounter("__x", "h") }},
+		{"label with a space", func(r *Registry) { r.NewCounter("c_total", "h", "bad label") }},
+		{"reserved label prefix", func(r *Registry) { r.NewCounter("c_total", "h", "__x") }},
+		{"le on a histogram", func(r *Registry) { r.NewHistogram("h_seconds", "h", nil, "le") }},
+		{"duplicate label", func(r *Registry) { r.NewCounter("c_total", "h", "a", "a") }},
+	}
+	for _, tc := range cases {
+		mustPanic(t, func() { tc.f(NewRegistry(0)) })
+	}
+}
+
+func TestValidNamesAccepted(t *testing.T) {
+	r := NewRegistry(0)
+	r.NewCounter("ledger:colon_ok_1", "h", "route_1")
+	r.NewCounter("counter_le_ok", "h", "le") // le is only reserved on histograms
+	r.NewHistogram("h_seconds", "h", nil, "route")
 }

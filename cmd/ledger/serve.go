@@ -90,7 +90,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 
 	app := metrics.NewApp(version)
 	ready := health.NewReadiness(log)
-	// TODO(F11): open the SQLite store before this point and register its
+	// TODO(F11: wire store into serve): open the SQLite store before this point and register its
 	// check: ready.Add(health.Func("database", db.PingContext)). Per D17,
 	// readiness gates only on the database; optional integrations belong on a
 	// status endpoint, never here. Until then the list is empty and /readyz

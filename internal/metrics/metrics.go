@@ -8,10 +8,12 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 const (
@@ -19,6 +21,12 @@ const (
 	DefaultMaxSeries = 500
 	// maxLabelValue is the longest label value kept; longer ones are cut.
 	maxLabelValue = 64
+)
+
+// The name grammars of the Prometheus text format.
+var (
+	metricNameRE = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
+	labelNameRE  = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 )
 
 // DefaultBuckets are the histogram bounds, in seconds, for request durations.
@@ -79,6 +87,7 @@ type series struct {
 }
 
 func (r *Registry) add(name, help string, k kind, buckets []float64, labels []string) *family {
+	checkNames(name, k, labels)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.families[name]; dup {
@@ -89,6 +98,42 @@ func (r *Registry) add(name, help string, k kind, buckets []float64, labels []st
 	return f
 }
 
+// checkNames panics on a name the exposition format cannot carry, and on a
+// label set that would render a series twice. Like a duplicate metric, these
+// are programmer errors found at start-up.
+func checkNames(name string, k kind, labels []string) {
+	if !metricNameRE.MatchString(name) || strings.HasPrefix(name, "__") {
+		panic("metrics: invalid metric name " + strconv.Quote(name))
+	}
+	seen := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		switch {
+		case !labelNameRE.MatchString(l) || strings.HasPrefix(l, "__"):
+			panic("metrics: " + name + ": invalid label name " + strconv.Quote(l))
+		case k == kindHistogram && l == "le":
+			panic("metrics: " + name + ": label le is reserved for histogram buckets")
+		case seen[l]:
+			panic("metrics: " + name + ": duplicate label " + strconv.Quote(l))
+		}
+		seen[l] = true
+	}
+}
+
+// labelValue makes v safe to render. Invalid UTF-8 becomes U+FFFD, since
+// Prometheus rejects a scrape with an invalid label value. A value longer than
+// maxLabelValue bytes is cut back to a whole rune at or before the limit.
+func labelValue(v string) string {
+	v = strings.ToValidUTF8(v, "\uFFFD")
+	if len(v) <= maxLabelValue {
+		return v
+	}
+	cut := maxLabelValue
+	for cut > 0 && !utf8.RuneStart(v[cut]) {
+		cut--
+	}
+	return v[:cut]
+}
+
 // get returns the series for the label values, or nil when the cardinality
 // limit refuses a new one.
 func (f *family) get(values []string) *series {
@@ -97,10 +142,7 @@ func (f *family) get(values []string) *series {
 	}
 	clean := make([]string, len(values))
 	for i, v := range values {
-		if len(v) > maxLabelValue {
-			v = v[:maxLabelValue]
-		}
-		clean[i] = v
+		clean[i] = labelValue(v)
 	}
 	key := strings.Join(clean, "\xff")
 	f.mu.Lock()

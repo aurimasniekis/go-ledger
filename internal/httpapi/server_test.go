@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -446,5 +447,23 @@ func TestAbortedRequestStillAccessLogged(t *testing.T) {
 	lines := logLines(t, buf)
 	if len(lines) != 1 || lines[0]["msg"] != "request" || lines[0]["aborted"] != true || lines[0]["request_id"] == nil {
 		t.Fatalf("want one aborted access line, got %s", buf.String())
+	}
+}
+
+func TestPanicAfterResponseStartedCountsAsInternalError(t *testing.T) {
+	app := metrics.NewApp("test")
+	log, _ := logging.New(&bytes.Buffer{}, "debug", "json", redact.New())
+	s := New(testConfig(), log, WithMetrics(app))
+	s.Handle("GET /partial", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		panic("late")
+	}))
+	s.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/partial", nil))
+	var b bytes.Buffer
+	_ = app.Registry.Write(&b)
+	want := fmt.Sprintf("ledger_errors_total{kind=%q} 1", string(CodeInternal))
+	if !strings.Contains(b.String(), want) {
+		t.Fatalf("output lacks %q:\n%s", want, b.String())
 	}
 }
