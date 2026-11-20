@@ -86,6 +86,52 @@ func TestServeWithPulseEnabledStartsEvenWhenPulseIsUnreachable(t *testing.T) {
 	}
 }
 
+func TestServeProtectedRoutesAnswer401(t *testing.T) {
+	env := map[string]string{
+		"LEDGER_KEK_VALUE":          cmdSentinel,
+		"LEDGER_DATABASE_PATH":      filepath.Join(t.TempDir(), "ledger.db"),
+		"LEDGER_REPORTING_TIMEZONE": "UTC",
+	}
+	var errOut syncBuffer
+	addrc := make(chan net.Addr, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() {
+		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0", "--http.management_listen="}, &errOut,
+			serveEnv{Options: testOpts(env, nil), Listening: func(a net.Addr) { addrc <- a },
+				UI: fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}})
+	}()
+	var addr net.Addr
+	select {
+	case addr = <-addrc:
+	case code := <-done:
+		t.Fatalf("exited %d: %s", code, errOut.String())
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not start")
+	}
+	// Production wiring installs no authenticator yet: protected routes are denied.
+	for _, path := range []string{"/api/v1/users", "/api/v1/me"} {
+		resp, err := http.Get("http://" + addr.String() + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") == "" {
+			t.Fatalf("GET %s: %d", path, resp.StatusCode)
+		}
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, errOut.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no graceful shutdown")
+	}
+}
+
 func TestServeRunsOutboxRetentionWhilePublishingIsDisabled(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ledger.db")
 	env := map[string]string{

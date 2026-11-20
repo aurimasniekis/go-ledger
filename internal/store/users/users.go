@@ -177,6 +177,11 @@ func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expect
 			return &resource.VersionConflictError{Expected: expected, Current: before.Version}
 		}
 		after := p.Apply(before)
+		if sameUser(before, after) {
+			// Nothing changes: no write, no version bump, no audit event.
+			out = before
+			return nil
+		}
 		if before.ActiveAdministrator() && !after.ActiveAdministrator() {
 			var others int
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE role = ? AND disabled = 0 AND id <> ?",
@@ -218,6 +223,15 @@ func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expect
 		return err
 	})
 	return out, err
+}
+
+// sameUser reports whether a and b hold the same editable fields.
+func sameUser(a, b users.User) bool {
+	same := a.Username == b.Username && a.Role == b.Role && a.Disabled == b.Disabled
+	if a.DisplayName == nil || b.DisplayName == nil {
+		return same && a.DisplayName == b.DisplayName
+	}
+	return same && *a.DisplayName == *b.DisplayName
 }
 
 // CheckVersion returns the user when it still has version expected.

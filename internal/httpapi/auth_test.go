@@ -33,6 +33,9 @@ func TestRouteRegistrationRules(t *testing.T) {
 			s.HandleAPI(m+" /api/v1/x", Requires(authz.G(authz.ResourceUsers, authz.ActionRead)), ok)
 		})
 	}
+	for _, m := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+		mustPanic(t, m+" Authenticated", func() { s.HandleAPI(m+" /api/v1/x", Authenticated(), ok) })
+	}
 	// Allowed: a GET with a read grant, a write with a write grant.
 	s.HandleAPI("GET /api/v1/r", Requires(authz.G(authz.ResourceUsers, authz.ActionRead)), ok)
 	s.HandleAPI("POST /api/v1/w", Requires(authz.G(authz.ResourceUsers, authz.ActionWrite)), ok)
@@ -179,5 +182,31 @@ components: {responses: {Error: {description: e}}}
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+// TestAuthorizationRunsBeforeAPIMiddleware pins the order: middleware sees only
+// allowed requests, with the principal already in the context.
+func TestAuthorizationRunsBeforeAPIMiddleware(t *testing.T) {
+	var ran int
+	var sawPrincipal bool
+	mw := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ran++
+			_, sawPrincipal = authz.FromContext(r.Context())
+			next.ServeHTTP(w, r)
+		})
+	}
+	admin := authz.UserPrincipal("A", authz.RoleAdministrator)
+	s := apiServer(t, WithAuthenticators(fixed(admin, nil)), WithAPIMiddleware(mw))
+	s.HandleAPI("GET /api/v1/t", Requires(authz.G(authz.ResourceUsers, authz.ActionRead)), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+
+	if rec := do(s.Handler(), httptest.NewRequest("GET", "/api/v1/t", nil)); rec.Code != 401 || ran != 0 {
+		t.Fatalf("anonymous: status %d, middleware ran %d times", rec.Code, ran)
+	}
+	req := httptest.NewRequest("GET", "/api/v1/t", nil)
+	req.Header.Set("X-Test-Auth", "1")
+	if rec := do(s.Handler(), req); rec.Code != 200 || ran != 1 || !sawPrincipal {
+		t.Fatalf("authorised: status %d, ran %d, principal in context %v", rec.Code, ran, sawPrincipal)
 	}
 }

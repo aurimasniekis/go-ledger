@@ -40,4 +40,6 @@ Decision D4 chose full multi-user support with administrator and read-only roles
 - OIDC provisioning (A6, D16) is not presupposed: nothing here creates users from an identity provider or chooses a default role.
 - User changes publish no outbox events; add them if the event catalogue (docs/events.md) wants them.
 - Terraform coverage of users (D18) is open; the API has no DELETE, so a Terraform resource would disable on destroy or be omitted.
+- Open for A4: `authz.Intersect` (used by `TokenPrincipal`) keeps only grants the limit allows and does not downgrade write to read. A token holding `X:write` whose owner is limited to `X:read` ends up with neither, so a demoted owner's write token loses read access the owner still has. This is conservative and moot today (the only writable resource, users, is administrator-only); A4 decides, once a non-administrator resource has write, whether intersection downgrades write to read or the loss is documented.
+- Middleware order: authentication and grant checks run first, then `WithAPIMiddleware` middleware; `Authenticated()` is refused on state-changing methods.
 - Migration numbering: this change adds `0005_users` and the fixture `0004_bank_facts`. Other branches adding migrations at the same time take the next free number at merge time.

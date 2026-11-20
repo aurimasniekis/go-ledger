@@ -57,7 +57,9 @@ func WithUI(h http.Handler) Option { return func(s *Server) { s.ui = h } }
 //
 // Authentication and grant checks are not middleware: they come from the
 // access rule of each route ([Server.HandleAPI], [WithAuthenticators]) and run
-// before these.
+// before these, so middleware only sees allowed requests and can rely on the
+// principal in the context (except on [Public] routes). Requests refused with
+// 401 or 403 never reach it.
 func WithAPIMiddleware(mw ...func(http.Handler) http.Handler) Option {
 	return func(s *Server) { s.apiMW = append(s.apiMW, mw...) }
 }
@@ -134,10 +136,10 @@ func (s *Server) HandleAPI(pattern string, a Access, h http.Handler) {
 		panic(fmt.Sprintf("httpapi: API route %q must be \"METHOD /api/...\" without a host", pattern))
 	}
 	checkAccess(method, a)
-	h = s.authorize(a, h)
 	for i := len(s.apiMW) - 1; i >= 0; i-- {
 		h = s.apiMW[i](h)
 	}
+	h = s.authorize(a, h) // outermost: authentication and grants come first
 	s.api.Handle(pattern, routed(pattern, h))
 	s.apiRoutes = append(s.apiRoutes, Route{Method: method, Path: path, Access: a})
 }

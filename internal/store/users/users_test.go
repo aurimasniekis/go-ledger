@@ -176,6 +176,31 @@ func TestUpdateAuditsAndProtectsLastAdmin(t *testing.T) {
 	}
 }
 
+func TestNoOpPatchWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	st, rec := newStore(t)
+	a, _ := st.Create(ctx, audit.System, users.New{Username: "alice", Role: authz.RoleAdministrator})
+	rec.events = nil
+	for _, p := range []users.Patch{{}, {Role: ptr(authz.RoleAdministrator)}, {Username: ptr("alice")}, {Disabled: ptr(false)}, {SetDisplayName: true}} {
+		got, err := st.Update(ctx, admin, a.ID, 1, p)
+		if err != nil || got.Version != 1 || !got.UpdatedAt.Equal(a.UpdatedAt) {
+			t.Fatalf("%+v: %+v %v", p, got, err)
+		}
+	}
+	if len(rec.events) != 0 {
+		t.Fatalf("audited: %v", rec.actions())
+	}
+	// A real change still bumps the version once, and then the same patch is a no-op.
+	b, err := st.Update(ctx, admin, a.ID, 1, users.Patch{SetDisplayName: true, DisplayName: ptr("Al")})
+	if err != nil || b.Version != 2 {
+		t.Fatalf("change: %+v %v", b, err)
+	}
+	c, err := st.Update(ctx, admin, a.ID, 2, users.Patch{SetDisplayName: true, DisplayName: ptr("Al")})
+	if err != nil || c.Version != 2 {
+		t.Fatalf("repeat: %+v %v", c, err)
+	}
+}
+
 func TestAuditFailureRollsBackTheChange(t *testing.T) {
 	ctx := context.Background()
 	st, rec := newStore(t)

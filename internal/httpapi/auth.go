@@ -91,10 +91,16 @@ func WithAuthenticators(a ...Authenticator) Option {
 func safeMethod(m string) bool { return m == http.MethodGet || m == http.MethodHead }
 
 // checkAccess panics on an access rule that would let a reader change state:
-// an unsafe method guarded only by a read grant.
+// an unsafe method guarded only by a read grant or by Authenticated (which any
+// read-only user or narrow token passes). A state-changing route a signed-in
+// principal must reach whatever its grants (sign-out, task A2) will need an
+// explicit, named exception here.
 func checkAccess(method string, a Access) {
 	if a.kind == 0 {
 		panic("httpapi: API route without an access rule; use Requires, Authenticated or Public")
+	}
+	if a.kind == accessAuthenticated && !safeMethod(method) {
+		panic(fmt.Sprintf("httpapi: %s route is Authenticated: state-changing routes must require a write grant", method))
 	}
 	if g, ok := a.Grant(); ok && !safeMethod(method) && g.Action != authz.ActionWrite {
 		panic(fmt.Sprintf("httpapi: %s route guarded by %s: state-changing routes must require a write grant", method, g))
