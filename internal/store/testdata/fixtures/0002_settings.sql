@@ -1,5 +1,5 @@
 -- Fixture: a database at schema version 2 (migration ledger and settings),
--- holding the captured reporting zone. Upgrading it must apply migration 0003.
+-- holding the captured reporting zone. Upgrading it must apply migrations 0003 and 0004.
 -- The migration ledger. The migration runner reads and writes this table; its
 -- columns are part of the runner's contract, so change them only through a
 -- later migration together with the runner.
