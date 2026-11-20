@@ -200,7 +200,9 @@ func TestTypeValidation(t *testing.T) {
 }
 
 func TestDefinitionAllowListRejectsSensitiveFields(t *testing.T) {
-	for _, name := range []string{"iban", "account_iban", "password", "api_token", "secret_ref", "raw_payload", "description", "remittance_info", "api_key", "account_number", "counterparty_name", "totp-secret"} {
+	for _, name := range []string{"iban", "account_iban", "password", "api_token", "secret_ref", "raw_payload", "description", "remittance_info", "api_key", "account_number", "counterparty_name", "totp-secret",
+		// PU1 re-review N1: free text, holders and cards named with a prefix.
+		"user_note", "free_text", "freetext", "holder_name", "account_holder_name", "ultimate_debtor_name", "card_number_masked", "card_last4", "account_no", "name", "message", "note", "debtor_name", "creditor_name", "card_number"} {
 		d := Definition{Entity: "widget", Action: "created", Trigger: "t", Fields: []Field{{Name: name, Kind: KindString}}}
 		if err := NewRegistry().Register(d); err == nil {
 			t.Errorf("field %q was accepted, want rejection", name)
@@ -353,7 +355,7 @@ func TestPurgeRetention(t *testing.T) {
 }
 
 func TestDefinitionAllowsOrdinaryFinanceNames(t *testing.T) {
-	for _, name := range []string{"credit_limit", "credit_debit", "withdrawal_count", "company_id", "expanded", "discarded", "context_id", "merchant_name", "category_name", "currency", "amount", "account_id"} {
+	for _, name := range []string{"credit_limit", "credit_debit", "withdrawal_count", "company_id", "expanded", "discarded", "context_id", "merchant_name", "category_name", "error_message", "textual_id", "cardinality", "notebook_id", "currency", "amount", "account_id"} {
 		d := Definition{Entity: "widget", Action: "created", Trigger: "t", Fields: []Field{{Name: name, Kind: KindString}}}
 		if err := NewRegistry().Register(d); err != nil {
 			t.Errorf("field %q rejected: %v", name, err)

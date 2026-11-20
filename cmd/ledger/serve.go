@@ -16,6 +16,8 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/metrics"
+	"github.com/aurimasniekis/go-ledger/internal/outbox"
+	"github.com/aurimasniekis/go-ledger/internal/pulsebus"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
@@ -36,6 +38,8 @@ type serveEnv struct {
 	// ManagementListening learns the address of the management listener, when
 	// there is one.
 	ManagementListening func(net.Addr)
+	// PulseDial replaces the Pulse connection in tests.
+	PulseDial outbox.Dialer
 }
 
 // runServe implements "ledger serve": load the configuration, set up logging,
@@ -117,6 +121,15 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		log.Error("cannot determine the reporting time zone", "error", err.Error())
 		return 1
 	}
+	// The outbox writer takes the events.pulse switch and source (N3). No feature
+	// registers events yet, so nothing calls it; features add definitions to the
+	// registry in their own change (docs/events.md).
+	ob, err := outbox.New(outbox.Config{Registry: outbox.NewRegistry(), Enabled: cfg.Events.Pulse.Enabled, Source: cfg.Events.Pulse.Source})
+	if err != nil {
+		log.Error("invalid event settings", "error", err.Error())
+		return 1
+	}
+	_ = ob
 	// TODO(monthly-view task): hand zone to the services that need it (monthly view, recurrence).
 	_ = zone
 
@@ -179,6 +192,27 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		n++
 		go func() { errc <- mgmt.Run(rctx, mln) }()
 	}
+	// Pulse publishing is optional: disabled means no worker and no connection,
+	// and a Pulse problem never affects startup or readiness (D17); the worker
+	// retries and reports through logs and metrics.
+	var pulseDone chan struct{}
+	if cfg.Events.Pulse.Enabled {
+		dial := env.PulseDial
+		if dial == nil {
+			dial = pulsebus.Dialer(pulsebus.Config{
+				URL: cfg.Events.Pulse.URL, CredsFile: cfg.Events.Pulse.CredsFile, CAFile: cfg.Events.Pulse.CAFile,
+				Name: cfg.Events.Pulse.Name, Source: cfg.Events.Pulse.Source,
+			})
+		}
+		pub, err := outbox.NewPublisher(outbox.PublisherConfig{DB: db, Dial: dial, Log: log, Meter: app})
+		if err != nil {
+			log.Error("cannot start the event publisher", "error", err.Error())
+		} else {
+			pulseDone = make(chan struct{})
+			go func() { defer close(pulseDone); pub.Run(rctx) }()
+			log.Info("event publishing to Pulse is enabled; events leave this machine", "source", cfg.Events.Pulse.Source)
+		}
+	}
 	code := 0
 	for i := 0; i < n; i++ {
 		if err := <-errc; err != nil {
@@ -186,6 +220,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 			code = 1
 		}
 		stop()
+	}
+	if pulseDone != nil {
+		<-pulseDone // before the database closes
 	}
 	return code
 }
