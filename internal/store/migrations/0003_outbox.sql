@@ -5,8 +5,8 @@
 CREATE TABLE outbox (
     seq             INTEGER PRIMARY KEY AUTOINCREMENT,
     id              TEXT NOT NULL UNIQUE CHECK (length(id) = 26),
-    subject         TEXT NOT NULL CHECK (length(subject) <= 256 AND subject LIKE 'evt.%'),
-    type            TEXT NOT NULL CHECK (type LIKE '%.v%'),
+    subject         TEXT NOT NULL CHECK (length(subject) <= 256 AND subject GLOB 'evt.ledger.*.*'),
+    type            TEXT NOT NULL CHECK (type GLOB 'ledger.*.*.v[1-9]*'),
     source          TEXT NOT NULL CHECK (source <> ''),
     occurred_at     TEXT NOT NULL CHECK (length(occurred_at) = 30 AND occurred_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z'),
     payload         TEXT NOT NULL CHECK (json_valid(payload) AND json_type(payload) = 'object'),
@@ -34,10 +34,10 @@ BEGIN
 END;
 
 CREATE TRIGGER outbox_terminal_is_final
-BEFORE UPDATE OF state ON outbox
+BEFORE UPDATE ON outbox
 WHEN OLD.state <> 'pending'
 BEGIN
-    SELECT RAISE(ABORT, 'outbox row is already published or failed');
+    SELECT RAISE(ABORT, 'a published or failed outbox row is final');
 END;
 
 CREATE TRIGGER outbox_keep_pending

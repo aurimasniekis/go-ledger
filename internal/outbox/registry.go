@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -21,13 +22,82 @@ const (
 // MaxStringBytes bounds a string payload value, which keeps free text out by size as well as by name.
 const MaxStringBytes = 256
 
-// forbiddenFragments are field-name fragments that may never be allow-listed:
-// credentials, account identifiers, raw provider payloads and free text. This
-// is a guard against a careless catalog entry, not the allow-list itself.
-var forbiddenFragments = []string{
-	"secret", "token", "password", "passwd", "credential", "cred", "apikey", "api_key", "totp", "cookie", "session",
-	"iban", "account_number", "bban", "pan", "card",
-	"raw", "payload", "description", "memo", "note", "remittance", "text", "message", "body", "counterparty", "name",
+// forbiddenNames are field names that may never be allow-listed: credentials,
+// account identifiers, raw provider payloads and free text. Matching is
+// exact, on the whole name or on a whole "_"/"-" separated token of it, so
+// credit_limit, merchant_name and company_id are fine. This is a guard against
+// a careless catalog entry, not the allow-list itself: every field is also
+// typed, size-bounded and reviewed.
+var (
+	forbiddenTokens = map[string]bool{
+		"secret": true, "secrets": true, "token": true, "tokens": true, "password": true, "passwd": true,
+		"credential": true, "credentials": true, "apikey": true, "totp": true, "cookie": true, "session": true,
+		"iban": true, "bban": true, "swift": true,
+		"raw": true, "payload": true, "description": true, "memo": true, "remittance": true,
+	}
+	forbiddenNames = map[string]bool{
+		"api_key": true, "account_number": true, "card_number": true, "pan": true, "cvv": true,
+		"note": true, "notes": true, "text": true, "message": true, "body": true,
+		"counterparty": true, "counterparty_name": true, "debtor_name": true, "creditor_name": true,
+	}
+)
+
+func forbiddenField(name string) (string, bool) {
+	if forbiddenNames[name] {
+		return name, true
+	}
+	for _, t := range strings.FieldsFunc(name, func(r rune) bool { return r == '_' || r == '-' }) {
+		if forbiddenTokens[t] {
+			return t, true
+		}
+	}
+	return "", false
+}
+
+// KeyKind is the shape of the optional subject key an event may carry.
+type KeyKind string
+
+const (
+	// KeyNone: the subject has no key (the zero value).
+	KeyNone KeyKind = ""
+	// KeyULID: one token that is a lowercase ULID (26 Crockford base32 characters),
+	// the id of the entity the event is about.
+	KeyULID KeyKind = "ulid"
+)
+
+// Doc describes the key for the event catalog; empty when there is none.
+func (k KeyKind) Doc() string {
+	if k == KeyULID {
+		return "lowercase ULID of the entity"
+	}
+	return ""
+}
+
+func (k KeyKind) check(key string) error {
+	switch k {
+	case KeyNone:
+		if key != "" {
+			return errors.New("the event declares no subject key")
+		}
+	case KeyULID:
+		if key != "" && !validULIDKey(key) {
+			return errors.New("the subject key must be a lowercase ULID (26 characters of 0-9 a-z without i, l, o, u)")
+		}
+	}
+	return nil
+}
+
+func validULIDKey(s string) bool {
+	if len(s) != 26 || s[0] > '7' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'z' || c == 'i' || c == 'l' || c == 'o' || c == 'u') {
+			return false
+		}
+	}
+	return true
 }
 
 // Field is one allow-listed payload field.
@@ -47,8 +117,9 @@ type Definition struct {
 	Version int // zero means [TypeVersion]
 	// Trigger says when the event is enqueued, for the catalog.
 	Trigger string
-	// KeyDoc describes the optional subject key, empty when the subject has none.
-	KeyDoc string
+	// Key declares the shape of the optional subject key; KeyNone means the
+	// subject has no key and Enqueue rejects one.
+	Key    KeyKind
 	Fields []Field
 }
 
@@ -77,6 +148,9 @@ func (d Definition) validate() error {
 	if strings.TrimSpace(d.Trigger) == "" {
 		return fmt.Errorf("outbox: event %s has no trigger description", d.id())
 	}
+	if d.Key != KeyNone && d.Key != KeyULID {
+		return fmt.Errorf("outbox: event %s has unknown key kind %q", d.id(), d.Key)
+	}
 	seen := map[string]bool{}
 	for _, f := range d.Fields {
 		if !ValidToken(f.Name) {
@@ -89,10 +163,8 @@ func (d Definition) validate() error {
 		if f.Kind != KindString && f.Kind != KindInt && f.Kind != KindBool {
 			return fmt.Errorf("outbox: event %s field %q has unknown kind %q", d.id(), f.Name, f.Kind)
 		}
-		for _, bad := range forbiddenFragments {
-			if strings.Contains(f.Name, bad) {
-				return fmt.Errorf("outbox: event %s field %q may not be allow-listed (name contains %q: secrets, account numbers, raw bank data and free text stay out of events)", d.id(), f.Name, bad)
-			}
+		if bad, hit := forbiddenField(f.Name); hit {
+			return fmt.Errorf("outbox: event %s field %q may not be allow-listed (%q: secrets, account numbers, raw bank data and free text stay out of events)", d.id(), f.Name, bad)
 		}
 	}
 	return nil

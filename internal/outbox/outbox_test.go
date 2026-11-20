@@ -18,7 +18,7 @@ var fixedNow = time.Date(2026, 11, 20, 10, 0, 0, 123456789, time.UTC)
 func testRegistry(t *testing.T) *Registry {
 	t.Helper()
 	r := NewRegistry(Definition{
-		Entity: "widget", Action: "created", Trigger: "test trigger",
+		Entity: "widget", Action: "created", Trigger: "test trigger", Key: KeyULID,
 		Fields: []Field{
 			{Name: "widget_id", Kind: KindString, Required: true},
 			{Name: "count", Kind: KindInt},
@@ -37,6 +37,7 @@ func setup(t *testing.T) (*store.DB, *Outbox) {
 	t.Cleanup(func() { _ = db.Close() })
 	n := 0
 	o, err := New(Config{
+		Enabled:  true,
 		Registry: testRegistry(t), Source: "ledger-test",
 		Now:   func() time.Time { return fixedNow },
 		NewID: func() string { n++; return fmt.Sprintf("01JD%022d", n) },
@@ -65,13 +66,13 @@ func TestEnqueueCommitPersistsEnvelope(t *testing.T) {
 	var got Enqueued
 	err := db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		got, err = o.Enqueue(ctx, tx, Event{Entity: "widget", Action: "created", Key: "abc-1", Payload: map[string]any{"widget_id": "abc-1", "count": 3, "active": true}})
+		got, err = o.Enqueue(ctx, tx, Event{Entity: "widget", Action: "created", Key: "01jd0000000000000000000abc", Payload: map[string]any{"widget_id": "abc-1", "count": 3, "active": true}})
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Subject != "evt.ledger.widget.created.abc-1" || got.Type != "ledger.widget.created.v1" || len(got.ID) != 26 {
+	if got.Subject != "evt.ledger.widget.created.01jd0000000000000000000abc" || got.Type != "ledger.widget.created.v1" || len(got.ID) != 26 {
 		t.Fatalf("unexpected result %+v", got)
 	}
 	var subject, typ, source, occurred, payload, state string
@@ -199,7 +200,7 @@ func TestTypeValidation(t *testing.T) {
 }
 
 func TestDefinitionAllowListRejectsSensitiveFields(t *testing.T) {
-	for _, name := range []string{"iban", "account_iban", "password", "api_token", "secret_ref", "raw_payload", "description", "remittance_info", "creds_file", "account_number", "counterparty_name"} {
+	for _, name := range []string{"iban", "account_iban", "password", "api_token", "secret_ref", "raw_payload", "description", "remittance_info", "api_key", "account_number", "counterparty_name", "totp-secret"} {
 		d := Definition{Entity: "widget", Action: "created", Trigger: "t", Fields: []Field{{Name: name, Kind: KindString}}}
 		if err := NewRegistry().Register(d); err == nil {
 			t.Errorf("field %q was accepted, want rejection", name)
@@ -286,8 +287,8 @@ func TestPurgeRetention(t *testing.T) {
 	now := fixedNow
 	ids := map[string]string{}
 	err := db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		for _, n := range []string{"pub-old", "pub-new", "fail-old", "fail-new", "pending-old"} {
-			e, err := o.Enqueue(ctx, tx, Event{Entity: "widget", Action: "created", Key: n, Payload: map[string]any{"widget_id": n}})
+		for i, n := range []string{"pub-old", "pub-new", "fail-old", "fail-new", "pending-old"} {
+			e, err := o.Enqueue(ctx, tx, Event{Entity: "widget", Action: "created", Key: fmt.Sprintf("01jd%022d", i), Payload: map[string]any{"widget_id": n}})
 			if err != nil {
 				return err
 			}
@@ -347,6 +348,172 @@ func TestPurgeRetention(t *testing.T) {
 		want := n == "pub-new" || n == "fail-new" || n == "pending-old"
 		if left[id] != want {
 			t.Errorf("%s present = %v, want %v", n, left[id], want)
+		}
+	}
+}
+
+func TestDefinitionAllowsOrdinaryFinanceNames(t *testing.T) {
+	for _, name := range []string{"credit_limit", "credit_debit", "withdrawal_count", "company_id", "expanded", "discarded", "context_id", "merchant_name", "category_name", "currency", "amount", "account_id"} {
+		d := Definition{Entity: "widget", Action: "created", Trigger: "t", Fields: []Field{{Name: name, Kind: KindString}}}
+		if err := NewRegistry().Register(d); err != nil {
+			t.Errorf("field %q rejected: %v", name, err)
+		}
+	}
+}
+
+func TestSubjectKeyFollowsDeclaredShape(t *testing.T) {
+	db, o := setup(t)
+	ctx := context.Background()
+	enq := func(entity, key string) error {
+		return db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			_, err := o.Enqueue(ctx, tx, Event{Entity: entity, Action: "created", Key: key, Payload: map[string]any{"widget_id": "a"}})
+			return err
+		})
+	}
+	if err := enq("widget", "01jd0000000000000000000001"); err != nil {
+		t.Fatalf("valid ULID key: %v", err)
+	}
+	if err := enq("widget", ""); err != nil {
+		t.Fatalf("a declared key is optional: %v", err)
+	}
+	for _, k := range []string{"lt601010012345678901", "lt60.1010", "01JD0000000000000000000001", "01jd000000000000000000000", "01jd00000000000000000000i1", "81jd0000000000000000000001", "*", ">"} {
+		if err := enq("widget", k); err == nil {
+			t.Errorf("key %q accepted, want rejection", k)
+		}
+	}
+	// An event that declares no key rejects any key.
+	reg := NewRegistry(Definition{Entity: "plain", Action: "created", Trigger: "t"})
+	o2, err := New(Config{Enabled: true, Registry: reg, Source: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := o2.Enqueue(ctx, tx, Event{Entity: "plain", Action: "created", Key: "01jd0000000000000000000001"})
+		return err
+	})
+	if err == nil {
+		t.Error("a key on a keyless event was accepted")
+	}
+	if n := countRows(t, db); n != 2 {
+		t.Errorf("%d rows, want 2", n)
+	}
+}
+
+func TestDisabledOutboxRecordsNothing(t *testing.T) {
+	db, _ := setup(t)
+	ctx := context.Background()
+	o, err := New(Config{Enabled: false, Registry: testRegistry(t), Source: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Enqueued
+	err = db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		got, err = o.Enqueue(ctx, tx, Event{Entity: "widget", Action: "created", Payload: map[string]any{"widget_id": "a"}})
+		return err
+	})
+	if err != nil || got.Recorded {
+		t.Fatalf("disabled enqueue: recorded=%v err=%v", got.Recorded, err)
+	}
+	if n := countRows(t, db); n != 0 {
+		t.Errorf("%d rows while disabled, want 0", n)
+	}
+	// Mistakes are still caught while disabled.
+	for _, ev := range []Event{
+		{Entity: "nope", Action: "created"},
+		{Entity: "widget", Action: "created", Payload: map[string]any{"widget_id": "a", "iban": "x"}},
+		{Entity: "widget", Action: "created", Key: "lt60", Payload: map[string]any{"widget_id": "a"}},
+	} {
+		_ = db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			if _, err := o.Enqueue(ctx, tx, ev); err == nil {
+				t.Errorf("invalid event %+v accepted while disabled", ev)
+			}
+			return nil
+		})
+	}
+	// Enabling later records only new changes: nothing is replayed.
+	on, _ := New(Config{Enabled: true, Registry: testRegistry(t), Source: "x"})
+	if n := countRows(t, db); n != 0 {
+		t.Fatalf("%d rows after enabling, want 0", n)
+	}
+	err = db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		got, err = on.Enqueue(ctx, tx, Event{Entity: "widget", Action: "created", Payload: map[string]any{"widget_id": "a"}})
+		return err
+	})
+	if err != nil || !got.Recorded || countRows(t, db) != 1 {
+		t.Fatalf("enabled enqueue: %+v %v", got, err)
+	}
+}
+
+func TestTerminalRowsAreImmutable(t *testing.T) {
+	db, o := setup(t)
+	ctx := context.Background()
+	var id string
+	err := db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		e, err := o.Enqueue(ctx, tx, Event{Entity: "widget", Action: "created", Payload: map[string]any{"widget_id": "a"}})
+		id = e.ID
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := func(q string, args ...any) error {
+		return db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, q, args...)
+			return err
+		})
+	}
+	at := store.Timestamp{Time: fixedNow}
+	later := store.Timestamp{Time: fixedNow.AddDate(1, 0, 0)}
+	// A pending row's status columns may change freely.
+	if err := exec("UPDATE outbox SET attempts=2, last_error='timeout', next_attempt_at=? WHERE id=?", later, id); err != nil {
+		t.Fatalf("pending update: %v", err)
+	}
+	if err := exec("UPDATE outbox SET state='published', published_at=? WHERE id=?", at, id); err != nil {
+		t.Fatal(err)
+	}
+	for q, args := range map[string][]any{
+		"UPDATE outbox SET published_at=? WHERE id=?":    {later, id},
+		"UPDATE outbox SET attempts=99 WHERE id=?":       {id},
+		"UPDATE outbox SET last_error='x' WHERE id=?":    {id},
+		"UPDATE outbox SET next_attempt_at=? WHERE id=?": {later, id},
+	} {
+		if err := exec(q, args...); err == nil {
+			t.Errorf("%q succeeded on a published row", q)
+		}
+	}
+	// Same for a failed row.
+	var fid string
+	_ = db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		e, err := o.Enqueue(ctx, tx, Event{Entity: "widget", Action: "created", Payload: map[string]any{"widget_id": "b"}})
+		fid = e.ID
+		return err
+	})
+	if err := exec("UPDATE outbox SET state='failed', failed_at=?, last_error='gave up' WHERE id=?", at, fid); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec("UPDATE outbox SET failed_at=? WHERE id=?", later, fid); err == nil {
+		t.Error("failed_at of a failed row was rewritten")
+	}
+	if err := exec("UPDATE outbox SET last_error='' WHERE id=?", fid); err == nil {
+		t.Error("last_error of a failed row was rewritten")
+	}
+}
+
+func TestColumnChecksRejectMalformedSubjectAndType(t *testing.T) {
+	db, _ := setup(t)
+	ts := "2026-11-20T10:00:00.123456789Z"
+	for _, c := range [][2]string{
+		{"EVT.ledger.a.b", "ledger.a.b.v1"},
+		{"evt.other.a.b", "ledger.a.b.v1"},
+		{"evt.ledger.a.b", "ledger.a.b"},
+		{"evt.ledger.a.b", "ledger.a.b.v0"},
+	} {
+		err := db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, "INSERT INTO outbox (id, subject, type, source, occurred_at, payload, next_attempt_at, created_at) VALUES ('01JD00000000000000000000AA', ?, ?, 's', ?, '{}', ?, ?)", c[0], c[1], ts, ts, ts)
+			return err
+		})
+		if err == nil {
+			t.Errorf("insert %v succeeded, want a CHECK failure", c)
 		}
 	}
 }

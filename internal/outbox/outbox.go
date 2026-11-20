@@ -32,6 +32,9 @@ const (
 type Config struct {
 	// Registry is the allow-list of events. Required.
 	Registry *Registry
+	// Enabled turns recording on (events.pulse.enabled). When false, Enqueue
+	// validates the event and then records nothing: no replay on enabling later.
+	Enabled bool
 	// Source is the CloudEvents-style source stored on every event
 	// (events.pulse.source). Required.
 	Source string
@@ -44,10 +47,11 @@ type Config struct {
 // Outbox enqueues events. It holds no database handle: every call takes the
 // caller's transaction.
 type Outbox struct {
-	reg    *Registry
-	source string
-	now    func() time.Time
-	newID  func() string
+	enabled bool
+	reg     *Registry
+	source  string
+	now     func() time.Time
+	newID   func() string
 }
 
 // New validates cfg and returns an Outbox.
@@ -59,7 +63,7 @@ func New(cfg Config) (*Outbox, error) {
 	if src == "" || len(src) > 128 || strings.IndexFunc(src, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
 		return nil, errors.New("outbox: source must be 1-128 printable characters")
 	}
-	o := &Outbox{reg: cfg.Registry, source: src, now: cfg.Now, newID: cfg.NewID}
+	o := &Outbox{enabled: cfg.Enabled, reg: cfg.Registry, source: src, now: cfg.Now, newID: cfg.NewID}
 	if o.now == nil {
 		o.now = time.Now
 	}
@@ -73,14 +77,17 @@ func New(cfg Config) (*Outbox, error) {
 type Event struct {
 	Entity string
 	Action string
-	// Key is the optional trailing subject token(s), for example a lowercase
-	// entity id. Empty for none.
+	// Key is the optional trailing subject token; its shape is fixed by the
+	// event's [Definition.Key] (for example a lowercase ULID). Empty for none.
 	Key     string
 	Payload map[string]any
 }
 
 // Enqueued identifies the row Enqueue wrote.
 type Enqueued struct {
+	// Recorded is false when publishing is disabled and nothing was written;
+	// the other fields are then empty.
+	Recorded   bool
 	ID         string
 	Subject    string
 	Type       string
@@ -92,11 +99,16 @@ type Enqueued struct {
 // never commits: when the caller rolls back, the row disappears with the change.
 // The event is validated first (registered, subject, type, payload allow-list);
 // a validation error leaves the transaction usable, and the caller normally
-// returns it so the transaction rolls back.
+// returns it so the transaction rolls back. When the outbox is disabled the
+// event is still validated (so mistakes show up in every mode) but nothing is
+// written and Enqueued.Recorded is false.
 func (o *Outbox) Enqueue(ctx context.Context, tx *sql.Tx, ev Event) (Enqueued, error) {
 	def, ok := o.reg.Lookup(ev.Entity, ev.Action)
 	if !ok {
 		return Enqueued{}, fmt.Errorf("outbox: event %s.%s is not registered", ev.Entity, ev.Action)
+	}
+	if err := def.Key.check(ev.Key); err != nil {
+		return Enqueued{}, fmt.Errorf("outbox: event %s: %w", def.id(), err)
 	}
 	subject, err := Subject(ev.Entity, ev.Action, ev.Key)
 	if err != nil {
@@ -117,6 +129,9 @@ func (o *Outbox) Enqueue(ctx context.Context, tx *sql.Tx, ev Event) (Enqueued, e
 	if err != nil {
 		return Enqueued{}, fmt.Errorf("outbox: encode payload: %w", err)
 	}
+	if !o.enabled {
+		return Enqueued{}, nil
+	}
 	now := o.now().UTC()
 	id := o.newID()
 	_, err = tx.ExecContext(ctx, `INSERT INTO outbox
@@ -126,7 +141,7 @@ func (o *Outbox) Enqueue(ctx context.Context, tx *sql.Tx, ev Event) (Enqueued, e
 	if err != nil {
 		return Enqueued{}, fmt.Errorf("outbox: insert %s: %w", subject, err)
 	}
-	return Enqueued{ID: id, Subject: subject, Type: typ, OccurredAt: now}, nil
+	return Enqueued{Recorded: true, ID: id, Subject: subject, Type: typ, OccurredAt: now}, nil
 }
 
 // PurgeResult counts the rows Purge deleted.
