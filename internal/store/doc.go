@@ -12,9 +12,14 @@
 // this process are serialised in Go rather than by SQLite lock retries. The
 // reader pool has several query-only connections; WAL lets them read a
 // consistent snapshot while a write is in progress. Writes go through
-// [DB.WriteTx], reads through [DB.ReadTx]. Never call WriteTx from inside a
-// WriteTx function: the writer pool has one connection, so the inner call
-// waits until its context ends.
+// [DB.WriteTx], reads through [DB.ReadTx]. Both pass a context to the
+// callback; use it for everything inside. WriteTx called with that context
+// returns [ErrNestedWriteTx] (the writer pool has one connection, so a nested
+// call could never proceed). A ReadTx inside a WriteTx runs on another
+// connection and does not see the uncommitted writes.
+//
+// Before the first pending migration of a non-new database, [Open] writes a
+// "<db>.pre-vNNNN-<UTC>.bak" copy with VACUUM INTO and fails if it cannot.
 //
 // # Migrations
 //

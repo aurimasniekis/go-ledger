@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -14,7 +15,7 @@ const TimeLayout = "2006-01-02T15:04:05.000000000Z"
 // migration. It rejects anything that is not [TimeLayout], including the
 // driver's default encoding of a time.Time and any offset other than Z.
 func TimestampCheck(column string) string {
-	return fmt.Sprintf("length(%[1]s) = 30 AND %[1]s GLOB '????-??-??T??:??:??.?????????Z'", column)
+	return fmt.Sprintf("length(%[1]s) = 30 AND %[1]s GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z'", column)
 }
 
 // FormatTime converts t to UTC and formats it as [TimeLayout].
@@ -40,8 +41,12 @@ type Timestamp struct {
 	time.Time
 }
 
-// Value implements driver.Valuer.
+// Value implements driver.Valuer. The zero time is an error: it would pass the
+// column CHECK and hide a field that was never set.
 func (t Timestamp) Value() (driver.Value, error) {
+	if t.IsZero() {
+		return nil, errors.New("store: zero timestamp (a time field was never set)")
+	}
 	return FormatTime(t.Time), nil
 }
 

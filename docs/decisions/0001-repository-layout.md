@@ -41,7 +41,7 @@ Rules:
 
 ## Consequences
 
-- The boundary rules need enforcement. depguard in `.golangci.yml` covers the domain packages. The provider rule is complete only once finance packages exist, so each finance slice must keep it true and add a test where practical.
+- The boundary rules need enforcement. depguard in `.golangci.yml` covers the domain, store and httpapi packages. The provider rule is complete only once finance packages exist, so each finance slice must keep it true and add a test where practical.
 - Packages with only `doc.go` are placeholders until their slices land. Each slice brings its own tests.
 - Moving a package across a boundary needs a new ADR or an update to this one.
 - Left open: the exact port interfaces per domain package. Each slice decides them, within the rule that the domain declares and adapters implement.

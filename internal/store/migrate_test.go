@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -246,4 +248,70 @@ func TestConcurrentOpenMigratesOnce(t *testing.T) {
 	if n := queryInt(t, raw, "SELECT count(*) FROM schema_migrations"); n != 3 {
 		t.Fatalf("schema_migrations rows = %d, want 3", n)
 	}
+}
+
+func backups(t *testing.T, path string) []string {
+	t.Helper()
+	m, err := filepath.Glob(path + ".pre-v*.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestPreMigrationBackup(t *testing.T) {
+	ctx := context.Background()
+	t.Run("new database is not backed up", func(t *testing.T) {
+		path := tempPath(t)
+		openTest(t, path, Options{Migrations: exampleSet(t, 2)})
+		if b := backups(t, path); len(b) != 0 {
+			t.Fatalf("backups of a new database: %v", b)
+		}
+	})
+	t.Run("upgrade copies the old version first", func(t *testing.T) {
+		path := tempPath(t)
+		db := openTest(t, path, Options{Migrations: exampleSet(t, 2)})
+		_ = db.Close()
+		upgraded := openTest(t, path, Options{Migrations: exampleSet(t, 3)})
+		if upgraded.SchemaVersion() != 3 {
+			t.Fatalf("version %d, want 3", upgraded.SchemaVersion())
+		}
+		b := backups(t, path)
+		if len(b) != 1 || !strings.Contains(b[0], ".pre-v0002-") {
+			t.Fatalf("backups = %v, want one .pre-v0002- file", b)
+		}
+		if fi, err := os.Stat(b[0]); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("backup stat = %v, %v; want mode 0600", fi, err)
+		}
+		if n := queryInt(t, rawDB(t, b[0]), "SELECT count(*) FROM schema_migrations"); n != 2 {
+			t.Fatalf("backup has %d migrations, want 2", n)
+		}
+	})
+	t.Run("up-to-date database is not backed up", func(t *testing.T) {
+		path := tempPath(t)
+		db := openTest(t, path, Options{Migrations: exampleSet(t, 2)})
+		_ = db.Close()
+		openTest(t, path, Options{Migrations: exampleSet(t, 2)})
+		if b := backups(t, path); len(b) != 0 {
+			t.Fatalf("backups: %v", b)
+		}
+	})
+	t.Run("failed backup stops the migration", func(t *testing.T) {
+		path := tempPath(t)
+		db := openTest(t, path, Options{Migrations: exampleSet(t, 2)})
+		_ = db.Close()
+		// A directory where the backup file must go makes VACUUM INTO fail.
+		fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		dest := fmt.Sprintf("%s.pre-v0002-%s.bak", path, fixed.Format("20060102T150405.000000000Z"))
+		if err := os.Mkdir(dest, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Open(ctx, path, Options{Migrations: exampleSet(t, 3), Now: func() time.Time { return fixed }})
+		if err == nil || !strings.Contains(err.Error(), "pre-migration backup") {
+			t.Fatalf("Open = %v, want a pre-migration backup error", err)
+		}
+		if n := queryInt(t, rawDB(t, path), "SELECT count(*) FROM schema_migrations"); n != 2 {
+			t.Fatalf("schema_migrations has %d rows, want 2 (migration must not run)", n)
+		}
+	})
 }

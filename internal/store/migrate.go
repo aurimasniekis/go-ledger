@@ -208,7 +208,11 @@ type MigrationResult struct {
 // migrate brings the database behind conn up to the last of known. conn must
 // be a dedicated connection opened with BEGIN IMMEDIATE transactions; it may be
 // left with foreign keys on or off, so the caller closes it afterwards.
-func migrate(ctx context.Context, conn *sql.Conn, known []Migration, now func() time.Time) (MigrationResult, error) {
+//
+// When the database is not new (version > 0) and migrations are pending,
+// beforeMigrate(from) runs once, before the first one; if it fails nothing is
+// applied. A nil beforeMigrate is skipped.
+func migrate(ctx context.Context, conn *sql.Conn, known []Migration, now func() time.Time, beforeMigrate func(ctx context.Context, from int) error) (MigrationResult, error) {
 	applied, err := readApplied(ctx, conn)
 	if err != nil {
 		return MigrationResult{}, err
@@ -217,6 +221,11 @@ func migrate(ctx context.Context, conn *sql.Conn, known []Migration, now func() 
 		return MigrationResult{}, err
 	}
 	res := MigrationResult{From: len(applied), To: len(applied)}
+	if res.From > 0 && res.From < len(known) && beforeMigrate != nil {
+		if err := beforeMigrate(ctx, res.From); err != nil {
+			return res, err
+		}
+	}
 	for res.To < len(known) {
 		next := known[res.To]
 		done, err := applyOne(ctx, conn, known, next, now)

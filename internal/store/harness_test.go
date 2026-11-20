@@ -93,7 +93,7 @@ func upgradeFixture(t *testing.T, fx fixture, known []Migration) *DB {
 	if got := db.SchemaVersion(); got != len(known) {
 		t.Fatalf("fixture %s upgraded to version %d, want %d", fx.name, got, len(known))
 	}
-	err = db.ReadTx(ctx, func(tx *sql.Tx) error {
+	err = db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		var integrity string
 		if err := tx.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integrity); err != nil {
 			return err
@@ -177,7 +177,7 @@ func TestMigrationHarnessExample(t *testing.T) {
 	ctx := context.Background()
 	checks := map[string]func(t *testing.T, db *DB){
 		"0002_accounts_with_entries.sql": func(t *testing.T, db *DB) {
-			err := db.ReadTx(ctx, func(tx *sql.Tx) error {
+			err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 				if n := queryInt(t, tx, "SELECT count(*) FROM entries"); n != 3 {
 					t.Errorf("entries = %d after the accounts rebuild, want 3 (a cascade deleted them?)", n)
 				}

@@ -15,7 +15,7 @@ func TestTimestampsAreStoredInUTC(t *testing.T) {
 
 	plus3 := time.FixedZone("UTC+3", 3*60*60)
 	local := time.Date(2026, 3, 29, 2, 30, 0, 123456789, plus3)
-	err := db.WriteTx(ctx, func(tx *sql.Tx) error {
+	err := db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "INSERT INTO events (id, happened_at) VALUES (1, ?)", Timestamp{local})
 		return err
 	})
@@ -25,7 +25,7 @@ func TestTimestampsAreStoredInUTC(t *testing.T) {
 
 	var stored string
 	var back Timestamp
-	err = db.ReadTx(ctx, func(tx *sql.Tx) error {
+	err = db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx, "SELECT happened_at FROM events WHERE id = 1").Scan(&stored); err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ func TestTimestampsAreStoredInUTC(t *testing.T) {
 		"unix seconds":       int64(1774740600),
 		"utc bare time.Time": local.UTC(),
 	} {
-		err := db.WriteTx(ctx, func(tx *sql.Tx) error {
+		err := db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "INSERT INTO events (happened_at) VALUES (?)", v)
 			return err
 		})
@@ -77,11 +77,11 @@ func TestParseTimeIsStrict(t *testing.T) {
 }
 
 // TestSchemaConventions checks the migrated schema: every table is STRICT,
-// and every *_at column is TEXT guarded by TimestampCheck.
+// no column is a floating-point type, and every *_at column is TEXT guarded by TimestampCheck.
 func TestSchemaConventions(t *testing.T) {
 	ctx := context.Background()
 	db := openTest(t, tempPath(t), Options{})
-	err := db.ReadTx(ctx, func(tx *sql.Tx) error {
+	err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, "SELECT name, strict FROM pragma_table_list WHERE schema = 'main' AND type = 'table' AND name NOT LIKE 'sqlite_%'")
 		if err != nil {
 			return err
@@ -118,6 +118,9 @@ func TestSchemaConventions(t *testing.T) {
 				if err := cols.Scan(&col, &typ); err != nil {
 					return err
 				}
+				if strings.EqualFold(typ, "REAL") || strings.EqualFold(typ, "FLOAT") || strings.EqualFold(typ, "DOUBLE") {
+					t.Errorf("%s.%s is %s: money and quantities must be exact (integer minor units or TEXT decimals), never binary floating point", table, col, typ)
+				}
 				if !strings.HasSuffix(col, "_at") {
 					continue
 				}
@@ -136,5 +139,33 @@ func TestSchemaConventions(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestZeroTimestampIsRejected(t *testing.T) {
+	if _, err := (Timestamp{}).Value(); err == nil {
+		t.Fatal("zero Timestamp.Value succeeded")
+	}
+	if _, err := (Timestamp{Time: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}).Value(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTimestampCheckRejectsNonDigits(t *testing.T) {
+	db := openTest(t, tempPath(t), Options{})
+	check := TimestampCheck("v")
+	for s, want := range map[string]bool{
+		"2026-03-28T23:30:00.123456789Z": true,
+		"abcd-ef-ghTij:kl:mn.opqrstuvwZ": false,
+		"2026-03-28T23:30:00.12345678xZ": false,
+	} {
+		var ok bool
+		q := "SELECT " + strings.ReplaceAll(check, "v", "?")
+		if err := db.readers.QueryRow(q, s, s).Scan(&ok); err != nil {
+			t.Fatal(err)
+		}
+		if ok != want {
+			t.Errorf("CHECK(%q) = %v, want %v", s, ok, want)
+		}
 	}
 }

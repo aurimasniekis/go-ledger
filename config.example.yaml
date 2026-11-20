@@ -1,0 +1,87 @@
+# Ledger configuration file.
+# Generated from the configuration definition; do not edit by hand.
+# Regenerate with: make config-examples
+#
+# Pass it with --config or LEDGER_CONFIG. Every key can also be set with an
+# environment variable (LEDGER_ plus the dotted key in upper case with dots
+# turned into underscores) and, except secrets, a flag of the same name as the
+# key. Precedence, highest first: flags, environment variables, this file,
+# built-in defaults. Unknown keys and wrong types are rejected. Durations are
+# written like "30s". Secrets never go in this file.
+
+http:
+
+  # Address the HTTP server listens on, as host:port. The default accepts
+  # local connections only; use :8080 to listen on every interface.
+  # Environment: LEDGER_HTTP_LISTEN  Flag: --http.listen
+  listen: "127.0.0.1:8080"
+
+  # Maximum time to read a request's headers.
+  # Environment: LEDGER_HTTP_READ_HEADER_TIMEOUT  Flag: --http.read_header_timeout
+  read_header_timeout: "10s"
+
+  # Maximum time to read an entire request, body included.
+  # Environment: LEDGER_HTTP_READ_TIMEOUT  Flag: --http.read_timeout
+  read_timeout: "30s"
+
+  # Maximum time to write a response.
+  # Environment: LEDGER_HTTP_WRITE_TIMEOUT  Flag: --http.write_timeout
+  write_timeout: "60s"
+
+  # Maximum time an idle keep-alive connection stays open.
+  # Environment: LEDGER_HTTP_IDLE_TIMEOUT  Flag: --http.idle_timeout
+  idle_timeout: "120s"
+
+  # How long graceful shutdown waits for in-flight requests before closing
+  # connections.
+  # Environment: LEDGER_HTTP_SHUTDOWN_TIMEOUT  Flag: --http.shutdown_timeout
+  shutdown_timeout: "15s"
+
+  # Maximum size of a request body in bytes.
+  # Environment: LEDGER_HTTP_MAX_BODY_BYTES  Flag: --http.max_body_bytes
+  max_body_bytes: 1048576
+
+  # IP addresses or CIDR ranges of reverse proxies whose forwarding headers
+  # are trusted (a list in YAML, comma separated in the variable). Empty
+  # trusts none.
+  # Environment: LEDGER_HTTP_TRUSTED_PROXIES  Flag: --http.trusted_proxies
+  trusted_proxies: []
+
+database:
+
+  # Path of the SQLite database file. The directory is created if it is
+  # missing.
+  # Environment: LEDGER_DATABASE_PATH  Flag: --database.path
+  path: "data/ledger.db"
+
+  # How long a statement waits for a locked database before failing.
+  # Environment: LEDGER_DATABASE_BUSY_TIMEOUT  Flag: --database.busy_timeout
+  busy_timeout: "5s"
+
+log:
+
+  # Minimum log level.
+  # Environment: LEDGER_LOG_LEVEL  Flag: --log.level  Allowed: debug, info, warn, error
+  level: "info"
+
+  # Log output format: json for machines, text for people.
+  # Environment: LEDGER_LOG_FORMAT  Flag: --log.format  Allowed: text, json
+  format: "json"
+
+reporting:
+
+  # IANA time zone used for due dates and monthly views, for example
+  # Europe/Vilnius. Empty uses the host's local zone.
+  # Environment: LEDGER_REPORTING_TIMEZONE  Flag: --reporting.timezone
+  timezone: ""
+
+  # Secret kek.value: Key-encryption key for stored credentials. Required
+  # unless LEDGER_KEK_FILE is set. Secret: environment only, never in the YAML
+  # file and never a flag.
+
+kek:
+
+  # Path of a file that contains the key-encryption key. Alternative to
+  # LEDGER_KEK_VALUE; trailing newlines are ignored.
+  # Environment: LEDGER_KEK_FILE  Flag: --kek.file
+  file: ""

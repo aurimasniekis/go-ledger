@@ -2,7 +2,10 @@ module github.com/aurimasniekis/go-ledger
 
 go 1.27.1
 
-require modernc.org/sqlite v1.62.0
+require (
+	go.yaml.in/yaml/v3 v3.0.6
+	modernc.org/sqlite v1.62.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect

@@ -5,5 +5,5 @@ CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
     name       TEXT NOT NULL CHECK (name <> ''),
     checksum   TEXT NOT NULL CHECK (length(checksum) = 64),
-    applied_at TEXT NOT NULL CHECK (length(applied_at) = 30 AND applied_at GLOB '????-??-??T??:??:??.?????????Z')
+    applied_at TEXT NOT NULL CHECK (length(applied_at) = 30 AND applied_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z')
 ) STRICT;

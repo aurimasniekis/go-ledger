@@ -23,8 +23,8 @@ func TestOpenAppliesSettingsAndMigrates(t *testing.T) {
 		t.Fatalf("SchemaVersion = %d, want %d", db.SchemaVersion(), len(known))
 	}
 	want := map[string]string{"journal_mode": "wal", "foreign_keys": "1", "busy_timeout": "5000", "synchronous": "2"}
-	for label, run := range map[string]func(context.Context, func(*sql.Tx) error) error{"writer": db.WriteTx, "reader": db.ReadTx} {
-		err := run(ctx, func(tx *sql.Tx) error {
+	for label, run := range map[string]func(context.Context, func(context.Context, *sql.Tx) error) error{"writer": db.WriteTx, "reader": db.ReadTx} {
+		err := run(ctx, func(_ context.Context, tx *sql.Tx) error {
 			for name, w := range want {
 				var got string
 				if err := tx.QueryRowContext(ctx, "PRAGMA "+name).Scan(&got); err != nil {
@@ -63,7 +63,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if second.SchemaVersion() != first.SchemaVersion() {
 		t.Fatalf("version changed on reopen: %d -> %d", first.SchemaVersion(), second.SchemaVersion())
 	}
-	err := second.ReadTx(context.Background(), func(tx *sql.Tx) error {
+	err := second.ReadTx(context.Background(), func(_ context.Context, tx *sql.Tx) error {
 		if n := queryInt(t, tx, "SELECT count(*) FROM schema_migrations"); n != second.SchemaVersion() {
 			t.Errorf("schema_migrations has %d rows, want %d", n, second.SchemaVersion())
 		}
@@ -76,7 +76,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 
 func createParentChild(t *testing.T, db *DB) {
 	t.Helper()
-	err := db.WriteTx(context.Background(), func(tx *sql.Tx) error {
+	err := db.WriteTx(context.Background(), func(_ context.Context, tx *sql.Tx) error {
 		mustExec(t, tx, "CREATE TABLE parent (id INTEGER PRIMARY KEY) STRICT")
 		mustExec(t, tx, "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent (id)) STRICT")
 		mustExec(t, tx, "INSERT INTO parent (id) VALUES (1)")
@@ -92,7 +92,7 @@ func TestForeignKeyViolationIsRejected(t *testing.T) {
 	db := openTest(t, tempPath(t), Options{})
 	createParentChild(t, db)
 
-	err := db.WriteTx(ctx, func(tx *sql.Tx) error {
+	err := db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "INSERT INTO child (id, parent_id) VALUES (1, 99)")
 		return err
 	})
@@ -101,14 +101,14 @@ func TestForeignKeyViolationIsRejected(t *testing.T) {
 	}
 	// Deleting a referenced parent must fail too.
 	mustExec(t, db.writer, "INSERT INTO child (id, parent_id) VALUES (3, 1)")
-	err = db.WriteTx(ctx, func(tx *sql.Tx) error {
+	err = db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "DELETE FROM parent WHERE id = 1")
 		return err
 	})
 	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
 		t.Fatalf("delete of a referenced parent: err = %v, want a foreign key failure", err)
 	}
-	err = db.ReadTx(ctx, func(tx *sql.Tx) error {
+	err = db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		if n := queryInt(t, tx, "SELECT count(*) FROM child WHERE parent_id = 99"); n != 0 {
 			t.Errorf("orphan child rows = %d, want 0", n)
 		}
@@ -123,7 +123,7 @@ func TestReadersAreQueryOnly(t *testing.T) {
 	ctx := context.Background()
 	db := openTest(t, tempPath(t), Options{})
 	createParentChild(t, db)
-	err := db.ReadTx(ctx, func(tx *sql.Tx) error {
+	err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "INSERT INTO parent (id) VALUES (2)")
 		return err
 	})
@@ -138,7 +138,7 @@ func TestWriteTxRollsBackOnErrorAndPanic(t *testing.T) {
 	createParentChild(t, db)
 	boom := errors.New("boom")
 
-	err := db.WriteTx(ctx, func(tx *sql.Tx) error {
+	err := db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		mustExec(t, tx, "INSERT INTO parent (id) VALUES (2)")
 		return boom
 	})
@@ -152,14 +152,14 @@ func TestWriteTxRollsBackOnErrorAndPanic(t *testing.T) {
 				t.Fatal("panic was swallowed")
 			}
 		}()
-		_ = db.WriteTx(ctx, func(tx *sql.Tx) error {
+		_ = db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 			mustExec(t, tx, "INSERT INTO parent (id) VALUES (3)")
 			panic("boom")
 		})
 	}()
 
 	// The single writer connection must be usable again, and neither row kept.
-	err = db.WriteTx(ctx, func(tx *sql.Tx) error {
+	err = db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		if n := queryInt(t, tx, "SELECT count(*) FROM parent WHERE id IN (2, 3)"); n != 0 {
 			t.Errorf("rolled-back rows present: %d", n)
 		}
@@ -185,7 +185,7 @@ func TestWritesAreSerialised(t *testing.T) {
 	for range workers {
 		wg.Go(func() {
 			for range each {
-				errs <- db.WriteTx(ctx, func(tx *sql.Tx) error {
+				errs <- db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 					var n int
 					if err := tx.QueryRowContext(ctx, "SELECT n FROM counter WHERE id = 1").Scan(&n); err != nil {
 						return err
@@ -218,7 +218,7 @@ func TestReadersSeeSnapshotDuringWrite(t *testing.T) {
 	inWrite, release := make(chan struct{}), make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- db.WriteTx(ctx, func(tx *sql.Tx) error {
+		done <- db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO parent (id) VALUES (2)"); err != nil {
 				return err
 			}
@@ -230,7 +230,7 @@ func TestReadersSeeSnapshotDuringWrite(t *testing.T) {
 	<-inWrite
 	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	err := db.ReadTx(rctx, func(tx *sql.Tx) error {
+	err := db.ReadTx(rctx, func(_ context.Context, tx *sql.Tx) error {
 		if n := queryInt(t, tx, "SELECT count(*) FROM parent"); n != 1 {
 			t.Errorf("reader sees %d parents during the write, want 1", n)
 		}
@@ -266,7 +266,7 @@ func TestBusyTimeoutAgainstAnotherProcess(t *testing.T) {
 	mustExec(t, conn, "BEGIN IMMEDIATE")
 
 	start := time.Now()
-	err = db.WriteTx(ctx, func(tx *sql.Tx) error { return nil })
+	err = db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error { return nil })
 	if err == nil {
 		t.Fatal("WriteTx succeeded while another connection held the write lock")
 	}
@@ -281,7 +281,7 @@ func TestBusyTimeoutAgainstAnotherProcess(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		_, _ = conn.ExecContext(ctx, "COMMIT")
 	}()
-	if err := db.WriteTx(ctx, func(tx *sql.Tx) error {
+	if err := db.WriteTx(ctx, func(_ context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "INSERT INTO parent (id) VALUES (2)")
 		return err
 	}); err != nil {
@@ -306,5 +306,31 @@ func TestVacuumIntoMakesUsableCopy(t *testing.T) {
 	}
 	if n := queryInt(t, copyDB.readers, "SELECT count(*) FROM parent"); n != 1 {
 		t.Fatalf("copy has %d parents, want 1", n)
+	}
+}
+
+func TestNestedWriteTxIsRejected(t *testing.T) {
+	db := openTest(t, tempPath(t), Options{})
+	// Background would wait forever on the single writer connection; the
+	// guard must answer at once. The timeout only turns a regression into a
+	// failure instead of a hung test.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var inner error
+	err := db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		derived, cancelDerived := context.WithCancel(ctx)
+		defer cancelDerived()
+		inner = db.WriteTx(derived, func(context.Context, *sql.Tx) error { return nil })
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(inner, ErrNestedWriteTx) {
+		t.Fatalf("nested WriteTx = %v, want ErrNestedWriteTx", inner)
+	}
+	// The outer transaction is unaffected and the writer is free afterwards.
+	if err := db.WriteTx(ctx, func(context.Context, *sql.Tx) error { return nil }); err != nil {
+		t.Fatalf("WriteTx after the rejected nested call: %v", err)
 	}
 }

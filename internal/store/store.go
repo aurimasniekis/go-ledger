@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,6 +18,13 @@ import (
 )
 
 const driverName = "sqlite"
+
+// ErrNestedWriteTx is returned by [DB.WriteTx] when it is called with the
+// context of a WriteTx function that is still running: the single writer
+// connection is held by the outer call, so waiting for it would never end.
+var ErrNestedWriteTx = errors.New("store: WriteTx called inside a WriteTx function")
+
+type writeTxKey struct{}
 
 // Defaults for [Options]. Retry limits and timeouts are still an open product
 // decision; these values only bound how long a writer waits for a lock that
@@ -157,7 +165,26 @@ func runMigrations(ctx context.Context, path string, opts Options, known []Migra
 		return MigrationResult{}, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	defer func() { _ = conn.Close() }()
-	return migrate(ctx, conn, known, opts.Now)
+	return migrate(ctx, conn, known, opts.Now, func(ctx context.Context, from int) error {
+		return backupBeforeMigrate(ctx, conn, path, from, opts.Now())
+	})
+}
+
+// backupBeforeMigrate writes a consistent copy of the database to a sibling
+// file, "<path>.pre-vNNNN-<UTC time>.bak", where NNNN is the schema version
+// being left (decision D17). VACUUM cannot run inside a transaction, so it
+// runs on the migration connection before the first migration's transaction.
+// The copy holds the same financial data as the database, so it gets the same
+// owner-only permissions. A failed backup fails Open: the migrations do not run.
+func backupBeforeMigrate(ctx context.Context, conn *sql.Conn, path string, from int, at time.Time) error {
+	dest := fmt.Sprintf("%s.pre-v%04d-%s.bak", path, from, at.UTC().Format("20060102T150405.000000000Z"))
+	if _, err := conn.ExecContext(ctx, "VACUUM INTO ?", dest); err != nil {
+		return fmt.Errorf("store: pre-migration backup to %s: %w", dest, err)
+	}
+	if err := os.Chmod(dest, 0o600); err != nil {
+		return fmt.Errorf("store: pre-migration backup %s: %w", dest, err)
+	}
+	return nil
 }
 
 // connWithBusyRetry opens a connection, retrying while SQLite reports the
@@ -249,18 +276,24 @@ func (db *DB) Ping(ctx context.Context) error {
 // WriteTx runs fn in a write transaction on the single writer connection,
 // begun with BEGIN IMMEDIATE. It commits when fn returns nil and rolls back
 // when fn returns an error or panics (the panic is re-raised). fn must not
-// call WriteTx (see the package documentation) and must not keep tx.
-func (db *DB) WriteTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	return runTx(ctx, db.writer, nil, fn)
+// call WriteTx again with the context it receives (that returns
+// [ErrNestedWriteTx] instead of deadlocking) and must not keep tx. A [DB.ReadTx]
+// started inside fn runs on another connection and does not see fn's
+// uncommitted writes.
+func (db *DB) WriteTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
+	if ctx.Value(writeTxKey{}) != nil {
+		return ErrNestedWriteTx
+	}
+	return runTx(context.WithValue(ctx, writeTxKey{}, struct{}{}), db.writer, nil, fn)
 }
 
 // ReadTx runs fn in a read-only transaction on a reader connection. Every
 // query in fn sees the same snapshot of the database.
-func (db *DB) ReadTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+func (db *DB) ReadTx(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error {
 	return runTx(ctx, db.readers, &sql.TxOptions{ReadOnly: true}, fn)
 }
 
-func runTx(ctx context.Context, pool *sql.DB, txOpts *sql.TxOptions, fn func(tx *sql.Tx) error) (err error) {
+func runTx(ctx context.Context, pool *sql.DB, txOpts *sql.TxOptions, fn func(ctx context.Context, tx *sql.Tx) error) (err error) {
 	tx, err := pool.BeginTx(ctx, txOpts)
 	if err != nil {
 		return fmt.Errorf("store: begin: %w", err)
@@ -271,7 +304,7 @@ func runTx(ctx context.Context, pool *sql.DB, txOpts *sql.TxOptions, fn func(tx 
 			panic(p)
 		}
 	}()
-	if err := fn(tx); err != nil {
+	if err := fn(ctx, tx); err != nil {
 		if rerr := tx.Rollback(); rerr != nil && !errors.Is(rerr, sql.ErrTxDone) {
 			return errors.Join(err, fmt.Errorf("store: rollback: %w", rerr))
 		}
