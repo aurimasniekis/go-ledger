@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -332,5 +333,38 @@ func TestNestedWriteTxIsRejected(t *testing.T) {
 	// The outer transaction is unaffected and the writer is free afterwards.
 	if err := db.WriteTx(ctx, func(context.Context, *sql.Tx) error { return nil }); err != nil {
 		t.Fatalf("WriteTx after the rejected nested call: %v", err)
+	}
+}
+
+func TestOpenCreatesFileOwnerOnlyAndKeepsExistingMode(t *testing.T) {
+	old := syscall.Umask(0)
+	defer syscall.Umask(old)
+	path := tempPath(t)
+	db := openTest(t, path, Options{})
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("new file: %v %v", fi, err)
+	}
+	_ = db.Close()
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	db2, err := Open(context.Background(), path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db2.Close() }()
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o640 {
+		t.Fatalf("existing mode changed: %v", fi.Mode())
+	}
+}
+
+func TestPingFailsOnceTheDatabaseIsClosed(t *testing.T) {
+	db := openTest(t, tempPath(t), Options{})
+	if err := db.Ping(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	if err := db.Ping(context.Background()); err == nil {
+		t.Fatal("Ping succeeded on a closed database")
 	}
 }

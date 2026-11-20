@@ -82,6 +82,9 @@ func Open(ctx context.Context, path string, opts Options) (*DB, error) {
 		}
 	}
 
+	if err := createFile(path); err != nil {
+		return nil, err
+	}
 	res, err := runMigrations(ctx, path, opts, known)
 	if err != nil {
 		return nil, err
@@ -110,6 +113,19 @@ func Open(ctx context.Context, path string, opts Options) (*DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// createFile creates an empty database file with mode 0600 when it does not
+// exist, so the file is owner-only whatever the umask. SQLite creates the
+// -wal and -shm files itself, copying the database file's permissions on
+// Unix, so they follow; the directory should still be owner-only. An existing
+// file keeps its mode.
+func createFile(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("store: create %s: %w", path, err)
+	}
+	return f.Close()
 }
 
 func checkPath(path string) error {
