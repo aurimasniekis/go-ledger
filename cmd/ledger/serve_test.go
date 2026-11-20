@@ -72,6 +72,19 @@ func TestServeStartsLogsAndShutsDown(t *testing.T) {
 		t.Fatalf("got %d %v %s", resp.StatusCode, resp.Header, body)
 	}
 
+	// The API description is served by ledger serve (ADR-0011).
+	for _, p := range []string{"/api/v1/openapi.json", "/api/v1/openapi.yaml"} {
+		resp, err = http.Get("http://" + addr.String() + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.Contains(string(body), "Ledger Management API") {
+			t.Fatalf("%s: got %d %.200s", p, resp.StatusCode, body)
+		}
+	}
+
 	// The shell is served at / by the same process, next to the API.
 	resp, err = http.Get("http://" + addr.String() + "/")
 	if err != nil {

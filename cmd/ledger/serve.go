@@ -140,6 +140,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)))
+	httpapi.RegisterAPI(srv)
 
 	// Metrics and health are unauthenticated. They go on a separate
 	// management listener (loopback by default), or on the main one when

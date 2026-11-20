@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 )
@@ -25,6 +26,7 @@ const (
 	CodeNotFound        Code = "not_found"              // 404
 	CodeTooLarge        Code = "payload_too_large"      // 413
 	CodeMethod          Code = "method_not_allowed"     // 405
+	CodePrecondition    Code = "precondition_required"  // 428: a write did not say which version it applies to
 )
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.
@@ -33,6 +35,19 @@ type ErrorBody struct {
 	Message   string `json:"message"`
 	Field     string `json:"field,omitempty"`
 	RequestID string `json:"request_id"`
+	// Reconciliation is present on a version conflict (409) only.
+	Reconciliation *Reconciliation `json:"reconciliation,omitempty"`
+}
+
+// Reconciliation tells a client whose write lost an optimistic-concurrency
+// race what the object looks like now, so it can merge and retry with
+// current_version (ADR-0011, decision D17).
+type Reconciliation struct {
+	// CurrentVersion is the object's version now; retry with it in If-Match.
+	CurrentVersion int64 `json:"current_version"`
+	// Current is the object's current representation, when the handler
+	// supplied it.
+	Current any `json:"current,omitempty"`
 }
 
 // Error is an error that knows how to present itself to API clients. Message
@@ -42,6 +57,8 @@ type Error struct {
 	Code    Code
 	Message string
 	Field   string
+	// Reconciliation is sent with a version conflict; see [VersionConflict].
+	Reconciliation *Reconciliation
 	// Cause is logged, never sent.
 	Cause error
 }
@@ -76,6 +93,15 @@ func Conflict(message string) *Error {
 	return &Error{Status: http.StatusConflict, Code: CodeConflict, Message: message}
 }
 
+// MethodNotAllowed is a 405; allow is the Allow header the mux computed.
+func MethodNotAllowed(allow string) *Error {
+	msg := "method not allowed"
+	if allow != "" {
+		msg += "; allowed: " + allow
+	}
+	return &Error{Status: http.StatusMethodNotAllowed, Code: CodeMethod, Message: msg}
+}
+
 func RateLimited(message string) *Error {
 	return &Error{Status: http.StatusTooManyRequests, Code: CodeRateLimited, Message: message}
 }
@@ -101,10 +127,17 @@ func tooLarge(limit int64) *Error {
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	var apiErr *Error
 	var maxErr *http.MaxBytesError
+	var conflict *resource.VersionConflictError
 	switch {
 	case errors.As(err, &apiErr):
 	case errors.As(err, &maxErr):
 		apiErr = tooLarge(maxErr.Limit)
+	case errors.As(err, &conflict):
+		// The handler did not attach the current object; the version alone
+		// still lets the client re-read and retry.
+		apiErr = VersionConflict(conflict.Current, nil)
+	case errors.Is(err, resource.ErrNotFound):
+		apiErr = NotFound("no such resource")
 	default:
 		apiErr = Internal(err)
 	}
@@ -120,6 +153,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		Message:   redact.Default().Text(apiErr.Message),
 		Field:     apiErr.Field,
 		RequestID: logging.RequestID(r.Context()),
+	}
+	if rc := apiErr.Reconciliation; rc != nil {
+		body.Reconciliation = rc
+		w.Header().Set("ETag", ETag(rc.CurrentVersion))
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
