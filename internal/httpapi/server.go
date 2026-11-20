@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
+	"github.com/aurimasniekis/go-ledger/internal/metrics"
 )
 
 // Server is Ledger's HTTP server: one mux behind the standard middleware
@@ -17,15 +18,29 @@ type Server struct {
 	log  *slog.Logger
 	mux  *http.ServeMux
 	http *http.Server
+	m    *metrics.App
 }
+
+// Option configures a Server.
+type Option func(*Server)
+
+// WithMetrics records request metrics in m.
+func WithMetrics(m *metrics.App) Option { return func(s *Server) { s.m = m } }
 
 // New builds a server from the HTTP section of the configuration. Register
 // routes with Handle before calling Run.
-func New(cfg config.HTTP, log *slog.Logger) *Server {
+func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
 	s := &Server{cfg: cfg, log: log, mux: http.NewServeMux()}
-	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	for _, o := range opts {
+		o(s)
+	}
+	s.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The catch-all is labelled "unmatched", not "/", in metrics.
+		if i := infoFrom(r.Context()); i != nil {
+			i.route = routeUnmatched
+		}
 		WriteError(w, r, NotFound("no such resource"))
-	})
+	}))
 	s.http = &http.Server{
 		Handler:           s.chain(s.mux),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
@@ -39,16 +54,19 @@ func New(cfg config.HTTP, log *slog.Logger) *Server {
 }
 
 // chain wraps h in the middleware, outermost first: request ID, access log,
-// panic recovery, body limit.
+// metrics (when enabled), panic recovery, body limit.
 func (s *Server) chain(h http.Handler) http.Handler {
 	h = bodyLimitMiddleware(s.cfg.MaxBodyBytes)(h)
 	h = recoverMiddleware(h)
+	if s.m != nil {
+		h = metricsMiddleware(s.m)(h)
+	}
 	h = accessLogMiddleware(s.log)(h)
 	return requestIDMiddleware(h)
 }
 
 // Handle registers a route pattern (net/http ServeMux syntax).
-func (s *Server) Handle(pattern string, h http.Handler) { s.mux.Handle(pattern, h) }
+func (s *Server) Handle(pattern string, h http.Handler) { s.mux.Handle(pattern, routed(pattern, h)) }
 
 // Handler returns the full handler, for tests.
 func (s *Server) Handler() http.Handler { return s.http.Handler }

@@ -46,7 +46,7 @@ func TestServeStartsLogsAndShutsDown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	go func() {
-		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0"}, &errOut,
+		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0", "--http.management_listen=127.0.0.1:0"}, &errOut,
 			serveEnv{Options: opts, Listening: func(a net.Addr) { addrc <- a }})
 	}()
 	var addr net.Addr
@@ -153,7 +153,7 @@ func startServe(t *testing.T, dbPath string, extraEnv map[string]string, host fu
 	s.cancel = cancel
 	t.Cleanup(cancel)
 	go func() {
-		s.done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0"}, s.logs, serveEnv{
+		s.done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0", "--http.management_listen="}, s.logs, serveEnv{
 			Options:   testOpts(env, nil),
 			Listening: func(a net.Addr) { addrc <- a },
 			Reporting: reporting.Options{HostZoneName: host},
@@ -194,7 +194,7 @@ func TestServeOpensStoreCapturesZoneAndClosesOnShutdown(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != 200 || !strings.Contains(string(body), "ok") {
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"database":"ok"`) {
 		t.Fatalf("readyz: %d %s", resp.StatusCode, body)
 	}
 	if fi, err := os.Stat(dbPath); err != nil || fi.Mode().Perm() != 0o600 {
@@ -229,7 +229,7 @@ func TestServeOpensStoreCapturesZoneAndClosesOnShutdown(t *testing.T) {
 
 func TestServeRefusesStartupWithoutResolvableZone(t *testing.T) {
 	var errOut syncBuffer
-	code := runServe(context.Background(), []string{"--http.listen=127.0.0.1:0"}, &errOut, serveEnv{
+	code := runServe(context.Background(), []string{"--http.listen=127.0.0.1:0", "--http.management_listen="}, &errOut, serveEnv{
 		Options:   testOpts(map[string]string{"LEDGER_KEK_VALUE": cmdSentinel, "LEDGER_DATABASE_PATH": filepath.Join(t.TempDir(), "l.db")}, nil),
 		Listening: func(net.Addr) { t.Error("must not listen") },
 		Reporting: reporting.Options{HostZoneName: func() (string, bool) { return "", false }},
@@ -246,7 +246,7 @@ func TestServeRefusesUnopenableDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	var errOut syncBuffer
-	code := runServe(context.Background(), []string{"--http.listen=127.0.0.1:0"}, &errOut, serveEnv{
+	code := runServe(context.Background(), []string{"--http.listen=127.0.0.1:0", "--http.management_listen="}, &errOut, serveEnv{
 		Options:   testOpts(map[string]string{"LEDGER_KEK_VALUE": cmdSentinel, "LEDGER_DATABASE_PATH": filepath.Join(blocker, "l.db")}, nil),
 		Listening: func(net.Addr) { t.Error("must not listen") },
 	})

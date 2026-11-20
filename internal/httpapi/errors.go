@@ -108,6 +108,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		apiErr = Internal(err)
 	}
+	if i := infoFrom(r.Context()); i != nil {
+		i.kind = string(apiErr.Code)
+	}
 	log := logging.FromContext(r.Context())
 	if apiErr.Status >= 500 {
 		log.ErrorContext(r.Context(), "request failed", "code", string(apiErr.Code), "error", errString(apiErr))
