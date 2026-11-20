@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/aurimasniekis/go-pulse/pkg/pulse/envelope"
+	"github.com/nats-io/nats.go"
 
 	"github.com/aurimasniekis/go-ledger/internal/outbox"
 )
@@ -40,6 +41,22 @@ func TestClassify(t *testing.T) {
 	other := errors.New("other")
 	if !errors.Is(classify(other), other) || errors.Is(classify(other), outbox.ErrTimeout) {
 		t.Fatal("other errors pass through")
+	}
+}
+
+func TestClassifyConnectionAndPayload(t *testing.T) {
+	for _, e := range []error{nats.ErrConnectionClosed} {
+		if err := classify(e); !errors.Is(err, outbox.ErrDisconnected) || !errors.Is(err, e) {
+			t.Fatalf("%v: %v", e, err)
+		}
+	}
+	for _, e := range []error{nats.ErrConnectionReconnecting, nats.ErrReconnectBufExceeded, nats.ErrDisconnected} {
+		if err := classify(e); errors.Is(err, outbox.ErrDisconnected) {
+			t.Fatalf("%v is recoverable, not a lost connection", e)
+		}
+	}
+	if err := classify(nats.ErrMaxPayload); !errors.Is(err, outbox.ErrPermanent) {
+		t.Fatalf("max payload: %v", err)
 	}
 }
 

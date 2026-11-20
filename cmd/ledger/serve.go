@@ -195,6 +195,13 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// Pulse publishing is optional: disabled means no worker and no connection,
 	// and a Pulse problem never affects startup or readiness (D17); the worker
 	// retries and reports through logs and metrics.
+	// Outbox retention (expiry and purge) runs whether or not publishing is on,
+	// so history is bounded and enabling later never replays older rows.
+	retentionDone := make(chan struct{})
+	go func() {
+		defer close(retentionDone)
+		outbox.NewRetention(outbox.RetentionConfig{DB: db, Log: log, Meter: app, Publishing: cfg.Events.Pulse.Enabled}).Run(rctx)
+	}()
 	var pulseDone chan struct{}
 	if cfg.Events.Pulse.Enabled {
 		dial := env.PulseDial
@@ -221,8 +228,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		}
 		stop()
 	}
+	<-retentionDone // before the database closes
 	if pulseDone != nil {
-		<-pulseDone // before the database closes
+		<-pulseDone
 	}
 	return code
 }

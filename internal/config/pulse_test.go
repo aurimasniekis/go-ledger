@@ -52,6 +52,14 @@ func TestPulseSourceValidatedAtLoadEvenWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestPulseNameValidatedAtLoad(t *testing.T) {
+	_, err := load(t, okEnv(env{"LEDGER_EVENTS_PULSE_NAME": "bad\nname"}), nil, nil, "")
+	wantProblem(t, problems(t, err), "events.pulse.name")
+	if _, err := load(t, okEnv(env{"LEDGER_EVENTS_PULSE_NAME": "my ledger"}), nil, nil, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func repeat(s string, n int) string {
 	out := ""
 	for i := 0; i < n; i++ {

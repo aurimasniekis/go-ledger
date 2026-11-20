@@ -11,9 +11,15 @@ import (
 // required only when enabled. Files are not opened here: a missing creds file
 // must never stop startup, the publisher reports it and retries.
 func (p Pulse) validate(bad func(key, msg string)) {
-	src := strings.TrimSpace(p.Source)
-	if src == "" || len(src) > 128 || strings.IndexFunc(src, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0 {
+	printable := func(s string) bool {
+		s = strings.TrimSpace(s)
+		return s != "" && len(s) <= 128 && strings.IndexFunc(s, func(r rune) bool { return !unicode.IsPrint(r) }) < 0
+	}
+	if !printable(p.Source) {
 		bad("events.pulse.source", "must be 1 to 128 printable characters")
+	}
+	if !printable(p.Name) {
+		bad("events.pulse.name", "must be 1 to 128 printable characters")
 	}
 	if !p.Enabled {
 		return
