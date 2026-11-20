@@ -21,6 +21,9 @@
 // Before the first pending migration of a non-new database, [Open] writes a
 // "<db>.pre-vNNNN-<UTC>.bak" copy with VACUUM INTO and fails if it cannot.
 //
+// [Backup], [Restore], [VerifyBackup], [LockInstance] and [PruneMigrationBackups]
+// implement the operator procedure in docs/backup-restore.md (ADR-0019).
+//
 // # Migrations
 //
 // Migrations are numbered SQL files in migrations/, embedded in the binary
