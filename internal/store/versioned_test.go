@@ -68,6 +68,27 @@ func TestUpdateVersioned(t *testing.T) {
 	}
 }
 
+// UpdateVersioned must not write id and expected into spare capacity of the
+// caller's args slice.
+func TestUpdateVersionedDoesNotAliasArgs(t *testing.T) {
+	ctx := context.Background()
+	db := versionedDB(t)
+	id := resource.NewID()
+	mustExec(t, db.writer, "INSERT INTO things (id, name) VALUES (?, 'a')", id)
+	args := make([]any, 1, 4)
+	args[0] = "b"
+	err := db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := UpdateVersioned(ctx, tx, "things", "name = ?", id, 1, args...)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spare := args[1:4]; spare[0] != nil || spare[1] != nil || spare[2] != nil {
+		t.Fatalf("the caller's args backing array was overwritten: %v", spare)
+	}
+}
+
 func TestDeleteVersioned(t *testing.T) {
 	ctx := context.Background()
 	db := versionedDB(t)

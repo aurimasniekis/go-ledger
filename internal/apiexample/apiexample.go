@@ -36,9 +36,11 @@ var OpenAPIPaths []byte
 
 // Example is the example resource.
 type Example struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	// Note is optional: a merge patch clears it with null.
+	Note      *string   `json:"note"`
 	Version   int64     `json:"version"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -60,6 +62,7 @@ func Migrations() ([]store.Migration, error) {
     id         TEXT PRIMARY KEY CHECK (` + store.IDCheck("id") + `),
     name       TEXT NOT NULL CHECK (name <> ''),
     kind       TEXT NOT NULL CHECK (kind IN ('alpha', 'beta')),
+    note       TEXT CHECK (note IS NULL OR length(note) BETWEEN 1 AND 200),
     version    INTEGER NOT NULL DEFAULT 1 CHECK (` + store.VersionCheck + `),
     created_at TEXT NOT NULL CHECK (` + store.TimestampCheck("created_at") + `)
 ) STRICT;`,
@@ -75,12 +78,12 @@ type Store struct {
 	Now func() time.Time
 }
 
-const columns = "id, name, kind, version, created_at"
+const columns = "id, name, kind, note, version, created_at"
 
 func scan(row interface{ Scan(...any) error }) (Example, error) {
 	var e Example
 	var at store.Timestamp
-	if err := row.Scan(&e.ID, &e.Name, &e.Kind, &e.Version, &at); err != nil {
+	if err := row.Scan(&e.ID, &e.Name, &e.Kind, &e.Note, &e.Version, &at); err != nil {
 		return Example{}, err
 	}
 	e.CreatedAt = at.Time
@@ -148,12 +151,22 @@ func (s *Store) List(ctx context.Context, q httpapi.ListQuery) ([]Example, error
 	return out, err
 }
 
-// Update changes the given fields when the example still has version
-// expected, and returns it as stored.
-func (s *Store) Update(ctx context.Context, id string, expected int64, name, kind *string) (Example, error) {
+// Patch is a validated partial update (JSON Merge Patch semantics): a nil
+// Name or Kind leaves the column unchanged; SetNote with a nil Note clears the
+// note, SetNote with a value replaces it, and no SetNote leaves it unchanged.
+type Patch struct {
+	Name, Kind *string
+	SetNote    bool
+	Note       *string
+}
+
+// Update applies p when the example still has version expected, and returns
+// it as stored.
+func (s *Store) Update(ctx context.Context, id string, expected int64, p Patch) (Example, error) {
 	var e Example
 	err := s.DB.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := store.UpdateVersioned(ctx, tx, table, "name = coalesce(?, name), kind = coalesce(?, kind)", id, expected, name, kind); err != nil {
+		set := "name = coalesce(?, name), kind = coalesce(?, kind), note = CASE WHEN ? THEN ? ELSE note END"
+		if _, err := store.UpdateVersioned(ctx, tx, table, set, id, expected, p.Name, p.Kind, p.SetNote, p.Note); err != nil {
 			return err
 		}
 		var err error
@@ -237,27 +250,37 @@ func Register(srv *httpapi.Server, st *Store) {
 		httpapi.SetVersion(w, e.Version)
 		httpapi.WriteJSON(w, http.StatusOK, e)
 	}))
+	// PATCH is a JSON Merge Patch (RFC 7396, ADR-0015): an absent member is
+	// unchanged, null clears an optional member (note), and null on a required
+	// member is a 400. The optional "version" member is the precondition, not
+	// data, and is not stored.
 	srv.Handle("PATCH "+Path+"/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Name    *string `json:"name"`
-			Kind    *string `json:"kind"`
-			Version *int64  `json:"version"`
-		}
-		if err := httpapi.DecodeJSON(r, &in); err != nil {
-			httpapi.WriteError(w, r, err)
-			return
-		}
-		expected, err := httpapi.ExpectedVersion(r, in.Version)
+		patch, err := httpapi.DecodeMergePatch(r, "name", "kind", "note", "version")
 		if err != nil {
 			httpapi.WriteError(w, r, err)
 			return
 		}
-		if err := validate(in.Name, in.Kind); err != nil {
+		var bodyVersion *int64
+		if patch.Has("version") {
+			var v int64
+			if patch.IsNull("version") || patch.Decode("version", &v) != nil {
+				httpapi.WriteError(w, r, httpapi.Validation("version", "version must be a positive integer"))
+				return
+			}
+			bodyVersion = &v
+		}
+		expected, err := httpapi.ExpectedVersion(r, bodyVersion)
+		if err != nil {
+			httpapi.WriteError(w, r, err)
+			return
+		}
+		in, err := parsePatch(patch)
+		if err != nil {
 			httpapi.WriteError(w, r, err)
 			return
 		}
 		id := r.PathValue("id")
-		e, err := st.Update(r.Context(), id, expected, in.Name, in.Kind)
+		e, err := st.Update(r.Context(), id, expected, in)
 		if err != nil {
 			writeWriteError(w, r, st, id, err)
 			return
@@ -266,6 +289,7 @@ func Register(srv *httpapi.Server, st *Store) {
 		httpapi.WriteJSON(w, http.StatusOK, e)
 	}))
 	srv.Handle("DELETE "+Path+"/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// DELETE takes the version from If-Match only (ADR-0015): it has no body.
 		expected, err := httpapi.ExpectedVersion(r, nil)
 		if err != nil {
 			httpapi.WriteError(w, r, err)
@@ -292,6 +316,43 @@ func writeWriteError(w http.ResponseWriter, r *http.Request, st *Store, id strin
 		}
 	}
 	httpapi.WriteError(w, r, err)
+}
+
+func parsePatch(p httpapi.MergePatch) (Patch, error) {
+	var out Patch
+	for _, f := range []struct {
+		field string
+		dst   **string
+	}{{"name", &out.Name}, {"kind", &out.Kind}} {
+		if !p.Has(f.field) {
+			continue
+		}
+		if p.IsNull(f.field) {
+			return Patch{}, httpapi.Validation(f.field, f.field+" is required and cannot be cleared")
+		}
+		var v string
+		if err := p.Decode(f.field, &v); err != nil {
+			return Patch{}, err
+		}
+		*f.dst = &v
+	}
+	if p.Has("note") {
+		out.SetNote = true
+		if !p.IsNull("note") {
+			var v string
+			if err := p.Decode("note", &v); err != nil {
+				return Patch{}, err
+			}
+			if n := utf8.RuneCountInString(v); n < 1 || n > 200 || !utf8.ValidString(v) {
+				return Patch{}, httpapi.Validation("note", fmt.Sprintf("note must be 1 to 200 characters, or null to clear it, got %d", n))
+			}
+			out.Note = &v
+		}
+	}
+	if err := validate(out.Name, out.Kind); err != nil {
+		return Patch{}, err
+	}
+	return out, nil
 }
 
 func validate(name, kind *string) error {

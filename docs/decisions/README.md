@@ -14,5 +14,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0010: ledger serve wiring and reporting-zone capture](0010-serve-wiring-and-reporting-zone.md)
 - [ADR-0011: Management API conventions and OpenAPI](0011-api-conventions-and-openapi.md)
 - [ADR-0012: Transactional outbox and event catalog](0012-transactional-outbox.md)
+- [ADR-0015: API conventions amendments](0015-api-conventions-amendments.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

@@ -1,6 +1,6 @@
 # ADR-0011: Management API conventions and OpenAPI
 
-Status: Accepted (2026-11-20)
+Status: Accepted (2026-11-20); parts superseded by [ADR-0015](0015-api-conventions-amendments.md): the 409 code for a stale version, DELETE versioning, the partial-update convention and the paging-stability wording
 
 ## Context
 

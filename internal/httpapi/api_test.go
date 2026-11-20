@@ -69,7 +69,8 @@ func TestOpenAPIDocumentVersionMatchesPrefix(t *testing.T) {
 
 func TestOpenAPIDocumentListsEveryErrorCode(t *testing.T) {
 	codes := []Code{CodeValidation, CodeUnauthenticated, CodeForbidden, CodeConflict, CodeRateLimited,
-		CodeUnavailable, CodeInternal, CodeNotFound, CodeTooLarge, CodeMethod, CodePrecondition}
+		CodeUnavailable, CodeInternal, CodeNotFound, CodeTooLarge, CodeMethod, CodePrecondition,
+		CodeVersionConflict, CodeUnsupportedType}
 	var doc map[string]any
 	if err := yaml.Unmarshal(OpenAPIYAML(), &doc); err != nil {
 		t.Fatal(err)
@@ -116,6 +117,7 @@ components:
 		{Method: "GET", Path: "/api/v1/things/{id}"},
 		{Method: "POST", Path: "/api/v1/things"},
 		{Method: "GET", Path: "/api/v1/files/{path...}"},
+		{Method: "GET", Path: "/api/v1/sub/"},
 	}), "\n")
 	for _, want := range []string{
 		"POST /api/v1/things: registered but not documented",
@@ -126,6 +128,7 @@ components:
 		"unresolved $ref #/components/responses/Missing",
 		"GET /api/v1/things/{id}: default response is not",
 		"GET /api/v1/files/{path...}: API routes must not use",
+		"GET /api/v1/sub/: API routes must not use",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -291,7 +294,7 @@ func TestResourceErrorsMapToEnvelope(t *testing.T) {
 	}
 	rec = do(s.Handler(), httptest.NewRequest("GET", "/api/v1/e/conflict", nil))
 	b := decodeErr(t, rec)
-	if rec.Code != 409 || b.Code != CodeConflict || b.Reconciliation == nil || b.Reconciliation.CurrentVersion != 4 || rec.Header().Get("ETag") != `"4"` {
+	if rec.Code != 409 || b.Code != CodeVersionConflict || b.Reconciliation == nil || b.Reconciliation.CurrentVersion != 4 || rec.Header().Get("ETag") != `"4"` {
 		t.Fatalf("conflict: %d %s %q", rec.Code, rec.Body.String(), rec.Header().Get("ETag"))
 	}
 	if strings.Contains(rec.Body.String(), `"current":`) {
@@ -324,6 +327,8 @@ func TestExpectedVersion(t *testing.T) {
 		{name: "two headers", ifMatch: []string{`"5"`, `"6"`}, status: 400, field: "If-Match"},
 		{name: "unquoted", ifMatch: []string{"5"}, status: 400, field: "If-Match"},
 		{name: "zero", ifMatch: []string{`"0"`}, status: 400, field: "If-Match"},
+		{name: "zero padded", ifMatch: []string{`"01"`}, status: 400, field: "If-Match"},
+		{name: "empty tag", ifMatch: []string{`""`}, status: 400, field: "If-Match"},
 		{name: "negative", ifMatch: []string{`"-1"`}, status: 400, field: "If-Match"},
 		{name: "overflow", ifMatch: []string{`"99999999999999999999"`}, status: 400, field: "If-Match"},
 		{name: "body zero", body: &zero, status: 400, field: "version"},
