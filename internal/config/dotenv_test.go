@@ -26,6 +26,7 @@ func TestParseDotenv(t *testing.T) {
 		{"single quoted literal", "A='no \\n escape $HOME'\n", []EnvPair{{"A", "no \\n escape $HOME"}}},
 		{"no expansion", "A=$HOME\nB=\"${A}x\"\nC=$(id)\n", []EnvPair{{"A", "$HOME"}, {"B", "${A}x"}, {"C", "$(id)"}}},
 		{"inline comment unquoted", "A=value # note\nB=x#y\n", []EnvPair{{"A", "value"}, {"B", "x#y"}}},
+		{"comment-only value is empty", "A= # c\nB=   #c\nC=#x\nD=\t# y\n", []EnvPair{{"A", ""}, {"B", ""}, {"C", ""}, {"D", ""}}},
 		{"comment after quote", "A=\"v\" # note\nB='w'#n\n", []EnvPair{{"A", "v"}, {"B", "w"}}},
 		{"equals in value", "A=b=c\n", []EnvPair{{"A", "b=c"}}},
 		{"crlf", "A=1\r\nB=\"2\"\r\n", []EnvPair{{"A", "1"}, {"B", "2"}}},

@@ -18,9 +18,16 @@ func RegisterFlags(fs *flag.FlagSet) *Flags {
 		if f.Secret {
 			continue
 		}
-		fs.Var(&flagValue{fl: fl, key: f.Path, isBool: f.TypeName() == "boolean"}, f.Path, f.Desc+" ["+f.Env+"]")
+		fs.Var(&flagValue{fl: fl, key: f.Path, isBool: f.TypeName() == "boolean"}, f.Path, f.Desc+usageDefault(f)+" ["+f.Env+"]")
 	}
 	return fl
+}
+
+func usageDefault(f Field) string {
+	if f.Default == "" {
+		return ""
+	}
+	return " (default " + f.Default + ")"
 }
 
 // Values returns the raw values of the key flags that were set.

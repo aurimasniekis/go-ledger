@@ -11,10 +11,10 @@
 
 http:
 
-  # Address the HTTP server listens on, as host:port. Use 127.0.0.1:8080 to
-  # accept local connections only.
+  # Address the HTTP server listens on, as host:port. The default accepts
+  # local connections only; use :8080 to listen on every interface.
   # Environment: LEDGER_HTTP_LISTEN  Flag: --http.listen
-  listen: ":8080"
+  listen: "127.0.0.1:8080"
 
   # Maximum time to read a request's headers.
   # Environment: LEDGER_HTTP_READ_HEADER_TIMEOUT  Flag: --http.read_header_timeout
@@ -64,9 +64,9 @@ log:
   # Environment: LEDGER_LOG_LEVEL  Flag: --log.level  Allowed: debug, info, warn, error
   level: "info"
 
-  # Log output format.
+  # Log output format: json for machines, text for people.
   # Environment: LEDGER_LOG_FORMAT  Flag: --log.format  Allowed: text, json
-  format: "text"
+  format: "json"
 
 reporting:
 

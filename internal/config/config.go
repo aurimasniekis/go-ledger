@@ -34,7 +34,7 @@ type Config struct {
 
 // HTTP configures the HTTP server that serves the API and the embedded UI.
 type HTTP struct {
-	Listen            string        `cfg:"listen" default:":8080" desc:"Address the HTTP server listens on, as host:port. Use 127.0.0.1:8080 to accept local connections only."`
+	Listen            string        `cfg:"listen" default:"127.0.0.1:8080" desc:"Address the HTTP server listens on, as host:port. The default accepts local connections only; use :8080 to listen on every interface."`
 	ReadHeaderTimeout time.Duration `cfg:"read_header_timeout" default:"10s" desc:"Maximum time to read a request's headers."`
 	ReadTimeout       time.Duration `cfg:"read_timeout" default:"30s" desc:"Maximum time to read an entire request, body included."`
 	WriteTimeout      time.Duration `cfg:"write_timeout" default:"60s" desc:"Maximum time to write a response."`
@@ -53,7 +53,7 @@ type Database struct {
 // Log configures logging.
 type Log struct {
 	Level  string `cfg:"level" default:"info" enum:"debug,info,warn,error" desc:"Minimum log level."`
-	Format string `cfg:"format" default:"text" enum:"text,json" desc:"Log output format."`
+	Format string `cfg:"format" default:"json" enum:"text,json" desc:"Log output format: json for machines, text for people."`
 }
 
 // Reporting configures how dates are reported.

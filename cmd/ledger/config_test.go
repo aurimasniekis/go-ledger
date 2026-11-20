@@ -37,7 +37,7 @@ func TestConfigEnvPrintsEveryVariableWithoutSecrets(t *testing.T) {
 			t.Errorf("missing %s", v.Name)
 		}
 	}
-	if !strings.Contains(out.String(), "LEDGER_HTTP_LISTEN=:8080") {
+	if !strings.Contains(out.String(), "LEDGER_HTTP_LISTEN=127.0.0.1:8080") {
 		t.Error("default not shown")
 	}
 }

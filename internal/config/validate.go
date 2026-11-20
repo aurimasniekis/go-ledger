@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -46,6 +49,20 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	bad := func(key, msg string) { ps = append(ps, Problem{Source: sources[key], Key: key, Msg: msg}) }
 	if strings.TrimSpace(c.HTTP.Listen) == "" {
 		bad("http.listen", "must not be empty")
+	} else if _, port, err := net.SplitHostPort(c.HTTP.Listen); err != nil {
+		bad("http.listen", "must be host:port, for example 127.0.0.1:8080 or :8080")
+	} else if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+		bad("http.listen", "port must be a number from 0 to 65535")
+	}
+	for i, p := range c.HTTP.TrustedProxies {
+		p = strings.TrimSpace(p)
+		if _, err := netip.ParsePrefix(p); err == nil {
+			continue
+		}
+		if _, err := netip.ParseAddr(p); err == nil {
+			continue
+		}
+		bad("http.trusted_proxies", fmt.Sprintf("entry %d is not an IP address or CIDR range", i+1))
 	}
 	for _, d := range []struct {
 		key string

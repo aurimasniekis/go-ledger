@@ -73,7 +73,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := res.Config
-	if c.HTTP.Listen != ":8080" || c.HTTP.ReadTimeout != 30*time.Second || c.Log.Level != "info" || c.HTTP.MaxBodyBytes != 1<<20 {
+	if c.HTTP.Listen != "127.0.0.1:8080" || c.HTTP.ReadTimeout != 30*time.Second || c.Log.Level != "info" || c.HTTP.MaxBodyBytes != 1<<20 {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 	if res.Sources["http.listen"] != "default" || res.Sources["kek.value"] != "env LEDGER_KEK_VALUE" {
@@ -93,7 +93,7 @@ func TestPrecedence(t *testing.T) {
 		idleTO  time.Duration
 		listenS string
 	}{
-		{"defaults only", nil, nil, nil, ":8080", 30 * time.Second, 120 * time.Second, "default"},
+		{"defaults only", nil, nil, nil, "127.0.0.1:8080", 30 * time.Second, 120 * time.Second, "default"},
 		{"yaml over default", nil, files{"c.yaml": yamlText}, nil, ":1111", 11 * time.Second, time.Minute, "yaml"},
 		{"env over yaml", env{"LEDGER_HTTP_LISTEN": ":2222"}, files{"c.yaml": yamlText}, nil, ":2222", 11 * time.Second, time.Minute, "env LEDGER_HTTP_LISTEN"},
 		{"flag over env", env{"LEDGER_HTTP_LISTEN": ":2222"}, files{"c.yaml": yamlText}, map[string]string{"http.listen": ":3333"}, ":3333", 11 * time.Second, time.Minute, "flag --http.listen"},

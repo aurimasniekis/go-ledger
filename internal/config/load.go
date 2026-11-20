@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,9 @@ type Options struct {
 	// LookupEnv defaults to os.LookupEnv. ReadFile defaults to os.ReadFile.
 	LookupEnv func(string) (string, bool)
 	ReadFile  func(string) ([]byte, error)
+	// Environ lists the process environment as KEY=VALUE, to find unknown
+	// LEDGER_ variables. It defaults to os.Environ.
+	Environ func() []string
 }
 
 // Result is a loaded configuration and how it came to be.
@@ -72,6 +76,38 @@ type Result struct {
 	EnvFile      string
 	EnvFileFound bool
 	EnvLoaded    []string
+	// UnknownEnv names (never values) the LEDGER_ variables, from the
+	// environment or the .env file, that no key uses: usually typos.
+	UnknownEnv []string
+}
+
+// unknownEnv returns the sorted names with the LEDGER_ prefix that no key or
+// setting uses.
+func unknownEnv(environ func() []string, pairs []EnvPair) []string {
+	if environ == nil {
+		environ = os.Environ
+	}
+	known := map[string]bool{Prefix + "CONFIG": true, Prefix + "ENV_FILE": true}
+	for _, f := range fields() {
+		known[f.Env] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		if strings.HasPrefix(name, Prefix) && !known[name] && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	for _, kv := range environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		add(name)
+	}
+	for _, p := range pairs {
+		add(p.Key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Load builds the configuration. Precedence, highest first: flags, environment
@@ -106,6 +142,7 @@ func Load(opts Options) (*Result, error) {
 		fromFile[p.Key] = p.Value
 		res.EnvLoaded = append(res.EnvLoaded, p.Key)
 	}
+	res.UnknownEnv = unknownEnv(opts.Environ, pairs)
 	// Empty means unset, so a blank "LEDGER_X=" never overrides a lower layer.
 	envValue := func(k string) (string, bool) {
 		v, ok := lookup(k)

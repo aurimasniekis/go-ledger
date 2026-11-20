@@ -121,9 +121,10 @@ func parseDotenvValue(v string) (value, problem string) {
 		}
 		return "", "unterminated double-quoted value"
 	}
-	// Unquoted: a comment starts at whitespace followed by '#'.
-	for i := 1; i < len(v); i++ {
-		if v[i] == '#' && (v[i-1] == ' ' || v[i-1] == '\t') {
+	// Unquoted: a comment starts at a '#' that begins the value or follows
+	// whitespace.
+	for i := 0; i < len(v); i++ {
+		if v[i] == '#' && (i == 0 || v[i-1] == ' ' || v[i-1] == '\t') {
 			v = v[:i]
 			break
 		}

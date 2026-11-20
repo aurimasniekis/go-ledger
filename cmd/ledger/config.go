@@ -83,6 +83,9 @@ func reportSources(w io.Writer, res *config.Result) {
 	} else {
 		say(w, "env file:", res.EnvFile, "(not found)")
 	}
+	for _, n := range res.UnknownEnv {
+		say(w, "warning: unknown variable "+n+" is ignored (check the spelling)")
+	}
 	say(w)
 	for _, f := range config.Fields() {
 		say(w, fmt.Sprintf("%s = %s  [%s]", f.Path, display(f, &res.Config), res.Sources[f.Path]))
