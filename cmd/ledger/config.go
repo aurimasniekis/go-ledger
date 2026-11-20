@@ -50,15 +50,16 @@ func configCheck(args []string, stdout, stderr io.Writer, base config.Options) i
 		return 2
 	}
 	opts := fl.Options()
-	opts.LookupEnv, opts.ReadFile = base.LookupEnv, base.ReadFile
+	opts.LookupEnv, opts.ReadFile, opts.Environ = base.LookupEnv, base.ReadFile, base.Environ
 	res, err := config.Load(opts)
 	if err != nil {
+		// Warn before the error: a typo in a variable name is often why
+		// validation failed.
 		var ce *config.Error
 		if errors.As(err, &ce) {
-			say(stderr, "ledger: "+ce.Error())
-		} else {
-			say(stderr, "ledger: "+err.Error())
+			warnUnknown(stderr, ce.UnknownEnv)
 		}
+		say(stderr, "ledger: "+err.Error())
 		return 1
 	}
 	reportSources(stdout, res)
@@ -83,12 +84,17 @@ func reportSources(w io.Writer, res *config.Result) {
 	} else {
 		say(w, "env file:", res.EnvFile, "(not found)")
 	}
-	for _, n := range res.UnknownEnv {
-		say(w, "warning: unknown variable "+n+" is ignored (check the spelling)")
-	}
+	warnUnknown(w, res.UnknownEnv)
 	say(w)
 	for _, f := range config.Fields() {
 		say(w, fmt.Sprintf("%s = %s  [%s]", f.Path, display(f, &res.Config), res.Sources[f.Path]))
+	}
+}
+
+// warnUnknown prints one warning per unrecognised LEDGER_ variable name.
+func warnUnknown(w io.Writer, names []string) {
+	for _, n := range names {
+		say(w, "warning: unknown variable "+n+" is ignored (check the spelling)")
 	}
 }
 
