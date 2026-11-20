@@ -105,9 +105,16 @@ func TestChecksRejectMalformedText(t *testing.T) {
 	if err := insert("1.50", "EUR", "2026-01-31"); err != nil {
 		t.Fatalf("valid row rejected: %v", err)
 	}
-	for _, bad := range []string{"", "-", ".", "1.", ".5", "-.5", "1.2.3", "1e5", "1-2", "--1", "+1", " 1", "1,00", "abc"} {
+	for _, bad := range []string{"", "-", ".", "1.", ".5", "-.5", "1.2.3", "1e5", "1-2", "--1", "+1", " 1", "1,00", "abc",
+		"007", "-007", "00.5", "-0", "-0.00", "-0.", strings.Repeat("9", money.MaxDigits+1), "-" + strings.Repeat("9", money.MaxDigits+1),
+		strings.Repeat("9", 30) + "." + strings.Repeat("9", 31)} {
 		if err := insert(bad, "EUR", "2026-01-31"); err == nil {
 			t.Errorf("amount %q accepted by CHECK", bad)
+		}
+	}
+	for _, ok := range []string{"0", "0.00", "-0.10", "10", "100.05", strings.Repeat("9", money.MaxDigits), "-" + strings.Repeat("9", 30) + "." + strings.Repeat("9", 30)} {
+		if err := insert(ok, "EUR", "2026-01-31"); err != nil {
+			t.Errorf("amount %q rejected by CHECK: %v", ok, err)
 		}
 	}
 	for _, bad := range []string{"eur", "EU", "EURO", "E1R"} {
@@ -166,6 +173,14 @@ func TestValuersRefuseZeroAndOversizedValues(t *testing.T) {
 	}
 	if _, err := (Date{}).Value(); err == nil {
 		t.Error("zero date stored")
+	}
+	big60 := money.MustParseDecimal(strings.Repeat("9", money.MaxDigits))
+	sum := big60.Add(big60) // 61 digits: ParseDecimal would refuse to read it back
+	if _, err := (Amount{sum}).Value(); err == nil {
+		t.Error("a 61-digit amount was stored; it could not be read back")
+	}
+	if _, err := (Amount{big60}).Value(); err != nil {
+		t.Errorf("a 60-digit amount was refused: %v", err)
 	}
 	tiny := money.MustParseDecimal("0." + strings.Repeat("0", money.MaxScale-1) + "1")
 	if _, err := (Amount{tiny.Mul(tiny)}).Value(); err == nil {

@@ -23,6 +23,7 @@ package sqlvalue
 import (
 	"database/sql/driver"
 	"fmt"
+	"strings"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
@@ -30,15 +31,20 @@ import (
 
 // AmountCheck returns the CHECK expression for an amount column: non-empty
 // text of at most 1+MaxDigits+1 characters made of digits, at most one '-'
-// in front and at most one '.'. The Go scanner validates fully on read.
+// in front and at most one '.', at most MaxDigits digits, no leading zeros
+// ("007") and no negative zero ("-0.00"), the canonical form the Valuer
+// writes. The Go scanner validates fully on read.
 func AmountCheck(column string) string {
 	return fmt.Sprintf("length(%[1]s) BETWEEN 1 AND %[2]d"+
+		" AND length(replace(replace(%[1]s, '-', ''), '.', '')) BETWEEN 1 AND %[3]d"+
 		" AND %[1]s NOT GLOB '*[^0-9.-]*'"+
+		" AND %[1]s NOT GLOB '0[0-9]*' AND %[1]s NOT GLOB '-0[0-9]*'"+
+		" AND replace(replace(%[1]s, '0', ''), '.', '') <> '-'"+
 		" AND %[1]s NOT GLOB '?*-*'"+
 		" AND %[1]s NOT GLOB '*.*.*'"+
 		" AND %[1]s NOT GLOB '*.' AND %[1]s NOT GLOB '.*' AND %[1]s NOT GLOB '-.*'"+
 		" AND %[1]s GLOB '*[0-9]*'",
-		column, money.MaxDigits+2)
+		column, money.MaxDigits+2, money.MaxDigits)
 }
 
 // CurrencyCheck returns the CHECK expression for a currency column: three
@@ -69,13 +75,19 @@ type Amount struct {
 	money.Decimal
 }
 
-// Value implements driver.Valuer. It refuses a scale above money.MaxScale,
-// which [money.ParseDecimal] could not read back.
+// Value implements driver.Valuer. It refuses a scale above money.MaxScale and
+// more than money.MaxDigits digits, which [money.ParseDecimal] could not read
+// back.
 func (a Amount) Value() (driver.Value, error) {
 	if a.Scale() > money.MaxScale {
 		return nil, fmt.Errorf("sqlvalue: amount scale %d exceeds %d; round it before storing", a.Scale(), money.MaxScale)
 	}
-	return a.String(), nil
+	s := a.String()
+	digits := len(s) - strings.Count(s, "-") - strings.Count(s, ".")
+	if digits > money.MaxDigits {
+		return nil, fmt.Errorf("sqlvalue: amount has %d digits, more than %d; it could not be read back", digits, money.MaxDigits)
+	}
+	return s, nil
 }
 
 // Scan implements sql.Scanner. It accepts only decimal text.

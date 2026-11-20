@@ -63,15 +63,16 @@ func (z Zone) location() *time.Location {
 	return z.loc
 }
 
-// DateOf returns the calendar date the instant t falls on in the zone.
-func (z Zone) DateOf(t time.Time) Date {
+// DateOf returns the calendar date the instant t falls on in the zone. It
+// returns ErrInvalidDate if that date is outside years 1..9999.
+func (z Zone) DateOf(t time.Time) (Date, error) {
 	l := t.In(z.location())
-	return Date{year: l.Year(), month: l.Month(), day: l.Day()}
+	return NewDate(l.Year(), l.Month(), l.Day())
 }
 
 // Today returns the date of now in the zone. Pass the clock's time so that
 // tests stay deterministic.
-func (z Zone) Today(now time.Time) Date { return z.DateOf(now) }
+func (z Zone) Today(now time.Time) (Date, error) { return z.DateOf(now) }
 
 // StartOf returns the UTC instant at which d begins in the zone. On a day
 // whose midnight is skipped by a daylight-saving change, it is the first
@@ -90,12 +91,20 @@ func (z Zone) StartOf(d Date) time.Time {
 
 // DayRange returns the half-open UTC interval [start, end) that d covers in
 // the zone. It is 23 or 25 hours long on daylight-saving change days.
-func (z Zone) DayRange(d Date) (start, end time.Time) {
-	return z.StartOf(d), z.StartOf(d.AddDays(1))
+func (z Zone) DayRange(d Date) (start, end time.Time, err error) {
+	next, err := d.AddDays(1)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	return z.StartOf(d), z.StartOf(next), nil
 }
 
 // MonthRange returns the half-open UTC interval [start, end) that m covers in
 // the zone.
-func (z Zone) MonthRange(m YearMonth) (start, end time.Time) {
-	return z.StartOf(m.First()), z.StartOf(m.AddMonths(1).First())
+func (z Zone) MonthRange(m YearMonth) (start, end time.Time, err error) {
+	next, err := m.AddMonths(1)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	return z.StartOf(m.First()), z.StartOf(next.First()), nil
 }

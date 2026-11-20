@@ -46,6 +46,22 @@ func TestClampedDate(t *testing.T) {
 	}
 }
 
+func TestDateJSONRejectsNull(t *testing.T) {
+	type dto struct {
+		Due Date `json:"due"`
+	}
+	for _, in := range []string{`{"due":null}`, `{"due":20260101}`, `{"due":""}`} {
+		var v dto
+		if err := json.Unmarshal([]byte(in), &v); err == nil {
+			t.Errorf("%s decoded to %q without error", in, v.Due)
+		}
+	}
+	var v dto
+	if err := json.Unmarshal([]byte(`{"due":"2026-01-31"}`), &v); err != nil || v.Due.String() != "2026-01-31" {
+		t.Errorf("valid date: %q, %v", v.Due, err)
+	}
+}
+
 func TestAddMonthsClamped(t *testing.T) {
 	jan31 := MustDate(2026, time.January, 31)
 	for _, tc := range []struct {
@@ -63,7 +79,7 @@ func TestAddMonthsClamped(t *testing.T) {
 		{MustDate(2026, time.December, 15), 1, "2027-01-15"},
 		{MustDate(2026, time.January, 15), -13, "2024-12-15"},
 	} {
-		if got := tc.from.AddMonthsClamped(tc.n); got.String() != tc.want {
+		if got := must(tc.from.AddMonthsClamped(tc.n)); got.String() != tc.want {
 			t.Errorf("%s + %d months = %s, want %s", tc.from, tc.n, got, tc.want)
 		}
 	}
@@ -71,10 +87,10 @@ func TestAddMonthsClamped(t *testing.T) {
 
 func TestDateArithmeticAndOrder(t *testing.T) {
 	a := MustDate(2026, time.February, 27)
-	if got := a.AddDays(2).String(); got != "2026-03-01" {
+	if got := must(a.AddDays(2)).String(); got != "2026-03-01" {
 		t.Errorf("AddDays = %s", got)
 	}
-	if got := a.AddDays(-58).String(); got != "2025-12-31" {
+	if got := must(a.AddDays(-58)).String(); got != "2025-12-31" {
 		t.Errorf("AddDays(-58) = %s", got)
 	}
 	b := MustDate(2026, time.March, 29) // a DST change day in Europe; dates do not care
@@ -101,16 +117,16 @@ func TestYearMonth(t *testing.T) {
 	if m.First().String() != "2024-02-01" || m.Last().String() != "2024-02-29" {
 		t.Errorf("First/Last = %s/%s", m.First(), m.Last())
 	}
-	if got := m.AddMonths(11).String(); got != "2025-01" {
+	if got := must(m.AddMonths(11)).String(); got != "2025-01" {
 		t.Errorf("AddMonths(11) = %s", got)
 	}
-	if got := m.AddMonths(-2).String(); got != "2023-12" {
+	if got := must(m.AddMonths(-2)).String(); got != "2023-12" {
 		t.Errorf("AddMonths(-2) = %s", got)
 	}
 	if !m.Contains(MustDate(2024, time.February, 10)) || m.Contains(MustDate(2024, time.March, 1)) {
 		t.Error("Contains wrong")
 	}
-	if m.Compare(m.AddMonths(1)) != -1 {
+	if m.Compare(must(m.AddMonths(1))) != -1 {
 		t.Error("Compare wrong")
 	}
 	for _, bad := range []string{"2024-2", "2024-13", "2024-02-01", ""} {

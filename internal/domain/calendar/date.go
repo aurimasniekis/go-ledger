@@ -1,6 +1,8 @@
 package calendar
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -89,20 +91,24 @@ func (d Date) midnightUTC() time.Time {
 	return time.Date(d.year, d.month, d.day, 0, 0, 0, 0, time.UTC)
 }
 
-// AddDays returns d plus n days (n may be negative).
-func (d Date) AddDays(n int) Date {
+// AddDays returns d plus n days (n may be negative). It returns
+// ErrInvalidDate if the result falls outside years 1..9999.
+func (d Date) AddDays(n int) (Date, error) {
 	t := d.midnightUTC().AddDate(0, 0, n)
-	return Date{year: t.Year(), month: t.Month(), day: t.Day()}
+	return NewDate(t.Year(), t.Month(), t.Day())
 }
 
 // AddMonthsClamped returns the date n months later (or earlier), with the day
 // clamped to the end of the target month (decision D6). It does not
 // accumulate: 31 Jan + 1 month is 28/29 Feb, but 31 Jan + 2 months is 31 Mar.
-// Schedules should therefore always step from the anchor date.
-func (d Date) AddMonthsClamped(n int) Date {
-	ym := d.YearMonth().AddMonths(n)
-	out, _ := ClampedDate(ym.year, ym.month, d.day) // d.day >= 1, so no error
-	return out
+// Schedules should therefore always step from the anchor date. It returns
+// ErrInvalidDate if the result falls outside years 1..9999.
+func (d Date) AddMonthsClamped(n int) (Date, error) {
+	ym, err := d.YearMonth().AddMonths(n)
+	if err != nil {
+		return Date{}, err
+	}
+	return ClampedDate(ym.year, ym.month, d.day)
 }
 
 // Compare returns -1, 0 or +1 as d is before, equal to or after o.
@@ -153,6 +159,16 @@ func (d Date) MarshalText() ([]byte, error) {
 		return nil, fmt.Errorf("%w: zero date", ErrInvalidDate)
 	}
 	return []byte(d.String()), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler: only a JSON string is accepted,
+// so null is an error instead of silently leaving the zero date.
+func (d *Date) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil || bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return fmt.Errorf("%w: a date must be a JSON string", ErrInvalidDate)
+	}
+	return d.UnmarshalText([]byte(s))
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler with [ParseDate].
@@ -212,10 +228,14 @@ func (m YearMonth) Last() Date {
 // Contains reports whether d falls in m.
 func (m YearMonth) Contains(d Date) bool { return d.YearMonth() == m }
 
-// AddMonths returns the month n months later (or earlier).
-func (m YearMonth) AddMonths(n int) YearMonth {
+// AddMonths returns the month n months later (or earlier). It returns
+// ErrInvalidDate if the result falls outside years 1..9999.
+func (m YearMonth) AddMonths(n int) (YearMonth, error) {
 	idx := m.year*12 + int(m.month-1) + n
-	return YearMonth{year: idx / 12, month: time.Month(idx%12 + 1)}
+	if idx < 12 || idx >= 10000*12 { // also guards against int overflow of n
+		return YearMonth{}, fmt.Errorf("%w: %d months from %s is outside years 1..9999", ErrInvalidDate, n, m)
+	}
+	return YearMonth{year: idx / 12, month: time.Month(idx%12 + 1)}, nil
 }
 
 // Compare returns -1, 0 or +1 as m is before, equal to or after o.

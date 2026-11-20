@@ -7,7 +7,7 @@ Ledger is a personal finance application for one maintainer. Changes arrive as p
 - Go, as set in `go.mod`.
 - `make`.
 - golangci-lint v2.15.0, for `make lint`.
-- No network access is needed for tests.
+- Go modules, downloaded once (`go mod download`). After that, no network access is needed for tests.
 
 ## Workflow
 
@@ -16,6 +16,7 @@ Ledger is a personal finance application for one maintainer. Changes arrive as p
 3. Run `make check` before you open a pull request. It runs gofmt, vet, lint, the race-enabled tests and the build. Frontend checks join it with the UI (F7).
 4. Open a pull request that says what changed, how you verified it, and what you did not verify.
 5. Record a significant tradeoff in `docs/decisions/` (see its README).
+6. A schema change is a new numbered file in `internal/store/migrations/`, plus a fixture for the previous version in `internal/store/testdata/fixtures/`. Never edit an applied migration (ADR-0003).
 
 ## Commit messages
 

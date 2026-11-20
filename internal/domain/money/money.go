@@ -1,6 +1,7 @@
 package money
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -182,6 +183,9 @@ func (m *Money) UnmarshalJSON(b []byte) error {
 	c, okC := raw["currency"]
 	if !okA || !okC {
 		return errors.New("money: amount and currency are both required")
+	}
+	if bytes.Equal(bytes.TrimSpace(a), []byte("null")) || bytes.Equal(bytes.TrimSpace(c), []byte("null")) {
+		return errors.New("money: amount and currency must not be null")
 	}
 	var v moneyJSON
 	if err := json.Unmarshal(a, &v.Amount); err != nil {

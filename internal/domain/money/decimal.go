@@ -1,6 +1,8 @@
 package money
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -23,9 +25,11 @@ var ErrInvalidDecimal = errors.New("money: invalid decimal")
 //
 // The zero value is 0 with scale 0. A Decimal is immutable: every operation
 // returns a new value. Compare values with [Decimal.Cmp] or [Decimal.Equal],
-// never with ==, because the coefficient is held by pointer.
+// never with ==, which the compiler rejects: 1.00 and 1.00 are
+// separate allocations, so == could never answer correctly.
 type Decimal struct {
-	coef  *big.Int // nil means zero; never mutated after construction
+	_     [0]func() // makes the type non-comparable: == is a compile error
+	coef  *big.Int  // nil means zero; never mutated after construction
 	scale int32
 }
 
@@ -205,7 +209,7 @@ func (d Decimal) WithScale(scale int32) (Decimal, error) {
 // conversion; stored amounts are never rounded.
 func (d Decimal) RoundHalfEven(scale int32) Decimal {
 	if scale < 0 {
-		scale = 0
+		panic(fmt.Sprintf("money: RoundHalfEven scale %d is negative", scale))
 	}
 	if scale >= d.scale {
 		return Decimal{coef: d.rescaled(scale), scale: scale}
@@ -252,6 +256,24 @@ func (d Decimal) String() string {
 // MarshalText implements encoding.TextMarshaler with [Decimal.String]. In
 // JSON a Decimal is therefore a string, never a JSON number.
 func (d Decimal) MarshalText() ([]byte, error) { return []byte(d.String()), nil }
+
+// UnmarshalJSON implements json.Unmarshaler: only a JSON string is accepted.
+// Without it, encoding/json would silently turn null into 0 for a plain
+// Decimal field.
+func (d *Decimal) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil || bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		return fmt.Errorf("%w: a decimal must be a JSON string, got %s", ErrInvalidDecimal, truncate(string(b)))
+	}
+	return d.UnmarshalText([]byte(s))
+}
+
+func truncate(s string) string {
+	if len(s) > 20 {
+		return s[:20] + "..."
+	}
+	return s
+}
 
 // UnmarshalText implements encoding.TextUnmarshaler with [ParseDecimal].
 // encoding/json calls it only for JSON strings, so JSON numbers are rejected.

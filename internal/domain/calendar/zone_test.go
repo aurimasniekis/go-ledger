@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 	_ "time/tzdata" // zones resolve without a host zoneinfo database
@@ -29,11 +30,11 @@ func TestDateOfDependsOnReportingZone(t *testing.T) {
 		"America/New_York":   "2026-01-31",
 		"Pacific/Kiritimati": "2026-02-01",
 	} {
-		if got := MustLoadZone(zone).DateOf(instant).String(); got != want {
+		if got := must(MustLoadZone(zone).DateOf(instant)).String(); got != want {
 			t.Errorf("%s: DateOf = %s, want %s", zone, got, want)
 		}
 	}
-	if got := MustLoadZone("Europe/Vilnius").Today(instant); got.YearMonth().String() != "2026-02" {
+	if got := must(MustLoadZone("Europe/Vilnius").Today(instant)); got.YearMonth().String() != "2026-02" {
 		t.Errorf("Today's month = %s", got.YearMonth())
 	}
 }
@@ -49,14 +50,17 @@ func TestDayRangeAcrossDaylightSaving(t *testing.T) {
 		{MustDate(2026, time.October, 25), 25, "2026-10-24T21:00:00Z"}, // fall back
 		{MustDate(2026, time.June, 1), 24, "2026-05-31T21:00:00Z"},
 	} {
-		start, end := z.DayRange(tc.day)
+		start, end, err := z.DayRange(tc.day)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if end.Sub(start) != tc.hours*time.Hour || start.Format(time.RFC3339) != tc.start {
 			t.Errorf("%s: [%s, %s) is %s", tc.day, start.Format(time.RFC3339), end.Format(time.RFC3339), end.Sub(start))
 		}
 		if start.Location() != time.UTC {
 			t.Errorf("StartOf must return UTC, got %s", start.Location())
 		}
-		if z.DateOf(start) != tc.day || z.DateOf(end.Add(-time.Nanosecond)) != tc.day || z.DateOf(end) != tc.day.AddDays(1) {
+		if must(z.DateOf(start)) != tc.day || must(z.DateOf(end.Add(-time.Nanosecond))) != tc.day || must(z.DateOf(end)) != must(tc.day.AddDays(1)) {
 			t.Errorf("%s: range does not map back to the day", tc.day)
 		}
 	}
@@ -68,17 +72,20 @@ func TestStartOfWhenMidnightIsSkipped(t *testing.T) {
 	z := MustLoadZone("America/Santiago")
 	d := MustDate(2024, time.September, 8)
 	start := z.StartOf(d)
-	if z.DateOf(start) != d {
-		t.Fatalf("StartOf(%s) = %s, which is %s in the zone", d, start, z.DateOf(start))
+	if must(z.DateOf(start)) != d {
+		t.Fatalf("StartOf(%s) = %s, which is %s in the zone", d, start, must(z.DateOf(start)))
 	}
-	if z.DateOf(start.Add(-time.Nanosecond)) != d.AddDays(-1) {
+	if must(z.DateOf(start.Add(-time.Nanosecond))) != must(d.AddDays(-1)) {
 		t.Fatalf("StartOf(%s) = %s is not the first instant of the day", d, start)
 	}
 }
 
 func TestMonthRange(t *testing.T) {
 	z := MustLoadZone("Europe/Vilnius")
-	start, end := z.MonthRange(MustDate(2026, time.March, 10).YearMonth())
+	start, end, err := z.MonthRange(MustDate(2026, time.March, 10).YearMonth())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if start.Format(time.RFC3339) != "2026-02-28T22:00:00Z" || end.Format(time.RFC3339) != "2026-03-31T21:00:00Z" {
 		t.Fatalf("MonthRange = [%s, %s)", start.Format(time.RFC3339), end.Format(time.RFC3339))
 	}
@@ -91,7 +98,52 @@ func TestZeroZonePanics(t *testing.T) {
 		}
 	}()
 	var z Zone
-	z.DateOf(time.Now())
+	_, _ = z.DateOf(time.Now())
+}
+
+func TestYearRangeErrors(t *testing.T) {
+	last, first := MustDate(9999, time.December, 31), MustDate(1, time.January, 1)
+	if _, err := last.AddDays(1); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("9999-12-31 + 1 day: %v", err)
+	}
+	if _, err := first.AddDays(-1); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("0001-01-01 - 1 day: %v", err)
+	}
+	if _, err := last.AddMonthsClamped(1); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("9999-12-31 + 1 month: %v", err)
+	}
+	if _, err := first.AddMonthsClamped(-1); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("0001-01-01 - 1 month: %v", err)
+	}
+	if _, err := last.YearMonth().AddMonths(1); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("9999-12 + 1: %v", err)
+	}
+	if _, err := first.YearMonth().AddMonths(math.MinInt); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("MinInt months: %v", err)
+	}
+	if _, err := first.YearMonth().AddMonths(math.MaxInt); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("MaxInt months: %v", err)
+	}
+	z := MustLoadZone("UTC")
+	if _, _, err := z.DayRange(last); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("DayRange(9999-12-31): %v", err)
+	}
+	if _, _, err := z.MonthRange(last.YearMonth()); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("MonthRange(9999-12): %v", err)
+	}
+	if _, err := z.DateOf(time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("DateOf(year 10000): %v", err)
+	}
+	if _, err := z.DateOf(time.Date(0, 6, 1, 0, 0, 0, 0, time.UTC)); !errors.Is(err, ErrInvalidDate) {
+		t.Errorf("DateOf(year 0): %v", err)
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 func TestHostZoneName(t *testing.T) {

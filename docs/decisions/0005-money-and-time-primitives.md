@@ -2,8 +2,6 @@
 
 Status: Proposed (2026-11-20)
 
-Numbering: ADR-0003 is used by two open pull requests (configuration and the SQLite store), so one of them will become ADR-0004. This record takes 0005 to avoid a third collision.
-
 ## Context
 
 Ledger must keep amounts exact, keep the source form of bank amounts (provenance), never combine currencies without an explicit conversion, and keep due dates apart from instants. The operator decided (D5): any ISO 4217 code that appears in the data; decimal storage with a stored scale that keeps the source exact; half-even rounding only at presentation and conversion; one configured IANA reporting time zone (default: the host zone captured at setup); per-currency totals first, a converted aggregate second with rate provenance. D6 adds month-end clamping and date-only due dates.
@@ -35,7 +33,10 @@ Ledger must keep amounts exact, keep the source form of bank amounts (provenance
 - Sorting or filtering by amount in SQL needs a separate, derived sortable column if it is ever needed. It must not replace the exact column.
 - **To wire after the configuration (F2) and store (F5) pull requests merge:**
   - Build the reporting `calendar.Zone` from `reporting.timezone`.
-  - F2 treats an empty value as "host local zone". D5 asks for the host zone to be captured once at setup instead, so setup should write `calendar.HostZoneName()` into the configuration, or ask when it returns no name.
-  - Migrations that add money or date columns use the `sqlvalue` CHECK helpers next to the store's timestamp check.
-  - `go.mod` here requires `modernc.org/sqlite` v1.62.0 (test-only), the same version F5 uses, so the merge is a trivial `go.mod` / `go.sum` union.
+  - Persist the reporting zone (control default, 2026-11-20; a separate wiring task, not this change): on the first start against a new database, resolve the zone once (explicit `reporting.timezone`, else `calendar.HostZoneName()`) and store it in the database. Refuse startup if no IANA name resolves (no silent UTC). An empty config later means "use the stored zone"; an explicit value that differs is applied with a warning and an audit entry. F2 validation already rejects `Local`, like `LoadZone`.
+  - Migrations that add money or date columns copy the `sqlvalue` CHECK helpers next to the store's timestamp check. The store's schema-convention test enforces the names: `*_date`, `*_amount` (with a sibling `*_currency`) and `*_currency` are TEXT with the matching CHECK.
+- JSON: a `null` or non-string amount, currency, `Decimal` or `Date` is an error, never zero. `Decimal` is not comparable with `==` (compile error); use `Cmp`/`Equal`.
+- Calendar arithmetic that leaves years 1..9999 returns `ErrInvalidDate` (`AddDays`, `AddMonthsClamped`, `AddMonths`, `DateOf`, `DayRange`, `MonthRange`). `RoundHalfEven` panics on a negative scale.
+- The amount Valuer and CHECK also bound the digit count (`MaxDigits`) and require the canonical form (no leading zeros, no negative zero), so a stored value can always be read back.
+- The float ban test covers the money, calendar and sqlvalue packages only. Packages for commitments, matching, outlook and FX must be added to `moneyPackages` as they land (see docs/plan.md).
 - Locale formatting (grouping, symbols) is the UI's job. `ForDisplay` fixes only the digits.
