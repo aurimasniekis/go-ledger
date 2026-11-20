@@ -41,6 +41,14 @@ http:
   # Environment: LEDGER_HTTP_MAX_BODY_BYTES  Flag: --http.max_body_bytes
   max_body_bytes: 1048576
 
+  # Address of the management listener that serves /metrics, /healthz and
+  # /readyz, as host:port. Unauthenticated by design: keep it on loopback or a
+  # private network, never a public interface. Empty (set in the YAML file or
+  # with --http.management_listen=; a blank environment variable counts as
+  # unset) serves them on the main listener instead.
+  # Environment: LEDGER_HTTP_MANAGEMENT_LISTEN  Flag: --http.management_listen
+  management_listen: "127.0.0.1:9090"
+
   # IP addresses or CIDR ranges of reverse proxies whose forwarding headers
   # are trusted (a list in YAML, comma separated in the variable). Empty
   # trusts none.

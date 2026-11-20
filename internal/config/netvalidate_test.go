@@ -41,6 +41,18 @@ func TestListenAndTrustedProxiesValidation(t *testing.T) {
 	}
 }
 
+func TestManagementListenValidationAndDefault(t *testing.T) {
+	if res, err := load(t, okEnv(nil), nil, nil, ""); err != nil || res.Config.HTTP.ManagementListen != "127.0.0.1:9090" {
+		t.Errorf("default: %v %q", err, res.Config.HTTP.ManagementListen)
+	}
+	if res, err := load(t, okEnv(nil), files{"c.yaml": "http:\n  management_listen: \"\"\n"}, nil, "c.yaml"); err != nil || res.Config.HTTP.ManagementListen != "" {
+		t.Errorf("empty in YAML (a blank variable counts as unset): %v %q", err, res.Config.HTTP.ManagementListen)
+	}
+	if _, err := load(t, okEnv(env{"LEDGER_HTTP_MANAGEMENT_LISTEN": "nonsense"}), nil, nil, ""); err == nil || !strings.Contains(err.Error(), "http.management_listen") {
+		t.Errorf("bad value accepted: %v", err)
+	}
+}
+
 func TestDefaultsListenLoopbackAndLogJSON(t *testing.T) {
 	res, err := load(t, okEnv(nil), nil, nil, "")
 	if err != nil {
