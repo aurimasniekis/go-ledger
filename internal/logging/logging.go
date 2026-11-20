@@ -76,8 +76,9 @@ func (h contextHandler) WithAttrs(a []slog.Attr) slog.Handler {
 }
 
 func (h contextHandler) WithGroup(n string) slog.Handler {
-	// Attributes added after a group would nest, so the ID must be added again.
-	return contextHandler{h.Handler.WithGroup(n), false}
+	// An ID already attached by With sits above the group, so hasID stays.
+	// Without one, the ID added in Handle lands inside the group (known).
+	return contextHandler{h.Handler.WithGroup(n), h.hasID}
 }
 
 type ctxKey int

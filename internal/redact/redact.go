@@ -38,8 +38,10 @@ func SensitiveKey(name string) bool {
 
 // bearer matches an Authorization-style credential written inside free text.
 // urlSecret matches secret-looking query parameters or key=value pairs in free
-// text, such as an OIDC callback URL in an error string.
-var urlSecret = regexp.MustCompile(`(?i)\b((?:[a-z0-9_]*(?:token|code|secret|password|key))=)[^&\s"']+`)
+// text, such as an OIDC callback URL in an error string. Names are matched
+// exactly (never as a suffix, so currency_code=EUR or idempotency_key=x stay
+// readable); bare code and key count only as a URL parameter after ? or &.
+var urlSecret = regexp.MustCompile(`(?i)(?:\b((?:access_token|id_token|refresh_token|client_secret|api_key|apikey|password|token|secret)=)|([?&](?:code|key)=))[^&\s"',;]+`)
 
 var bearer = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}`)
 
@@ -85,7 +87,7 @@ func (r *Redactor) Text(s string) string {
 		s = strings.ReplaceAll(s, sec, Mask)
 	}
 	r.mu.RUnlock()
-	s = urlSecret.ReplaceAllString(s, "${1}"+Mask)
+	s = urlSecret.ReplaceAllString(s, "${1}${2}"+Mask)
 	return bearer.ReplaceAllString(s, "$1 "+Mask)
 }
 

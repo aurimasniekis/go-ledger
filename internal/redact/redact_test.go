@@ -73,3 +73,27 @@ func TestTextMasksURLParameters(t *testing.T) {
 		t.Fatalf("over-redacted: %s", out)
 	}
 }
+
+func TestTextKeepsOrdinaryKeyValueText(t *testing.T) {
+	for _, in := range []string{
+		"currency_code=EUR", "status_code=500, retrying", "exit code=1",
+		"config key=http.listen is invalid", "idempotency_key=abc123", "barcode=1", "monkey=banana",
+	} {
+		if out := New().Text(in); out != in {
+			t.Errorf("over-redacted %q -> %q", in, out)
+		}
+	}
+}
+
+func TestTextMasksExactParameters(t *testing.T) {
+	for _, in := range []string{
+		"/cb?code=zzz", "/x?a=1&key=zzz", "password=zzz", "client_secret=zzz", "refresh_token=zzz", "id_token=zzz", "apikey=zzz", "token=zzz",
+	} {
+		if out := New().Text(in); strings.Contains(out, "zzz") {
+			t.Errorf("leaked in %q -> %q", in, out)
+		}
+	}
+	if out := New().Text("status_code=500, retrying"); out != "status_code=500, retrying" {
+		t.Errorf("got %q", out)
+	}
+}

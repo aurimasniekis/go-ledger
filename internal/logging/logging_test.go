@@ -74,3 +74,13 @@ func TestULID(t *testing.T) {
 		t.Fatal("collision")
 	}
 }
+
+func TestWithGroupKeepsSingleRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	base, _ := New(&buf, "info", "json", nil)
+	ctx := WithRequestID(context.Background(), "RID")
+	base.With("request_id", "RID").WithGroup("g").InfoContext(ctx, "m", "a", 1)
+	if n := strings.Count(buf.String(), "request_id"); n != 1 {
+		t.Fatalf("want one request_id, got %d: %s", n, buf.String())
+	}
+}
