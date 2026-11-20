@@ -20,5 +20,21 @@ describe('App shell', () => {
     render(<App history={createMemoryHistory({ initialEntries: ['/'] })} />)
     await userEvent.selectOptions(await screen.findByLabelText('Theme'), 'dark')
     expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(localStorage.getItem('ledger.theme')).toBe('dark')
+  })
+
+  it('reaches the theme select by Tab and keeps a visible-focus class', async () => {
+    render(<App history={createMemoryHistory({ initialEntries: ['/'] })} />)
+    const select = await screen.findByLabelText('Theme')
+    for (let i = 0; i < 6 && document.activeElement !== select; i++) await userEvent.tab()
+    expect(select).toHaveFocus()
+    expect(select.className).toContain('focus-visible:outline-ring')
+    expect(select.className).toContain('border-border-control')
+  })
+
+  it('renders the design page with every status', async () => {
+    render(<App history={createMemoryHistory({ initialEntries: ['/design'] })} />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Design system' })).toBeInTheDocument()
+    for (const l of ['Paid', 'Upcoming', 'Overdue', 'Deferred', 'Stale', 'Error']) expect(screen.getAllByText(l).length).toBeGreaterThan(0)
   })
 })

@@ -1,0 +1,213 @@
+package httpapi
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+
+	"go.yaml.in/yaml/v3"
+)
+
+// APIPrefix is the base path of version 1 of the Management API. A
+// backwards-incompatible change gets a new prefix (ADR-0011).
+const APIPrefix = "/api/v1"
+
+//go:embed openapi.yaml
+var openAPIYAML []byte
+
+// OpenAPIYAML returns the OpenAPI document of the API, as written.
+func OpenAPIYAML() []byte { return openAPIYAML }
+
+var openAPIJSON = sync.OnceValues(func() ([]byte, error) { return yamlToJSON(openAPIYAML) })
+
+// OpenAPIJSON returns the OpenAPI document converted to JSON.
+func OpenAPIJSON() ([]byte, error) { return openAPIJSON() }
+
+func yamlToJSON(doc []byte) ([]byte, error) {
+	var v any
+	if err := yaml.Unmarshal(doc, &v); err != nil {
+		return nil, fmt.Errorf("openapi: parse YAML: %w", err)
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("openapi: convert to JSON (keys must be strings): %w", err)
+	}
+	return out, nil
+}
+
+// RegisterAPI registers every route of the Management API under [APIPrefix].
+// ledger serve calls it, and TestOpenAPIContract compares what it registers
+// with openapi.yaml, so every /api/v1 route must be registered here.
+//
+// Authentication and grants (tasks A1-A4) plug in through
+// [WithAPIMiddleware]; until then these routes are unauthenticated. The API
+// description is public: it is the same document as in the source repository.
+func RegisterAPI(s *Server) {
+	s.Handle("GET "+APIPrefix+"/openapi.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		doc, err := OpenAPIJSON()
+		if err != nil {
+			WriteError(w, r, Internal(err))
+			return
+		}
+		writeDoc(w, "application/json", doc)
+	}))
+	s.Handle("GET "+APIPrefix+"/openapi.yaml", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeDoc(w, "application/yaml", OpenAPIYAML())
+	}))
+}
+
+func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {
+	w.Header().Set("Content-Type", contentType+"; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(doc)
+}
+
+var httpMethods = []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+
+var pathParam = regexp.MustCompile(`\{([^}]*)\}`)
+
+// CheckContract compares an OpenAPI document with registered routes. It
+// returns one line per problem: a route the document lacks, a documented
+// operation with no route, an unresolvable $ref, a missing or duplicate
+// operationId, an undeclared path parameter, or an operation without the
+// shared error response. Routes must lie under the document's first server URL.
+func CheckContract(doc []byte, routes []Route) []string {
+	var problems []string
+	var root map[string]any
+	if err := yaml.Unmarshal(doc, &root); err != nil {
+		return []string{"document does not parse: " + err.Error()}
+	}
+	if _, err := yamlToJSON(doc); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if v, _ := root["openapi"].(string); !strings.HasPrefix(v, "3.") {
+		problems = append(problems, fmt.Sprintf("openapi version %q is not 3.x", v))
+	}
+	base := ""
+	if servers, _ := root["servers"].([]any); len(servers) > 0 {
+		if s, _ := servers[0].(map[string]any); s != nil {
+			base, _ = s["url"].(string)
+		}
+	}
+	if base == "" {
+		problems = append(problems, "servers[0].url is missing")
+	}
+
+	// $ref targets.
+	walk(root, func(ref string) {
+		if _, ok := resolve(root, ref); !ok {
+			problems = append(problems, "unresolved $ref "+ref)
+		}
+	})
+
+	documented := map[string]bool{}
+	opIDs := map[string]string{}
+	paths, _ := root["paths"].(map[string]any)
+	for p, item := range paths {
+		pi, _ := item.(map[string]any)
+		for _, m := range httpMethods {
+			op, ok := pi[m].(map[string]any)
+			if !ok {
+				continue
+			}
+			key := strings.ToUpper(m) + " " + base + p
+			documented[key] = true
+			id, _ := op["operationId"].(string)
+			switch {
+			case id == "":
+				problems = append(problems, key+": no operationId")
+			case opIDs[id] != "":
+				problems = append(problems, fmt.Sprintf("%s: operationId %q is also used by %s", key, id, opIDs[id]))
+			default:
+				opIDs[id] = key
+			}
+			declared := map[string]bool{}
+			for _, list := range []any{pi["parameters"], op["parameters"]} {
+				params, _ := list.([]any)
+				for _, prm := range params {
+					pm, _ := prm.(map[string]any)
+					if ref, ok := pm["$ref"].(string); ok {
+						r, _ := resolve(root, ref)
+						pm, _ = r.(map[string]any)
+					}
+					if in, _ := pm["in"].(string); in == "path" {
+						name, _ := pm["name"].(string)
+						declared[name] = true
+					}
+				}
+			}
+			for _, sm := range pathParam.FindAllStringSubmatch(p, -1) {
+				if !declared[sm[1]] {
+					problems = append(problems, fmt.Sprintf("%s: path parameter %q is not declared", key, sm[1]))
+				}
+			}
+			resp, _ := op["responses"].(map[string]any)
+			def, _ := resp["default"].(map[string]any)
+			if ref, _ := def["$ref"].(string); ref != "#/components/responses/Error" {
+				problems = append(problems, key+": default response is not #/components/responses/Error")
+			}
+		}
+	}
+
+	registered := map[string]bool{}
+	for _, r := range routes {
+		if strings.Contains(r.Path, "...}") || strings.HasSuffix(r.Path, "{$}") || strings.HasSuffix(r.Path, "/") {
+			problems = append(problems, r.String()+": API routes must not use {name...} or {$} wildcards or end in / (a trailing slash matches every deeper path)")
+		}
+		registered[r.String()] = true
+		if !documented[r.String()] {
+			problems = append(problems, r.String()+": registered but not documented in the OpenAPI document")
+		}
+	}
+	for key := range documented {
+		if !registered[key] {
+			problems = append(problems, key+": documented in the OpenAPI document but not registered")
+		}
+	}
+	slices.Sort(problems)
+	return problems
+}
+
+// walk calls fn for every $ref value in v.
+func walk(v any, fn func(string)) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, x := range t {
+			if s, ok := x.(string); ok && k == "$ref" {
+				fn(s)
+				continue
+			}
+			walk(x, fn)
+		}
+	case []any:
+		for _, x := range t {
+			walk(x, fn)
+		}
+	}
+}
+
+// resolve follows a local JSON pointer ("#/a/b").
+func resolve(root map[string]any, ref string) (any, bool) {
+	rest, ok := strings.CutPrefix(ref, "#/")
+	if !ok {
+		return nil, false
+	}
+	var cur any = root
+	for _, part := range strings.Split(rest, "/") {
+		part = strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if cur, ok = m[part]; !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}

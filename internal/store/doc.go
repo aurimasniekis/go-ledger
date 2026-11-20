@@ -49,4 +49,10 @@
 // a *_currency column ([sqlvalue.CurrencyCheck]). Timestamp and TimestampCheck
 // stay here because they are part of the store's own conventions. Tests enforce
 // the name-based rules for all of them; see ADR-0005.
+//
+// Mutable configurable tables have a ULID id ([IDCheck]) and a version column
+// ([VersionCheck]) and change only through [UpdateVersioned] and
+// [DeleteVersioned] (optimistic concurrency, ADR-0011). A test enforces the
+// columns; tables that are not mutable configuration are listed there with
+// their reason.
 package store

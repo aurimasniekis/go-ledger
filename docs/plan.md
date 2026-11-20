@@ -10,14 +10,16 @@ Last updated: 2026-11-20.
 
 ## In review
 
+- **M1 API conventions and OpenAPI** (ADR-0011): `/api/v1`, ULID IDs, cursor pagination and filters, mandatory optimistic concurrency (version/ETag, If-Match or body version, 409 with reconciliation, 428 without a version), JSON 404/405 for API routes, hand-written OpenAPI served as JSON and YAML, route/document contract test, authentication middleware hook, and an internal example resource (`internal/apiexample`, not served).
+
 - **F5 SQLite store and migrations**: `modernc.org/sqlite` (ADR-0003), one writer and query-only readers, WAL, foreign keys, busy timeout, embedded forward-only migrations with checksums, UTC timestamp convention, migration fixture harness. Not yet wired into `cmd/ledger` (needs the configuration task's database path).
 - **F9 Money and time primitives**: exact `money.Decimal`/`Money`/`Totals` (per-currency, mixed currencies rejected), half-even rounding at presentation only, `calendar.Date`/`YearMonth`/`Zone`, exact TEXT encoding for SQLite (`store/sqlvalue`), float ban test (ADR-0005).
   - Follow-up: the float ban (`internal/domain/money/nofloat_test.go`) covers only the money, calendar and sqlvalue packages. Add the commitments, matching, outlook and FX packages to `moneyPackages` as they land (or move the check repo-wide).
   - Follow-up (separate wiring task): persist the reporting zone captured on first start, per the control default in decisions.md; F2's `reporting.timezone` description already states it.
 
-- **B1 Banking provider boundary and bank facts** (ADR-0013): `internal/domain/banking` provider port, capabilities with the D10 access mode per connection, error taxonomy, sensitive-value type, idempotency keys; migration `0003_bank_facts` (connections, accounts, balance snapshots, transactions; RESTRICT-only references; explicit purge); `internal/store/bankfacts`; deterministic fake provider `bankingtest`; transitive "no provider import" test; float ban extended. No HTTP endpoints yet.
+- **B1 Banking provider boundary and bank facts** (ADR-0013): `internal/domain/banking` provider port, capabilities with the D10 access mode per connection, error taxonomy, sensitive-value type, idempotency keys; migration `0004_bank_facts` (connections, accounts, balance snapshots, transactions; RESTRICT-only references; explicit purge); `internal/store/bankfacts`; deterministic fake provider `bankingtest`; transitive "no provider import" test; float ban extended. No HTTP endpoints yet.
   - Follow-up (B2): whole-window keying, staleness and attempt timestamps, no-longer-reported marking, `superseded_by` links, retry policy by error kind.
-  - Merge note: the outbox pull request also adds migration 0003; the second to merge renumbers.
+  - Merge note: the outbox migration is 0003, so this one is 0004.
 
 ## Next (first wave)
 

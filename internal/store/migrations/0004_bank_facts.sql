@@ -4,6 +4,8 @@
 -- refer to these with ON DELETE RESTRICT, never CASCADE or SET NULL, so a
 -- bank fact cannot disappear from under a user decision. Bank facts are
 -- deleted only by the explicit purge path (bankfacts.Store.PurgeConnection).
+-- Only bank_connections is Ledger-managed (versioned, M1); the other tables
+-- are provider-owned facts that nothing edits through the API.
 -- Account identifiers, provider handles and session references are
 -- sensitive: stored for the owner, never logged.
 
@@ -11,7 +13,7 @@
 -- Mode and account access are recorded at creation (decision D10). Ledger
 -- manages these rows, so they carry a version for optimistic concurrency.
 CREATE TABLE bank_connections (
-    id                  TEXT PRIMARY KEY CHECK (length(id) = 26),
+    id                  TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     provider            TEXT NOT NULL CHECK (provider <> '' AND provider NOT GLOB '*[^a-z0-9_]*'),
     application         TEXT NOT NULL CHECK (application <> ''),
     mode                TEXT NOT NULL CHECK (mode IN ('app', 'developer')),
@@ -38,7 +40,7 @@ CREATE TABLE bank_connections (
 -- hash). provider_handle is the per-session reference used for fetching; it
 -- changes on re-authorisation.
 CREATE TABLE bank_accounts (
-    id                    TEXT PRIMARY KEY CHECK (length(id) = 26),
+    id                    TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     connection_id         TEXT NOT NULL REFERENCES bank_connections (id) ON DELETE RESTRICT,
     provider              TEXT NOT NULL CHECK (provider <> ''),
     external_id           TEXT NOT NULL CHECK (external_id <> ''),
@@ -56,13 +58,20 @@ CREATE TABLE bank_accounts (
     UNIQUE (provider, external_id)
 ) STRICT;
 
+-- An account never changes provider: transactions copy it (see below).
+CREATE TRIGGER bank_accounts_provider_immutable
+BEFORE UPDATE OF provider ON bank_accounts
+BEGIN
+    SELECT RAISE(ABORT, 'a bank account cannot change provider');
+END;
+
 CREATE INDEX bank_accounts_connection ON bank_accounts (connection_id);
 
 -- Balance observations, append-only. obtained_at is when Ledger fetched the
 -- figure (freshness); reference_date is the date the bank says it applies
 -- to. An unknown balance is no row, never a zero.
 CREATE TABLE bank_balance_snapshots (
-    id             TEXT PRIMARY KEY CHECK (length(id) = 26),
+    id             TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     account_id     TEXT NOT NULL REFERENCES bank_accounts (id) ON DELETE RESTRICT,
     balance_type   TEXT NOT NULL CHECK (balance_type IN ('booked', 'available', 'expected', 'other')),
     provider_type  TEXT NOT NULL CHECK (provider_type <> ''),
@@ -88,7 +97,7 @@ END;
 -- latest fetch that reported the row; no_longer_reported_at is set when a
 -- covering fetch stopped returning it (decision D8: never hard-deleted).
 CREATE TABLE bank_transactions (
-    id                      TEXT PRIMARY KEY CHECK (length(id) = 26),
+    id                      TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     account_id              TEXT NOT NULL REFERENCES bank_accounts (id) ON DELETE RESTRICT,
     provider                TEXT NOT NULL CHECK (provider <> ''),
     dedupe_key              TEXT NOT NULL CHECK (dedupe_key GLOB 'ref:?*#[1-9]*' OR dedupe_key GLOB 'fb:?*#[1-9]*'),
@@ -134,4 +143,27 @@ BEFORE UPDATE OF booking_status ON bank_transactions
 WHEN OLD.booking_status = 'booked' AND NEW.booking_status <> 'booked'
 BEGIN
     SELECT RAISE(ABORT, 'a booked bank transaction cannot change status');
+END;
+
+-- A transaction's provider is its account's provider.
+CREATE TRIGGER bank_transactions_provider_matches_account
+BEFORE INSERT ON bank_transactions
+WHEN NEW.provider IS NOT (SELECT provider FROM bank_accounts WHERE id = NEW.account_id)
+BEGIN
+    SELECT RAISE(ABORT, 'bank transaction provider must match its account');
+END;
+
+-- superseded_by links two transactions of the same account.
+CREATE TRIGGER bank_transactions_superseded_same_account_insert
+BEFORE INSERT ON bank_transactions
+WHEN NEW.superseded_by IS NOT NULL AND NEW.account_id IS NOT (SELECT account_id FROM bank_transactions WHERE id = NEW.superseded_by)
+BEGIN
+    SELECT RAISE(ABORT, 'superseded_by must refer to a transaction of the same account');
+END;
+
+CREATE TRIGGER bank_transactions_superseded_same_account_update
+BEFORE UPDATE OF superseded_by ON bank_transactions
+WHEN NEW.superseded_by IS NOT NULL AND NEW.account_id IS NOT (SELECT account_id FROM bank_transactions WHERE id = NEW.superseded_by)
+BEGIN
+    SELECT RAISE(ABORT, 'superseded_by must refer to a transaction of the same account');
 END;

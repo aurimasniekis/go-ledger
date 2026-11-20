@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// WCAG relative-luminance contrast, checked against the tokens in index.css.
+// WCAG 2.2 relative-luminance contrast, checked against the tokens in index.css.
 function lum(hex: string) {
   const c = [1, 3, 5].map((i) => {
     const v = parseInt(hex.slice(i, i + 2), 16) / 255
@@ -16,39 +16,115 @@ function ratio(a: string, b: string) {
 }
 
 const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
-function tokens(block: RegExp) {
-  const body = block.exec(css)?.[1] ?? ''
-  return Object.fromEntries([...body.matchAll(/--([a-z-]+):\s*(#[0-9a-f]{6});/g)].map((m) => [m[1]!, m[2]!]))
+function parse(body: string) {
+  return Object.fromEntries([...body.matchAll(/--([a-z0-9-]+):\s*(#[0-9a-f]{6});/g)].map((m) => [m[1]!, m[2]!]))
 }
 const themes = {
-  light: tokens(/:root \{([^}]*)\}/),
-  dark: tokens(/:root\[data-theme='dark'\] \{([^}]*)\}/),
+  light: parse(/:root \{([^}]*)\}/.exec(css)?.[1] ?? ''),
+  dark: parse(/:root\[data-theme='dark'\] \{([^}]*)\}/.exec(css)?.[1] ?? ''),
 }
-const pairs: [string, string][] = [
-  ['foreground', 'background'],
-  ['foreground', 'surface'],
-  ['muted-foreground', 'background'],
-  ['muted-foreground', 'muted'],
+
+const STATUS = ['paid', 'upcoming', 'overdue', 'deferred', 'stale', 'error'].map((s) => 'status-' + s)
+const ACCENT = ['accent-teal', 'accent-cyan', 'accent-violet', 'accent-warm', 'primary', 'accent']
+const SURFACES = ['background', 'surface', 'surface-raised', 'muted']
+
+// Text (and icon, which carries meaning) pairs: 4.5:1.
+const textPairs: [string, string][] = [
+  ...['background', 'surface', 'surface-raised'].map((s): [string, string] => ['foreground', s]),
+  ...SURFACES.map((s): [string, string] => ['muted-foreground', s]),
+  ['foreground', 'muted'],
   ['primary-foreground', 'primary'],
   ['secondary-foreground', 'secondary'],
-  ['primary', 'background'],
-  ['danger', 'background'],
-  ['warning', 'background'],
-  ['success', 'background'],
+  // Solid (strong-tier) badges: overdue and error carry their label in the strong foreground.
+  ['status-strong-foreground', 'status-overdue'],
+  ['status-strong-foreground', 'status-error'],
+  ...ACCENT.flatMap((a) => SURFACES.map((s): [string, string] => [a, s])),
+  ...STATUS.flatMap((s) => [...SURFACES.map((b): [string, string] => [s, b]), [s, s + '-bg'] as [string, string]]),
 ]
+// Non-text pairs (WCAG 1.4.11): control boundaries and focus rings, 3:1.
+const uiPairs: [string, string][] = ['border-control', 'ring'].flatMap((t) =>
+  SURFACES.map((s): [string, string] => [t, s]),
+)
+// Tokens that are deliberately exempt from a contrast check, with the reason.
+const exempt: Record<string, string> = {
+  border: 'decorative divider; a control boundary uses border-control',
+  secondary: 'fill, checked as the secondary-foreground pair',
+  'primary-foreground': 'checked on primary',
+  'secondary-foreground': 'checked on secondary',
+  ...Object.fromEntries(STATUS.map((s) => [s + '-bg', 'tint, checked as the background of ' + s])),
+}
 
-describe('theme tokens meet WCAG AA text contrast (4.5:1)', () => {
+describe('theme tokens meet WCAG 2.2 AA', () => {
   for (const [name, t] of Object.entries(themes)) {
-    for (const [fg, bg] of pairs) {
-      it(`${name}: ${fg} on ${bg}`, () => {
+    for (const [fg, bg] of textPairs) {
+      it(`${name}: text ${fg} on ${bg} is at least 4.5:1`, () => {
         expect(t[fg], `${fg} token`).toBeDefined()
+        expect(t[bg], `${bg} token`).toBeDefined()
         expect(ratio(t[fg]!, t[bg]!)).toBeGreaterThanOrEqual(4.5)
       })
     }
+    for (const [fg, bg] of uiPairs) {
+      it(`${name}: non-text ${fg} on ${bg} is at least 3:1`, () => {
+        expect(t[fg], `${fg} token`).toBeDefined()
+        expect(ratio(t[fg]!, t[bg]!)).toBeGreaterThanOrEqual(3)
+      })
+    }
+    it(`${name}: every colour token is covered by a pair or an explicit exemption`, () => {
+      const covered = new Set([...textPairs, ...uiPairs].flat())
+      const missing = Object.keys(t).filter((k) => !covered.has(k) && !(k in exempt))
+      expect(missing).toEqual([])
+    })
   }
+
+  // Status hues must stay distinguishable from the accents, the focus ring and each other,
+  // so a violet or focused element never reads as a commitment or freshness state.
+  const lab = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const v = parseInt(hex.slice(i, i + 2), 16) / 255
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+    }) as [number, number, number]
+    const f = (x: number) => (x > 0.008856 ? Math.cbrt(x) : 7.787 * x + 16 / 116)
+    const fx = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047)
+    const fy = f(0.2126 * r + 0.7152 * g + 0.0722 * b)
+    const fz = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883)
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)] as const
+  }
+  const deltaE = (a: string, b: string) => {
+    const [p, q] = [lab(a), lab(b)]
+    return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+  }
+  for (const [name, t] of Object.entries(themes)) {
+    it(`${name}: status tokens never equal and stay visibly distinct from accent and ring tokens`, () => {
+      const others = ['ring', 'accent-teal', 'accent-cyan', 'accent-violet', 'accent-warm', 'primary', 'accent']
+      for (const s of STATUS) {
+        for (const o of others) {
+          expect(t[s], `${s} must not equal ${o}`).not.toBe(t[o])
+          expect(deltaE(t[s]!, t[o]!), `${s} vs ${o}`).toBeGreaterThanOrEqual(20)
+        }
+      }
+    })
+    it(`${name}: status hues are distinct from each other, overdue and error clearly apart`, () => {
+      for (const a of STATUS) for (const b of STATUS) if (a < b) expect(deltaE(t[a]!, t[b]!), `${a} vs ${b}`).toBeGreaterThanOrEqual(20)
+      expect(deltaE(t['status-overdue']!, t['status-error']!)).toBeGreaterThanOrEqual(35)
+    })
+  }
+
+  it('both themes define the same tokens', () => {
+    expect(Object.keys(themes.light).sort()).toEqual(Object.keys(themes.dark).sort())
+  })
+
   it('the OS-dark media block repeats the dark tokens', () => {
     const m = /prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme='light'\]\) \{([^}]*)\}/.exec(css)?.[1] ?? ''
-    const media = Object.fromEntries([...m.matchAll(/--([a-z-]+):\s*(#[0-9a-f]{6});/g)].map((x) => [x[1]!, x[2]!]))
-    for (const [k, v] of Object.entries(themes.dark)) expect(media[k]).toBe(v)
+    expect(parse(m)).toEqual(themes.dark)
+  })
+
+  it('honours reduced motion', () => {
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*transition-duration: 0\.01ms !important/)
+  })
+
+  it('keeps radii within 4-8px', () => {
+    const px = [...css.matchAll(/--radius(?:-small|-large)?: (\d+)px;/g)].map((m) => Number(m[1]))
+    expect(px.length).toBe(3)
+    for (const v of px) expect(v >= 4 && v <= 8).toBe(true)
   })
 })

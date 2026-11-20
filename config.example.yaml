@@ -98,3 +98,40 @@ kek:
   # LEDGER_KEK_VALUE; trailing newlines are ignored.
   # Environment: LEDGER_KEK_FILE  Flag: --kek.file
   file: ""
+
+events:
+
+  pulse:
+
+    # Publish events to Pulse. Off by default. While off, nothing is recorded
+    # or published, and turning it on later does not replay changes made while
+    # it was off.
+    # Environment: LEDGER_EVENTS_PULSE_ENABLED  Flag: --events.pulse.enabled
+    enabled: false
+
+    # Event source stamped on every published event (the envelope's source
+    # field): 1 to 128 printable characters.
+    # Environment: LEDGER_EVENTS_PULSE_SOURCE  Flag: --events.pulse.source
+    source: "ledger"
+
+    # Pulse server URL; must use the tls:// scheme, for example
+    # tls://pulse.example.com:4222. Required when events.pulse.enabled is
+    # true. Nothing connects while publishing is off.
+    # Environment: LEDGER_EVENTS_PULSE_URL  Flag: --events.pulse.url
+    url: ""
+
+    # Path of the Pulse .creds file (user JWT and key seed). Required when
+    # events.pulse.enabled is true. Only the path is configuration: the file
+    # is read by the Pulse client, never copied, and its path and content are
+    # never logged.
+    # Environment: LEDGER_EVENTS_PULSE_CREDS_FILE  Flag: --events.pulse.creds_file
+    creds_file: ""
+
+    # Optional PEM file with an extra CA to trust for the Pulse server, added
+    # to the system roots. Certificate verification is never disabled.
+    # Environment: LEDGER_EVENTS_PULSE_CA_FILE  Flag: --events.pulse.ca_file
+    ca_file: ""
+
+    # Connection name shown on the Pulse server.
+    # Environment: LEDGER_EVENTS_PULSE_NAME  Flag: --events.pulse.name
+    name: "ledger"

@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking/bankingtest"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 )
@@ -441,7 +442,7 @@ func TestPurgeIsExplicitAndBlockedByUserData(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := e.count("bank_transactions")
-	if _, err := e.facts.PurgeConnection(e.ctx, conn.ID); !errors.Is(err, banking.ErrPurgeBlocked) {
+	if _, err := e.facts.PurgeConnection(e.ctx, conn.ID, e.version(conn)); !errors.Is(err, banking.ErrPurgeBlocked) {
 		t.Fatalf("purge with user data: %v, want ErrPurgeBlocked", err)
 	}
 	if e.count("bank_transactions") != before || e.count("bank_connections") != 1 {
@@ -454,7 +455,7 @@ func TestPurgeIsExplicitAndBlockedByUserData(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := e.facts.PurgeConnection(e.ctx, conn.ID)
+	res, err := e.facts.PurgeConnection(e.ctx, conn.ID, e.version(conn))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,6 +469,112 @@ func TestPurgeIsExplicitAndBlockedByUserData(t *testing.T) {
 		if n := e.count(table); n != 0 {
 			t.Errorf("%s has %d rows after purge", table, n)
 		}
+	}
+}
+
+// version is the connection's current version.
+func (e *env) version(conn banking.Connection) int64 {
+	e.t.Helper()
+	c, err := e.facts.Connection(e.ctx, conn.ID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return c.Version
+}
+
+func (e *env) exec(query string, args ...any) error {
+	e.t.Helper()
+	return e.db.WriteTx(e.ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, query, args...)
+		return err
+	})
+}
+
+// A superseded pair whose referenced (booked) row was inserted first must not
+// make the purge fail on the self-referencing foreign key.
+func TestPurgeWithSupersededPairInsertedBookedFirst(t *testing.T) {
+	e := newEnv(t, banking.ModeApp)
+	conn, sess := e.connect("s")
+	e.importAll(conn, sess, bankingtest.October2026())
+	txs := e.eurTransactions(conn)
+	if len(txs) < 2 {
+		t.Fatalf("need two transactions, have %d", len(txs))
+	}
+	booked, pending := txs[0], txs[1] // import order: booked has the lower rowid
+	if err := e.exec("UPDATE bank_transactions SET superseded_by = ? WHERE id = ?", booked.ID, pending.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.facts.PurgeConnection(e.ctx, conn.ID, e.version(conn)); err != nil {
+		t.Fatalf("purge with a superseded pair: %v", err)
+	}
+	for _, table := range []string{"bank_transactions", "bank_balance_snapshots", "bank_accounts", "bank_connections"} {
+		if n := e.count(table); n != 0 {
+			t.Errorf("%s has %d rows after purge", table, n)
+		}
+	}
+}
+
+func TestDisconnectAndPurgeUseExpectedVersion(t *testing.T) {
+	e := newEnv(t, banking.ModeApp)
+	conn, _ := e.connect("s")
+	v := e.version(conn)
+
+	var vc *resource.VersionConflictError
+	if _, err := e.facts.DisconnectConnection(e.ctx, conn.ID, v-1, e.clock.now); !errors.As(err, &vc) {
+		t.Fatalf("disconnect at a stale version: %v, want a version conflict", err)
+	}
+	if _, err := e.facts.PurgeConnection(e.ctx, conn.ID, v+1); !errors.As(err, &vc) {
+		t.Fatalf("purge at a wrong version: %v, want a version conflict", err)
+	}
+	if e.count("bank_connections") != 1 {
+		t.Fatal("a conflicting purge deleted the connection")
+	}
+	got, err := e.facts.DisconnectConnection(e.ctx, conn.ID, v, e.clock.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != banking.ConnectionDisconnected || got.Version != v+1 {
+		t.Errorf("after disconnect: status %q version %d, want disconnected and %d", got.Status, got.Version, v+1)
+	}
+	if _, err := e.facts.DisconnectConnection(e.ctx, "01JZ0000000000000000000009", 1, e.clock.now); !errors.Is(err, banking.ErrNotFound) {
+		t.Errorf("disconnect of an unknown connection: %v", err)
+	}
+	if _, err := e.facts.PurgeConnection(e.ctx, conn.ID, got.Version); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSupersededAndProviderMustMatchTheAccount(t *testing.T) {
+	e := newEnv(t, banking.ModeApp)
+	conn, sess := e.connect("s")
+	e.importAll(conn, sess, bankingtest.October2026())
+	accts, err := e.facts.Accounts(e.ctx, conn.ID)
+	if err != nil || len(accts) < 2 {
+		t.Fatalf("accounts: %v (%d)", err, len(accts))
+	}
+	var one, two banking.StoredTransaction
+	for _, a := range accts {
+		txs, err := e.facts.Transactions(e.ctx, a.ID)
+		if err != nil || len(txs) == 0 {
+			continue
+		}
+		if one.ID == "" {
+			one = txs[0]
+		} else if two.ID == "" {
+			two = txs[0]
+		}
+	}
+	if one.ID == "" || two.ID == "" || one.AccountID == two.AccountID {
+		t.Skip("dataset has transactions in fewer than two accounts")
+	}
+	if err := e.exec("UPDATE bank_transactions SET superseded_by = ? WHERE id = ?", one.ID, two.ID); err == nil {
+		t.Error("superseded_by across accounts accepted")
+	}
+	if err := e.exec("UPDATE bank_accounts SET provider = 'other' WHERE id = ?", one.AccountID); err == nil {
+		t.Error("account provider changed")
+	}
+	if err := e.exec("INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, entry_reference, booking_status, provider_status, source_amount, source_currency, booking_date, imported_at, last_seen_at) SELECT ?, account_id, 'other', 'ref:zz#1', 'entry_reference', 'zz', 'booked', 'BOOK', '1', 'EUR', '2026-10-01', imported_at, last_seen_at FROM bank_transactions WHERE id = ?", resource.NewID(), one.ID); err == nil {
+		t.Error("transaction with a provider different from its account accepted")
 	}
 }
 

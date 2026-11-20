@@ -1,6 +1,6 @@
 // Package bankfacts persists bank facts (ADR-0013): connections, accounts,
 // balance snapshots and transactions, in the tables of migration
-// 0003_bank_facts. It implements [banking.FactStore].
+// 0004_bank_facts. It implements [banking.FactStore].
 //
 // Bank facts are provider-owned. Nothing here writes user data, and the
 // only path that deletes bank facts is [Store.PurgeConnection].
@@ -22,9 +22,11 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
-	"github.com/aurimasniekis/go-ledger/internal/logging"
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/sqlvalue"
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Store implements [banking.FactStore] on a [store.DB].
@@ -35,10 +37,10 @@ type Store struct {
 
 var _ banking.FactStore = (*Store)(nil)
 
-// New returns a Store. newID returns ULIDs; nil means logging.NewULID.
+// New returns a Store. newID returns ULIDs; nil means resource.NewID.
 func New(db *store.DB, newID func() string) *Store {
 	if newID == nil {
-		newID = logging.NewULID
+		newID = resource.NewID
 	}
 	return &Store{db: db, newID: newID}
 }
@@ -204,6 +206,9 @@ func (s *Store) Connections(ctx context.Context) ([]banking.Connection, error) {
 	return out, nil
 }
 
+// updateConnection is for provider-driven transitions: it bumps version
+// without comparing it (ADR-0013 §5). User-initiated changes use
+// updateConnectionVersioned.
 func (s *Store) updateConnection(ctx context.Context, id banking.ConnectionID, set string, args ...any) (banking.Connection, error) {
 	var out banking.Connection
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -220,6 +225,37 @@ func (s *Store) updateConnection(ctx context.Context, id banking.ConnectionID, s
 		return err
 	})
 	return out, err
+}
+
+func (s *Store) updateConnectionVersioned(ctx context.Context, id banking.ConnectionID, expected int64, set string, args ...any) (banking.Connection, error) {
+	var out banking.Connection
+	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := store.UpdateVersioned(ctx, tx, "bank_connections", set, string(id), expected, args...); err != nil {
+			return versionedError(id, err)
+		}
+		var err error
+		out, err = connectionTx(ctx, tx, "id = ?", id)
+		return err
+	})
+	return out, err
+}
+
+// versionedError maps a missing row to banking.ErrNotFound and keeps
+// version conflicts as they are.
+func versionedError(id banking.ConnectionID, err error) error {
+	if errors.Is(err, resource.ErrNotFound) {
+		return notFound("connection", id)
+	}
+	return fmt.Errorf("bankfacts: connection %s: %w", id, err)
+}
+
+// DisconnectConnection implements [banking.FactStore].
+func (s *Store) DisconnectConnection(ctx context.Context, id banking.ConnectionID, expected int64, at time.Time) (banking.Connection, error) {
+	if err := requireTime("disconnect", at); err != nil {
+		return banking.Connection{}, err
+	}
+	return s.updateConnectionVersioned(ctx, id, expected,
+		"status = 'disconnected', consent_state = NULL, last_error_kind = '', last_error_code = '', updated_at = ?", ts(at))
 }
 
 // ActivateConnection implements [banking.FactStore].
@@ -621,34 +657,38 @@ func (s *Store) Transactions(ctx context.Context, id banking.AccountID) ([]banki
 
 // PurgeConnection implements [banking.FactStore]. It deletes the
 // connection's transactions, balance snapshots, accounts and the connection
-// itself in one transaction. Every table that refers to bank facts does so
-// with ON DELETE RESTRICT, so while user data (a payment match, a
-// correction) refers to any of them the purge fails with
-// [banking.ErrPurgeBlocked] and nothing is deleted. Ending the provider
+// itself in one transaction, the connection through [store.DeleteVersioned]
+// at version expected. Every table that refers to bank facts does so with ON
+// DELETE RESTRICT, so while user data (a payment match, a correction) refers
+// to any of them the purge fails with [banking.ErrPurgeBlocked] and nothing
+// is deleted. superseded_by links between the purged transactions are
+// cleared first: SQLite checks that self-reference per row, so the delete
+// order would otherwise decide whether the purge fails. Ending the provider
 // session is the caller's job and should happen first.
-func (s *Store) PurgeConnection(ctx context.Context, id banking.ConnectionID) (banking.PurgeResult, error) {
+func (s *Store) PurgeConnection(ctx context.Context, id banking.ConnectionID, expected int64) (banking.PurgeResult, error) {
 	var res banking.PurgeResult
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := connectionTx(ctx, tx, "id = ?", id); err != nil {
+		c, err := connectionTx(ctx, tx, "id = ?", id)
+		if err != nil {
 			return err
+		}
+		if c.Version != expected {
+			return fmt.Errorf("bankfacts: connection %s: %w", id, &resource.VersionConflictError{Expected: expected, Current: c.Version})
 		}
 		accounts := "SELECT id FROM bank_accounts WHERE connection_id = ?"
 		steps := []struct {
 			query string
 			count *int
 		}{
+			{"UPDATE bank_transactions SET superseded_by = NULL WHERE superseded_by IS NOT NULL AND account_id IN (" + accounts + ")", nil},
 			{"DELETE FROM bank_transactions WHERE account_id IN (" + accounts + ")", &res.Transactions},
 			{"DELETE FROM bank_balance_snapshots WHERE account_id IN (" + accounts + ")", &res.Balances},
 			{"DELETE FROM bank_accounts WHERE connection_id = ?", &res.Accounts},
-			{"DELETE FROM bank_connections WHERE id = ?", nil},
 		}
 		for _, st := range steps {
 			r, err := tx.ExecContext(ctx, st.query, id)
 			if err != nil {
-				if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-					return fmt.Errorf("bankfacts: purge connection %s: %w", id, banking.ErrPurgeBlocked)
-				}
-				return fmt.Errorf("bankfacts: purge connection %s: %w", id, err)
+				return purgeError(id, err)
 			}
 			if st.count != nil {
 				n, err := r.RowsAffected()
@@ -658,10 +698,25 @@ func (s *Store) PurgeConnection(ctx context.Context, id banking.ConnectionID) (b
 				*st.count = int(n)
 			}
 		}
+		if err := store.DeleteVersioned(ctx, tx, "bank_connections", string(id), expected); err != nil {
+			return purgeError(id, err)
+		}
 		return nil
 	})
 	if err != nil {
 		return banking.PurgeResult{}, err
 	}
 	return res, nil
+}
+
+// purgeError reports a foreign-key violation, by SQLite's extended result
+// code, as [banking.ErrPurgeBlocked]. SQLite reports a violated ON DELETE
+// RESTRICT action with the trigger-class code, an unresolved plain foreign
+// key with the foreign-key one; neither can come from anything else in the
+// purge, whose statements fire no triggers that raise.
+func purgeError(id banking.ConnectionID, err error) error {
+	if serr, ok := errors.AsType[*sqlite.Error](err); ok && (serr.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY || serr.Code() == sqlite3.SQLITE_CONSTRAINT_TRIGGER) {
+		return fmt.Errorf("bankfacts: purge connection %s: %w", id, banking.ErrPurgeBlocked)
+	}
+	return fmt.Errorf("bankfacts: purge connection %s: %w", id, err)
 }

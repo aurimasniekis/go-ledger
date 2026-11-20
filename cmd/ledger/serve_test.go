@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/aurimasniekis/go-ledger/internal/outbox"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 )
 
@@ -30,6 +32,57 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 	return s.b.Write(p)
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+func TestServeWithPulseEnabledStartsEvenWhenPulseIsUnreachable(t *testing.T) {
+	env := map[string]string{
+		"LEDGER_KEK_VALUE":               cmdSentinel,
+		"LEDGER_DATABASE_PATH":           filepath.Join(t.TempDir(), "ledger.db"),
+		"LEDGER_REPORTING_TIMEZONE":      "UTC",
+		"LEDGER_EVENTS_PULSE_ENABLED":    "true",
+		"LEDGER_EVENTS_PULSE_URL":        "tls://pulse.example.com:4222",
+		"LEDGER_EVENTS_PULSE_CREDS_FILE": "/nonexistent/pulse.creds",
+	}
+	var errOut syncBuffer
+	addrc := make(chan net.Addr, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	go func() {
+		done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0", "--http.management_listen="}, &errOut,
+			serveEnv{Options: testOpts(env, nil), Listening: func(a net.Addr) { addrc <- a },
+				PulseDial: func(context.Context) (outbox.Bus, error) { return nil, errors.New("unreachable") },
+				UI:        fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}})
+	}()
+	var addr net.Addr
+	select {
+	case addr = <-addrc:
+	case code := <-done:
+		t.Fatalf("exited %d: %s", code, errOut.String())
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not start")
+	}
+	resp, err := http.Get("http://" + addr.String() + "/readyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("readyz %d: Pulse must not gate readiness", resp.StatusCode)
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, errOut.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no graceful shutdown")
+	}
+	out := errOut.String()
+	if !strings.Contains(out, "events leave this machine") || strings.Contains(out, "pulse.creds") {
+		t.Fatalf("logs:\n%s", out)
+	}
+}
 
 func TestServeStartsLogsAndShutsDown(t *testing.T) {
 	env := map[string]string{
@@ -70,6 +123,19 @@ func TestServeStartsLogsAndShutsDown(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != 404 || resp.Header.Get("X-Request-ID") != "serve-test-1" || !strings.Contains(string(body), `"request_id":"serve-test-1"`) {
 		t.Fatalf("got %d %v %s", resp.StatusCode, resp.Header, body)
+	}
+
+	// The API description is served by ledger serve (ADR-0011).
+	for _, p := range []string{"/api/v1/openapi.json", "/api/v1/openapi.yaml"} {
+		resp, err = http.Get("http://" + addr.String() + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.Contains(string(body), "Ledger Management API") {
+			t.Fatalf("%s: got %d %.200s", p, resp.StatusCode, body)
+		}
 	}
 
 	// The shell is served at / by the same process, next to the API.

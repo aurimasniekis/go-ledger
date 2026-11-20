@@ -169,8 +169,15 @@ type FactStore interface {
 	UpsertTransactions(ctx context.Context, id AccountID, txs []KeyedTransaction, seenAt time.Time) ([]TransactionUpsert, error)
 	Transactions(ctx context.Context, id AccountID) ([]StoredTransaction, error)
 
+	// DisconnectConnection is the user-initiated disconnect. It applies only
+	// when the connection still has version expected (optimistic
+	// concurrency, M1), failing with a *resource.VersionConflictError
+	// otherwise. Ending the provider session is the caller's job.
+	DisconnectConnection(ctx context.Context, id ConnectionID, expected int64, at time.Time) (Connection, error)
+
 	// PurgeConnection deletes a connection and every bank fact under it. It
-	// is the only path that deletes bank facts (decision D8: explicit purge)
+	// is the only path that deletes bank facts (decision D8: explicit purge),
+	// applies only at version expected like [FactStore.DisconnectConnection],
 	// and fails with [ErrPurgeBlocked] while user data refers to them.
-	PurgeConnection(ctx context.Context, id ConnectionID) (PurgeResult, error)
+	PurgeConnection(ctx context.Context, id ConnectionID, expected int64) (PurgeResult, error)
 }

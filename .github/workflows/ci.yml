@@ -129,8 +129,10 @@ jobs:
         env:
           LEDGER_HTTP_LISTEN: 127.0.0.1:18080
           LEDGER_KEK_VALUE: ci-smoke-not-a-secret
-          LEDGER_DATABASE_PATH: ":memory:"
+          LEDGER_REPORTING_TIMEZONE: UTC
+        # The store refuses in-memory databases, so the smoke test uses a file under the runner's temp dir.
         run: |
+          export LEDGER_DATABASE_PATH="$RUNNER_TEMP/ledger.db"
           bin/ledger serve > "$RUNNER_TEMP/ledger.log" 2>&1 &
           pid=$!
           trap 'kill "$pid" 2>/dev/null || true' EXIT

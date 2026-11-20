@@ -49,6 +49,25 @@ func TestNoForeignKeyCascadesFromBankFacts(t *testing.T) {
 }
 
 func init() {
+	fixtureChecks["0003_outbox.sql"] = func(t *testing.T, db *DB) {
+		ctx := context.Background()
+		err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
+			if n := queryInt(t, tx, "SELECT count(*) FROM outbox"); n != 2 {
+				t.Errorf("outbox has %d rows after upgrade, want the 2 from the fixture", n)
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM outbox WHERE state = 'pending'"); n != 1 {
+				t.Errorf("%d pending outbox rows after upgrade, want 1", n)
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM bank_connections"); n != 0 {
+				t.Errorf("bank_connections has %d rows after upgrade", n)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	fixtureChecks["0002_settings.sql"] = func(t *testing.T, db *DB) {
 		ctx := context.Background()
 		err := db.ReadTx(ctx, func(_ context.Context, tx *sql.Tx) error {
