@@ -13,6 +13,9 @@ func TestUnknownCommandMessageHasNoBlankLine(t *testing.T) {
 	if lines[0] != `ledger: unknown command "bogus"` {
 		t.Fatalf("first stderr line = %q", lines[0])
 	}
+	if len(lines) < 2 {
+		t.Fatalf("stderr has no second line: %q", errOut.String())
+	}
 	if lines[1] == "" {
 		t.Errorf("blank line after the unknown-command error: %q", errOut.String())
 	}

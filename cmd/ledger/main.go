@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/aurimasniekis/go-ledger/internal/config"
 )
 
 // version is set at build time with -ldflags "-X main.version=<version>".
@@ -26,6 +28,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version":
 		say(stdout, "ledger", version)
 		return 0
+	case "config":
+		return runConfig(args[1:], stdout, stderr, config.Options{})
 	case "help", "-h", "--help":
 		usage(stdout)
 		return 0
@@ -40,6 +44,7 @@ func usage(w io.Writer) {
 	say(w, "usage: ledger <command>")
 	say(w)
 	say(w, "commands:")
+	say(w, "  config    check or document the configuration (config check, config env)")
 	say(w, "  version   print the build version")
 	say(w, "  help      print this message")
 }
