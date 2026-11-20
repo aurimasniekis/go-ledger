@@ -34,7 +34,7 @@ func TestMetricsUseRouteTemplatesNotRawPaths(t *testing.T) {
 	app := metrics.NewApp("test")
 	log, _ := logging.New(&bytes.Buffer{}, "debug", "json", redact.New())
 	s := New(testConfig(), log, WithMetrics(app))
-	s.Handle("GET /api/things/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.HandleAPI("GET /api/things/{id}", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.PathValue("id") == "bad" {
 			WriteError(w, r, Validation("id", "bad"))
 			return

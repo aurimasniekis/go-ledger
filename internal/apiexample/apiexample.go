@@ -210,9 +210,15 @@ var listSpec = httpapi.ListSpec{Filters: map[string]httpapi.FilterSpec{
 	"name": {Ops: []httpapi.FilterOp{httpapi.OpPrefix}},
 }}
 
+// access is the example's access rule. Real resources require a grant from
+// the vocabulary in internal/domain/authz, read for GET and write for the rest
+// (see the users routes in internal/httpapi/users.go); the example is not
+// served and has no resource there, so its routes are public.
+var access = httpapi.Public()
+
 // Register adds the example routes to srv.
 func Register(srv *httpapi.Server, st *Store) {
-	srv.Handle("GET "+Path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv.HandleAPI("GET "+Path, access, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q, err := httpapi.ParseList(r, listSpec)
 		if err != nil {
 			httpapi.WriteError(w, r, err)
@@ -225,7 +231,7 @@ func Register(srv *httpapi.Server, st *Store) {
 		}
 		httpapi.WriteJSON(w, http.StatusOK, httpapi.NewPage(items, q, func(e Example) string { return e.ID }))
 	}))
-	srv.Handle("POST "+Path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv.HandleAPI("POST "+Path, access, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Name *string `json:"name"`
 			Kind *string `json:"kind"`
@@ -260,7 +266,7 @@ func Register(srv *httpapi.Server, st *Store) {
 		httpapi.SetVersion(w, e.Version)
 		httpapi.WriteJSON(w, http.StatusCreated, e)
 	}))
-	srv.Handle("GET "+Path+"/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv.HandleAPI("GET "+Path+"/{id}", access, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e, err := st.Get(r.Context(), r.PathValue("id"))
 		if err != nil {
 			httpapi.WriteError(w, r, err)
@@ -273,7 +279,7 @@ func Register(srv *httpapi.Server, st *Store) {
 	// member is unchanged, null clears an optional member (note), and null on a
 	// required member is a 400. The optional "version" member is the precondition, not
 	// data, and is not stored.
-	srv.Handle("PATCH "+Path+"/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv.HandleAPI("PATCH "+Path+"/{id}", access, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		patch, err := httpapi.DecodeMergePatch(r, "name", "kind", "note", "version")
 		if err != nil {
 			httpapi.WriteError(w, r, err)
@@ -314,7 +320,7 @@ func Register(srv *httpapi.Server, st *Store) {
 		httpapi.SetVersion(w, e.Version)
 		httpapi.WriteJSON(w, http.StatusOK, e)
 	}))
-	srv.Handle("DELETE "+Path+"/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv.HandleAPI("DELETE "+Path+"/{id}", access, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// DELETE takes the version from If-Match only (ADR-0015): it has no body.
 		expected, err := httpapi.ExpectedVersion(r, nil)
 		if err != nil {
