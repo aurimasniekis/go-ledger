@@ -163,6 +163,10 @@ type State struct {
 	// occurrence's currency: it is not counted and never converted.
 	Unconverted   []money.Currency
 	EvidenceCount int
+	// ManualEvidenceCount and BankEvidenceCount split EvidenceCount by kind:
+	// manual payment records and confirmed bank-transaction matches.
+	ManualEvidenceCount int
+	BankEvidenceCount   int
 	// GraceUntil is the end of a documented grace period of an overdue
 	// occurrence; WithinGrace is true while today is not after it. The
 	// occurrence is overdue either way.
@@ -193,6 +197,14 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 	timing := TimingOf(o.DueDate, today)
 	zero, _ := money.Zero(cur, o.Amount.Amount().Scale())
 	st := State{Paid: paid, Overpaid: zero, Unconverted: other, EvidenceCount: len(f.Evidence), Override: f.Override}
+	for _, e := range f.Evidence {
+		switch e.Kind {
+		case EvidenceManual:
+			st.ManualEvidenceCount++
+		case EvidenceBankTransaction:
+			st.BankEvidenceCount++
+		}
+	}
 	c, _ := paid.Cmp(o.Amount)
 	if c > 0 {
 		st.Overpaid, _ = paid.Sub(o.Amount)

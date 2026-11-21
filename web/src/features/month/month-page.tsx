@@ -15,14 +15,14 @@ export function MonthPage({ month }: { month: string }) {
     const t = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(t)
   }, [])
-  const [panel, setPanel] = useState<MonthItem | null>(null) // the occurrence the open form starts on
+  const [panel, setPanel] = useState<{ item: MonthItem; inPlace: boolean } | null>(null) // the occurrence the open form starts on, and whether it sits under that row
   const [saved, setSaved] = useState<{ payment: ManualPayment; item: MonthItem } | null>(null)
   const opener = useRef<HTMLElement | null>(null)
   const headerButton = useRef<HTMLButtonElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
-  const openPanel = (item: MonthItem | null) => {
+  const openPanel = (item: MonthItem | null, inPlace: boolean) => {
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    setPanel(item)
+    setPanel(item ? { item, inPlace } : null)
   }
   // Give focus back to what opened the form, or to the primary button when that is gone.
   // It runs after the re-render, so a button that was disabled while the form was open is usable again;
@@ -43,7 +43,7 @@ export function MonthPage({ month }: { month: string }) {
         <h1 id="month-title" ref={headingRef} tabIndex={-1} className="text-2xl font-semibold focus:outline-none">
           Monthly view
         </h1>
-        <Button ref={headerButton} onClick={() => openPanel(unpaid[0] ?? null)} disabled={unpaid.length === 0 || panel !== null}>
+        <Button ref={headerButton} onClick={() => openPanel(unpaid[0] ?? null, false)} disabled={unpaid.length === 0 || panel !== null}>
           Record a payment
         </Button>
       </header>
@@ -73,16 +73,17 @@ export function MonthPage({ month }: { month: string }) {
           void navigate({ to: '/month', search: { month: m } })
         }}
         onRetry={() => void q.refetch()}
-        onRecord={(i) => openPanel(i)}
-        formFor={panel?.id}
+        onRecord={(i) => openPanel(i, true)}
+        formFor={panel?.inPlace ? panel.item.id : null}
         form={
           panel !== null && q.data ? (
             <PaymentPanel
               month={month}
               asOf={q.data.as_of}
               items={unpaid}
-              initialId={panel.id}
-              initialItem={panel}
+              initialId={panel.item.id}
+              initialItem={panel.item}
+              chooser={!panel.inPlace}
               onClose={() => {
                 setPanel(null)
                 restoreFocus()

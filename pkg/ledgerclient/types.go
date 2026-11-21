@@ -167,6 +167,8 @@ type PaymentState struct {
 	OverpaidAmount        Money            `json:"overpaid_amount"`
 	UnconvertedCurrencies []string         `json:"unconverted_currencies"`
 	EvidenceCount         int              `json:"evidence_count"`
+	ManualEvidenceCount   int              `json:"manual_evidence_count"`
+	BankEvidenceCount     int              `json:"bank_evidence_count"`
 	GraceUntil            *string          `json:"grace_until"`
 	WithinGrace           bool             `json:"within_grace"`
 	Override              *PaymentOverride `json:"override"`

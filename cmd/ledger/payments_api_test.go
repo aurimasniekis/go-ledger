@@ -22,11 +22,13 @@ type occurrenceWithPayment struct {
 		Outstanding struct {
 			Amount string `json:"amount"`
 		} `json:"outstanding_amount"`
-		Unconverted   []string `json:"unconverted_currencies"`
-		EvidenceCount int      `json:"evidence_count"`
-		GraceUntil    *string  `json:"grace_until"`
-		WithinGrace   bool     `json:"within_grace"`
-		Override      *struct {
+		Unconverted         []string `json:"unconverted_currencies"`
+		EvidenceCount       int      `json:"evidence_count"`
+		ManualEvidenceCount int      `json:"manual_evidence_count"`
+		BankEvidenceCount   int      `json:"bank_evidence_count"`
+		GraceUntil          *string  `json:"grace_until"`
+		WithinGrace         bool     `json:"within_grace"`
+		Override            *struct {
 			Status         string  `json:"status"`
 			Reason         string  `json:"reason"`
 			Applied        bool    `json:"applied"`

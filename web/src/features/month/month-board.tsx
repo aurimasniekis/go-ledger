@@ -58,9 +58,11 @@ export function MonthBoard(p: MonthBoardProps) {
       {p.data && (
         <>
           <Freshness {...p} data={p.data} />
-          {p.data.items.length === 0 ? <Empty label={label} /> : (
+          {/* The form opened from the header sits above the list; one opened from a row sits under that row. */}
+          {!p.formFor && p.form}
+          {p.data.items.length === 0 && !(p.form && p.formFor) ? <Empty label={label} /> : (
             <>
-              <Totals totals={p.data.totals} />
+              {p.data.items.length > 0 && <Totals totals={p.data.totals} />}
               <Occurrences items={p.data.items} onRecord={p.onRecord} formFor={p.formFor} form={p.form} />
             </>
           )}
@@ -225,9 +227,11 @@ function Occurrences({
       <h3 id="month-occurrences" className="font-semibold">
         Occurrences
       </h3>
-      <p data-testid="status-summary" className="text-sm text-muted-foreground">
-        {statusSummary(items)}
-      </p>
+      {items.length > 0 && (
+        <p data-testid="status-summary" className="text-sm text-muted-foreground">
+          {statusSummary(items)}
+        </p>
+      )}
       <ul className="space-y-2">{rows}</ul>
     </section>
   )
@@ -243,7 +247,13 @@ export function statusSummary(items: MonthItem[]): string {
     ['paid', 'paid'],
   ]
   return order
-    .map(([s, label]) => [items.filter((i) => i.payment.status === s).length, label] as const)
+    .map(([s, label]) => {
+      const rows = items.filter((i) => i.payment.status === s)
+      // The server's overdue_count counts every unpaid-or-partly-paid row whose timing is overdue: a partly paid
+      // row with an overdue remainder is one of them, so say so instead of hiding it under "partly paid".
+      const late = s === 'partially_paid' ? rows.filter((i) => i.payment.timing === 'overdue').length : 0
+      return [rows.length, late > 0 ? `${label} (${late} with an overdue remainder)` : label] as const
+    })
     .filter(([n]) => n > 0)
     .map(([n, label]) => `${n} ${label}`)
     .join(' · ')
@@ -286,7 +296,7 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
           <StatusBadge status={p.timing} label={p.timing === 'overdue' ? 'Remainder overdue' : 'Remainder due today'} />
         )}
         {provenance && <ProvenanceMarker kind={provenance} />}
-        {p.override?.applied && <span className="text-sm">Set by hand to {p.override.status} ({p.override.reason})</span>}
+        {p.override?.applied && <span className="text-sm">Marked {p.override.status}: {p.override.reason}</span>}
         {!settled && (
           <Button
             variant="ghost"

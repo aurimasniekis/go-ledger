@@ -14,6 +14,8 @@ export interface PaymentPanelProps {
   initialId: string
   /** The occurrence as it was when the form opened, for when a refetch drops it from items. */
   initialItem: MonthItem
+  /** Show the occurrence select (the header entry point); a form opened from a row stays on that row. */
+  chooser: boolean
   onClose: () => void
   onSaved: (p: ManualPayment, item: MonthItem) => void
 }
@@ -75,7 +77,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
         <StatusBadge status={item.payment.status} />
       </p>
       <div className="grid gap-3 sm:grid-cols-3">
-        <label className="grid gap-1 text-sm sm:col-span-3">
+        {p.chooser && <label className="grid gap-1 text-sm sm:col-span-3">
           Occurrence
           <select
             className="h-9 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -98,7 +100,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
               </option>
             ))}
           </select>
-        </label>
+        </label>}
         <label className="grid gap-1 text-sm">
           Amount paid ({item.amount.currency})
           <input
@@ -145,7 +147,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
           <StatusBadge status="error" label="Occurrence changed" />
           <p>
             {item.commitment_name || item.commitment_id}, due {item.due_date}, is no longer unpaid (it may have been paid elsewhere), so
-            nothing can be saved for it. Pick another occurrence or cancel.
+            nothing can be saved for it. {p.chooser ? 'Pick another occurrence or cancel.' : 'Cancel, then record the payment from another row.'}
           </p>
         </div>
       )}

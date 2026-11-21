@@ -2,11 +2,11 @@ import type { ComponentType } from 'react'
 import { Hand, Landmark, PenLine } from 'lucide-react'
 import type { MonthItem } from './types'
 
-export type Provenance = 'bank' | 'manual' | 'override'
+export type Provenance = 'bank' | 'manual' | 'both' | 'override'
 
 const MARKERS: Record<Provenance, { label: string; Icon: ComponentType<{ className?: string }>; hint: string }> = {
-  // Reserved for bank-matched payments (matching, X4). No data supplies it yet, so no row derives it today.
   bank: { label: 'Bank match', Icon: Landmark, hint: 'Settled by a matched bank transaction' },
+  both: { label: 'Bank match and manual payment', Icon: Landmark, hint: 'Settled by a matched bank transaction together with a payment you recorded by hand' },
   manual: { label: 'Manual payment', Icon: Hand, hint: 'Settled by a payment you recorded by hand' },
   override: { label: 'Set by hand', Icon: PenLine, hint: 'The status was set by hand, with a reason, over what the payments show' },
 }
@@ -31,13 +31,17 @@ export function ProvenanceMarker({ kind }: { kind: Provenance }) {
 }
 
 /**
- * What a row shows today. An applied override wins (it is the user's correction over the payments).
- * Otherwise any recorded payment counts as manual: every payment is recorded by hand until bank
- * matching exists, so a bank match is never derived here.
+ * What a row shows. An applied override wins (it is the user's correction over the payments). Otherwise the
+ * kinds of evidence decide, from the server's per-kind counts: bank matches, manual payments, or both. Evidence
+ * of an unknown kind (counted but in neither count) shows no marker rather than a wrong one.
  */
 export function provenanceOf(i: MonthItem): Provenance | null {
   const p = i.payment
   if (p.override?.applied) return 'override'
-  if (p.evidence_count > 0) return 'manual'
+  const bank = p.bank_evidence_count > 0
+  const manual = p.manual_evidence_count > 0
+  if (bank && manual) return 'both'
+  if (bank) return 'bank'
+  if (manual) return 'manual'
   return null
 }

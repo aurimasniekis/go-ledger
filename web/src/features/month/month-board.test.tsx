@@ -81,20 +81,32 @@ describe('MonthBoard design follow-ups', () => {
     item('b', { payment: payment({ status: 'overdue', timing: 'overdue' }) }),
     item('c', { payment: payment({ status: 'due', timing: 'due' }) }),
     item('d'),
-    item('e', { payment: payment({ status: 'paid', evidence_count: 1 }) }),
+    item('e', { payment: payment({ status: 'paid', evidence_count: 1, manual_evidence_count: 1 }) }),
+    item('g', { payment: payment({ status: 'paid', evidence_count: 1, bank_evidence_count: 1 }) }),
+    item('h', { payment: payment({ status: 'paid', evidence_count: 2, bank_evidence_count: 1, manual_evidence_count: 1 }) }),
     item('f', { payment: payment({ status: 'paid', evidence_count: 0, override: { status: 'paid', reason: 'cash', set_at: '2026-11-02T00:00:00Z', applied: true } }) }),
   ]
 
   it('summarises the rows by status so the list scans by status first', () => {
     board({ data: summary(rows()) })
-    expect(screen.getByTestId('status-summary')).toHaveTextContent('2 overdue · 1 due today · 1 upcoming · 2 paid')
+    expect(screen.getByTestId('status-summary')).toHaveTextContent('2 overdue · 1 due today · 1 upcoming · 4 paid')
   })
 
-  it('marks where a settled row came from: manual payment or hand-set status, never both, never on an unpaid row', () => {
+  it('counts a partly paid row with an overdue remainder the way the server counts overdue occurrences', () => {
+    const late = item('a', { payment: payment({ status: 'partially_paid', timing: 'overdue' }) })
+    board({ data: summary([late, item('b', { payment: payment({ status: 'partially_paid', timing: 'upcoming' }) })]) })
+    expect(screen.getByTestId('status-summary')).toHaveTextContent('2 partly paid (1 with an overdue remainder)')
+  })
+
+  it('marks where a settled row came from: manual payment or hand-set status (an override replaces the payment marker); no marker on an unpaid row without a hand-set status', () => {
     board({ data: summary(rows()) })
     const row = (name: string) => screen.getByText(name).closest('li')!
     expect(within(row('Rent e')).getByText('Manual payment')).toBeInTheDocument()
+    expect(within(row('Rent g')).getByText('Bank match')).toBeInTheDocument()
+    expect(within(row('Rent g')).queryByText('Manual payment')).toBeNull()
+    expect(within(row('Rent h')).getByText('Bank match and manual payment')).toBeInTheDocument()
     expect(within(row('Rent f')).getByText('Set by hand')).toBeInTheDocument()
+    expect(within(row('Rent f')).getAllByText(/Set by hand/)).toHaveLength(1)
     expect(within(row('Rent f')).queryByText('Manual payment')).toBeNull()
     expect(within(row('Rent d')).queryByText(/Manual payment|Set by hand|Bank match/)).toBeNull()
   })
