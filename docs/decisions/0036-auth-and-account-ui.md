@@ -37,7 +37,9 @@ Task U1 (the app shell and shared state primitives) is not built yet, so the she
    refresh over earlier data (a Stale badge with the time of the last good fetch) and the time of the last update.
 7. **Destructive actions.** Disabling or re-enabling a user is reversible, so it needs no confirmation and offers Undo.
    Revoking a token, ending a session, turning 2FA off and replacing recovery codes cannot be undone and go through an
-   `AlertDialog` that stays open with the error when the server refuses.
+   `AlertDialog` that stays open with the error when the server refuses. Turning 2FA off and replacing recovery codes
+   ask in that dialog for a current authenticator code, with a switch to a recovery code, and replacing the
+   authenticator asks for it next to the new code (decision D26-1a, ADR-0030 point 13).
 8. **QR code.** No QR dependency is added: a QR encoder is not in the dependency list and ADR approval is needed for a
    new library. Enrolment shows the base32 setup key and the `otpauth://` link and says there is nothing to scan.
    Adding a small encoder (with its own ADR note) is the follow-up if a QR code is wanted.

@@ -21,15 +21,15 @@ const (
 	RecoverySignInIssued Action = "auth.recovery_sign_in_issued" // Details: by (host), expires_at
 
 	// Second factors (A3, ADR-0030). The target is the user.
-	TwoFactorEnabled   Action = "two_factor.enabled"                    // Details: method, replaced (true, false), sessions_ended
-	TwoFactorDisabled  Action = "two_factor.disabled"                   // Details: method, by (self, administrator, host)
-	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated" // Details: count
+	TwoFactorEnabled   Action = "two_factor.enabled"                    // Details: method, replaced (true, false), sessions_ended, verified_with
+	TwoFactorDisabled  Action = "two_factor.disabled"                   // Details: method, by (self, administrator, host), verified_with
+	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated" // Details: count, verified_with
 
 	// Single-sign-on links (A6, ADR-0033). The target is the user.
 	OIDCLinked   Action = "oidc.linked"   // Details: provider, by (self, provisioning)
 	OIDCUnlinked Action = "oidc.unlinked" // Details: provider, by (self, host)
 
-	TokenCreated   Action = "token.created"    // Details: grants, root, expires_at (never the token)
+	TokenCreated   Action = "token.created"    // Details: grants, root, expires_at, parent_token_id (created by a token; never the token)
 	TokenRevoked   Action = "token.revoked"    // the actor is the owner, an administrator or a token with tokens:write
 	TokenWriteUsed Action = "token.write_used" // Details: method, route (the route pattern, never the URL), interactive_steps (skipped)
 
@@ -106,15 +106,20 @@ var Definitions = map[Action][]Field{
 	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...), f("device", "known")},
 	RecoverySignInIssued:   {f("by", "host"), f("expires_at")},
 
-	TwoFactorEnabled:   {f("method", "totp"), f("replaced", "true", "false"), f("sessions_ended")},
-	TwoFactorDisabled:  {f("method", "totp"), f("by", passwordChangedBy...)},
-	RecoveryCodesReset: {f("count")},
+	// verified_with: the current second factor the user proved for the change
+	// (decision D26-1a); absent when TOTP was not enabled before, or from the host.
+	TwoFactorEnabled:   {f("method", "totp"), f("replaced", "true", "false"), f("sessions_ended"), f("verified_with", "totp", "recovery_code")},
+	TwoFactorDisabled:  {f("method", "totp"), f("by", passwordChangedBy...), f("verified_with", "totp", "recovery_code")},
+	RecoveryCodesReset: {f("count"), f("verified_with", "totp", "recovery_code")},
 
 	OIDCLinked:   {f("provider"), f("by", "self", "provisioning")},
 	OIDCUnlinked: {f("provider"), f("by", "self", "host")},
 
-	TokenCreated: {f("grants"), f("root", "true", "false"), f("expires_at")},
-	TokenRevoked: nil,
+	// parent_token_id: the root token of the root account that created this
+	// token (decision D25); absent for a session or the host.
+	TokenCreated: {f("grants"), f("root", "true", "false"), f("expires_at"), f("parent_token_id")},
+	// cascaded_from: the parent token whose revocation revoked this one (D25-1).
+	TokenRevoked: {f("cascaded_from")},
 	// interactive_steps records that the request skipped two-factor and
 	// recent re-authentication, which API tokens do by design (ADR-0029).
 	TokenWriteUsed: {f("method"), f("route"), f("interactive_steps", "skipped")},

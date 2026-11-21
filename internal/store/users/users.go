@@ -112,6 +112,24 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n users.New) (use
 	return u, nil
 }
 
+// RootAccountID returns the ID of the root account (decision D25,
+// ADR-0029): the first user created on this database, the earliest
+// created_at, ties broken by insertion order. On a fresh database that is the
+// owner the bootstrap command made (ledger token create --create, or ledger
+// auth set-password --create). Users are never deleted, so the root account
+// never changes, and it stays the root account while disabled or demoted. It
+// returns resource.ErrNotFound when there are no users.
+func (s *Store) RootAccountID(ctx context.Context) (string, error) {
+	var id string
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT id FROM "+table+" ORDER BY created_at, rowid LIMIT 1").Scan(&id)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", resource.ErrNotFound
+	}
+	return id, err
+}
+
 // Get returns one user or resource.ErrNotFound.
 func (s *Store) Get(ctx context.Context, id string) (users.User, error) {
 	var u users.User

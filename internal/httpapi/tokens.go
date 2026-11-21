@@ -120,7 +120,7 @@ func tokenError(err error) error {
 		return Validation(fe.Field, fe.Message)
 	case errors.As(err, &ee):
 		return Forbidden(ee.Error())
-	case errors.Is(err, tokens.ErrNotUser):
+	case errors.Is(err, tokens.ErrNotUser), errors.Is(err, tokens.ErrTokenCannotCreate):
 		return Forbidden(err.Error())
 	case errors.Is(err, resource.ErrNotFound):
 		return NotFound("no such token")
@@ -146,8 +146,9 @@ var tokensListSpec = ListSpec{Filters: map[string]FilterSpec{"owner_id": {Ops: [
 
 func registerTokens(s *Server, svc *tokens.Service) {
 	// The signed-in user's own tokens, whatever their role. A token cannot
-	// list, create or revoke tokens here (SessionOnly): a token never mints
-	// another token, and creating one needs a recent password check.
+	// list or revoke tokens here (SessionOnly). Creating one needs a session
+	// with a recent password check, or a root token of the root account
+	// (decision D25), which creates tokens owned by the root account.
 	s.HandleAPI("GET "+MyTokensPath, SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q, err := ParseList(r, ListSpec{})
 		if err != nil {
@@ -157,7 +158,7 @@ func registerTokens(s *Server, svc *tokens.Service) {
 		tokenList(w, r, svc, q, principal(r).UserID)
 	}))
 
-	s.HandleAPI("POST "+MyTokensPath, SessionOnly().WithRecentAuth(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.HandleAPI("POST "+MyTokensPath, SessionOrTokenCreator().WithRecentAuth(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in createTokenBody
 		if err := DecodeJSON(r, &in); err != nil {
 			WriteError(w, r, err)

@@ -283,6 +283,10 @@ type Principal struct {
 	// only the enrolment, session and sign-out routes. Never set for API
 	// tokens, which skip interactive steps by design.
 	EnrollmentRequired bool
+	// CanCreateTokens is set for a root token of the root account (the first
+	// user, decision D25): the only token principal that may create API
+	// tokens. Never set for other tokens or for users.
+	CanCreateTokens bool
 }
 
 // UserPrincipal is a signed-in user acting with their role's grants.

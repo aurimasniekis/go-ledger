@@ -447,6 +447,20 @@ func (c *Client) GetToken(ctx context.Context, id string) (*APIToken, error) {
 	return &t, nil
 }
 
+// CreateMyToken creates an API token owned by the caller and returns it with
+// its secret, shown only in this response. Only a root token of the root
+// account (the first user, normally made by the bootstrap command) may call
+// it; any other token gets 403 forbidden (decision D25). The new token is
+// bounded by the root account's current role; give Grants, or Root for a root
+// token (then Warning explains its power).
+func (c *Client) CreateMyToken(ctx context.Context, in NewAPIToken) (*CreatedAPIToken, error) {
+	var t CreatedAPIToken
+	if err := c.do(ctx, request{op: opCreateMyToken, body: in}, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 // RevokeToken revokes any user's API token at once (needs tokens:write).
 // Revoking a revoked token succeeds and changes nothing.
 func (c *Client) RevokeToken(ctx context.Context, id string) error {

@@ -1,7 +1,9 @@
 # ADR-0029: API tokens and the bootstrap command
 
-Status: Accepted (2026-11-21) for the format, storage, enforcement and auditing (points 1-7 and 10); points 8 and 9
-are **proposed** and wait for an operator decision.
+Status: Accepted (2026-11-21). Points 1-7 and 10 at first; point 8 accepted by the operator (decision D24); point 9
+replaced by the operator's decision D25-1 (only a root token of the root account may create tokens), accepted; the
+re-enabling amendment accepted (decision D25-2). Point 9 amended by A4e with containment rules (control defaults
+that follow D25; see the amendment "Token-created tokens are contained").
 
 ## Context
 
@@ -43,7 +45,8 @@ creation and decide whether a password change revokes tokens.
    and an expiry not in the future are 400. A root token is only created when asked for explicitly
    (`"root": true` or `--root`), and every interface shows `tokens.RootWarning` with it.
 5. **Routes.** A user's own tokens: `GET/POST /auth/tokens`, `GET/DELETE /auth/tokens/{id}`, all `SessionOnly`
-   (any role, within their own grants); creation also needs recent re-authentication. Everyone's tokens:
+   (any role, within their own grants); creation also needs recent re-authentication, and a root token of the root
+   account may create tokens too (point 9). Everyone's tokens:
    `GET /tokens` (filter `owner_id`) and `GET /tokens/{id}` need `tokens:read`, `DELETE /tokens/{id}` needs
    `tokens:write`. `tokens` is a new administrative resource (read, write). Revoking an already revoked token is 204 and
    records nothing. The creation response (201, `Cache-Control: no-store`) is the only place the token appears:
@@ -61,11 +64,39 @@ creation and decide whether a password change revokes tokens.
    re-authentication were not asked for. The recorder is **required**: `httpapi.New` panics when `TokenAuth` is
    installed without `WithAuditRecorder`, and a token's state-changing request on a server without a recorder is
    refused with 500 (fail closed).
-8. **Proposed: a password change does not revoke API tokens.** Setting a password ends the user's other sessions
-   (ADR-0026) but leaves their tokens active; disabling the user stops them at once. Revoking is explicit
+8. **Accepted (D24): a password change does not revoke API tokens.** Setting a password ends the user's other
+   sessions (ADR-0026) but leaves their tokens active; disabling the user stops them at once. Revoking is explicit
    (`DELETE /auth/tokens/{id}`, or an administrator's `DELETE /tokens/{id}`).
-9. **Proposed: a token cannot create tokens.** Token creation is a session route; tokens may list and revoke tokens
-   (`tokens:read`/`tokens:write`) but never mint one, and so never chain grants or root.
+9. **Accepted (D25-1): only a root token of the root account may create tokens.** Sessions keep their rule (any role,
+   within its grants, with recent re-authentication). Among tokens, only a **root token owned by the root account**
+   may call `POST /auth/tokens`; every other token is 403 `forbidden`. This lets the Terraform provider manage
+   tokens with that one root token.
+   - **The root account** is the first user created on the database: the earliest `created_at`, ties broken by
+     insertion order (`users.Store.RootAccountID`). That is exactly the account the bootstrap flow makes on a fresh
+     database (`ledger token create --create ROLE <username>`, point 6, or `ledger auth set-password --create`);
+     on a database whose first user came from elsewhere (OIDC provisioning, ADR-0033), that user is the root
+     account. Users are never deleted (ADR-0021), so it never changes and no flag is stored (no migration).
+   - **Disabled root account.** It stays the root account; nothing passes to another user. Its tokens fail
+     authentication like any disabled owner's (401), so while it is disabled no token can create tokens. Sessions of
+     other users still can, and so can the host (`ledger token create`, for any user). Re-enabling it revives its
+     unrevoked, unexpired tokens (amendment below), including this power. **Demoted**, its root token holds only the
+     read-only role's grants (point 4), so it can create only tokens within them and no root token. A revoked or
+     expired root token stops at once.
+   - **Limits.** The new token is owned by the root account (the route creates the caller's own tokens) and bounded
+     by the creating token's effective grants, which for a root token are its owner's current role. An administrator
+     root account's root token may therefore create a root token as well (each with `tokens.RootWarning`).
+   - **Enforcement.** `tokens.Service.Authenticate` marks the principal (`authz.Principal.CanCreateTokens`) only
+     for a root token whose owner is the root account; the route's access rule
+     (`httpapi.SessionOrTokenCreator`, `x-ledger-access: session-or-root-token`) refuses every other token
+     before the handler runs or anything is audited; `tokens.Service.Create` checks again from current data (the
+     stored token is active, root and owned by the root account), so a forged flag gains nothing. Recent
+     re-authentication does not apply to the token (point 3).
+   - **Audit.** `token.created` names the creating token as the actor (kind `token`, `actor_token_id`) and in
+     the detail `parent_token_id`; the request is also `token.write_used` (point 7).
+   - **API description and client.** `POST /auth/tokens` inherits the document's security (bearer or session
+     cookie); session-only operations now declare the session cookie alone. The Go client has
+     `CreateMyToken` (`pkg/ledgerclient`). Listing and revoking own tokens under `/auth/tokens` stay
+     session-only; tokens use `/tokens` with `tokens:read`/`tokens:write`.
 10. **Logs.** Nothing logs the `Authorization` header, the token or its random part; a sentinel test creates, uses,
     refuses, revokes and reuses tokens and then searches the log, the audit log, every response but the creation's and
     every database row for each token and its random part.
@@ -88,10 +119,15 @@ creation and decide whether a password change revokes tokens.
   revoke all of a user's tokens on a password change (safer after a password compromise, because a stolen password
   plus recent re-authentication can mint a token that outlives the password change). A middle ground would be to
   report active tokens in the password-change response.
-- Point 9: chaining makes "grants <= creator" depend on the creating token's lifetime and on future vocabulary (a
-  non-root token holding every current grant must not mint a root token). It also leaves no path for a Terraform
-  `tokens` resource (T4, decision D18 still open); if D18 wants one, a token-created token would need the creating
-  token's grants as its limit and never root.
+- Point 9 (as first proposed, a token could never create tokens) left no path for a Terraform `tokens` resource. The
+  operator chose one narrow exception (D25-1). Restricting it to the root account's root tokens keeps chaining out of
+  reach of any narrower token: "grants <= creator" is always the root account's current role, which a root token
+  already follows, so the exception adds no grant that token did not hold. Defining the root account as the first
+  user follows the bootstrap flow without a stored flag; refusing to move it to another user when it is disabled
+  avoids a silent transfer of power, at the price that a disabled root account suspends token creation by tokens
+  until it is re-enabled (sessions and the host still work). The rejected alternatives were a stored "root"
+  flag on a user (a migration and a new thing to administer) and any administrator's root token (wider than the
+  decision).
 
 ## Consequences
 
@@ -101,16 +137,48 @@ creation and decide whether a password change revokes tokens.
 - `ledger token create` needs `serve` stopped (instance lock). Day-to-day tokens are created through the API or
   the UI; listing and revoking from the host, and management through the public API with a token, belong to M2.
 - A3 (TOTP) must keep exempting token principals from the second factor, and A6 (OIDC) adds no token path.
+- Every token created by a token traces back through `parent_token_id` to a root token of the root account, and
+  from there (`token.created` with actor `system` or a user) to how that one was made.
 - The UI (create with show-once dialog, grants picker, root warning; list; revoke) is A7. User documentation for
   bootstrap, rotation, least privilege and the power of root and long-lived tokens is A8.
 - Migration number: `0012`, after the commitment occurrences (`0011_commitment_occurrences`, ADR-0027); the fixture
   `0011_commitment_occurrences` covers the previous version.
 
-## Amendment: re-enabling a user (Proposed, pending the operator)
+## Amendment: re-enabling a user (Accepted, decision D25-2)
 
 Tokens are re-checked on every request against their owner's current state. Disabling a user therefore stops their
 tokens at once, but nothing is revoked: **re-enabling the user revives every token that was not revoked and has not
 expired.** Disabling is a suspension, not a revocation. Anyone who must also end a token for good revokes it (or
 revokes all of the user's tokens) before or after disabling. Ledger does not revoke tokens on disable because that
-would make the suspension irreversible and silently break unattended automation on a temporary disable. This note is
-Proposed until the operator confirms it, together with points 8 and 9; the user documentation (A8) must repeat it.
+would make the suspension irreversible and silently break unattended automation on a temporary disable. The operator
+accepted this note (D25-2); the user documentation (A8) must repeat it.
+
+## Amendment: token-created tokens are contained (A4e; control defaults that follow D25)
+
+The staff review of A4 showed that D25-1 let a leaked root token mint a never-expiring root child that outlived both
+the parent's expiry and the parent's revocation. These rules close that. They are control defaults that follow D25-1,
+not new operator decisions; the operator can replace them.
+
+1. **The parent is stored.** A token created through the API by a root token of the root account stores that token's ID
+   in `api_tokens.parent_token_id` (migration `0018_token_parents`; fixture `0017_payment_matches`). Tokens made by a
+   user session or by the host have none, and so do tokens that existed before the migration (their creator was only in
+   the audit log; no link is invented). The `token.created` audit entry still names `parent_token_id`.
+2. **A child never outlives its parent.** If the parent has an expiry, the child's `expires_at` is the requested one or
+   the parent's, whichever is earlier (a later or missing request is capped, silently, and the response shows the
+   resulting expiry). If the parent never expires, the child's expiry is as requested (none by default).
+3. **Revoking a token revokes its descendants** (children, their children, and so on) in the same transaction, each
+   audited as `token.revoked` with `cascaded_from` naming the revoked token. Already-revoked descendants are left as
+   they are. Creation re-checks the parent in the write transaction, so a parent revoked while a child is being created
+   leaves no child.
+4. Grants are unchanged: a child is bounded by the root account's current role (no escalation), and every request
+   still re-checks the owner. Disabling the root account stops its descendants through their owner, as before.
+
+### Limits of the root-account determination
+
+The root account is the user with the earliest `created_at` (ties by insertion order). `created_at` is the service
+clock at insert. If the clock steps backwards at bootstrap, before a second user is created, the first user could carry
+a later `created_at` than the second and the root account would be the second user. The window is narrow (bootstrap,
+with at most one user) and every user is created by the bootstrap commands, the administrator API or OIDC
+provisioning, none of which run the clock backwards on purpose. After a restore the root account follows the restored
+data. Ledger does not pin the root account in a settings row (that would need a migration and a way to change it); an
+operator who suspects a clock step at bootstrap should check the first users' `created_at` before relying on D25-1.

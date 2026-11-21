@@ -35,7 +35,14 @@ func New(db *store.DB, aw store.AuditWriter) *Store {
 	return &Store{db: db, audit: aw}
 }
 
-const columns = "id, owner_id, name, token_hash, display_prefix, last_chars, root, grants, created_at, expires_at, last_used_at, revoked_at"
+const columns = "id, owner_id, name, token_hash, display_prefix, last_chars, root, grants, created_at, expires_at, last_used_at, revoked_at, parent_token_id"
+
+func nullText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
 
 func nullTime(t *time.Time) any {
 	if t == nil {
@@ -73,12 +80,13 @@ func scan(row interface{ Scan(...any) error }) (tokens.Token, error) {
 	var t tokens.Token
 	var grants string
 	var created store.Timestamp
-	var expires, used, revoked sql.NullString
+	var expires, used, revoked, parent sql.NullString
 	if err := row.Scan(&t.ID, &t.OwnerID, &t.Name, &t.TokenHash, &t.DisplayPrefix, &t.LastChars, &t.Root, &grants,
-		&created, &expires, &used, &revoked); err != nil {
+		&created, &expires, &used, &revoked, &parent); err != nil {
 		return tokens.Token{}, err
 	}
 	t.CreatedAt = created.Time
+	t.ParentTokenID = parent.String
 	t.Grants = parseGrants(grants)
 	var err error
 	if t.ExpiresAt, err = parseNull(expires); err != nil {
@@ -105,9 +113,27 @@ func (s *Store) writeEvents(ctx context.Context, tx *sql.Tx, events []audit.Even
 // Create inserts a token and its events.
 func (s *Store) Create(ctx context.Context, t tokens.Token, events ...audit.Event) error {
 	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO api_tokens ("+columns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		if t.ParentTokenID != "" {
+			// The creator is checked again in the write transaction: a parent
+			// revoked or expired since the service read it makes no children.
+			var revoked sql.NullString
+			var expires sql.NullString
+			err := tx.QueryRowContext(ctx, "SELECT revoked_at, expires_at FROM api_tokens WHERE id = ?", t.ParentTokenID).Scan(&revoked, &expires)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && revoked.Valid {
+				return tokens.ErrTokenCannotCreate
+			}
+			if err != nil {
+				return err
+			}
+			if pe, err := parseNull(expires); err != nil {
+				return err
+			} else if pe != nil && (t.ExpiresAt == nil || t.ExpiresAt.After(*pe)) {
+				return tokens.ErrTokenCannotCreate
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO api_tokens ("+columns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			t.ID, t.OwnerID, t.Name, t.TokenHash, t.DisplayPrefix, t.LastChars, t.Root, strings.Join(t.Grants.Strings(), ","),
-			store.Timestamp{Time: t.CreatedAt}, nullTime(t.ExpiresAt), nullTime(t.LastUsedAt), nullTime(t.RevokedAt)); err != nil {
+			store.Timestamp{Time: t.CreatedAt}, nullTime(t.ExpiresAt), nullTime(t.LastUsedAt), nullTime(t.RevokedAt), nullText(t.ParentTokenID)); err != nil {
 			return fmt.Errorf("store: create API token: %w", err)
 		}
 		return s.writeEvents(ctx, tx, events)
@@ -182,7 +208,10 @@ func (s *Store) Revoke(ctx context.Context, id, ownerID string, at time.Time, ev
 			return err
 		}
 		revoked = true
-		return s.writeEvents(ctx, tx, events)
+		if err := s.writeEvents(ctx, tx, events); err != nil {
+			return err
+		}
+		return s.revokeDescendants(ctx, tx, id, at, events)
 	})
 	return revoked, err
 }
@@ -193,4 +222,48 @@ func (s *Store) Touch(ctx context.Context, id string, at time.Time) error {
 		_, err := tx.ExecContext(ctx, "UPDATE api_tokens SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)", store.Timestamp{Time: at}, id, store.Timestamp{Time: at})
 		return err
 	})
+}
+
+// revokeDescendants revokes, in the caller's transaction, every
+// not-yet-revoked token created (directly or through other tokens) by the
+// token id, and writes one token.revoked event for each, naming id in
+// cascaded_from. The events take their actor from the revocation's own event;
+// without one (no audit was asked for) nothing is written.
+func (s *Store) revokeDescendants(ctx context.Context, tx *sql.Tx, id string, at time.Time, events []audit.Event) error {
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE d(id) AS (
+    SELECT id FROM api_tokens WHERE parent_token_id = ?
+    UNION
+    SELECT t.id FROM api_tokens t JOIN d ON t.parent_token_id = d.id
+) SELECT id FROM api_tokens WHERE id IN (SELECT id FROM d) AND revoked_at IS NULL ORDER BY id`, id)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var child string
+		if err := rows.Scan(&child); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, child)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, child := range ids {
+		if _, err := tx.ExecContext(ctx, "UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL", store.Timestamp{Time: at}, child); err != nil {
+			return err
+		}
+		if len(events) == 0 {
+			continue
+		}
+		ev := audit.ForToken(audit.TokenRevoked, events[0].Actor, child, map[string]string{"cascaded_from": id}, at)
+		if err := s.audit.WriteAudit(ctx, tx, ev); err != nil {
+			return err
+		}
+	}
+	return nil
 }

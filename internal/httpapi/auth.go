@@ -30,6 +30,7 @@ const (
 	accessAuthenticated
 	accessPublic
 	accessSession
+	accessSessionOrTokenCreator
 )
 
 // Requires is a route that needs grant g. The principal must hold it (a write
@@ -56,6 +57,14 @@ func Public() Access { return Access{kind: accessPublic} }
 // write grant that may guard a state-changing method, because it only ever
 // touches the caller's own sign-in state (ADR-0026).
 func SessionOnly() Access { return Access{kind: accessSession} }
+
+// SessionOrTokenCreator is [SessionOnly] that also admits the one kind of API
+// token allowed to create tokens: a root token of the root account (decision
+// D25, authz.Principal.CanCreateTokens). Every other token is refused with
+// 403 before the handler runs or anything is audited. It guards token
+// creation only (POST /auth/tokens); the token service checks the same rule
+// again from current data.
+func SessionOrTokenCreator() Access { return Access{kind: accessSessionOrTokenCreator} }
 
 // WithRecentAuth returns a with the requirement that a signed-in user proved
 // their password recently (POST /auth/reauthenticate). Requests made with an
@@ -98,6 +107,8 @@ func (a Access) String() string {
 		return "public"
 	case accessSession:
 		return "session"
+	case accessSessionOrTokenCreator:
+		return "session-or-root-token"
 	}
 	return "invalid"
 }
@@ -164,7 +175,7 @@ func checkAccess(method string, a Access) {
 	if a.kind == 0 {
 		panic("httpapi: API route without an access rule; use Requires, Authenticated or Public")
 	}
-	if a.recent && a.kind != accessGrant && a.kind != accessSession {
+	if a.recent && a.kind != accessGrant && a.kind != accessSession && a.kind != accessSessionOrTokenCreator {
 		panic("httpapi: recent authentication applies to grant and session routes only")
 	}
 	if a.enrollment && a.kind != accessSession {
@@ -200,6 +211,12 @@ func (s *Server) authorize(pattern string, a Access, h http.Handler) http.Handle
 		}
 		if a.kind == accessSession && (p.Kind != authz.PrincipalUser || p.SessionID == "") {
 			WriteError(w, r, Forbidden("this requires a signed-in session; API tokens cannot use it"))
+			return
+		}
+		isSession := p.Kind == authz.PrincipalUser && p.SessionID != ""
+		isCreator := p.Kind == authz.PrincipalToken && p.CanCreateTokens
+		if a.kind == accessSessionOrTokenCreator && !isSession && !isCreator {
+			WriteError(w, r, Forbidden("this requires a signed-in session or a root token of the root account; other API tokens cannot create tokens"))
 			return
 		}
 		// Required 2FA (ADR-0030): a session whose user has not enrolled a

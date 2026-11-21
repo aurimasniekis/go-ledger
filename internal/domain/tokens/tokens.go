@@ -10,7 +10,9 @@
 // role (authz.TokenPrincipal); a root token holds whatever the owner's role
 // holds, including grants added to Ledger later. Token requests skip
 // interactive steps (two-factor, recent re-authentication) by design, and the
-// HTTP layer audits each state-changing one (token.write_used).
+// HTTP layer audits each state-changing one (token.write_used). Only a root
+// token of the root account (the first user, decision D25) may create tokens;
+// every other token is refused.
 //
 // The package is pure: it reaches storage through [Store] and users through
 // [Principals].
@@ -75,6 +77,10 @@ type Token struct {
 	DisplayPrefix string
 	LastChars     string
 	CreatedAt     time.Time
+	// ParentTokenID is the root token that created this token through the
+	// API ("" for a token made by a user or the host). Revoking the parent
+	// revokes this token, and ExpiresAt is never later than the parent's.
+	ParentTokenID string
 	// ExpiresAt is nil for a token that never expires (the default).
 	ExpiresAt  *time.Time
 	LastUsedAt *time.Time
@@ -139,9 +145,12 @@ type Store interface {
 }
 
 // Principals finds the current principal of an enabled user; it returns
-// users.ErrDisabled or resource.ErrNotFound otherwise.
+// users.ErrDisabled or resource.ErrNotFound otherwise. RootAccountID names
+// the root account (the first user created, decision D25), or returns
+// resource.ErrNotFound when there are no users.
 type Principals interface {
 	Principal(ctx context.Context, id string) (authz.Principal, error)
+	RootAccountID(ctx context.Context) (string, error)
 }
 
 // Errors.
@@ -151,9 +160,11 @@ var (
 	ErrInvalidToken = errors.New("invalid API token")
 	// ErrEscalation means a token would hold more than its creator.
 	ErrEscalation = errors.New("a token cannot have grants its creator does not hold")
-	// ErrNotUser means tokens are created by a signed-in user (or for one,
-	// from the host), never by another token.
-	ErrNotUser = errors.New("tokens are created by a signed-in user, not by another token")
+	// ErrNotUser means the creator is neither a user nor a token.
+	ErrNotUser = errors.New("tokens are created by a signed-in user or a root token of the root account")
+	// ErrTokenCannotCreate means a token tried to create a token without
+	// being a root token of the root account (decision D25).
+	ErrTokenCannotCreate = errors.New("only a root token of the root account (the first user) may create API tokens")
 )
 
 // FieldError is an invalid field of a new token.
@@ -247,15 +258,28 @@ func ValidateName(name string) error {
 }
 
 // Create issues a token owned by creator.UserID and bounded by creator's
-// grants. creator must be a user principal: the signed-in user, or, for a
-// host command, the owner's own principal. actor is who the audit entry names
-// (the user, or audit.System for the host).
+// grants. creator is a user principal (the signed-in user, or, for a host
+// command, the owner's own principal) or a root token of the root account
+// (decision D25); any other token is [ErrTokenCannotCreate]. actor is who the
+// audit entry names (the user, the token, or audit.System for the host); a
+// token-created token's entry also names the parent token (parent_token_id).
 //
 // A token may only hold grants the creator holds (no escalation), and only a
-// creator holding every grant of the vocabulary may create a root token. The
-// owner's current role is applied again on every request.
+// creator holding every grant of the vocabulary may create a root token. For
+// a creating token that is its effective grants: its owner's current role.
+// The owner's current role is applied again on every request.
 func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.Principal, n New) (Issued, error) {
-	if creator.Kind != authz.PrincipalUser || creator.UserID == "" {
+	var parent Token
+	var err error
+	switch {
+	case creator.UserID == "":
+		return Issued{}, ErrNotUser
+	case creator.Kind == authz.PrincipalToken:
+		parent, err = s.checkMinter(ctx, creator)
+		if err != nil {
+			return Issued{}, err
+		}
+	case creator.Kind != authz.PrincipalUser:
 		return Issued{}, ErrNotUser
 	}
 	if err := ValidateName(n.Name); err != nil {
@@ -291,16 +315,63 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.P
 		e := n.ExpiresAt.UTC()
 		expires = &e
 	}
+	// Containment (D25-1): a token made by a token never outlives it. A parent
+	// that never expires leaves the requested expiry as it is.
+	if parent.ExpiresAt != nil && (expires == nil || expires.After(*parent.ExpiresAt)) {
+		e := parent.ExpiresAt.UTC()
+		expires = &e
+	}
 	secret, err := s.generate()
 	if err != nil {
 		return Issued{}, err
 	}
 	t := Token{ID: s.newID(), Name: n.Name, OwnerID: creator.UserID, Root: n.Root, Grants: grants, TokenHash: Hash(secret),
-		DisplayPrefix: secret[:len(Prefix)+HintChars], LastChars: secret[len(secret)-HintChars:], CreatedAt: now, ExpiresAt: expires}
-	if err := s.store.Create(ctx, t, CreatedEvent(actor, t)); err != nil {
+		DisplayPrefix: secret[:len(Prefix)+HintChars], LastChars: secret[len(secret)-HintChars:], CreatedAt: now, ExpiresAt: expires, ParentTokenID: parent.ID}
+	ev := CreatedEvent(actor, t)
+	if parent.ID != "" {
+		ev.Details["parent_token_id"] = parent.ID
+	}
+	if err := s.store.Create(ctx, t, ev); err != nil {
 		return Issued{}, err
 	}
 	return Issued{Token: t, Secret: secret}, nil
+}
+
+// checkMinter returns the creating token after verifying, from current data, that the token principal p may
+// create tokens: p.CanCreateTokens is set, and the token still exists, is a
+// root token, and belongs to the root account. Anything else is
+// [ErrTokenCannotCreate].
+func (s *Service) checkMinter(ctx context.Context, p authz.Principal) (Token, error) {
+	if !p.CanCreateTokens || p.TokenID == "" {
+		return Token{}, ErrTokenCannotCreate
+	}
+	t, err := s.store.Get(ctx, p.TokenID)
+	if errors.Is(err, resource.ErrNotFound) {
+		return Token{}, ErrTokenCannotCreate
+	}
+	if err != nil {
+		return Token{}, err
+	}
+	if !t.Root || t.OwnerID != p.UserID || t.Status(s.Now()) != StatusActive {
+		return Token{}, ErrTokenCannotCreate
+	}
+	root, err := s.isRootAccount(ctx, t.OwnerID)
+	if err != nil {
+		return Token{}, err
+	}
+	if !root {
+		return Token{}, ErrTokenCannotCreate
+	}
+	return t, nil
+}
+
+// isRootAccount reports whether userID is the root account.
+func (s *Service) isRootAccount(ctx context.Context, userID string) (bool, error) {
+	id, err := s.principals.RootAccountID(ctx)
+	if errors.Is(err, resource.ErrNotFound) {
+		return false, nil
+	}
+	return id == userID, err
 }
 
 // ExpiryProblem says why expires cannot be a token's expiry as of now, in words
@@ -419,10 +490,18 @@ func (s *Service) Authenticate(ctx context.Context, secret string) (authz.Princi
 	if t.Root {
 		grants = owner.Role.Grants()
 	}
+	minter := false
+	if t.Root {
+		if minter, err = s.isRootAccount(ctx, t.OwnerID); err != nil {
+			return authz.Principal{}, err
+		}
+	}
 	if t.LastUsedAt == nil || now.Sub(*t.LastUsedAt) >= touchEvery {
 		s.touch(ctx, t.ID, now)
 	}
-	return authz.TokenPrincipal(t.ID, t.OwnerID, owner.Role, grants), nil
+	p := authz.TokenPrincipal(t.ID, t.OwnerID, owner.Role, grants)
+	p.CanCreateTokens = minter
+	return p, nil
 }
 
 // touch records the token's use, best effort: it never fails the request. It

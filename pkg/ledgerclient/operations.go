@@ -50,6 +50,8 @@ var (
 	opListTokens  = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
 	opGetToken    = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
 	opRevokeToken = operation{ID: "revokeToken", Method: http.MethodDelete, Path: "/tokens/{id}"}
+	// opCreateMyToken needs a root token of the root account (decision D25).
+	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
 
 // operations is every implemented operation. Resources of tasks still in
@@ -63,5 +65,5 @@ var operations = []operation{
 	opListManualPayments, opRecordManualPayment, opGetManualPayment, opDeleteManualPayment,
 	opSetOverride, opUndoOverride,
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch,
-	opListTokens, opGetToken, opRevokeToken,
+	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
 }

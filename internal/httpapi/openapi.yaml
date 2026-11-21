@@ -101,7 +101,8 @@ info:
 servers:
   - url: /api/v1
 # Every operation needs a bearer API token or a session cookie, unless it
-# says `security: []` (x-ledger-access: public).
+# says `security: []` (x-ledger-access: public) or only the session cookie
+# (x-ledger-access: session; API tokens are refused there).
 security:
   - bearerAuth: []
   - sessionCookie: []
@@ -847,6 +848,8 @@ paths:
     post:
       operationId: signOut
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-during-enrollment: true
       summary: End the current session
       description: Ends the session the request was made with and clears the cookie. Audited (auth.session_ended, reason signed_out).
@@ -860,6 +863,8 @@ paths:
     get:
       operationId: getCurrentSession
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-during-enrollment: true
       summary: The current session and its CSRF token
       tags: [auth]
@@ -876,6 +881,8 @@ paths:
     get:
       operationId: listMySessions
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       summary: List your active sessions
       description: The signed-in user's sessions that have not ended, newest first. Never includes session tokens.
       tags: [auth]
@@ -904,6 +911,8 @@ paths:
     delete:
       operationId: endMySession
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       summary: End one of your sessions
       description: |
         Ends the session; its next request is 401. Ending the current session
@@ -919,6 +928,8 @@ paths:
     post:
       operationId: reauthenticate
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-during-enrollment: true
       summary: Confirm your password for sensitive actions
       description: |
@@ -959,6 +970,8 @@ paths:
     put:
       operationId: changeMyPassword
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-recent-auth: true
       summary: Change your password
       description: |
@@ -1106,6 +1119,8 @@ paths:
     get:
       operationId: getMyOIDCLink
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       summary: Your single-sign-on link
       description: Shown even when single sign-on is no longer configured, so a stale link stays visible.
       tags: [auth]
@@ -1121,6 +1136,8 @@ paths:
     post:
       operationId: startOIDCLink
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-recent-auth: true
       summary: Link a single-sign-on identity to your account
       description: |
@@ -1152,6 +1169,8 @@ paths:
     delete:
       operationId: unlinkMyOIDC
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-recent-auth: true
       summary: Remove your single-sign-on link
       description: |
@@ -1170,6 +1189,8 @@ paths:
     post:
       operationId: startOIDCReauthentication
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-during-enrollment: true
       summary: Re-authenticate with the identity provider for sensitive actions
       description: |
@@ -1264,6 +1285,8 @@ paths:
     get:
       operationId: getMyTwoFactor
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-during-enrollment: true
       summary: Your two-factor authentication status
       tags: [auth]
@@ -1279,15 +1302,25 @@ paths:
     delete:
       operationId: disableMyTwoFactor
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-recent-auth: true
       summary: Disable your two-factor authentication
       description: |
-        Removes the authenticator and every recovery code. 409 `conflict`
-        when TOTP is not enabled, or when `auth.require_2fa` is on (enrol a
-        new authenticator to replace it instead; the host command
-        `ledger auth reset-2fa` can still remove it). Audited
-        (two_factor.disabled, by self).
+        Removes the authenticator and every recovery code. Besides recent
+        re-authentication, the body must carry a current code from the
+        authenticator or an unused recovery code (decision D26-1a; see
+        CurrentSecondFactor). 409 `conflict` when TOTP is not enabled, or
+        when `auth.require_2fa` is on (enrol a new authenticator to replace
+        it instead; the host command `ledger auth reset-2fa` can still
+        remove it). Audited (two_factor.disabled, by self, verified_with).
       tags: [auth]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CurrentSecondFactor"
       responses:
         "204":
           description: Disabled.
@@ -1297,6 +1330,8 @@ paths:
     post:
       operationId: startTOTPEnrollment
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-recent-auth: true
       x-ledger-during-enrollment: true
       summary: Start enrolling a TOTP authenticator
@@ -1323,6 +1358,8 @@ paths:
     post:
       operationId: confirmTOTPEnrollment
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-recent-auth: true
       x-ledger-during-enrollment: true
       summary: Confirm a TOTP enrolment and receive recovery codes
@@ -1332,9 +1369,16 @@ paths:
         authenticator), ten new recovery codes are returned (shown only
         here; earlier codes stop working) and every other session of the
         user ends; the current session stays and is no longer confined by
-        `auth.require_2fa`. A wrong code is 400 `invalid_second_factor`;
-        no started or an expired enrolment is 409 `conflict`. Audited
-        (two_factor.enabled).
+        `auth.require_2fa`. A wrong code is 400 `invalid_second_factor`
+        (field `code`); no started or an expired enrolment is 409
+        `conflict`.
+
+        When TOTP is already enabled (replacing the authenticator), the
+        body must also carry `current_code` from the authenticator being
+        replaced or `current_recovery_code` (decision D26-1a; see
+        CurrentSecondFactor). The new code is checked first, so a mistyped
+        new code uses up no recovery code. Audited (two_factor.enabled,
+        with verified_with on a replacement).
       tags: [auth]
       requestBody:
         required: true
@@ -1347,7 +1391,14 @@ paths:
               properties:
                 code:
                   type: string
+                  description: A code from the authenticator being enrolled.
                   examples: ["123456"]
+                current_code:
+                  type: string
+                  description: Replacing only; a code from the enabled authenticator.
+                current_recovery_code:
+                  type: string
+                  description: Replacing only; an unused recovery code, instead of current_code.
       responses:
         "200":
           description: TOTP is enabled.
@@ -1361,13 +1412,24 @@ paths:
     post:
       operationId: regenerateRecoveryCodes
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       x-ledger-recent-auth: true
       summary: Replace your recovery codes
       description: |
         Issues ten new recovery codes, shown only here; every earlier code
-        stops working. 409 `conflict` when TOTP is not enabled. Audited
-        (two_factor.recovery_codes_regenerated).
+        stops working. Besides recent re-authentication, the body must carry
+        a current code from the authenticator or an unused recovery code
+        (decision D26-1a; see CurrentSecondFactor). 409 `conflict` when
+        TOTP is not enabled. Audited (two_factor.recovery_codes_regenerated,
+        verified_with).
       tags: [auth]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CurrentSecondFactor"
       responses:
         "200":
           description: The new codes.
@@ -1499,6 +1561,8 @@ paths:
     get:
       operationId: listMyTokens
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       summary: List your API tokens
       description: |
         The signed-in user's API tokens in ID order, including expired and
@@ -1519,7 +1583,7 @@ paths:
           $ref: "#/components/responses/Error"
     post:
       operationId: createMyToken
-      x-ledger-access: session
+      x-ledger-access: session-or-root-token
       x-ledger-recent-auth: true
       summary: Create an API token
       description: |
@@ -1537,8 +1601,16 @@ paths:
 
         Requests made with a token skip two-factor and re-authentication;
         each state-changing one is audited (`token.write_used`). A token is
-        limited by its owner's current role on every request. API tokens
-        cannot create tokens. Audited (`token.created`, never the token).
+        limited by its owner's current role on every request.
+
+        Callers: a signed-in session (with recent re-authentication), or a
+        bearer **root token of the root account** (the first user created on
+        the instance, normally by the bootstrap command; decision D25). Such a
+        token creates tokens owned by the root account, bounded by that
+        account's current role, and may itself ask for a root token. Every
+        other API token is 403 `forbidden`. Audited (`token.created`, never
+        the token; a token-created token's entry names the creating token in
+        `parent_token_id` and as the actor).
       tags: [tokens]
       requestBody:
         required: true
@@ -1570,6 +1642,8 @@ paths:
     get:
       operationId: getMyToken
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       summary: Get one of your API tokens
       description: Another user's token is 404.
       tags: [tokens]
@@ -1585,6 +1659,8 @@ paths:
     delete:
       operationId: revokeMyToken
       x-ledger-access: session
+      security:
+        - sessionCookie: []
       summary: Revoke one of your API tokens
       description: |
         Revokes the token at once: its next request is 401. Revoking a
@@ -3275,6 +3351,27 @@ components:
             $ref: "#/components/schemas/ApiToken"
         next_cursor:
           type: [string, "null"]
+    CurrentSecondFactor:
+      type: object
+      additionalProperties: false
+      description: |
+        The current second factor that replacing, disabling or regenerating
+        two-factor authentication needs while TOTP is enabled (decision
+        D26-1a), on top of recent re-authentication and whatever the session
+        method (password or OIDC): exactly one of a code from the enabled
+        authenticator or an unused recovery code. Missing (or both) is 400
+        `validation_failed` on `current_code`; a wrong, reused or malformed
+        one is 400 `invalid_second_factor` on the field given, counts in the
+        sign-in limits (429 `rate_limited` once blocked) and is audited
+        (auth.reauthentication_failed). A TOTP code is used up; a recovery
+        code is consumed.
+      properties:
+        current_code:
+          type: string
+          examples: ["123456"]
+        current_recovery_code:
+          type: string
+          examples: ["ABCD-EFGH-JKMN-PQRS"]
     NewApiToken:
       type: object
       required: [name]
