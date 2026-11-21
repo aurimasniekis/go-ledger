@@ -78,6 +78,9 @@ type tokenJSON struct {
 	ExpiresAt     *time.Time `json:"expires_at"`
 	LastUsedAt    *time.Time `json:"last_used_at"`
 	RevokedAt     *time.Time `json:"revoked_at"`
+	// ParentTokenID is the token that created this one through the API; null
+	// when there is none (made on the host or by bootstrap, or before parents were recorded).
+	ParentTokenID *string `json:"parent_token_id"`
 }
 
 func utcPtr(t *time.Time) *time.Time {
@@ -92,7 +95,7 @@ func toTokenJSON(t tokens.Token, now time.Time) tokenJSON {
 	grants := t.Grants.Strings()
 	return tokenJSON{ID: t.ID, Name: t.Name, OwnerID: t.OwnerID, Root: t.Root, Grants: grants, Hint: t.Hint(),
 		DisplayPrefix: t.DisplayPrefix, LastChars: t.LastChars, Status: t.Status(now), CreatedAt: t.CreatedAt.UTC(),
-		ExpiresAt: utcPtr(t.ExpiresAt), LastUsedAt: utcPtr(t.LastUsedAt), RevokedAt: utcPtr(t.RevokedAt)}
+		ExpiresAt: utcPtr(t.ExpiresAt), LastUsedAt: utcPtr(t.LastUsedAt), RevokedAt: utcPtr(t.RevokedAt), ParentTokenID: nonEmpty(t.ParentTokenID)}
 }
 
 // createdTokenJSON answers token creation: the only time the token is shown.

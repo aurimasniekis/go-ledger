@@ -1623,6 +1623,11 @@ paths:
         unknown grant is 400. `expires_at` is optional; without it the
         token never expires.
 
+        A token created by a token expires no later than the token that
+        created it: a later or missing `expires_at` is capped, silently, at
+        that token's expiry, and the response shows the expiry it got. A
+        parent that never expires leaves the request as given.
+
         Requests made with a token skip two-factor and re-authentication;
         each state-changing one is audited (`token.write_used`). A token is
         limited by its owner's current role on every request.
@@ -1690,6 +1695,11 @@ paths:
         Revokes the token at once: its next request is 401. Revoking a
         revoked token changes nothing (204). Another user's token is 404.
         Audited (`token.revoked`).
+
+        Cascades: every token created through this one, directly or through
+        other tokens, is revoked at once too, and audited as `token.revoked`
+        with `cascaded_from` naming this token. Tokens with no recorded
+        parent are not affected.
       tags: [tokens]
       responses:
         "204":
@@ -1750,6 +1760,11 @@ paths:
       description: |
         Revokes the token at once: its next request is 401. Revoking a
         revoked token changes nothing (204). Audited (`token.revoked`).
+
+        Cascades: every token created through this one, directly or through
+        other tokens, is revoked at once too, and audited as `token.revoked`
+        with `cascaded_from` naming this token. Tokens with no recorded
+        parent are not affected.
       tags: [tokens]
       responses:
         "204":
@@ -3353,7 +3368,7 @@ components:
     ApiToken:
       type: object
       description: An API token. Never includes the token itself.
-      required: [id, name, owner_id, root, grants, hint, prefix, last_chars, status, created_at, expires_at, last_used_at, revoked_at]
+      required: [id, name, owner_id, root, grants, hint, prefix, last_chars, status, created_at, expires_at, last_used_at, revoked_at, parent_token_id]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -3398,6 +3413,9 @@ components:
         revoked_at:
           type: [string, "null"]
           format: date-time
+        parent_token_id:
+          type: [string, "null"]
+          description: The token that created this one through the API (a root token of the root account, or a token it created); null for tokens made on the host or by bootstrap, and for tokens created before parents were recorded.
     ApiTokenPage:
       type: object
       required: [items, next_cursor]
@@ -3450,7 +3468,7 @@ components:
         expires_at:
           type: [string, "null"]
           format: date-time
-          description: Optional; in the future. Without it the token never expires.
+          description: Optional; in the future. Without it the token never expires. Capped at the expiry of the token creating it, when that one expires.
     CreatedApiToken:
       type: object
       required: [secret, token, warning]
