@@ -25,6 +25,7 @@ type paymentStateJSON struct {
 	PaidAmount            money.Money      `json:"paid_amount"`
 	OutstandingAmount     money.Money      `json:"outstanding_amount"`
 	OverpaidAmount        money.Money      `json:"overpaid_amount"`
+	ShortfallAmount       money.Money      `json:"shortfall_amount"`
 	UnconvertedCurrencies []money.Currency `json:"unconverted_currencies"`
 	EvidenceCount         int              `json:"evidence_count"`
 	ManualEvidenceCount   int              `json:"manual_evidence_count"`
@@ -43,7 +44,7 @@ type overrideJSON struct {
 }
 
 func toPaymentStateJSON(st payments.State) paymentStateJSON {
-	out := paymentStateJSON{Status: st.Status, DerivedStatus: st.Derived, PaidAmount: st.Paid, OutstandingAmount: st.Outstanding, OverpaidAmount: st.Overpaid,
+	out := paymentStateJSON{Status: st.Status, DerivedStatus: st.Derived, PaidAmount: st.Paid, OutstandingAmount: st.Outstanding, OverpaidAmount: st.Overpaid, ShortfallAmount: st.Shortfall,
 		UnconvertedCurrencies: st.Unconverted, EvidenceCount: st.EvidenceCount, ManualEvidenceCount: st.ManualEvidenceCount, BankEvidenceCount: st.BankEvidenceCount, GraceUntil: st.GraceUntil, WithinGrace: st.WithinGrace}
 	if out.UnconvertedCurrencies == nil {
 		out.UnconvertedCurrencies = []money.Currency{}

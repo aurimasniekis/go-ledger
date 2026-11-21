@@ -47,7 +47,10 @@ type Row struct {
 //     override is a user decision and is visible on the row. With an
 //     "unpaid" override the evidence still counts in Paid while Outstanding
 //     is the full amount, so Paid + Outstanding can exceed Due.
-//   - Outstanding is the sum of what is still owed, as derived per occurrence.
+//   - Outstanding is the sum of what is still owed, as derived per occurrence;
+//     occurrences "not recorded" (due before their commitment was created,
+//     D38 1a) owe nothing here, and neither does one paid within the match
+//     tolerance (D39 5a).
 //   - Overdue is the part of Outstanding that belongs to occurrences past their
 //     original due date, whether or not a grace period is documented (D7).
 //   - Overpaid is informational: evidence above an occurrence's amount.
@@ -190,7 +193,12 @@ func totalsOf(rows []Row) ([]CurrencyTotals, *time.Time) {
 		}
 		zero, _ := money.Zero(cur, o.Amount.Amount().Scale())
 		overdue := zero
-		if st.Status != payments.StatusPaid && st.Timing == payments.StatusOverdue {
+		outstanding := st.Outstanding
+		if st.Status != payments.StatusPaid && st.Timing == payments.StatusNotRecorded {
+			// Before the commitment was tracked (D38 1a): listed and counted
+			// in Due, but neither outstanding nor overdue.
+			outstanding = zero
+		} else if st.Status != payments.StatusPaid && st.Timing == payments.StatusOverdue {
 			overdue = st.Outstanding
 			a.overdueN++
 		}
@@ -200,7 +208,7 @@ func totalsOf(rows []Row) ([]CurrencyTotals, *time.Time) {
 		// here: every figure derives from the occurrence's amount.
 		_ = a.due.Add(o.Amount)
 		_ = a.paid.Add(st.Paid)
-		_ = a.outstanding.Add(st.Outstanding)
+		_ = a.outstanding.Add(outstanding)
 		_ = a.overdue.Add(overdue)
 		_ = a.overpaid.Add(st.Overpaid)
 		a.n++

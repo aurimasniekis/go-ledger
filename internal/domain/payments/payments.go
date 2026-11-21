@@ -52,6 +52,10 @@ const (
 	// StatusCancelled is the status of a cancelled occurrence (D31): it is
 	// not an obligation, so it is never upcoming, due or overdue.
 	StatusCancelled Status = "cancelled"
+	// StatusNotRecorded is the status of an unpaid occurrence due before its
+	// commitment was created (D38 1a, ADR-0042): the user was not tracking it
+	// yet, so it is not overdue, though it is listed and can be marked paid.
+	StatusNotRecorded Status = "not_recorded"
 )
 
 // TimingOf places a due date against today in the reporting zone:
@@ -94,6 +98,11 @@ type Evidence struct {
 	OccurrenceID string
 	Amount       money.Money
 	Date         calendar.Date
+	// ConfirmedWithin is, for a bank match, the commitment's match tolerance
+	// recorded when the match was confirmed short of the occurrence's amount
+	// by no more than that tolerance (D39 5a, ADR-0042); nil otherwise. It is
+	// history: a later tolerance edit does not change it.
+	ConfirmedWithin *money.Money
 }
 
 // OverrideStatus is what a manual status override says.
@@ -138,6 +147,10 @@ type Override struct {
 type Facts struct {
 	Evidence []Evidence
 	Override *Override // nil when none is active
+	// CommitmentCreatedOn is the reporting-zone date the occurrence's
+	// commitment was created; the zero value means unknown, and no
+	// occurrence is then "not recorded" (D38 1a, ADR-0042).
+	CommitmentCreatedOn calendar.Date
 }
 
 // GraceFunc returns the end of a documented grace period for an occurrence,
@@ -162,6 +175,10 @@ type State struct {
 	Paid        money.Money
 	Outstanding money.Money
 	Overpaid    money.Money
+	// Shortfall is the amount confirmed bank payments confirmed within the
+	// commitment's match tolerance (recorded at confirmation) fell short by (D39 5a): the status is then paid and
+	// Outstanding is zero. Zero otherwise.
+	Shortfall money.Money
 	// Unconverted lists the currencies of evidence that is not in the
 	// occurrence's currency: it is not counted and never converted.
 	Unconverted   []money.Currency
@@ -198,8 +215,11 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 	}
 	slices.SortFunc(other, func(a, b money.Currency) int { return strings.Compare(a.Code(), b.Code()) })
 	timing := TimingOf(o.DueDate, today)
+	if timing == StatusOverdue && !f.CommitmentCreatedOn.IsZero() && o.DueDate.Before(f.CommitmentCreatedOn) {
+		timing = StatusNotRecorded
+	}
 	zero, _ := money.Zero(cur, o.Amount.Amount().Scale())
-	st := State{Paid: paid, Overpaid: zero, Unconverted: other, EvidenceCount: len(f.Evidence), Override: f.Override}
+	st := State{Paid: paid, Overpaid: zero, Shortfall: zero, Unconverted: other, EvidenceCount: len(f.Evidence), Override: f.Override}
 	for _, e := range f.Evidence {
 		switch e.Kind {
 		case EvidenceManual:
@@ -219,8 +239,34 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 	if c > 0 {
 		st.Overpaid, _ = paid.Sub(o.Amount)
 	}
+	short := false
+	if c < 0 && paid.Sign() > 0 && st.ManualEvidenceCount == 0 {
+		// Only confirmed bank matches count (no manual evidence, and other
+		// currencies are never counted), their same-currency sum is short of
+		// the amount, and a match recorded that it was confirmed within a
+		// tolerance that covers the gap (D39 5a, ADR-0042). The smallest
+		// recorded tolerance applies. Never a payment above the amount.
+		gap, _ := o.Amount.Sub(paid)
+		var tol *money.Money
+		for _, e := range f.Evidence {
+			w := e.ConfirmedWithin
+			if e.Kind != EvidenceBankTransaction || w == nil || w.Currency() != cur || w.Sign() <= 0 {
+				continue
+			}
+			if tol == nil {
+				tol = w
+			} else if wc, _ := w.Cmp(*tol); wc < 0 {
+				tol = w
+			}
+		}
+		if tol != nil {
+			if tc, _ := gap.Cmp(*tol); tc <= 0 {
+				short, st.Shortfall = true, gap
+			}
+		}
+	}
 	switch {
-	case c >= 0:
+	case c >= 0 || short:
 		st.Derived = StatusPaid
 	case paid.Sign() > 0:
 		st.Derived = StatusPartiallyPaid
@@ -253,7 +299,7 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 			st.Outstanding = zero
 		}
 	}
-	if timing == StatusOverdue && grace != nil {
+	if timing == StatusOverdue && grace != nil { // not for not_recorded
 		if until, ok := grace(o); ok {
 			st.GraceUntil = &until
 			st.WithinGrace = !today.After(until)

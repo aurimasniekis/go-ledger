@@ -282,7 +282,8 @@ func TestToleranceConfirmsThroughTheStore(t *testing.T) {
 	if states(got) != "auto_rule/confirmed" || got[0].Amount.String() != "12.99 EUR" || !strings.Contains(*got[0].Reason, "within the commitment's tolerance (short by 0.50 EUR)") {
 		t.Fatalf("streaming: %s %+v", states(got), got)
 	}
-	if st := f.state(streaming); st.Status != payments.StatusPartiallyPaid || st.Outstanding.String() != "0.50 EUR" {
+	// Within the tolerance counts as paid; the shortfall is a detail (D39 5a).
+	if st := f.state(streaming); st.Status != payments.StatusPaid || !st.Outstanding.IsZero() || st.Shortfall.String() != "0.50 EUR" {
 		t.Errorf("state: %+v", st)
 	}
 
