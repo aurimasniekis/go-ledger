@@ -65,7 +65,7 @@ HTTP" to the Management API; ADR-0021 point 6 says tools declare the grant of th
    (URL and token found like the management commands do, new `ledgerclient.Client.Raw`). It does not open the database,
    so it works while `ledger serve` holds the instance lock, and the server authenticates, authorises, validates and audits
    every call. A stdio write is audited as `token.write_used` and, because the client names the tool in an
-   `X-Ledger-MCP-Tool` header, also as `mcp.tool_called` with outcome `requested`: the tool name is asserted by the
+   `X-Ledger-MCP-Tool` header, also as `mcp.tool_called` with outcome `requested` (the client asked for the tool; it does not say the call succeeded; reworded in ADR-0043): the tool name is asserted by the
    client and the outcome is not known when the entry is written (the route's own result is not echoed). A denied stdio
    write leaves no entry, as for a direct HTTP call. The token never reaches stdout or stderr.
 10. **First tools.** `list_commitments`, `get_commitment`, `list_occurrences`, `get_month_summary` and `get_occurrence` (read),

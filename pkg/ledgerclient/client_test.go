@@ -317,3 +317,20 @@ func TestWithTimeoutAppliesToCallerClient(t *testing.T) {
 		t.Fatalf("the caller's timeout was replaced: %v", kept.hc.Timeout)
 	}
 }
+
+// A write whose answer is larger than the client keeps has still happened: Raw reports the real status and the
+// created resource, flagged as truncated, and not an error a caller might retry.
+func TestRawReportsATooLargeAnswerAsTruncatedNotAsAFailure(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "/api/v1/commitments/01JD3Y4C8V9M2Q7W5R6T0XZBNT")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(strings.Repeat("x", maxResponseBytes+10)))
+	})
+	r, err := c.Raw(context.Background(), http.MethodPost, "/commitments", nil, []byte("{}"), "")
+	if err != nil {
+		t.Fatalf("a too-large answer must not be an error: %v", err)
+	}
+	if r.Status != http.StatusCreated || !r.Truncated || len(r.Body) != 0 || r.Location != "/api/v1/commitments/01JD3Y4C8V9M2Q7W5R6T0XZBNT" {
+		t.Errorf("got status %d truncated=%v body=%d location=%q", r.Status, r.Truncated, len(r.Body), r.Location)
+	}
+}

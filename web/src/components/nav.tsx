@@ -13,9 +13,12 @@ export function PrimaryNav() {
   const session = useSession()
   if (!session.data || session.data.two_factor.enrollment_required) return null
   return (
-    <nav aria-label="Primary">
+    <nav aria-label="Primary" className="flex flex-wrap gap-x-2">
       <Link to="/month" className={link}>
         Monthly view
+      </Link>
+      <Link to="/matches" className={link}>
+        Payment matches
       </Link>
     </nav>
   )

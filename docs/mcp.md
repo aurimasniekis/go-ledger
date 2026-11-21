@@ -27,14 +27,38 @@ A tool runs one API operation as the token: the same authentication, grant, vali
 call. Without the grant a tool returns an error naming it (for example `commitments:write`); read the `ledger://me`
 resource to see what the token holds. Every call of a write or destructive tool is audited as `mcp.tool_called` with
 the tool, its outcome and the token, and the operation itself as `token.write_used`. A write through `ledger mcp stdio`
-is recorded the same way, with outcome `requested` (the tool name is the client's own claim; the outcome is the
-operation's). JSON-RPC batches are refused (400): send one message per request. Calls are limited per token
+is recorded as `token.write_used` and as `mcp.tool_called` with outcome `requested`. `requested` means only that the
+client asked for that tool: the tool name is the client's own claim, and the entry is written before the operation has
+answered, so it says nothing about success. What happened is in the operation's own audit entries
+(`token.write_used` and the object's, such as `payment_match.confirmed`), and a denied stdio write leaves no entry. An
+answer too large to return is not a failure either: the tool says the operation was done and names the resource, so
+read it instead of calling a write tool again. JSON-RPC batches are refused (400): send one message per request. Calls are limited per token
 (`mcp.requests_per_minute`, `mcp.burst`, `mcp.max_request_bytes`); `mcp.enabled: false` turns the endpoint off.
 
 Annotations tell a client how careful to be: `readOnlyHint` tools never change data; a destructive tool is marked
 `destructiveHint` and should be confirmed with the person first. Results are the API's JSON, as text and as structured
 content. Amounts are decimal strings with a currency; currencies are never added together. The monthly view describes
 recorded commitments and recorded payments only. It is not a statement of money that is safe to spend.
+
+## Payment matching and manual payments
+
+The match tools expose the review queue and the decisions of [ADR-0035](decisions/0035-payment-matches-and-corrections.md)
+and the engine of [ADR-0039](decisions/0039-automatic-payment-matching.md). The rules a client must keep:
+
+- `list_payment_matches` with `state: ["suggested"]` is the review queue. A suggestion never counts as payment. A
+  similarity score in its reason is a hint, never proof; an ambiguous or pending suggestion is for the person to decide.
+- Confirm, correct, create and record tools change what counts as paid: call them only on the person's instruction.
+  `reject_payment_match`, `unmatch_payment_match`, `reverse_payment_match` and `delete_manual_payment` are marked
+  destructive: reject, unmatch and reverse are final (the pair stays closed and is not suggested again), so confirm with
+  the person first.
+- Every change to a match takes its `version`; a stale one is a `version_conflict` naming the current version. Read the
+  match again and decide again; never resend the old change blindly.
+- An overpayment is refused (`occurrence_overpaid`) unless the person has said the payment really is larger and the call
+  sets `allow_overpayment`.
+- `run_payment_matching` runs the engine now. Automation never rejects, unmatches or reverses what a person decided.
+- The bank's description and counterparty are `null` (`bank_text_redacted`) unless the token holds `banking:read`.
+- `create_commitment` takes an optional `match_tolerance` (how far short of the amount a booked payment may fall and
+  still be confirmed automatically; never above the amount).
 
 ## Resources
 
@@ -260,7 +284,7 @@ Get one occurrence with its derived payment state.
 
 ### `create_commitment`
 
-Create a recurring commitment. Its occurrences are generated from the schedule. The same validation as the HTTP API applies; field errors name the member that is wrong. Not idempotent: calling it twice creates two commitments.
+Create a recurring commitment. Its occurrences are generated from the schedule. The same validation as the HTTP API applies; field errors name the member that is wrong. Optionally sets match_tolerance for automatic payment matching. Not idempotent: calling it twice creates two commitments. If the answer is reported as too large to return, the commitment WAS created: find it with list_commitments instead of calling this again.
 
 - Kind: write
 - Operation: `POST /api/v1/commitments`
@@ -311,6 +335,34 @@ Create a recurring commitment. Its occurrences are generated from the schedule. 
         "debt_repayment"
       ],
       "type": "string"
+    },
+    "match_tolerance": {
+      "description": "Optional, in the commitment's currency; omit or null for none. How far a booked bank payment may fall short of amount and still be confirmed automatically. A payment above amount is never confirmed automatically.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "amount": {
+              "description": "A decimal string such as \"12.50\", never a number.",
+              "pattern": "^[0-9]+(\\.[0-9]+)?$",
+              "type": "string"
+            },
+            "currency": {
+              "description": "ISO 4217 code, three upper-case letters.",
+              "pattern": "^[A-Z]{3}$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "amount",
+            "currency"
+          ],
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "name": {
       "description": "Display name.",
@@ -445,6 +497,526 @@ Delete a commitment and its unpaid future occurrences. Refused while the commitm
   },
   "required": [
     "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_payment_matches`
+
+List links between bank transactions and commitment occurrences, one page at a time. state=suggested is the review queue: proposals that do not count as payment until a person confirms them. Each match keeps apart the bank fact (transaction), who proposed it (origin), the decision (state, decided_by) and whether it counts as payment now (counts_as_evidence). A similarity score in a reason is a hint, never proof. The bank's description and counterparty are null (bank_text_redacted) unless the token holds banking:read.
+
+- Kind: read
+- Operation: `GET /api/v1/payment-matches`
+- Grant: `commitments:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "occurrence_id": {
+      "description": "Only matches of these occurrences.",
+      "items": {
+        "description": "The occurrence identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "origin": {
+      "description": "Only these origins.",
+      "items": {
+        "description": "",
+        "enum": [
+          "auto_rule",
+          "model_suggestion",
+          "user"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "state": {
+      "description": "Only these states.",
+      "items": {
+        "description": "",
+        "enum": [
+          "suggested",
+          "confirmed",
+          "rejected",
+          "reversed"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "transaction_id": {
+      "description": "Only matches of these bank transactions.",
+      "items": {
+        "description": "The bank transaction identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_payment_match`
+
+Get one payment match with its history, including its version (needed for every change).
+
+- Kind: read
+- Operation: `GET /api/v1/payment-matches/{id}`
+- Grant: `commitments:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The payment match identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `create_payment_match`
+
+Record the person's own confirmed match: a booked, outgoing bank transaction pays an occurrence, in the same currency. It counts as payment at once, so use it only on the person's instruction. Refused for a pending transaction, a transaction already fully allocated, or an overpayment unless allow_overpayment is set. Not idempotent: a second call for the same pair is refused as duplicate_match.
+
+- Kind: write
+- Operation: `POST /api/v1/payment-matches`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "allow_overpayment": {
+      "description": "Set true only when the person has said the payment really is larger than the amount due. Without it an overpayment is refused (occurrence_overpaid).",
+      "type": "boolean"
+    },
+    "amount": {
+      "additionalProperties": false,
+      "description": "How much of the transaction pays this occurrence, in the transaction's currency.",
+      "properties": {
+        "amount": {
+          "description": "A decimal string such as \"12.50\", never a number.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "type": "string"
+        },
+        "currency": {
+          "description": "ISO 4217 code, three upper-case letters.",
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "occurrence_id": {
+      "description": "The occurrence identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; kept on the match and in its history. Optional.",
+      "type": "string"
+    },
+    "transaction_id": {
+      "description": "The bank transaction identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "transaction_id",
+    "occurrence_id",
+    "amount"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `confirm_payment_match`
+
+Confirm a suggestion: from then on it counts as payment. Only on the person's instruction; the model that suggested a match, a similarity score or an amount that looks right never justifies it. Refused while the transaction is pending, and an overpayment is refused unless allow_overpayment is set. A stale version is refused with version_conflict naming the current one.
+
+- Kind: write
+- Operation: `POST /api/v1/payment-matches/{id}/confirm`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "allow_overpayment": {
+      "description": "Set true only when the person has said the payment really is larger than the amount due. Without it an overpayment is refused (occurrence_overpaid).",
+      "type": "boolean"
+    },
+    "id": {
+      "description": "The payment match identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; kept on the match and in its history. Optional.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the payment match this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `correct_payment_match`
+
+Change how much of the transaction pays the occurrence, on a suggested or confirmed match. What it links, its currency and origin never change: for a different target, unmatch and create a new match. A confirmed match is checked again (over-allocation, overpayment).
+
+- Kind: write
+- Operation: `POST /api/v1/payment-matches/{id}/correct`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "allow_overpayment": {
+      "description": "Set true only when the person has said the payment really is larger than the amount due. Without it an overpayment is refused (occurrence_overpaid).",
+      "type": "boolean"
+    },
+    "amount": {
+      "additionalProperties": false,
+      "description": "The new allocated amount, in the match's currency.",
+      "properties": {
+        "amount": {
+          "description": "A decimal string such as \"12.50\", never a number.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "type": "string"
+        },
+        "currency": {
+          "description": "ISO 4217 code, three upper-case letters.",
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "id": {
+      "description": "The payment match identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; kept on the match and in its history. Optional.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the payment match this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "amount"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `reject_payment_match`
+
+Reject a suggestion: it is not the payment for that occurrence. Final: the pair is closed and automatic matching will not suggest it again. Destructive; confirm with the person first.
+
+- Kind: destructive
+- Operation: `POST /api/v1/payment-matches/{id}/reject`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The payment match identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; kept on the match and in its history. Optional.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the payment match this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `unmatch_payment_match`
+
+Take back a confirmed match that was wrong: the occurrence stops counting this transaction as payment. Final: the pair is closed and automatic matching will not suggest it again. Destructive; confirm with the person first.
+
+- Kind: destructive
+- Operation: `POST /api/v1/payment-matches/{id}/unmatch`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The payment match identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; kept on the match and in its history. Optional.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the payment match this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `reverse_payment_match`
+
+Record that a confirmed match was right but the payment was reversed (bounced, refunded, returned): the occurrence reopens and the history of both decisions is kept. Final. Destructive; confirm with the person first.
+
+- Kind: destructive
+- Operation: `POST /api/v1/payment-matches/{id}/reverse`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The payment match identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; kept on the match and in its history. Optional.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the payment match this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `run_payment_matching`
+
+Run the matching engine now (it also runs after every bank refresh). It confirms a booked payment automatically only when every safeguard passes (exact amount or within the commitment's match_tolerance, close to the due date, no ambiguity); everything else becomes a suggestion for a person. It never rejects, unmatches or reverses a decision a person made. Returns the counts; re-running with unchanged data changes nothing. Its automatic confirmations count as payment and can be undone with unmatch_payment_match.
+
+- Kind: write
+- Operation: `POST /api/v1/payment-matching/runs`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object"
+}
+```
+
+</details>
+
+### `record_manual_payment`
+
+Mark an occurrence as paid, fully or in part, by recording a payment the person made (cash, a card the bank does not report). Counts as payment at once; use it only on the person's instruction. Same currency as the occurrence. Not idempotent: calling it twice records two payments. If the answer is reported as too large to return, the payment WAS recorded: read the occurrence instead of calling this again.
+
+- Kind: write
+- Operation: `POST /api/v1/occurrences/{id}/manual-payments`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "amount": {
+      "additionalProperties": false,
+      "description": "The amount paid, in the occurrence's currency.",
+      "properties": {
+        "amount": {
+          "description": "A decimal string such as \"12.50\", never a number.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "type": "string"
+        },
+        "currency": {
+          "description": "ISO 4217 code, three upper-case letters.",
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "id": {
+      "description": "The occurrence identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "note": {
+      "description": "Free-form note.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "paid_on": {
+      "description": "The date it was paid, YYYY-MM-DD.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "amount",
+    "paid_on"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `delete_manual_payment`
+
+Remove a manual payment record (the undo of record_manual_payment): the occurrence stops counting it. The record is kept as history. Destructive; confirm with the person first.
+
+- Kind: destructive
+- Operation: `DELETE /api/v1/occurrences/{id}/manual-payments/{payment_id}`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The occurrence identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "payment_id": {
+      "description": "The manual payment identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the manual payment this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "payment_id",
     "version"
   ],
   "type": "object"

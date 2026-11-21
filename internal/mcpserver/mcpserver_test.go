@@ -1,8 +1,10 @@
 package mcpserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"regexp"
@@ -14,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/pkg/ledgerclient"
 )
 
 var toolName = regexp.MustCompile(`^[a-z][a-z0-9_]{2,63}$`)
@@ -234,5 +237,33 @@ func TestDocsListEveryTool(t *testing.T) {
 	}
 	if doc != want {
 		t.Error("docs/mcp.md is out of date: run UPDATE_DOCS=1 go test ./internal/mcpserver -run TestDocsListEveryTool")
+	}
+}
+
+// The stdio caller reaches the server over HTTP. A write whose answer is larger than the client keeps has still
+// happened, so it must come back as a success naming the created resource and never as "unavailable", which a model
+// would answer by calling create again.
+func TestRemoteCallerReportsATooLargeWriteAnswerAsDone(t *testing.T) {
+	const loc = "/api/v1/commitments/01JD3Y4C8V9M2Q7W5R6T0XZBNT"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", loc)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(strings.Repeat("x", 9<<20)))
+	}))
+	defer srv.Close()
+	c, err := ledgerclient.New(srv.URL, "ldgr_test_secret_value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := Remote(c).Call(context.Background(), nil, Request{Method: http.MethodPost, Path: "/commitments", Body: []byte("{}"), Tool: "create_commitment"})
+	if err != nil {
+		t.Fatalf("a too-large answer must not be an error: %v", err)
+	}
+	if resp.Status != http.StatusCreated || !resp.Truncated || resp.Location != loc {
+		t.Fatalf("response: status %d truncated=%v location=%q", resp.Status, resp.Truncated, resp.Location)
+	}
+	res := (&server{}).result(&boundTool{Tool: Tool{Name: "create_commitment", Kind: KindWrite}}, resp)
+	if res.IsError || !strings.Contains(res.Content[0].(*mcp.TextContent).Text, loc) {
+		t.Errorf("the tool result must be a success naming the resource: %+v", res)
 	}
 }

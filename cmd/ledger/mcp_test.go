@@ -500,6 +500,20 @@ func TestMCPMissingGrantAndWriteAudit(t *testing.T) {
 // TestMCPHTTPGrantParity: the grant a tool declares is the grant of the route it
 // maps to, and for every tool and every kind of token the MCP outcome (allowed
 // or permission error) is the HTTP outcome (not 403, or 403).
+const fakeID = "01JD3Y4C8V9M2Q7W5R6T0XZBNT"
+
+func createMatchArgs() map[string]any {
+	return map[string]any{"transaction_id": fakeID, "occurrence_id": fakeID, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}}
+}
+
+func mustJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
 func TestMCPHTTPGrantParity(t *testing.T) {
 	f := newMCPFixture(t, mcpOpts{})
 	routes := map[string]httpapi.Route{}
@@ -542,6 +556,34 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 			return "POST", "/commitments", string(b)
 		},
 		"delete_commitment": func() (string, string, string) { return "DELETE", "/commitments/01JD3Y4C8V9M2Q7W5R6T0XZBNT", "" },
+
+		"list_payment_matches": func() (string, string, string) { return "GET", "/payment-matches", "" },
+		"get_payment_match":    func() (string, string, string) { return "GET", "/payment-matches/" + fakeID, "" },
+		"create_payment_match": func() (string, string, string) {
+			return "POST", "/payment-matches", string(mustJSON(createMatchArgs()))
+		},
+		"confirm_payment_match": func() (string, string, string) {
+			return "POST", "/payment-matches/" + fakeID + "/confirm", `{"version":1}`
+		},
+		"correct_payment_match": func() (string, string, string) {
+			return "POST", "/payment-matches/" + fakeID + "/correct", `{"version":1,"amount":{"amount":"1.00","currency":"EUR"}}`
+		},
+		"reject_payment_match": func() (string, string, string) {
+			return "POST", "/payment-matches/" + fakeID + "/reject", `{"version":1}`
+		},
+		"unmatch_payment_match": func() (string, string, string) {
+			return "POST", "/payment-matches/" + fakeID + "/unmatch", `{"version":1}`
+		},
+		"reverse_payment_match": func() (string, string, string) {
+			return "POST", "/payment-matches/" + fakeID + "/reverse", `{"version":1}`
+		},
+		"run_payment_matching": func() (string, string, string) { return "POST", "/payment-matching/runs", "{}" },
+		"record_manual_payment": func() (string, string, string) {
+			return "POST", "/occurrences/" + fakeID + "/manual-payments", `{"amount":{"amount":"1.00","currency":"EUR"},"paid_on":"2026-11-01"}`
+		},
+		"delete_manual_payment": func() (string, string, string) {
+			return "DELETE", "/occurrences/" + fakeID + "/manual-payments/" + fakeID, ""
+		},
 	}
 	mcpArgs := map[string]map[string]any{
 		"list_commitments":  nil,
@@ -551,6 +593,18 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"get_occurrence":    {"id": occ.Items[0].ID},
 		"create_commitment": newCommitmentArgs("Parity 2"),
 		"delete_commitment": {"id": "01JD3Y4C8V9M2Q7W5R6T0XZBNT", "version": 1},
+
+		"list_payment_matches":  nil,
+		"get_payment_match":     {"id": fakeID},
+		"create_payment_match":  createMatchArgs(),
+		"confirm_payment_match": {"id": fakeID, "version": 1},
+		"correct_payment_match": {"id": fakeID, "version": 1, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}},
+		"reject_payment_match":  {"id": fakeID, "version": 1},
+		"unmatch_payment_match": {"id": fakeID, "version": 1},
+		"reverse_payment_match": {"id": fakeID, "version": 1},
+		"run_payment_matching":  nil,
+		"record_manual_payment": {"id": fakeID, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}, "paid_on": "2026-11-01"},
+		"delete_manual_payment": {"id": fakeID, "payment_id": fakeID, "version": 1},
 	}
 	subjects := []struct {
 		name   string
@@ -590,7 +644,8 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 			if httpDenied != mcpDenied {
 				t.Errorf("%s / %s: HTTP status %d but MCP result isError=%v %q", sub.name, tl.Name, resp.StatusCode, res.IsError, resultText(res))
 			}
-			if !mcpDenied && res.IsError && tl.Kind == mcpserver.KindRead {
+			// A read of an object that does not exist (a sample id) is allowed: the grant passed, the object is missing.
+			if !mcpDenied && res.IsError && tl.Kind == mcpserver.KindRead && !strings.Contains(resultText(res), "(HTTP 404, not_found)") {
 				t.Errorf("%s / %s: allowed read failed: %s", sub.name, tl.Name, resultText(res))
 			}
 		}
