@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ var permissionMatrix = map[string]string{
 	"GET /api/v1/openapi.yaml": "public",
 	"GET /api/v1/me":           "authenticated",
 	"GET /api/v1/grants":       "authenticated",
+	"GET /api/v1/audit":        "audit:read",
 	"GET /api/v1/users":        "users:read",
 	"POST /api/v1/users":       "users:write",
 	"GET /api/v1/users/{id}":   "users:read",
@@ -62,7 +64,10 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &apiFixture{users: userstore.New(db, store.LogAudit(log), nil, nil), log: buf, ids: map[string]string{}}
+	// Audit entries go to the real table and, so these tests can assert on them
+	// line by line, to the log as well.
+	al := teeAudit{AuditLog: store.NewAuditLog(db), lines: store.LogAudit(log)}
+	f := &apiFixture{users: userstore.New(db, al, nil, nil), log: buf, ids: map[string]string{}}
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {
@@ -89,7 +94,7 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		return p, nil
 	})
 	f.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log, httpapi.WithAuthenticators(authn))
-	registerAPI(f.srv, db, log)
+	registerAPI(f.srv, db, al)
 
 	mk := func(name string, role authz.Role) users.User {
 		u, err := f.users.Create(ctx, audit.System, users.New{Username: name, Role: role})
@@ -108,6 +113,19 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	}
 	buf.Reset()
 	return f
+}
+
+// teeAudit writes each event to the audit table and to a log line.
+type teeAudit struct {
+	*store.AuditLog
+	lines store.AuditWriter
+}
+
+func (t teeAudit) WriteAudit(ctx context.Context, tx *sql.Tx, e audit.Event) error {
+	if err := t.AuditLog.WriteAudit(ctx, tx, e); err != nil {
+		return err
+	}
+	return t.lines.WriteAudit(ctx, tx, e)
 }
 
 func ptr[T any](v T) *T { return &v }

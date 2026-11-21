@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/health"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
@@ -129,7 +129,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		env.AfterOpen(db)
 	}
 
-	zone, err := reporting.Resolve(ctx, db, cfg.Reporting.Timezone, log, env.Reporting)
+	auditLog := store.NewAuditLog(db)
+	zoneOpts := env.Reporting
+	zoneOpts.Audit = auditLog
+	zone, err := reporting.Resolve(ctx, db, cfg.Reporting.Timezone, log, zoneOpts)
 	if err != nil {
 		log.Error("cannot determine the reporting time zone", "error", err.Error())
 		return 1
@@ -165,8 +168,8 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// Per D17, readiness gates only on the database; optional integrations belong on a
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
-	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)))
-	registerAPI(srv, db, log)
+	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil))
+	registerAPI(srv, db, auditLog)
 	// Sign-in sessions and API tokens arrive with their own tasks; until an
 	// authenticator is installed, every non-public API route answers 401.
 	log.Warn("no API authentication method is available yet; API routes other than the API description answer 401")
@@ -251,12 +254,19 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	return code
 }
 
-// registerAPI registers the Management API with its dependencies. The audit
-// log table does not exist yet, so audit events go to the structured log
-// (store.LogAudit) until it does.
-func registerAPI(srv *httpapi.Server, db *store.DB, log *slog.Logger) {
+// auditLog is what the API needs of the audit log: a writer for changes and a
+// reader for GET /audit. store.AuditLog implements it.
+type auditLog interface {
+	store.AuditWriter
+	audit.Reader
+}
+
+// registerAPI registers the Management API with its dependencies. Changes
+// record their audit entries in the same transaction through al (ADR-0025).
+func registerAPI(srv *httpapi.Server, db *store.DB, al auditLog) {
 	httpapi.RegisterAPI(srv, httpapi.Deps{
-		Users: users.New(db, store.LogAudit(log), nil, nil),
+		Users: users.New(db, al, nil, nil),
+		Audit: al,
 	})
 }
 

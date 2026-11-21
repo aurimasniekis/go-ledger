@@ -12,6 +12,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
@@ -47,6 +48,8 @@ func yamlToJSON(doc []byte) ([]byte, error) {
 // calls them.
 type Deps struct {
 	Users users.Store
+	// Audit reads the audit log.
+	Audit audit.Reader
 }
 
 // RegisterAPI registers every route of the Management API under [APIPrefix].
@@ -70,6 +73,7 @@ func RegisterAPI(s *Server, d Deps) {
 	}))
 	registerAuthz(s)
 	registerUsers(s, d.Users)
+	registerAudit(s, d.Audit)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {

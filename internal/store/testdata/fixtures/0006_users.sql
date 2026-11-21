@@ -1,7 +1,9 @@
--- Fixture: a database at schema version 6 (migration ledger, settings, the
--- transactional outbox, bank facts, bank refresh bookkeeping and users),
--- holding the data of the version 5 fixture. Upgrading it must apply
--- migration 0007 (currency-rate cache). All identifiers are synthetic.
+-- Fixture: a database at schema version 6 (the version 5 contents plus the
+-- users table), holding one administrator and one disabled read-only user in
+-- addition to the settings, outbox and bank data of the version 5 fixture.
+-- Upgrading it must apply migrations 0007 (currency-rate cache) and 0008
+-- (audit log) and keep every user row.
+-- All identifiers are synthetic.
 -- The migration ledger. The migration runner reads and writes this table; its
 -- columns are part of the runner's contract, so change them only through a
 -- later migration together with the runner.
@@ -330,13 +332,7 @@ INSERT INTO bank_refresh_runs (id, connection_id, started_at, finished_at, outco
 INSERT INTO bank_refresh_runs (id, connection_id, started_at, finished_at, outcome, error_kind, error_code, accounts_reported, accounts_failed, transactions_rejected) VALUES ('01JZ0000000000000000000021', '01JZ0000000000000000000010', '2026-01-07T04:00:00.000000000Z', '2026-01-07T04:00:02.000000000Z', 'failed', 'rate_limited', 'fake-rate-limit', 1, 1, 0);
 INSERT INTO bank_account_sync (account_id, last_attempt_at, last_success_at, last_error_kind, last_error_code, transactions_through) VALUES ('01JZ0000000000000000000011', '2026-01-07T04:00:02.000000000Z', '2026-01-06T04:00:05.000000000Z', 'rate_limited', 'fake-rate-limit', '2026-01-05');
 
--- Users and roles (A1, ADR-0021). One row per user account. Credentials
--- (password hashes, TOTP, OIDC links, sessions, API tokens) live in their own
--- tables, added by later migrations. Users are disabled, never deleted, so
--- audit entries and token ownership keep pointing at a real row.
--- The role values follow internal/domain/authz; adding a role is a table
--- rebuild. The last active administrator is protected in code
--- (users.CheckLastAdministrator), inside the write transaction.
+-- Users and roles (migration 0006, A1).
 CREATE TABLE users (
     id           TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     username     TEXT NOT NULL UNIQUE CHECK (length(username) BETWEEN 1 AND 64 AND username NOT GLOB '*[^a-z0-9._-]*' AND substr(username, 1, 1) GLOB '[a-z0-9]'),
@@ -349,5 +345,7 @@ CREATE TABLE users (
     version      INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
     CHECK ((disabled = 1) = (disabled_at IS NOT NULL))
 ) STRICT;
-INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (6, 'users', 'e80355d8b6692e71df243b1ed470a462259ad17f253f5850194cec4084404b91', '2026-01-07T03:04:05.000000000Z');
-INSERT INTO users (id, username, display_name, role, created_at, updated_at) VALUES ('01JZ0000000000000000000030', 'alice', 'Alice Example', 'administrator', '2026-01-07T03:04:05.000000000Z', '2026-01-07T03:04:05.000000000Z');
+
+INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (6, 'users', 'e80355d8b6692e71df243b1ed470a462259ad17f253f5850194cec4084404b91', '2026-01-09T03:04:05.000000000Z');
+INSERT INTO users (id, username, display_name, role, disabled, disabled_at, created_at, updated_at, version) VALUES ('01JZ0000000000000000000030', 'owner', 'Owner', 'administrator', 0, NULL, '2026-01-09T03:04:05.000000000Z', '2026-01-09T03:04:05.000000000Z', 1);
+INSERT INTO users (id, username, display_name, role, disabled, disabled_at, created_at, updated_at, version) VALUES ('01JZ0000000000000000000031', 'viewer', NULL, 'read-only', 1, '2026-01-10T03:04:05.000000000Z', '2026-01-09T03:04:05.000000000Z', '2026-01-10T03:04:05.000000000Z', 2);

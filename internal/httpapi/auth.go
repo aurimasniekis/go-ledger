@@ -108,7 +108,7 @@ func checkAccess(method string, a Access) {
 }
 
 // authorize wraps h so it runs only for a principal allowed by a.
-func (s *Server) authorize(a Access, h http.Handler) http.Handler {
+func (s *Server) authorize(pattern string, a Access, h http.Handler) http.Handler {
 	if a.kind == accessPublic {
 		return h
 	}
@@ -131,6 +131,9 @@ func (s *Server) authorize(a Access, h http.Handler) http.Handler {
 			logging.FromContext(r.Context()).InfoContext(r.Context(), "permission denied",
 				"principal_kind", string(p.Kind), "user_id", p.UserID, "grant", g.String())
 			WriteError(w, r, Forbidden("this requires the "+g.String()+" grant"))
+			return
+		}
+		if !s.auditTokenWrite(w, r, p, pattern) {
 			return
 		}
 		h.ServeHTTP(w, r.WithContext(authz.WithPrincipal(r.Context(), p)))

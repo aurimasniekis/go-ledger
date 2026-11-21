@@ -137,6 +137,7 @@ var unversionedTables = map[string]string{
 	"outbox":                 "append-only event queue owned by the server (ADR-0012); rows are never edited through the API",
 	"fx_rates":               "provider-reported currency rates (ADR-0022), written only by the rate service and never edited through the API",
 	"bank_refresh_runs":      "refresh history written only by the import engine (ADR-0020); finished runs are immutable, never edited through the API",
+	"audit_log":              "append-only audit log (ADR-0025); triggers refuse any update or delete, so entries are never edited through the API",
 	"bank_account_sync":      "per-account refresh bookkeeping written only by the import engine (ADR-0020), never edited through the API",
 }
 

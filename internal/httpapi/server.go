@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
+	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/metrics"
 )
 
@@ -29,6 +30,8 @@ type Server struct {
 	apiMW     []func(http.Handler) http.Handler
 	apiRoutes []Route
 	authn     []Authenticator
+	// auditTokenWrites records a token's state-changing request ([WithAuditRecorder]).
+	auditTokenWrites func(r *http.Request, p authz.Principal, pattern string) error
 }
 
 // Route is a registered API route: an HTTP method, a ServeMux path pattern
@@ -139,7 +142,7 @@ func (s *Server) HandleAPI(pattern string, a Access, h http.Handler) {
 	for i := len(s.apiMW) - 1; i >= 0; i-- {
 		h = s.apiMW[i](h)
 	}
-	h = s.authorize(a, h) // outermost: authentication and grants come first
+	h = s.authorize(pattern, a, h) // outermost: authentication and grants come first
 	s.api.Handle(pattern, routed(pattern, h))
 	s.apiRoutes = append(s.apiRoutes, Route{Method: method, Path: path, Access: a})
 }
