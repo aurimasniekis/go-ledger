@@ -44,17 +44,31 @@ func toOutlookRate(r *fx.Rate) *outlookRateJSON {
 }
 
 type outlookLineJSON struct {
-	Currency                money.Currency `json:"currency"`
-	StillDue                money.Money    `json:"still_due"`
-	Overdue                 money.Money    `json:"overdue"`
-	Upcoming                money.Money    `json:"upcoming"`
-	OverdueCount            int            `json:"overdue_count"`
-	UnconvertedEvidence     int            `json:"unconverted_evidence_count"`
-	Balance                 *money.Money   `json:"balance"`
-	BalanceLessStillDue     *money.Money   `json:"balance_less_still_due"`
-	AccountCount            int            `json:"account_count"`
-	StaleAccountCount       int            `json:"stale_account_count"`
-	OldestBalanceObtainedAt *time.Time     `json:"oldest_balance_obtained_at"`
+	Currency                money.Currency            `json:"currency"`
+	StillDue                money.Money               `json:"still_due"`
+	Overdue                 money.Money               `json:"overdue"`
+	Upcoming                money.Money               `json:"upcoming"`
+	OverdueCount            int                       `json:"overdue_count"`
+	UnconvertedEvidence     int                       `json:"unconverted_evidence_count"`
+	Balance                 *money.Money              `json:"balance"`
+	BalanceLessStillDue     *money.Money              `json:"balance_less_still_due"`
+	AccountCount            int                       `json:"account_count"`
+	StaleAccountCount       int                       `json:"stale_account_count"`
+	OldestBalanceObtainedAt *time.Time                `json:"oldest_balance_obtained_at"`
+	OverdueMonths           []outlookOverdueMonthJSON `json:"overdue_months"`
+	BalanceAsOf             *calendar.Date            `json:"balance_as_of"`
+	PaymentsAfterBalance    *outlookPaymentsAfterJSON `json:"payments_after_balance"`
+}
+
+type outlookOverdueMonthJSON struct {
+	Month  calendar.YearMonth `json:"month"`
+	Count  int                `json:"count"`
+	Amount money.Money        `json:"amount"`
+}
+
+type outlookPaymentsAfterJSON struct {
+	Count  int         `json:"count"`
+	Amount money.Money `json:"amount"`
 }
 
 type outlookBalanceJSON struct {
@@ -122,11 +136,18 @@ type outlookJSON struct {
 		From      *calendar.YearMonth `json:"from"`
 		Through   calendar.YearMonth  `json:"through"`
 		Truncated bool                `json:"truncated"`
+		// NotRecordedCount is the occurrences in the window counted nowhere
+		// because they fell due before their commitment was recorded.
+		NotRecordedCount int `json:"not_recorded_count"`
 	} `json:"window"`
 	Currencies []outlookLineJSON `json:"currencies"`
 	Balances   struct {
 		Shown bool   `json:"shown"`
 		Note  string `json:"note"`
+		// StaleAfterSeconds is how old the last successful refresh of an
+		// account may be before its balance is flagged as not fresh; null
+		// when balances are not shown.
+		StaleAfterSeconds *int64 `json:"stale_after_seconds"`
 	} `json:"balances"`
 	Accounts       []outlookAccountJSON  `json:"accounts"`
 	Converted      *outlookConvertedJSON `json:"converted"`
@@ -168,13 +189,28 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 		from := o.From
 		out.Window.From = &from
 	}
-	out.Window.Through, out.Window.Truncated = o.Through, o.Truncated
+	out.Window.Through, out.Window.Truncated, out.Window.NotRecordedCount = o.Through, o.Truncated, o.NotRecordedCount
 	for i, l := range o.Currencies {
 		out.Currencies[i] = outlookLineJSON{Currency: l.Currency, StillDue: l.StillDue, Overdue: l.Overdue, Upcoming: l.Upcoming, OverdueCount: l.OverdueCount,
 			UnconvertedEvidence: l.UnconvertedEvidence, Balance: l.Balance, BalanceLessStillDue: l.BalanceLessStillDue,
-			AccountCount: l.Accounts, StaleAccountCount: l.StaleAccounts, OldestBalanceObtainedAt: l.OldestBalanceAt}
+			AccountCount: l.Accounts, StaleAccountCount: l.StaleAccounts, OldestBalanceObtainedAt: l.OldestBalanceAt,
+			OverdueMonths: make([]outlookOverdueMonthJSON, len(l.OverdueMonths))}
+		for j, m := range l.OverdueMonths {
+			out.Currencies[i].OverdueMonths[j] = outlookOverdueMonthJSON{Month: m.Month, Count: m.Count, Amount: m.Amount}
+		}
+		if !l.BalanceAsOf.IsZero() {
+			d := l.BalanceAsOf
+			out.Currencies[i].BalanceAsOf = &d
+		}
+		if p := l.PaymentsAfterBalance; p != nil {
+			out.Currencies[i].PaymentsAfterBalance = &outlookPaymentsAfterJSON{Count: p.Count, Amount: p.Amount}
+		}
 	}
 	out.Balances.Shown = o.BalancesShown
+	if o.BalancesShown {
+		secs := int64(o.BankStaleAfter / time.Second)
+		out.Balances.StaleAfterSeconds = &secs
+	}
 	switch {
 	case o.BalancesShown:
 		out.Balances.Note = outlookBalancesShownNote

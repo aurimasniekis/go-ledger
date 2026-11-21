@@ -26,6 +26,12 @@ export interface OutlookCurrency {
   account_count: number
   stale_account_count: number
   oldest_balance_obtained_at: string | null
+  /** The months the overdue part comes from, oldest first. */
+  overdue_months: { month: string; count: number; amount: Money }[]
+  /** The date of the oldest counted balance; null without a balance. */
+  balance_as_of: string | null
+  /** Payments dated after balance_as_of: a caveat, never netted into the balance. Null without a balance. */
+  payments_after_balance: { count: number; amount: Money } | null
 }
 
 export type FreshnessState = 'fresh' | 'stale' | 'failed' | 'reconnect_required' | 'disconnected' | 'never_refreshed'
@@ -66,9 +72,9 @@ export interface OutlookConverted {
 export interface Outlook {
   as_of: string
   notice: string
-  window: { from: string | null; through: string; truncated: boolean }
+  window: { from: string | null; through: string; truncated: boolean; not_recorded_count: number }
   currencies: OutlookCurrency[]
-  balances: { shown: boolean; note: string }
+  balances: { shown: boolean; note: string; stale_after_seconds: number | null }
   accounts: OutlookAccount[]
   converted: OutlookConverted | null
   planned_outflows: { included: boolean; note: string }

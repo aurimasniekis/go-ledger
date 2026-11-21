@@ -36,6 +36,9 @@ type Row struct {
 	// CommitmentName is the name of the commitment the occurrence belongs
 	// to; empty when the Service has no Commitments.
 	CommitmentName string
+	// Evidence is the payment evidence behind State (manual payments and
+	// confirmed bank matches, in any currency), newest facts as stored.
+	Evidence []payments.Evidence
 }
 
 // CurrencyTotals are the exact totals of the occurrences of one currency.
@@ -156,7 +159,7 @@ func (s Service) Month(ctx context.Context, month calendar.YearMonth, today cale
 				if err != nil {
 					return Summary{}, err
 				}
-				out.Rows = append(out.Rows, Row{Occurrence: o, State: payments.Derive(o, facts[o.ID], today, s.Grace), CommitmentName: name})
+				out.Rows = append(out.Rows, Row{Occurrence: o, State: payments.Derive(o, facts[o.ID], today, s.Grace), CommitmentName: name, Evidence: facts[o.ID].Evidence})
 			}
 			after = items[len(items)-1].ID
 		}

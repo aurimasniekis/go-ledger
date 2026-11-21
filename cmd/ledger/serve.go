@@ -246,6 +246,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		connSvc.Schedule = sched.Status
 	}
 	parts.banking = connSvc
+	parts.facts, parts.bankStaleAfter = facts, cfg.Banking.StaleAfter
 	if cfg.Reporting.Currency != "" {
 		// Validated with the configuration.
 		parts.reportingCurrency, _ = moneypkg.ParseCurrency(cfg.Reporting.Currency)
@@ -377,6 +378,10 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 	if matching == nil {
 		matching = newMatcher(parts.db, al, parts.matches, zone, now, nil)
 	}
+	banks := parts.facts
+	if banks == nil {
+		banks = bankfacts.New(parts.db, nil)
+	}
 	httpapi.RegisterAPI(srv, httpapi.Deps{
 		Users:       parts.users,
 		Commitments: parts.commitments,
@@ -394,7 +399,8 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		// wired until the rate provider adapter (FX2) exists: only amounts
 		// already in the reporting currency convert, the rest are excluded
 		// and flagged.
-		Banks:             bankfacts.New(parts.db, nil),
+		Banks:             banks,
+		BankStaleAfter:    parts.bankStaleAfter,
 		ReportingCurrency: parts.reportingCurrency,
 		Zone:              zone,
 		Now:               now,

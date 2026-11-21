@@ -61,6 +61,17 @@ and payment derivation is changing in parallel (PR #79).
    refetch reuse the month view's behaviour (ADR-0034 point 4). Planned outflows (task S8) are not part of Ledger yet:
    `planned_outflows.included` is false and the page says so.
 
+9. **Follow-ups from the product review (FX3c).** The bank balance is shown exactly as the bank reported it and is never
+   adjusted. Each currency line carries `balance_as_of` (the oldest counted balance's reference date, or the UTC date it
+   was obtained when the bank gave none) and `payments_after_balance` (count and amount of payment evidence in that
+   currency dated after it: a caveat that such payments are off "still due" but may not be in the balance yet, never
+   netted in). `overdue_months` lists the months the overdue part comes from, for links to the monthly view;
+   `window.not_recorded_count` counts occurrences left out because they fell due before their commitment was recorded;
+   `balances.stale_after_seconds` is the effective `banking.stale_after`, so "not fresh" can say "not refreshed in 24 h".
+   When nothing besides the reporting currency converts, the page shows only the explanation, not repeated figures.
+   `ledger serve` now shares its bank-facts store with the outlook and passes `banking.stale_after` as
+   `BankStaleAfter`.
+
 ## Consequences
 
 - No migration. New: `internal/domain/outlook`, `internal/httpapi/outlook.go`, the OpenAPI path and schemas

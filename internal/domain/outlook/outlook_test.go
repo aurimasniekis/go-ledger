@@ -598,3 +598,101 @@ func TestEveryFigureOfACurrencyUsesTheSingleReportedRate(t *testing.T) {
 		t.Errorf("still due %s, want %s", o.Converted.StillDue, wantDue)
 	}
 }
+
+func TestOverdueMonthsListWhereTheOverdueComes(t *testing.T) {
+	e := newEnv(t)
+	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eur := lineOf(t, o, "EUR")
+	if len(eur.OverdueMonths) != 2 || eur.OverdueMonths[0].Month != ym(t, "2026-09") || eur.OverdueMonths[0].Amount.String() != "100.00 EUR" ||
+		eur.OverdueMonths[1].Month != ym(t, "2026-10") || eur.OverdueMonths[1].Amount.String() != "60.00 EUR" || eur.OverdueMonths[1].Count != 1 {
+		t.Errorf("EUR overdue months %+v", eur.OverdueMonths)
+	}
+	if usd := lineOf(t, o, "USD"); len(usd.OverdueMonths) != 0 {
+		t.Errorf("USD has no overdue, got %+v", usd.OverdueMonths)
+	}
+	var n int
+	for _, m := range eur.OverdueMonths {
+		n += m.Count
+	}
+	if n != eur.OverdueCount {
+		t.Errorf("months count %d, line count %d", n, eur.OverdueCount)
+	}
+}
+
+func TestPaymentsAfterTheBalanceDateAreACaveatNeverNettedIn(t *testing.T) {
+	e := newEnv(t)
+	// The EUR balance is for 2026-11-01. Evidence dated that day is in it;
+	// two payments dated later are not. A USD payment after the USD balance
+	// is counted only in USD.
+	for i, b := range e.banks.balances["a1"] {
+		if b.ID == "b3" {
+			e.banks.balances["a1"][i].ReferenceDate = d(t, "2026-11-01")
+		}
+	}
+	e.facts["o4"] = payments.Facts{Evidence: []payments.Evidence{
+		{Kind: payments.EvidenceManual, ID: "p4", OccurrenceID: "o4", Amount: m(t, "25.00", "EUR"), Date: d(t, "2026-11-03")},
+		{Kind: payments.EvidenceBankTransaction, ID: "p5", OccurrenceID: "o4", Amount: m(t, "10.00", "EUR"), Date: d(t, "2026-11-04")},
+		{Kind: payments.EvidenceManual, ID: "p6", OccurrenceID: "o4", Amount: m(t, "9.00", "USD"), Date: d(t, "2026-11-04")},
+	}}
+	e.facts["o5"] = payments.Facts{Evidence: []payments.Evidence{{Kind: payments.EvidenceManual, ID: "p7", OccurrenceID: "o5", Amount: m(t, "5.00", "USD"), Date: d(t, "2026-11-14")}}}
+	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eur := lineOf(t, o, "EUR")
+	if eur.BalanceAsOf != d(t, "2026-11-01") || eur.PaymentsAfterBalance == nil || eur.PaymentsAfterBalance.Count != 2 || eur.PaymentsAfterBalance.Amount.String() != "35.00 EUR" {
+		t.Errorf("EUR caveat: as of %s, %+v", eur.BalanceAsOf, eur.PaymentsAfterBalance)
+	}
+	if str(eur.Balance) != "1200.50 EUR" {
+		t.Errorf("the balance was adjusted: %s", str(eur.Balance))
+	}
+	// USD has no reference date: the date it was obtained (three days before t0) stands in, and only the USD payment after it counts: the USD evidence on a EUR occurrence is never converted, so it is in no line.
+	usd := lineOf(t, o, "USD")
+	if usd.BalanceAsOf.IsZero() || usd.PaymentsAfterBalance == nil || usd.PaymentsAfterBalance.Amount.String() != "5.00 USD" || usd.PaymentsAfterBalance.Count != 1 {
+		t.Errorf("USD caveat: as of %s, %+v", usd.BalanceAsOf, usd.PaymentsAfterBalance)
+	}
+	// A line without a balance has no caveat.
+	if gbp := lineOf(t, o, "GBP"); gbp.PaymentsAfterBalance != nil || !gbp.BalanceAsOf.IsZero() {
+		t.Errorf("GBP has no counted balance: %+v", gbp)
+	}
+}
+
+func TestNotRecordedOccurrencesAreCountedNotSummed(t *testing.T) {
+	e := newEnv(t)
+	// o1 fell due before its commitment was created: it owes nothing here.
+	e.facts["o1"] = payments.Facts{CommitmentCreatedOn: d(t, "2026-09-10")}
+	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.NotRecordedCount != 1 {
+		t.Errorf("not recorded %d, want 1", o.NotRecordedCount)
+	}
+	if eur := lineOf(t, o, "EUR"); eur.Overdue.String() != "60.00 EUR" || len(eur.OverdueMonths) != 1 {
+		t.Errorf("EUR %+v", eur)
+	}
+}
+
+func TestBankStaleAfterIsReportedWithBalances(t *testing.T) {
+	e := newEnv(t)
+	s := e.service(t, false)
+	o, err := s.Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil || o.BankStaleAfter != banking.DefaultStaleAfter {
+		t.Fatalf("default: %v %v", o.BankStaleAfter, err)
+	}
+	s.BankStaleAfter = 2 * time.Hour
+	o, err = s.Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil || o.BankStaleAfter != 2*time.Hour {
+		t.Fatalf("configured: %v %v", o.BankStaleAfter, err)
+	}
+	// The 1 h old EUR refresh is fresh within 2 h but the 72 h old USD one is not.
+	if lineOf(t, o, "EUR").StaleAccounts != 0 || lineOf(t, o, "USD").StaleAccounts != 1 {
+		t.Errorf("stale accounts with a 2 h threshold: %+v", o.Currencies)
+	}
+	if o, _ = s.Build(context.Background(), outlook.Request{}); o.BankStaleAfter != 0 {
+		t.Errorf("without balances the threshold is not reported: %v", o.BankStaleAfter)
+	}
+}

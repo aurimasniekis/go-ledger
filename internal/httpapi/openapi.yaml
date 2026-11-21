@@ -3356,8 +3356,11 @@ components:
         window:
           type: object
           additionalProperties: false
-          required: [from, through, truncated]
+          required: [from, through, truncated, not_recorded_count]
           properties:
+            not_recorded_count:
+              type: integer
+              description: Occurrences in the window that are counted nowhere because they fell due before their commitment was recorded; the monthly view lists them.
             from:
               description: The first month read; null when no commitment starts by through.
               oneOf:
@@ -3375,12 +3378,15 @@ components:
         balances:
           type: object
           additionalProperties: false
-          required: [shown, note]
+          required: [shown, note, stale_after_seconds]
           properties:
             shown:
               type: boolean
             note:
               type: string
+            stale_after_seconds:
+              description: How old the last successful refresh of an account may be before its balance is flagged as not fresh (banking.stale_after); null when balances are not shown.
+              type: [integer, "null"]
         accounts:
           type: array
           items:
@@ -3413,7 +3419,7 @@ components:
       type: object
       description: The comparison in one currency. Nothing in it is converted.
       additionalProperties: false
-      required: [currency, still_due, overdue, upcoming, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at]
+      required: [currency, still_due, overdue, upcoming, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at, overdue_months, balance_as_of, payments_after_balance]
       properties:
         currency:
           $ref: "#/components/schemas/Currency"
@@ -3443,6 +3449,37 @@ components:
         oldest_balance_obtained_at:
           type: [string, "null"]
           format: date-time
+        overdue_months:
+          type: array
+          description: The months the overdue part comes from, oldest first, each with its overdue count and amount; the monthly view of that month lists the items.
+          items:
+            type: object
+            additionalProperties: false
+            required: [month, count, amount]
+            properties:
+              month:
+                $ref: "#/components/schemas/YearMonth"
+              count:
+                type: integer
+              amount:
+                $ref: "#/components/schemas/Money"
+        balance_as_of:
+          description: The date of the oldest counted balance (its reference date, or the UTC date it was obtained when the bank gave none); null when no balance is counted. The balance is never adjusted.
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        payments_after_balance:
+          description: Payment evidence in this currency dated after balance_as_of (manual payments and confirmed bank matches), that is recorded payments the balance may not yet reflect. A caveat only, never netted into the balance. Null when no balance is counted.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [count, amount]
+              properties:
+                count:
+                  type: integer
+                amount:
+                  $ref: "#/components/schemas/Money"
+            - type: "null"
     OutlookAccount:
       type: object
       description: A bank account, the balances the outlook counts for it (one per currency) and its data freshness.
