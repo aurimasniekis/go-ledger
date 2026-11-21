@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 )
@@ -66,6 +67,9 @@ type Options struct {
 	HostZoneName func() (string, bool)
 	// Now is the clock for the settings row. Nil means time.Now.
 	Now func() time.Time
+	// Audit records a configuration-driven zone change (reporting_timezone_changed)
+	// in the same transaction as the new zone. Nil records nothing.
+	Audit store.AuditWriter
 }
 
 // Resolve determines the reporting zone and persists it.
@@ -147,6 +151,13 @@ func Resolve(ctx context.Context, db *store.DB, explicit string, log *slog.Logge
 		if err != nil {
 			return fmt.Errorf("reporting: store zone: %w", err)
 		}
+		if source == SourceConfigChanged && opts.Audit != nil {
+			// The change reclassifies dates, so it is audited with the new zone
+			// in one transaction (decision F9). The actor is the system: the
+			// change came from configuration, not a signed-in user.
+			return opts.Audit.WriteAudit(ctx, tx, audit.Event{Action: audit.ReportingTimezoneChanged, Actor: audit.System,
+				TargetType: "setting", TargetID: SettingKey, At: opts.Now().UTC(), Details: map[string]string{"from": prev, "to": want}})
+		}
 		return nil
 	})
 	if err != nil {
@@ -156,8 +167,6 @@ func Resolve(ctx context.Context, db *store.DB, explicit string, log *slog.Logge
 	case SourceConfig, SourceHost:
 		log.Info("reporting time zone captured and stored", "zone", zone.Name(), "source", string(source))
 	case SourceConfigChanged:
-		// TODO(audit-log task): record this change in the audit log once it
-		// exists; until then the warning below is the only record.
 		log.Warn("reporting time zone changed by configuration; due dates and monthly views are reclassified",
 			"event", "reporting_timezone_changed", "from", prev, "to", zone.Name())
 	default:

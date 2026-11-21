@@ -1,10 +1,11 @@
-// Package audit defines audit events (ADR-0021): who did what to which
-// object. The audit log itself (table, writer, read API) is task A5; until it
-// lands, store.AuditWriter is the port features write through, in the same
-// transaction as the change they record.
+// Package audit defines audit events (ADR-0021, ADR-0025): who did what to
+// which object. store.AuditWriter is the port features write through, in the
+// same transaction as the change they record; store.AuditLog implements it
+// with the append-only audit_log table and serves the admin read API.
 //
 // An event never carries secrets, request bodies or free-form user content:
-// Details holds a fixed, small set of non-secret fields per action.
+// every action declares the few detail fields it may carry (see [Validate]),
+// and a writer refuses anything else.
 package audit
 
 import (
@@ -21,6 +22,9 @@ const (
 	ActorUser   ActorKind = "user"   // a signed-in user
 	ActorToken  ActorKind = "token"  // an API token (HTTP or MCP); interactive steps such as 2FA were skipped
 	ActorSystem ActorKind = "system" // the server itself or a host CLI command (bootstrap, break-glass)
+	// ActorAnonymous is nobody who could be identified: a failed sign-in
+	// whose username matches no account.
+	ActorAnonymous ActorKind = "anonymous"
 )
 
 // Actor is who made a change.

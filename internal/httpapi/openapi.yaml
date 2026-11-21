@@ -116,6 +116,98 @@ paths:
                 $ref: "#/components/schemas/GrantVocabulary"
         default:
           $ref: "#/components/responses/Error"
+  /audit:
+    get:
+      operationId: listAuditEntries
+      x-ledger-access: audit:read
+      summary: List audit entries
+      description: |
+        The append-only audit log, oldest first (ID order). Administrators only.
+        Entries record who did what to which object: sign-in successes and
+        failures, two-factor changes, OIDC links, role changes, API token
+        creation, revocation and write use, state-changing MCP calls (with the
+        token's identity) and finance corrections. An entry has no free-form
+        payload: `details` holds only the few non-secret fields its action
+        declares. The attempted username of a failed sign-in is never recorded.
+      tags: [audit]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: action
+          in: query
+          description: Only entries with these actions (repeat for any of several).
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+              maxLength: 64
+        - name: action[prefix]
+          in: query
+          description: Only entries whose action starts with this text, for example `token.`.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: actor_kind
+          in: query
+          description: Only entries by these kinds of actor (repeat for any of several).
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/AuditActorKind"
+        - name: actor_user_id
+          in: query
+          description: Only entries by this user, or by a token this user owns.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: actor_token_id
+          in: query
+          description: Only entries made with this API token.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: target_type
+          in: query
+          schema:
+            type: string
+            maxLength: 32
+        - name: target_id
+          in: query
+          schema:
+            type: string
+            maxLength: 64
+        - name: at[gte]
+          in: query
+          description: Only entries at or after this time.
+          schema:
+            type: string
+            format: date-time
+        - name: at[lt]
+          in: query
+          description: Only entries before this time.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: One page of audit entries in ID order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEntry"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
   /users:
     get:
       operationId: listUsers
@@ -287,6 +379,8 @@ tags:
     description: Who the caller is and the grant vocabulary.
   - name: users
     description: User accounts and roles (administrative).
+  - name: audit
+    description: The append-only audit log (administrative, read-only).
 components:
   parameters:
     Limit:
@@ -362,6 +456,42 @@ components:
         updated_at:
           type: string
           format: date-time
+    AuditActorKind:
+      type: string
+      enum: [user, token, system, anonymous]
+      description: user is a signed-in user; token an API token (its owner is actor_user_id); system the server or a host command; anonymous nobody who could be identified.
+    AuditEntry:
+      type: object
+      required: [id, action, actor_kind, actor_user_id, actor_token_id, target_type, target_id, at, details]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        action:
+          type: string
+          examples: ["user.role_changed"]
+        actor_kind:
+          $ref: "#/components/schemas/AuditActorKind"
+        actor_user_id:
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        actor_token_id:
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        target_type:
+          type: [string, "null"]
+        target_id:
+          type: [string, "null"]
+        at:
+          type: string
+          format: date-time
+        details:
+          type: object
+          description: Only the fields the action declares, as short text. Never a request body, a secret or a bank payload.
+          additionalProperties:
+            type: string
+            maxLength: 256
     Principal:
       type: object
       required: [kind, user_id, token_id, role, grants]

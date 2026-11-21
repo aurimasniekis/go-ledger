@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 )
 
@@ -92,6 +93,35 @@ func TestExplicitFirstStartBeatsHost(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "level=WARN") {
 		t.Fatalf("first capture must not warn: %s", buf)
+	}
+}
+
+func TestZoneChangeByConfigIsAudited(t *testing.T) {
+	db := openDB(t)
+	log, _ := logger()
+	al := store.NewAuditLog(db)
+	opts := host("Europe/Vilnius", true)
+	opts.Audit = al
+	ctx := context.Background()
+	// First capture, and a restart with the same zone, are not changes.
+	for _, explicit := range []string{"Asia/Tokyo", "Asia/Tokyo", ""} {
+		if _, err := Resolve(ctx, db, explicit, log, opts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := al.List(ctx, audit.Filter{}); len(got) != 0 {
+		t.Fatalf("%d audit entries without a change", len(got))
+	}
+	if _, err := Resolve(ctx, db, "Europe/London", log, opts); err != nil {
+		t.Fatal(err)
+	}
+	got, err := al.List(ctx, audit.Filter{Actions: []audit.Action{audit.ReportingTimezoneChanged}})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("entries %v, err %v", got, err)
+	}
+	e := got[0]
+	if e.Actor != audit.System || e.TargetType != "setting" || e.TargetID != SettingKey || e.Details["from"] != "Asia/Tokyo" || e.Details["to"] != "Europe/London" {
+		t.Errorf("entry %+v", e)
 	}
 }
 
