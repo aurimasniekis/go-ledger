@@ -22,6 +22,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/store/users"
 	"github.com/aurimasniekis/go-ledger/internal/web"
 )
@@ -256,7 +257,8 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 // (store.LogAudit) until it does.
 func registerAPI(srv *httpapi.Server, db *store.DB, log *slog.Logger) {
 	httpapi.RegisterAPI(srv, httpapi.Deps{
-		Users: users.New(db, store.LogAudit(log), nil, nil),
+		Users:       users.New(db, store.LogAudit(log), nil, nil),
+		Commitments: commitmentstore.New(db, store.LogAudit(log), nil, nil),
 	})
 }
 

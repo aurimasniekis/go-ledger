@@ -37,6 +37,8 @@ type Resource string
 const (
 	// ResourceAudit is the audit log. It is only ever read through the API.
 	ResourceAudit Resource = "audit"
+	// ResourceCommitments is recurring commitment definitions (task C1).
+	ResourceCommitments Resource = "commitments"
 	// ResourceUsers is user accounts: their roles and whether they are disabled.
 	ResourceUsers Resource = "users"
 )
@@ -54,6 +56,7 @@ type ResourceInfo struct {
 
 var vocabulary = []ResourceInfo{
 	{Name: ResourceAudit, Description: "The audit log of security-relevant and finance-correcting changes.", Actions: []Action{ActionRead}, AdminOnly: true},
+	{Name: ResourceCommitments, Description: "Recurring commitment definitions: kind, amount, schedule, dates, priority and notes.", Actions: []Action{ActionRead, ActionWrite}},
 	{Name: ResourceUsers, Description: "User accounts, their roles and whether they are disabled.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 }
 

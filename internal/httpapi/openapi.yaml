@@ -280,6 +280,219 @@ paths:
                 $ref: "#/components/schemas/User"
         default:
           $ref: "#/components/responses/Error"
+  /commitments:
+    get:
+      operationId: listCommitments
+      x-ledger-access: commitments:read
+      summary: List commitment definitions
+      tags: [commitments]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: kind
+          in: query
+          description: Only commitments of these kinds (repeat for any of several).
+          schema:
+            $ref: "#/components/schemas/CommitmentKind"
+        - name: priority
+          in: query
+          description: Only commitments with these priorities (repeat for any of several).
+          schema:
+            $ref: "#/components/schemas/CommitmentPriority"
+        - name: currency
+          in: query
+          description: Only commitments in these currencies (repeat for any of several).
+          schema:
+            $ref: "#/components/schemas/Currency"
+      responses:
+        "200":
+          description: One page of commitments in ID order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Commitment"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createCommitment
+      x-ledger-access: commitments:write
+      summary: Record a recurring commitment
+      description: |
+        Records a recurring commitment definition (ADR-0024). The definition
+        is user data, kept apart from bank facts and from dated occurrences
+        and payment state, which are derived from it. Every invalid field is
+        reported: the first in field and message, all of them in errors.
+        Audited (commitment.created with kind and currency).
+      tags: [commitments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, kind, amount, schedule, start_date]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                kind:
+                  $ref: "#/components/schemas/CommitmentKind"
+                amount:
+                  $ref: "#/components/schemas/PositiveMoney"
+                schedule:
+                  $ref: "#/components/schemas/Schedule"
+                start_date:
+                  $ref: "#/components/schemas/Date"
+                end_date:
+                  description: The last day the commitment applies (inclusive); null for open-ended. Not before start_date.
+                  oneOf:
+                    - $ref: "#/components/schemas/Date"
+                    - type: "null"
+                priority:
+                  description: Optional; null when not prioritised.
+                  oneOf:
+                    - $ref: "#/components/schemas/CommitmentPriority"
+                    - type: "null"
+                notes:
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "201":
+          description: Created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Commitment"
+        default:
+          $ref: "#/components/responses/Error"
+  /commitments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getCommitment
+      x-ledger-access: commitments:read
+      summary: Get a commitment definition
+      tags: [commitments]
+      responses:
+        "200":
+          description: The commitment.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Commitment"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateCommitment
+      x-ledger-access: commitments:write
+      summary: Change a commitment definition
+      description: |
+        A JSON Merge Patch (RFC 7396, ADR-0015, ADR-0017) of the writable
+        members. amount and schedule merge member by member, so
+        {"schedule":{"day":20}} changes only the day; to switch a schedule
+        between monthly and annual, send the whole schedule with the members
+        that no longer apply set to null, or all members of the new form.
+        end_date, priority and notes are optional (null clears them); name,
+        kind, amount, schedule and start_date cannot be null. The merged
+        result is validated as a whole and every invalid field is reported.
+        Requires the version in If-Match or the body; a stale version is a
+        409 version_conflict with reconciliation. An empty patch, or one
+        that changes nothing, is a no-op. Audited (commitment.updated with
+        the names of the changed fields). Changes apply to the definition
+        only; how they affect dated occurrences follows decision D6 (from
+        an effective date forward, paid history immutable) and is task C2.
+      tags: [commitments]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                version:
+                  $ref: "#/components/schemas/Version"
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                kind:
+                  $ref: "#/components/schemas/CommitmentKind"
+                amount:
+                  $ref: "#/components/schemas/PositiveMoney"
+                schedule:
+                  $ref: "#/components/schemas/Schedule"
+                start_date:
+                  $ref: "#/components/schemas/Date"
+                end_date:
+                  description: The last day the commitment applies (inclusive); null for open-ended. Not before start_date.
+                  oneOf:
+                    - $ref: "#/components/schemas/Date"
+                    - type: "null"
+                priority:
+                  description: Optional; null when not prioritised.
+                  oneOf:
+                    - $ref: "#/components/schemas/CommitmentPriority"
+                    - type: "null"
+                notes:
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "200":
+          description: The changed commitment.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Commitment"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteCommitment
+      x-ledger-access: commitments:write
+      summary: Delete a commitment definition
+      description: |
+        Deletes the definition. Requires If-Match; a stale version is a 409
+        version_conflict. Audited (commitment.deleted). Once occurrences and
+        payment history exist (tasks C2, C3), a commitment they refer to
+        cannot be deleted (409 conflict); set end_date to stop it instead.
+      tags: [commitments]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Deleted.
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: meta
     description: The API description itself.
@@ -287,6 +500,8 @@ tags:
     description: Who the caller is and the grant vocabulary.
   - name: users
     description: User accounts and roles (administrative).
+  - name: commitments
+    description: Recurring commitment definitions.
 components:
   parameters:
     Limit:
@@ -323,6 +538,135 @@ components:
       schema:
         type: string
   schemas:
+    CommitmentKind:
+      type: string
+      enum: [service, server, domain, subscription, debt_repayment]
+      description: What the commitment pays for. server covers servers and VPSs.
+    CommitmentPriority:
+      type: string
+      enum: [essential, important, flexible]
+      description: How important paying on time is (decision D14, three levels).
+    Currency:
+      type: string
+      description: An ISO 4217 currency code, three upper-case letters.
+      pattern: "^[A-Z]{3}$"
+      examples: ["EUR"]
+    Decimal:
+      type: string
+      description: An exact decimal number as a string, keeping its scale ("12.50"). Never a JSON number.
+      pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+      examples: ["12.50"]
+    PositiveMoney:
+      type: object
+      description: An exact amount greater than zero with its currency (ADR-0005). It is never converted.
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount:
+          $ref: "#/components/schemas/Decimal"
+        currency:
+          $ref: "#/components/schemas/Currency"
+    Date:
+      type: string
+      format: date
+      description: A calendar date, YYYY-MM-DD.
+      examples: ["2026-11-20"]
+    Schedule:
+      description: |
+        When a commitment falls due: a versioned schedule spec (ADR-0024).
+        version is 1, the only version; a later version is added beside it,
+        never by changing what version 1 means. Calendar rules (decision
+        D6): a day past the end of a month falls on that month's last day,
+        and an annual February 29 falls on February 28 in years that are not
+        leap years. A monthly schedule counts its interval from the month of
+        start_date.
+      oneOf:
+        - $ref: "#/components/schemas/MonthlySchedule"
+        - $ref: "#/components/schemas/AnnualSchedule"
+      discriminator:
+        propertyName: frequency
+        mapping:
+          monthly: "#/components/schemas/MonthlySchedule"
+          annual: "#/components/schemas/AnnualSchedule"
+    MonthlySchedule:
+      type: object
+      additionalProperties: false
+      required: [version, frequency, interval, day]
+      properties:
+        version:
+          type: integer
+          const: 1
+        frequency:
+          type: string
+          const: monthly
+        interval:
+          type: integer
+          minimum: 1
+          maximum: 120
+          description: Months between due dates (1 = every month, 3 = quarterly).
+        day:
+          type: integer
+          minimum: 1
+          maximum: 31
+      examples:
+        - {version: 1, frequency: monthly, interval: 1, day: 15}
+    AnnualSchedule:
+      type: object
+      additionalProperties: false
+      required: [version, frequency, month, day]
+      properties:
+        version:
+          type: integer
+          const: 1
+        frequency:
+          type: string
+          const: annual
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        day:
+          type: integer
+          minimum: 1
+          maximum: 31
+          description: A day that exists in the month in a leap year.
+      examples:
+        - {version: 1, frequency: annual, month: 2, day: 29}
+    Commitment:
+      type: object
+      description: A recurring commitment definition. Dated occurrences and payment state are not part of it.
+      required: [id, name, kind, amount, schedule, start_date, end_date, priority, notes, version, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+        kind:
+          $ref: "#/components/schemas/CommitmentKind"
+        amount:
+          $ref: "#/components/schemas/PositiveMoney"
+        schedule:
+          $ref: "#/components/schemas/Schedule"
+        start_date:
+          $ref: "#/components/schemas/Date"
+        end_date:
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        priority:
+          oneOf:
+            - $ref: "#/components/schemas/CommitmentPriority"
+            - type: "null"
+        notes:
+          type: [string, "null"]
+        version:
+          $ref: "#/components/schemas/Version"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
     Role:
       type: string
       enum: [administrator, read-only]
@@ -452,6 +796,17 @@ components:
         field:
           type: string
           description: The request field or parameter the error is about.
+        errors:
+          type: array
+          description: Every invalid field, when a validation found more than one problem (field and message repeat the first). Nested members are named with dots, for example schedule.day or amount.currency.
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string
         request_id:
           type: string
         reconciliation:

@@ -56,6 +56,13 @@ const (
 	UserEnabled     Action = "user.enabled"
 )
 
+// Commitment actions (task C1). Details never carry names or notes.
+const (
+	CommitmentCreated Action = "commitment.created" // Details: kind, currency
+	CommitmentUpdated Action = "commitment.updated" // Details: fields (comma-separated names of changed fields)
+	CommitmentDeleted Action = "commitment.deleted" // Details: kind
+)
+
 // Event is one audited change.
 type Event struct {
 	Action     Action

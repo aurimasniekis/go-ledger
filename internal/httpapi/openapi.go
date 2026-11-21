@@ -12,6 +12,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
@@ -46,7 +47,8 @@ func yamlToJSON(doc []byte) ([]byte, error) {
 // requests; TestOpenAPIContract registers the routes with zero Deps and never
 // calls them.
 type Deps struct {
-	Users users.Store
+	Users       users.Store
+	Commitments commitments.Store
 }
 
 // RegisterAPI registers every route of the Management API under [APIPrefix].
@@ -70,6 +72,7 @@ func RegisterAPI(s *Server, d Deps) {
 	}))
 	registerAuthz(s)
 	registerUsers(s, d.Users)
+	registerCommitments(s, d.Commitments)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {

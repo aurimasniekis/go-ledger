@@ -1,0 +1,262 @@
+// Package commitments persists recurring commitment definitions (task C1,
+// ADR-0024) in the table of migration 0007_commitments. It implements
+// [commitments.Store]: every write runs in one transaction and records its
+// audit event through a [store.AuditWriter].
+package commitments
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
+	"github.com/aurimasniekis/go-ledger/internal/store"
+	"github.com/aurimasniekis/go-ledger/internal/store/sqlvalue"
+)
+
+// Store implements [commitments.Store] on a [store.DB].
+type Store struct {
+	db    *store.DB
+	audit store.AuditWriter
+	now   func() time.Time
+	newID func() string
+}
+
+var _ commitments.Store = (*Store)(nil)
+
+// New returns a Store. aw records audit events and is required; now and newID
+// default to time.Now and resource.NewID.
+func New(db *store.DB, aw store.AuditWriter, now func() time.Time, newID func() string) *Store {
+	if aw == nil {
+		panic("commitments.New: an audit writer is required")
+	}
+	if now == nil {
+		now = time.Now
+	}
+	if newID == nil {
+		newID = resource.NewID
+	}
+	return &Store{db: db, audit: aw, now: now, newID: newID}
+}
+
+const table = "commitments"
+
+const columns = "id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, version, created_at, updated_at"
+
+type querier interface {
+	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
+}
+
+func scan(row interface{ Scan(...any) error }) (commitments.Commitment, error) {
+	var c commitments.Commitment
+	var kind, schedule string
+	var amount sqlvalue.Amount
+	var currency sqlvalue.Currency
+	var start sqlvalue.Date
+	var end, priority, notes sql.NullString
+	var created, updated store.Timestamp
+	if err := row.Scan(&c.ID, &c.Name, &kind, &amount, &currency, &schedule, &start, &end, &priority, &notes, &c.Version, &created, &updated); err != nil {
+		return commitments.Commitment{}, err
+	}
+	m, err := sqlvalue.Money(amount, currency)
+	if err != nil {
+		return commitments.Commitment{}, err
+	}
+	s, errs := commitments.ParseSchedule([]byte(schedule), "schedule")
+	if len(errs) > 0 {
+		return commitments.Commitment{}, errors.Join(errors.New("stored schedule"), commitments.Validation(errs))
+	}
+	c.Kind, c.Amount, c.Schedule, c.StartDate = commitments.Kind(kind), m, s, start.Date
+	if end.Valid {
+		var d sqlvalue.Date
+		if err := d.Scan(end.String); err != nil {
+			return commitments.Commitment{}, err
+		}
+		c.EndDate = &d.Date
+	}
+	if priority.Valid {
+		p := commitments.Priority(priority.String)
+		c.Priority = &p
+	}
+	if notes.Valid {
+		c.Notes = &notes.String
+	}
+	c.CreatedAt, c.UpdatedAt = created.Time, updated.Time
+	return c, nil
+}
+
+func get(ctx context.Context, q querier, id string) (commitments.Commitment, error) {
+	c, err := scan(q.QueryRowContext(ctx, "SELECT "+columns+" FROM "+table+" WHERE id = ?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return commitments.Commitment{}, resource.ErrNotFound
+	}
+	return c, err
+}
+
+// args returns the column values of f in the order name, kind, amount,
+// currency, schedule, start_date, end_date, priority, notes.
+func args(f commitments.Fields) ([]any, error) {
+	schedule, err := json.Marshal(f.Schedule)
+	if err != nil {
+		return nil, err
+	}
+	var end, priority any
+	if f.EndDate != nil {
+		end = sqlvalue.Date{Date: *f.EndDate}
+	}
+	if f.Priority != nil {
+		priority = string(*f.Priority)
+	}
+	return []any{f.Name, string(f.Kind), sqlvalue.Amount{Decimal: f.Amount.Amount()}, sqlvalue.Currency{Currency: f.Amount.Currency()},
+		string(schedule), sqlvalue.Date{Date: f.StartDate}, end, priority, f.Notes}, nil
+}
+
+// Create validates f, inserts it at version 1 and records commitment.created.
+func (s *Store) Create(ctx context.Context, actor audit.Actor, f commitments.Fields) (commitments.Commitment, error) {
+	if err := commitments.Validation(f.Validate()); err != nil {
+		return commitments.Commitment{}, err
+	}
+	vals, err := args(f)
+	if err != nil {
+		return commitments.Commitment{}, err
+	}
+	now := s.now().UTC()
+	c := commitments.Commitment{ID: s.newID(), Fields: f, Version: 1, CreatedAt: now, UpdatedAt: now}
+	err = s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		all := append([]any{c.ID}, vals...)
+		all = append(all, store.Timestamp{Time: now}, store.Timestamp{Time: now})
+		if _, err := tx.ExecContext(ctx, "INSERT INTO "+table+" (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, created_at, updated_at)"+
+			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", all...); err != nil {
+			return err
+		}
+		return s.audit.WriteAudit(ctx, tx, commitments.CreatedEvent(actor, c, now))
+	})
+	if err != nil {
+		return commitments.Commitment{}, err
+	}
+	return c, nil
+}
+
+// Get returns one commitment or resource.ErrNotFound.
+func (s *Store) Get(ctx context.Context, id string) (commitments.Commitment, error) {
+	var c commitments.Commitment
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		c, err = get(ctx, tx, id)
+		return err
+	})
+	return c, err
+}
+
+func in(column string, n int) string {
+	return column + " IN (?" + strings.Repeat(", ?", n-1) + ")"
+}
+
+// List returns up to f.Limit+1 commitments after f.After in ID order.
+func (s *Store) List(ctx context.Context, f commitments.ListFilter) ([]commitments.Commitment, error) {
+	where := []string{"id > ?"}
+	vals := []any{f.After}
+	if len(f.Kinds) > 0 {
+		where = append(where, in("kind", len(f.Kinds)))
+		for _, k := range f.Kinds {
+			vals = append(vals, string(k))
+		}
+	}
+	if len(f.Priorities) > 0 {
+		where = append(where, in("priority", len(f.Priorities)))
+		for _, p := range f.Priorities {
+			vals = append(vals, string(p))
+		}
+	}
+	if len(f.Currencies) > 0 {
+		where = append(where, in("currency", len(f.Currencies)))
+		for _, c := range f.Currencies {
+			vals = append(vals, c.Code())
+		}
+	}
+	vals = append(vals, f.Limit+1)
+	var out []commitments.Commitment
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT "+columns+" FROM "+table+" WHERE "+strings.Join(where, " AND ")+" ORDER BY id LIMIT ?", vals...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			c, err := scan(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, c)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// Update replaces the fields when the commitment still has version expected
+// and records commitment.updated with the names of the changed fields. When
+// nothing changes it writes nothing, keeps the version and records nothing.
+func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expected int64, f commitments.Fields) (commitments.Commitment, error) {
+	if err := commitments.Validation(f.Validate()); err != nil {
+		return commitments.Commitment{}, err
+	}
+	vals, err := args(f)
+	if err != nil {
+		return commitments.Commitment{}, err
+	}
+	var out commitments.Commitment
+	err = s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		before, err := get(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if before.Version != expected {
+			return &resource.VersionConflictError{Expected: expected, Current: before.Version}
+		}
+		changed := commitments.ChangedFields(before.Fields, f)
+		if len(changed) == 0 {
+			out = before
+			return nil
+		}
+		now := s.now().UTC()
+		set := "name = ?, kind = ?, amount = ?, currency = ?, schedule = ?, start_date = ?, end_date = ?, priority = ?, notes = ?, updated_at = ?"
+		if _, err := store.UpdateVersioned(ctx, tx, table, set, id, expected, append(vals, store.Timestamp{Time: now})...); err != nil {
+			return err
+		}
+		if err := s.audit.WriteAudit(ctx, tx, commitments.UpdatedEvent(actor, id, changed, now)); err != nil {
+			return err
+		}
+		out, err = get(ctx, tx, id)
+		return err
+	})
+	return out, err
+}
+
+// Delete removes the commitment when it still has version expected and
+// records commitment.deleted. Rows that refer to it (occurrences, once they
+// exist) block the delete through their foreign keys: that is ErrInUse.
+func (s *Store) Delete(ctx context.Context, actor audit.Actor, id string, expected int64) error {
+	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		before, err := get(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := store.DeleteVersioned(ctx, tx, table, id, expected); err != nil {
+			if isForeignKey(err) {
+				return commitments.ErrInUse
+			}
+			return err
+		}
+		return s.audit.WriteAudit(ctx, tx, commitments.DeletedEvent(actor, before, s.now().UTC()))
+	})
+}
+
+func isForeignKey(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "FOREIGN KEY constraint failed")
+}
