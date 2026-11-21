@@ -794,8 +794,11 @@ func (s *Store) Reverse(ctx context.Context, actor audit.Actor, id string, expec
 //
 //  1. the confirmation is the match's latest change (no correction since);
 //  2. it is the person's latest match decision (no match event by them on any
-//     match since, compared by time and then insertion order, which a reused
-//     rowid cannot defeat): the undo notice is replaced by their next change (D37);
+//     match since, later by insertion order or later by time, so a clock
+//     stepped back cannot hide a later decision; rowid reuse cannot produce a
+//     later row with a lower rowid, and the one gap left is a later decision
+//     that was deleted, ADR-0045 limitations): the undo notice is replaced by
+//     their next change (D37);
 //  3. nothing else changed the occurrence since: its version is still the one
 //     the confirmation left (another match, a manual payment or its deletion,
 //     a status override, a terms change, a cancellation).
@@ -866,7 +869,7 @@ func (s *Store) Unconfirm(ctx context.Context, actor audit.Actor, id string, exp
 		}
 		// 2. It is the person's latest match decision.
 		var later int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_match_events WHERE actor_user = ? AND (at > ? OR (at = ? AND rowid > ?))", actor.UserID, lastAt, lastAt, lastRow).Scan(&later); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_match_events WHERE actor_user = ? AND (rowid > ? OR at > ?)", actor.UserID, lastRow, lastAt).Scan(&later); err != nil {
 			return err
 		}
 		if later > 0 {

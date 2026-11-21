@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
@@ -152,7 +153,7 @@ func TestUnconfirmTwiceRestoresTheSuggestionsReason(t *testing.T) {
 	}
 }
 
-// TestUnconfirmedHistoryIsDeletableOnlyWithTheSuggestion: after an unconfirm
+// TestUnconfirmedHistoryKeptOnlyWhileDecided: after an unconfirm
 // the match is a suggestion again, so history_kept no longer protects it
 // (ADR-0045 limitations); while confirmed it does.
 func TestUnconfirmedHistoryKeptOnlyWhileDecided(t *testing.T) {
@@ -303,6 +304,23 @@ func TestUnconfirmWindow(t *testing.T) {
 		// reuse them): give the later entry the lowest rowid.
 		f.mustExec("DROP TRIGGER payment_match_events_append_only")
 		f.mustExec("UPDATE payment_match_events SET rowid = -1, at = '2099-01-01T00:00:00.000000000Z' WHERE match_id = ?", other.Match.ID)
+		closed(t, f, c)
+	})
+	t.Run("a clock stepped back does not hide a later decision", func(t *testing.T) {
+		f := newFixture(t)
+		s, _ := f.suggestion()
+		f.clock.set(t0.Add(time.Hour))
+		c := f.confirmAs(alice, s)
+		// The clock steps back: the next decision is written with an earlier
+		// time but a later insertion order.
+		f.clock.set(t0)
+		rent := f.occurrence(f.commitment("800.00", "EUR", 2).ID, "2026-10")
+		b, err := f.ms.Create(f.ctx, audit.System, matches.New{TransactionID: f.tx("RENT 2026-10").ID, OccurrenceID: rent.ID, Amount: money.MustParse("800.00", "EUR"),
+			Origin: matches.OriginAutoRule, State: matches.StateSuggested, Reason: reason("rent suggestion")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.confirmAs(alice, b.Match)
 		closed(t, f, c)
 	})
 	t.Run("confirmed before provenance was recorded", func(t *testing.T) {
