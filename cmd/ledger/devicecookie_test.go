@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
@@ -348,7 +346,7 @@ func TestOIDCSecondFactorIssuesNoDeviceCookie(t *testing.T) {
 
 	e.clock.advance(time.Minute)
 	w, _ := e.callback(e.authorize(""))
-	const prefix = "/sign-in#second_factor="
+	prefix := secondFactorPrefix
 	if w.Code != 303 || !strings.HasPrefix(location(w), prefix) {
 		t.Fatalf("OIDC sign-in with TOTP: %d %q, want a second-factor challenge", w.Code, location(w))
 	}
@@ -374,11 +372,8 @@ func TestOIDCSecondFactorIssuesNoDeviceCookie(t *testing.T) {
 // A device cookie that cannot be stored does not fail the sign-in, but leaves
 // a warning for the operator. The warning never carries the token.
 func TestFailedDeviceCookieIssueIsLoggedWithoutTheToken(t *testing.T) {
-	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
 	e := newSignInEnv(t, nil)
+	logs := e.log // the logger newSignInEnv passes into buildAPI, as ledger serve does
 	if err := e.db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "CREATE TRIGGER refuse_device_cookies BEFORE INSERT ON device_cookies BEGIN SELECT RAISE(ABORT, 'device cookies refused for this test'); END")
 		return err

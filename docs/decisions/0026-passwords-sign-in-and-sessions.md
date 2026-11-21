@@ -94,8 +94,9 @@ outbound timeouts only).
    rarely meets it.
 10. **Audit.** New actions (ADR-0025's vocabulary, extended here): `auth.session_ended` (reason `signed_out` or
     `terminated`, target the session), `auth.password_changed` (by `self`, `administrator` or `host`;
-    `sessions_ended`, and `device_cookies_revoked` since D23-1b), `auth.reauthenticated` and `auth.reauthentication_failed`. Sign-in success is written in the
-    same transaction as the new session; failures with `Record`.
+    `sessions_ended`, and `device_cookies_revoked` since D23-1b), `auth.reauthenticated` and
+    `auth.reauthentication_failed`. Sign-in success is written in the same transaction as the new session; failures
+    with `Record`.
 11. **Host CLI.** `ledger auth set-password [--create ROLE] <username>` reads the password from the first line of
     standard input, needs `ledger serve` stopped (instance lock), ends the user's sessions and is audited as the
     system (`by: host`). It is how the first administrator gets a password without the UI. Standard input is read
@@ -113,7 +114,8 @@ outbound timeouts only).
   usernames locked). There is no way to sign in while that continues, and **restarting `ledger serve` is the only
   recovery**: it clears the in-memory counts, and the attacker can start again. The host CLI does not help, since it
   needs `ledger serve` stopped. This design (per-username lock, no exemption for known devices such as OWASP's
-  device cookie) was kept as an accepted risk until decision D23-1b, which adds the device-cookie exemption (see the amendment at the end).
+  device cookie) was kept as an accepted risk until decision D23-1b, which adds the device-cookie exemption (see
+  the amendment at the end).
   Persistent limits were rejected for now: a restart clears an attacker's counts too, but persisting would add a
   write per failed attempt.
 - Reserving attempts before hashing (rather than counting failures after it) is what makes the limits hold under

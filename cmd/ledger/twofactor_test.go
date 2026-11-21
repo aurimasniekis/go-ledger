@@ -419,7 +419,7 @@ func TestKEKChangeAndHostReset(t *testing.T) {
 	}
 	al := store.NewAuditLog(db)
 	clk := &clock{t: time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)}
-	parts, err := buildAPI(db, al, testAuthConfig(), testKEK, auth.NewArgon2id(cheapParams, 4), clk.now)
+	parts, err := buildAPI(db, al, testAuthConfig(), testKEK, auth.NewArgon2id(cheapParams, 4), clk.now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestKEKChangeAndHostReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := buildAPI(db, store.NewAuditLog(db), testAuthConfig(), "a different key-encryption key", auth.NewArgon2id(cheapParams, 4), clk.now)
+	other, err := buildAPI(db, store.NewAuditLog(db), testAuthConfig(), "a different key-encryption key", auth.NewArgon2id(cheapParams, 4), clk.now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestKEKChangeAndHostReset(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 	al = store.NewAuditLog(db)
-	final, _ := buildAPI(db, al, testAuthConfig(), testKEK, auth.NewArgon2id(cheapParams, 4), clk.now)
+	final, _ := buildAPI(db, al, testAuthConfig(), testKEK, auth.NewArgon2id(cheapParams, 4), clk.now, nil)
 	if iss, err := final.auth.SignIn(ctx, auth.SignInInput{Username: "carol", Password: testPassword, Address: "192.0.2.1"}); err != nil || iss.SecondFactor != nil || iss.Token == "" {
 		t.Fatalf("password-only after reset: %+v %v", iss.SecondFactor, err)
 	}
