@@ -321,6 +321,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Commitments: parts.commitments,
 		Occurrences: parts.commitments.Occurrences(),
 		Payments:    parts.payments,
+		Matches:     parts.matches,
 		Audit:       al,
 		Auth:        parts.auth,
 		Tokens:      parts.tokens,

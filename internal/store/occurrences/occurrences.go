@@ -35,6 +35,11 @@ import (
 // refuses to drop a paid occurrence.
 var DefaultEvidence = []string{
 	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id)",
+	// Payment matches (X1, ADR-0035): a confirmed match keeps its occurrence
+	// even while its transaction does not count (no longer reported), and a
+	// reversed one is payment history that is kept too. Suggestions and
+	// rejections do not: they are dropped with the occurrence.
+	"EXISTS (SELECT 1 FROM payment_matches pm WHERE pm.occurrence_id = o.id AND pm.state IN ('confirmed', 'reversed'))",
 }
 
 // Options configures a [Store].

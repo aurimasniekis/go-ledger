@@ -22,6 +22,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	matchstore "github.com/aurimasniekis/go-ledger/internal/store/matches"
 	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
 	tokenstore "github.com/aurimasniekis/go-ledger/internal/store/tokens"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
@@ -54,6 +55,7 @@ type apiParts struct {
 	users       *userstore.Store
 	commitments *commitmentstore.Store
 	payments    *paymentstore.Store
+	matches     *matchstore.Store
 	auth        *auth.Service
 	tokens      *tokens.Service
 	// oidc is single sign-on, set by ledger serve when it is configured.
@@ -73,7 +75,8 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.
 	if err != nil {
 		return apiParts{}, err
 	}
-	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil), auth: svc,
+	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil),
+		matches: matchstore.New(db, al, now, nil), auth: svc,
 		tokens: tokens.NewService(tokenstore.New(db, al), us, tokens.Options{Now: now})}, nil
 }
 

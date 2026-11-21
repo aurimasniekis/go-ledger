@@ -39,6 +39,16 @@ const (
 	CorrectionReversed Action = "correction.reversed" // Details: kind
 
 	ReportingTimezoneChanged Action = "settings.reporting_timezone_changed" // Details: from, to
+
+	// Payment matches (X1, ADR-0035). The target is the match. Details:
+	// occurrence_id, transaction_id, origin, from (the state before; none
+	// for a new match), currency. Never the amount, a reason or bank text.
+	PaymentMatchSuggested Action = "payment_match.suggested"
+	PaymentMatchConfirmed Action = "payment_match.confirmed"
+	PaymentMatchRejected  Action = "payment_match.rejected"
+	PaymentMatchUnmatched Action = "payment_match.unmatched"
+	PaymentMatchCorrected Action = "payment_match.corrected"
+	PaymentMatchReversed  Action = "payment_match.reversed"
 )
 
 // Fixed value sets for detail fields that are not identifiers.
@@ -59,7 +69,13 @@ var (
 	correctionKinds   = []string{"match", "unmatch", "payment_status", "categorisation", "other"}
 	overrideStatuses  = []string{"paid", "unpaid"}
 	overrideOrNone    = []string{"none", "paid", "unpaid"}
+	matchOrigins      = []string{"auto_rule", "model_suggestion", "user"}
+	matchFromStates   = []string{"none", "suggested", "confirmed", "rejected", "reversed"}
 )
+
+func matchFields() []Field {
+	return []Field{f("occurrence_id"), f("transaction_id"), f("origin", matchOrigins...), f("from", matchFromStates...), f("currency")}
+}
 
 // Field declares one allowed detail field. Enum, when set, lists the only
 // accepted values.
@@ -120,6 +136,13 @@ var Definitions = map[Action][]Field{
 	ManualPaymentDeleted:           {f("payment_id"), f("currency")},
 	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
 	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
+
+	PaymentMatchSuggested: matchFields(),
+	PaymentMatchConfirmed: matchFields(),
+	PaymentMatchRejected:  matchFields(),
+	PaymentMatchUnmatched: matchFields(),
+	PaymentMatchCorrected: matchFields(),
+	PaymentMatchReversed:  matchFields(),
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account
