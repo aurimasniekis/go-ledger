@@ -229,8 +229,8 @@ func TestAutomationActorIsHeldToTheAutoRules(t *testing.T) {
 }
 
 // TestAutomationNeverUndoesAPersonsDecision is decision D33: automation may
-// not reject, unmatch or reverse a match a user or token decided, corrected or
-// suggested; it may drop its own suggestions.
+// never unmatch or reverse, and may reject only a suggestion with no person in
+// its history.
 func TestAutomationNeverUndoesAPersonsDecision(t *testing.T) {
 	tok := audit.Actor{Kind: audit.ActorToken, UserID: alice.UserID, TokenID: "01JD3Y4C8V9M2Q7W5R6T0XZBNT"}
 	for _, sys := range []audit.Actor{audit.System, {Kind: audit.ActorAnonymous}} {
@@ -330,15 +330,31 @@ func TestAutomationNeverUndoesAPersonsDecision(t *testing.T) {
 					t.Errorf("reject own suggestion: %v", err)
 				}
 			})
-			t.Run("automation may undo its own confirmation", func(t *testing.T) {
+			t.Run("automation cannot undo its own confirmation", func(t *testing.T) {
+				for _, u := range []string{"unmatch", "reverse"} {
+					f := newFixture(t)
+					rent, o := f.tx("RENT 2026-10"), f.occurrence(f.commitment("800.00", "EUR", 2).ID, "2026-10")
+					c, err := f.ms.Create(f.ctx, sys, matches.New{TransactionID: rent.ID, OccurrenceID: o.ID, Amount: money.MustParse("800.00", "EUR"), Origin: matches.OriginAutoRule, State: matches.StateConfirmed})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := undo[u](f, c.Match, sys); !errors.Is(err, matches.ErrActorUndo) {
+						t.Errorf("automation %s of its own confirmation: %v", u, err)
+					}
+					if got, err := f.ms.Get(f.ctx, c.Match.ID); err != nil || got.State != matches.StateConfirmed || got.Version != c.Match.Version {
+						t.Errorf("match changed: %+v %v", got, err)
+					}
+				}
+			})
+			t.Run("a suggestion a token made cannot be rejected by automation", func(t *testing.T) {
 				f := newFixture(t)
 				rent, o := f.tx("RENT 2026-10"), f.occurrence(f.commitment("800.00", "EUR", 2).ID, "2026-10")
-				c, err := f.ms.Create(f.ctx, sys, matches.New{TransactionID: rent.ID, OccurrenceID: o.ID, Amount: money.MustParse("800.00", "EUR"), Origin: matches.OriginAutoRule, State: matches.StateConfirmed})
+				s, err := f.ms.Create(f.ctx, tok, matches.New{TransactionID: rent.ID, OccurrenceID: o.ID, Amount: money.MustParse("800.00", "EUR"), Origin: matches.OriginModel, State: matches.StateSuggested})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := undo["unmatch"](f, c.Match, sys); err != nil {
-					t.Errorf("unmatch own confirmation: %v", err)
+				if err := undo["reject"](f, s.Match, sys); !errors.Is(err, matches.ErrActorUndo) {
+					t.Errorf("reject a token's suggestion: %v", err)
 				}
 			})
 		})
