@@ -360,6 +360,7 @@ func TestErrorClassification(t *testing.T) {
 		{"bank rate limit, no header: EB's 6 h guidance", fault{status: 429, file: "error_rate_limit.json"}, banking.KindRateLimited, "", "ASPSP_RATE_LIMIT_EXCEEDED", 6 * time.Hour},
 		{"bank rate limit with Retry-After", fault{status: 429, file: "error_rate_limit.json", header: http.Header{"Retry-After": {"120"}}}, banking.KindRateLimited, "", "ASPSP_RATE_LIMIT_EXCEEDED", 2 * time.Minute},
 		{"bare 429 with HTTP-date", fault{status: 429, raw: "slow down", header: http.Header{"Retry-After": {t0.Add(30 * time.Second).Format(http.TimeFormat)}}}, banking.KindRateLimited, "", "http_429", 30 * time.Second},
+		{"Retry-After date beyond 7 days is ignored", fault{status: 429, raw: "slow down", header: http.Header{"Retry-After": {t0.Add(8 * 24 * time.Hour).Format(http.TimeFormat)}}}, banking.KindRateLimited, "", "http_429", 0},
 		{"bare 429 without Retry-After", fault{status: 429, raw: "{}"}, banking.KindRateLimited, "", "http_429", 0},
 		{"bank error", fault{status: 500, file: "error_aspsp.json"}, banking.KindRetryable, "", "ASPSP_ERROR", 0},
 		{"outage page", fault{status: 503, raw: "<html>maintenance SECRET-ECHO</html>", header: http.Header{"Retry-After": {"60"}}}, banking.KindRetryable, "", "http_503", time.Minute},

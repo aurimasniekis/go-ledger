@@ -28,7 +28,7 @@ type wireStartAuthorization struct {
 	ASPSP       wireASPSP  `json:"aspsp"`
 	State       string     `json:"state"`
 	RedirectURL string     `json:"redirect_url"`
-	PSUType     string     `json:"psu_type,omitempty"`
+	PSUType     string     `json:"psu_type"`
 }
 
 type wireStartAuthorizationResponse struct {

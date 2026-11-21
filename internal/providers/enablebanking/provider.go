@@ -45,7 +45,7 @@ func New(cfg Config) (*Provider, error) {
 		return nil, errBaseURL
 	}
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{Timeout: DefaultRequestTimeout}
+		cfg.HTTPClient = NewHTTPClient()
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -74,8 +74,10 @@ func New(cfg Config) (*Provider, error) {
 			StableEntryReferences: true,
 			// Consent and history limits are per bank (Institution);
 			// Enable Banking documents no provider-wide value.
-			MaxConsentValidity:      0,
-			MaxHistoryDays:          0,
+			MaxConsentValidity: 0,
+			MaxHistoryDays:     0,
+			// Approximate and per bank; Enable Banking documents "about four"
+			// [U: not a provider-wide or exact limit].
 			BackgroundFetchesPerDay: 4,
 		},
 		details: map[string]banking.Account{},
@@ -150,18 +152,26 @@ func (p *Provider) StartConsent(ctx context.Context, req banking.ConsentRequest)
 	if req.Institution.ID == "" || req.State == "" || req.RedirectURL == "" || req.ValidUntil.IsZero() {
 		return banking.ConsentStart{}, p.newError(opStartConsent, banking.KindPermanent, banking.ReasonNone, "invalid_request", nil)
 	}
+	psuType := req.PSUType
+	if psuType == "" {
+		psuType = banking.PSUPersonal
+	}
+	now := p.now().UTC()
 	validUntil := req.ValidUntil.UTC()
 	if m := req.Institution.MaxConsentValidity; m > 0 {
-		if limit := p.now().UTC().Add(m - time.Minute); validUntil.After(limit) {
+		if limit := now.Add(m - time.Minute); validUntil.After(limit) {
 			validUntil = limit
 		}
+	}
+	if !validUntil.After(now) {
+		return banking.ConsentStart{}, p.newError(opStartConsent, banking.KindPermanent, banking.ReasonNone, "invalid_request", nil)
 	}
 	body := wireStartAuthorization{
 		Access:      wireAccess{ValidUntil: validUntil.Format(time.RFC3339)},
 		ASPSP:       wireASPSP{Name: req.Institution.ID, Country: req.Institution.Country},
 		State:       req.State,
 		RedirectURL: req.RedirectURL,
-		PSUType:     string(req.PSUType),
+		PSUType:     string(psuType),
 	}
 	var res wireStartAuthorizationResponse
 	if err := p.do(ctx, opStartConsent, http.MethodPost, "/auth", nil, body, &res); err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"time"
@@ -27,8 +28,21 @@ const MaxTokenTTL = 24 * time.Hour
 // DefaultTokenTTL is how long a signed JWT is used before a new one is made.
 const DefaultTokenTTL = time.Hour
 
-// DefaultRequestTimeout bounds one HTTP call when no client is given.
-const DefaultRequestTimeout = 60 * time.Second
+// DefaultRequestTimeout bounds one whole HTTP call when no client is given
+// (operator decision D17: 30 s total).
+const DefaultRequestTimeout = 30 * time.Second
+
+// DefaultConnectTimeout bounds establishing a connection when no client is
+// given (operator decision D17: 10 s).
+const DefaultConnectTimeout = 10 * time.Second
+
+// NewHTTPClient returns the default outbound client: a 10 s connect timeout
+// and a 30 s total timeout (D17).
+func NewHTTPClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = (&net.Dialer{Timeout: DefaultConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
+	return &http.Client{Transport: tr, Timeout: DefaultRequestTimeout}
+}
 
 // defaultMaxResponseBytes bounds a response body.
 const defaultMaxResponseBytes = 16 << 20
@@ -56,7 +70,7 @@ type Config struct {
 
 	// BaseURL defaults to [DefaultBaseURL]; tests point it at a test server.
 	BaseURL string
-	// HTTPClient defaults to a client with [DefaultRequestTimeout].
+	// HTTPClient defaults to [NewHTTPClient].
 	HTTPClient *http.Client
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time

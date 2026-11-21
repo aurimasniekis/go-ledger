@@ -207,6 +207,9 @@ func (p *Provider) rateLimited(op string, resp *http.Response, code string, caus
 	return e
 }
 
+// maxRetryAfter bounds a Retry-After value, as seconds or as a date.
+const maxRetryAfter = 7 * 24 * time.Hour
+
 // retryAfter parses a Retry-After header: delay seconds or an HTTP date.
 func retryAfter(h string, now time.Time) (time.Duration, bool) {
 	h = strings.TrimSpace(h)
@@ -214,13 +217,15 @@ func retryAfter(h string, now time.Time) (time.Duration, bool) {
 		return 0, false
 	}
 	if n, err := strconv.ParseInt(h, 10, 64); err == nil {
-		if n <= 0 || n > int64(7*24*time.Hour/time.Second) {
+		if n <= 0 || n > int64(maxRetryAfter/time.Second) {
 			return 0, false
 		}
 		return time.Duration(n) * time.Second, true
 	}
 	if t, err := http.ParseTime(h); err == nil && t.After(now) {
-		return t.Sub(now), true
+		if d := t.Sub(now); d <= maxRetryAfter {
+			return d, true
+		}
 	}
 	return 0, false
 }
