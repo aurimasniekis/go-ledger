@@ -31,7 +31,7 @@ func testAuthConfig() config.Auth {
 
 func mustParts(t *testing.T, db *store.DB, al auditLog) apiParts {
 	t.Helper()
-	p, err := buildAPI(db, al, testAuthConfig(), testKEK, auth.NewArgon2id(cheapParams, 4), nil)
+	p, err := buildAPI(db, al, testAuthConfig(), testKEK, auth.NewArgon2id(cheapParams, 4), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

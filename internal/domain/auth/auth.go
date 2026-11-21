@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -160,7 +161,7 @@ type Store interface {
 	// SetPassword stores hash for userID and deletes every session of the user
 	// except keep (may be empty) and every device cookie of the user, then
 	// writes events(ended) in the same transaction. resource.ErrNotFound for an unknown user.
-	SetPassword(ctx context.Context, userID, hash, keep string, at time.Time, events func(ended int) []audit.Event) (ended int, err error)
+	SetPassword(ctx context.Context, userID, hash, keep string, at time.Time, events func(ended, revokedCookies int) []audit.Event) (ended int, err error)
 	CreateSession(ctx context.Context, s Session, events ...audit.Event) error
 	// SessionByTokenHash returns resource.ErrNotFound for no such session.
 	SessionByTokenHash(ctx context.Context, tokenHash string) (Session, error)
@@ -212,6 +213,7 @@ type Service struct {
 	rec        audit.Recorder
 	now        func() time.Time
 	newID      func() string
+	log        *slog.Logger
 	accounts   *Limiter
 	addresses  *Limiter
 	// sealer seals TOTP secrets; nil disables enrolment (ErrTwoFactorUnavailable).
@@ -230,6 +232,9 @@ type Service struct {
 type Options struct {
 	Now   func() time.Time
 	NewID func() string
+	// Logger receives device cookies that could not be issued (the sign-in
+	// still succeeds); slog.Default when nil.
+	Logger *slog.Logger
 	// Sealer seals TOTP secrets (NewKEKSealer with TOTPPurpose). Without it,
 	// TOTP cannot be enrolled or checked; recovery codes still work.
 	Sealer Sealer
@@ -253,6 +258,9 @@ func NewService(cfg Config, st Store, principals Principals, hasher Hasher, rec 
 	if o.NewID == nil {
 		o.NewID = resource.NewID
 	}
+	if o.Logger == nil {
+		o.Logger = slog.Default()
+	}
 	if cfg.OIDC.Provisioning && o.Users == nil {
 		return nil, errors.New("auth: OIDC provisioning needs a user creator")
 	}
@@ -260,7 +268,7 @@ func NewService(cfg Config, st Store, principals Principals, hasher Hasher, rec 
 	if err != nil {
 		return nil, err
 	}
-	return &Service{cfg: cfg, store: st, principals: principals, hasher: hasher, rec: rec, now: o.Now, newID: o.NewID,
+	return &Service{cfg: cfg, store: st, principals: principals, hasher: hasher, rec: rec, now: o.Now, newID: o.NewID, log: o.Logger,
 		accounts: NewLimiter(cfg.AccountLimit, DefaultLimiterKeys, o.Now), addresses: NewLimiter(cfg.AddressLimit, DefaultLimiterKeys, o.Now),
 		sealer: o.Sealer, users: o.Users, dummy: dummy}, nil
 }
@@ -702,9 +710,9 @@ func (s *Service) SetPassword(ctx context.Context, actor authz.Principal, system
 		}
 	}
 	now := s.now().UTC()
-	return s.store.SetPassword(ctx, target, hash, keep, now, func(ended int) []audit.Event {
+	return s.store.SetPassword(ctx, target, hash, keep, now, func(ended, revoked int) []audit.Event {
 		return []audit.Event{{Action: audit.PasswordChanged, Actor: a, TargetType: "user", TargetID: target, At: now,
-			Details: map[string]string{"by": by, "sessions_ended": strconv.Itoa(ended)}}}
+			Details: map[string]string{"by": by, "sessions_ended": strconv.Itoa(ended), "device_cookies_revoked": strconv.Itoa(revoked)}}}
 	})
 }
 

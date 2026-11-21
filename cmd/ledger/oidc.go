@@ -95,7 +95,7 @@ func hostCommand(name, usage string, args []string, stderr io.Writer, env opsEnv
 	}
 	done = func() { _ = db.Close(); _ = lock.Close() }
 	al := store.NewAuditLog(db)
-	parts, err = buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now)
+	parts, err = buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now, nil)
 	if err == nil {
 		cred, err = authstore.New(db, al).CredentialByUsername(ctx, strings.ToLower(username))
 		if errors.Is(err, resource.ErrNotFound) {

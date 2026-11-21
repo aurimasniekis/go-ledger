@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -64,14 +65,15 @@ type apiParts struct {
 
 // buildAPI builds the API's stores and services on db. Changes record their
 // audit entries through al in the same transaction (ADR-0025). kek is the
-// key-encryption key that seals TOTP secrets (ADR-0030).
-func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.Hasher, now func() time.Time) (apiParts, error) {
+// key-encryption key that seals TOTP secrets (ADR-0030). log receives the
+// authentication service's warnings; nil means slog's default logger.
+func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.Hasher, now func() time.Time, log *slog.Logger) (apiParts, error) {
 	us := userstore.New(db, al, now, nil)
 	sealer, err := auth.NewKEKSealer(kek, auth.TOTPPurpose)
 	if err != nil {
 		return apiParts{}, err
 	}
-	svc, err := auth.NewService(authConfig(c), authstore.New(db, al), us, hasher, recorder{db: db, w: al}, auth.Options{Now: now, Sealer: sealer, Users: us})
+	svc, err := auth.NewService(authConfig(c), authstore.New(db, al), us, hasher, recorder{db: db, w: al}, auth.Options{Now: now, Sealer: sealer, Users: us, Logger: log})
 	if err != nil {
 		return apiParts{}, err
 	}
@@ -184,7 +186,7 @@ func runAuth(args []string, stdout, stderr io.Writer, env opsEnv) int {
 	}
 	defer func() { _ = db.Close() }()
 	al := store.NewAuditLog(db)
-	parts, err := buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now)
+	parts, err := buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now, nil)
 	if err != nil {
 		say(stderr, "ledger auth: "+err.Error())
 		return 1
@@ -252,7 +254,7 @@ func runReset2FA(args []string, stdout, stderr io.Writer, env opsEnv) int {
 	}
 	defer func() { _ = db.Close() }()
 	al := store.NewAuditLog(db)
-	parts, err := buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now)
+	parts, err := buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now, nil)
 	if err != nil {
 		say(stderr, "ledger auth: "+err.Error())
 		return 1

@@ -12,7 +12,7 @@ const (
 	// Sessions and credentials (A2, ADR-0026). The target of a session event
 	// is the session; of a password or re-authentication event, the user.
 	SessionEnded           Action = "auth.session_ended"           // Details: reason (signed_out, terminated)
-	PasswordChanged        Action = "auth.password_changed"        // Details: by (self, administrator, host), sessions_ended
+	PasswordChanged        Action = "auth.password_changed"        // Details: by (self, administrator, host), sessions_ended, device_cookies_revoked
 	Reauthenticated        Action = "auth.reauthenticated"         // Details: method
 	ReauthenticationFailed Action = "auth.reauthentication_failed" // Details: method, reason, device (known)
 	// A one-time recovery sign-in issued from the host (break-glass, A6,
@@ -101,7 +101,7 @@ var Definitions = map[Action][]Field{
 	SignInFailed:    {f("method", signInMethods...), f("reason", signInReasons...), f("device", "known")},
 
 	SessionEnded:           {f("reason", sessionEndReasons...)},
-	PasswordChanged:        {f("by", passwordChangedBy...), f("sessions_ended")},
+	PasswordChanged:        {f("by", passwordChangedBy...), f("sessions_ended"), f("device_cookies_revoked")},
 	Reauthenticated:        {f("method", signInMethods...)},
 	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...), f("device", "known")},
 	RecoverySignInIssued:   {f("by", "host"), f("expires_at")},
