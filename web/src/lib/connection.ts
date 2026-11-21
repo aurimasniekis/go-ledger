@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { NetworkError } from '@/lib/api'
 
 const subscribe = (cb: () => void) => {
   window.addEventListener('online', cb)
@@ -14,7 +15,7 @@ export function useOnline(): boolean {
   return useSyncExternalStore(subscribe, () => navigator.onLine, () => true)
 }
 
-/** A fetch that never reached the server (offline, refused, DNS) rejects with a TypeError, not an ApiError. */
+/** apiFetch wraps a fetch that never reached the server in a NetworkError; a bare TypeError is a programming error and is not "disconnected". */
 export function isNetworkError(e: unknown): boolean {
-  return e instanceof TypeError
+  return e instanceof NetworkError
 }

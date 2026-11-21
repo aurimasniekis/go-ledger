@@ -67,7 +67,7 @@ type Deps struct {
 	// Matches stores payment matches between bank transactions and
 	// occurrences (ADR-0035).
 	Matches matches.Store
-	// Matching runs the automatic payment matching (ADR-0038).
+	// Matching runs the automatic payment matching (ADR-0039).
 	Matching MatchingRunner
 	// Audit reads the audit log.
 	Audit audit.Reader
@@ -77,6 +77,8 @@ type Deps struct {
 	Tokens *tokens.Service
 	// OIDC is single sign-on (ADR-0033); nil when it is not configured.
 	OIDC *OIDCDeps
+	// MCP serves POST /mcp (internal/mcpserver); nil means MCP is turned off.
+	MCP http.Handler
 	// Zone is the reporting time zone (D5): it decides "today" for default
 	// effective dates and the materialisation horizon. Now defaults to
 	// time.Now.
@@ -117,6 +119,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
 	registerMatching(s, d.Matching)
+	registerMCP(s, d.MCP)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {

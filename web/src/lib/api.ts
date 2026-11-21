@@ -17,6 +17,14 @@ export interface ErrorBody {
   reconciliation?: { current_version: number; current?: unknown }
 }
 
+/** The request never reached the server (offline, refused, DNS). Any other thrown error is a defect, not a connection problem. */
+export class NetworkError extends Error {
+  constructor(cause?: unknown) {
+    super('Cannot reach the server.', { cause })
+    this.name = 'NetworkError'
+  }
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
@@ -26,6 +34,8 @@ export class ApiError extends Error {
   readonly requestId?: string
   /** Seconds from Retry-After (rate_limited), when the server sent one. */
   readonly retryAfter?: number
+  /** On a version conflict (409/412): the server's current version, and its current state when sent. */
+  readonly reconciliation?: ErrorBody['reconciliation']
 
   constructor(status: number, body: Partial<ErrorBody>, retryAfter?: number) {
     super(body.message ?? `request failed with status ${status}`)
@@ -36,6 +46,7 @@ export class ApiError extends Error {
     this.errors = body.errors?.length ? body.errors : body.field ? [{ field: body.field, message: this.message }] : []
     this.requestId = body.request_id
     this.retryAfter = retryAfter
+    this.reconciliation = body.reconciliation
   }
 }
 
@@ -75,7 +86,14 @@ export async function apiFetch<T>(path: string, init: ApiInit = {}): Promise<T> 
     body = JSON.stringify(json)
     headers['Content-Type'] = method === 'PATCH' ? 'application/merge-patch+json' : 'application/json'
   }
-  const res = await fetch(path, { ...rest, method, headers, body })
+  let res: Response
+  try {
+    res = await fetch(path, { ...rest, method, headers, body })
+  } catch (e) {
+    // fetch rejects with a TypeError when the request could not be made; an abort is not a connection problem.
+    if (e instanceof TypeError) throw new NetworkError(e)
+    throw e
+  }
   if (!res.ok) {
     let errBody: Partial<ErrorBody> = {}
     try {

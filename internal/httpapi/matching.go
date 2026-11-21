@@ -9,7 +9,7 @@ import (
 )
 
 // PaymentMatchingRunsPath starts an automatic payment-matching run (task X2,
-// ADR-0038).
+// ADR-0039).
 const PaymentMatchingRunsPath = APIPrefix + "/payment-matching/runs"
 
 // MatchingRunner runs the automatic payment matching for an actor.

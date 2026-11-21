@@ -97,7 +97,7 @@ type Fields struct {
 	Notes     *string
 	// MatchTolerance is how far a bank payment's amount may fall short of
 	// Amount and still be confirmed automatically by the matching engine
-	// (decision D9, task X2, ADR-0038). nil means none: only the exact amount
+	// (decision D9, task X2, ADR-0039). nil means none: only the exact amount
 	// confirms automatically. It is in Amount's currency and never negative.
 	MatchTolerance *money.Money
 }

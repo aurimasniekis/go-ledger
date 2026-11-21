@@ -265,7 +265,7 @@ func registerUsers(s *Server, st users.Store) {
 // a root token of the root account may not make a user an administrator or
 // re-enable a disabled administrator (which also revives their tokens, D25-2).
 // D34 adds the root account: demoting or disabling it needs a root token of the
-// root account too.
+// root account too, and D35 adds renaming it (a username change).
 // Demoting or disabling any other user stays open to users:write tokens.
 //
 // The decision is made on a read outside the write transaction, so it is pinned
@@ -281,7 +281,8 @@ func guardAdministratorPatch(r *http.Request, st users.Store, id string, expecte
 	enables := p.Disabled != nil && !*p.Disabled
 	demotes := p.Role != nil && *p.Role != authz.RoleAdministrator
 	disables := p.Disabled != nil && *p.Disabled
-	if !promotes && !enables && !demotes && !disables {
+	renames := p.Username != nil
+	if !promotes && !enables && !demotes && !disables && !renames {
 		return nil
 	}
 	before, err := st.Get(r.Context(), id)
@@ -291,14 +292,14 @@ func guardAdministratorPatch(r *http.Request, st users.Store, id string, expecte
 	if before.Version != expected {
 		return VersionConflict(before.Version, toUserJSON(before))
 	}
-	if demotes || disables {
-		// D34: the root account is only demoted or disabled by the root token or a session.
+	if demotes || disables || renames {
+		// D34, D35: the root account is only demoted, disabled or renamed by a root token of the root account or a session.
 		root, err := st.RootAccountID(r.Context())
 		if err != nil && !errors.Is(err, resource.ErrNotFound) {
 			return err
 		}
-		if root == id && ((demotes && before.Role == authz.RoleAdministrator) || (disables && !before.Disabled)) {
-			return rootTokenRequired("demoting or disabling the root account")
+		if root == id && ((demotes && before.Role == authz.RoleAdministrator) || (disables && !before.Disabled) || (renames && *p.Username != before.Username)) {
+			return rootTokenRequired("demoting, disabling or renaming the root account")
 		}
 	}
 	if promotes && before.Role != authz.RoleAdministrator {

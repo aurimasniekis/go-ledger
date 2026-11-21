@@ -51,7 +51,7 @@ const (
 	PaymentMatchReversed  Action = "payment_match.reversed"
 
 	// A person asked for an automatic matching run through the API (X2,
-	// ADR-0038). The matches it wrote are audited one by one as
+	// ADR-0039). The matches it wrote are audited one by one as
 	// payment_match.* with the system as actor. The target is the run
 	// (target ID "run"). Details: the counts.
 	PaymentMatchingRun Action = "payment_matching.run" // Details: confirmed, suggested, dropped, skipped
@@ -66,7 +66,9 @@ var (
 	// provisioning); identity_mismatch: an OIDC re-authentication returned
 	// another identity than the linked one.
 	signInReasons = []string{"invalid_credentials", "invalid_second_factor", "account_disabled", "locked_out", "identity_not_linked", "identity_mismatch"}
-	mcpOutcomes   = []string{"succeeded", "failed", "denied"}
+	// "requested" is a stdio call: the server saw the write and the tool
+	// name the client asserted, not the outcome (the route's own answer).
+	mcpOutcomes = []string{"succeeded", "failed", "denied", "requested"}
 	// A session ended by its own user signing out, or terminated from
 	// another session of the same user. Sessions ended by a password change
 	// are counted in auth.password_changed instead.

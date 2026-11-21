@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -58,7 +59,7 @@ type apiParts struct {
 	commitments *commitmentstore.Store
 	payments    *paymentstore.Store
 	matches     *matchstore.Store
-	// matching is the automatic payment matching (ADR-0038); registerAPI
+	// matching is the automatic payment matching (ADR-0039); registerAPI
 	// builds one when ledger serve has not.
 	matching *automatch.Engine
 	db       *store.DB
@@ -66,6 +67,8 @@ type apiParts struct {
 	tokens   *tokens.Service
 	// oidc is single sign-on, set by ledger serve when it is configured.
 	oidc *httpapi.OIDCDeps
+	// mcp serves the MCP endpoint, set by ledger serve when mcp.enabled.
+	mcp http.Handler
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their

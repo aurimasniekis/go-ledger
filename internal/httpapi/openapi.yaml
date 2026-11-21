@@ -406,11 +406,11 @@ paths:
         intact. A disabled user's sessions and tokens stop working on their
         next request. With an API token, making a user an administrator or
         re-enabling a disabled administrator needs a root token of the root
-        account (decision D32); so does demoting or disabling the root
-        (first) account (decision D34). Any other token is refused with 403
+        account (decision D32); so does demoting, disabling or renaming
+        the root (first) account (decisions D34, D35). Any other token is refused with 403
         `root_token_required` before anything changes, and that check is
-        pinned to the version (a stale version is a 409). Demoting or
-        disabling other users, no-op changes and profile edits stay open to a
+        pinned to the version (a stale version is a 409). Demoting,
+        disabling or renaming other users, no-op changes and profile edits stay open to a
         `users:write` token. Sessions are unchanged.
       tags: [users]
       parameters:
@@ -446,7 +446,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
         "403":
-          description: "With an API token: code `root_token_required` when promoting to administrator or re-enabling an administrator (decision D32), or when demoting or disabling the root account (decision D34), unless the caller is a root token of the root account; also the usual authorization refusals."
+          description: "With an API token: code `root_token_required` when promoting to administrator or re-enabling an administrator (decision D32), or when demoting, disabling or renaming the root account (decisions D34, D35), unless the caller is a root token of the root account; also the usual authorization refusals."
           content:
             application/json:
               schema:
@@ -544,7 +544,7 @@ paths:
                   description: |
                     Optional; null for none. How far a booked bank payment may fall
                     short of amount and still be confirmed automatically by the matching
-                    engine (decision D9, ADR-0038); without one only the exact amount
+                    engine (decision D9, ADR-0039); without one only the exact amount
                     confirms automatically. Zero or more, in the commitment's currency.
                     A payment above amount is never confirmed automatically (it would
                     overpay).
@@ -693,7 +693,7 @@ paths:
                   description: |
                     Optional; null for none. How far a booked bank payment may fall
                     short of amount and still be confirmed automatically by the matching
-                    engine (decision D9, ADR-0038); without one only the exact amount
+                    engine (decision D9, ADR-0039); without one only the exact amount
                     confirms automatically. Zero or more, in the commitment's currency.
                     A payment above amount is never confirmed automatically (it would
                     overpay). In a patch, send the whole object or null.
@@ -2399,13 +2399,70 @@ paths:
                 $ref: "#/components/schemas/PaymentMatch"
         default:
           $ref: "#/components/responses/Error"
+  /mcp:
+    post:
+      operationId: postMCP
+      x-ledger-access: token
+      security:
+        - bearerAuth: []
+      summary: Model Context Protocol endpoint (streamable HTTP)
+      description: |
+        The MCP server (ADR-0038): JSON-RPC 2.0 messages (one per request) over streamable
+        HTTP, stateless, with plain JSON answers (no event stream, no
+        session). Send `Authorization: Bearer <API token>`; sessions are
+        refused with 403. A client lists the tools with `tools/list` and
+        calls them with `tools/call`.
+
+        Every tool maps to one operation of this API and runs through that
+        operation's own route with the caller's token, so validation, grants
+        and audit are the same as a direct call: a tool that needs
+        `commitments:write` answers a token without it with a tool error
+        (`isError`) naming the grant, and every state-changing call is
+        recorded as `mcp.tool_called` (tool and outcome, never arguments)
+        besides the `token.write_used` entry of the operation itself. A
+        write made through `ledger mcp stdio` is recorded by the server as
+        `mcp.tool_called` with outcome `requested` (the tool name comes
+        from the client's `X-Ledger-MCP-Tool` header; the outcome is that of
+        the operation).
+        Tools are annotated read-only, write or destructive. Read-only
+        context (the caller's identity and grants, the grant vocabulary and
+        this API description) is offered as resources. Nothing secret is in a
+        tool result or a resource.
+
+        A JSON-RPC batch (a JSON array) is refused with 400 `validation`:
+        it would carry many tool calls in one request and so get around the
+        per-token rate limit. Send one message per request.
+
+        Requests are limited per token (`mcp.requests_per_minute`,
+        `mcp.burst`): more are 429 `rate_limited` with Retry-After. A body
+        above `mcp.max_request_bytes` is 413. GET and DELETE are 405. With
+        `mcp.enabled: false` the endpoint answers 404 `not_found`.
+      tags: [mcp]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: One JSON-RPC 2.0 request or notification of the Model Context Protocol (a batch array is refused with 400).
+      responses:
+        "200":
+          description: The JSON-RPC response.
+          content:
+            application/json:
+              schema:
+                type: object
+        "202":
+          description: A notification or response was accepted; there is no body.
+        default:
+          $ref: "#/components/responses/Error"
   /payment-matching/runs:
     post:
       operationId: runPaymentMatching
       x-ledger-access: commitments:write
       summary: Run the automatic payment matching
       description: |
-        Runs the automatic matching engine once (task X2, ADR-0038), the same
+        Runs the automatic matching engine once (task X2, ADR-0039), the same
         run that follows every bank refresh that stored something. It pairs
         outgoing bank transactions with open occurrences of the same
         currency, an amount within 10% (or the commitment's match tolerance)
@@ -2444,6 +2501,8 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 tags:
+  - name: mcp
+    description: Model Context Protocol server.
   - name: meta
     description: The API description itself.
   - name: access
@@ -2686,7 +2745,7 @@ components:
           description: |
             Optional; null for none. How far a booked bank payment may fall
             short of amount and still be confirmed automatically by the matching
-            engine (decision D9, ADR-0038); without one only the exact amount
+            engine (decision D9, ADR-0039); without one only the exact amount
             confirms automatically. Zero or more, in the commitment's currency.
             A payment above amount is never confirmed automatically (it would
             overpay).
@@ -2703,7 +2762,7 @@ components:
           format: date-time
     PaymentMatchingRun:
       type: object
-      description: The counts of one automatic payment-matching run (ADR-0038).
+      description: The counts of one automatic payment-matching run (ADR-0039).
       additionalProperties: false
       required: [candidates, confirmed, suggested, dropped, skipped]
       properties:

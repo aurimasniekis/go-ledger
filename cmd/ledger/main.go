@@ -48,6 +48,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runAuth(args[1:], stdout, stderr, opsEnv{Stdin: os.Stdin})
 	case "me", "grants", "users", "commitments", "occurrences", "matching", "tokens", "audit":
 		return runMgmt(args, stdout, stderr, mgmtEnv{})
+	case "mcp":
+		ctx, stop := mcpContext()
+		defer stop()
+		return runMCP(ctx, args[1:], stdout, stderr, mcpEnv{})
 	case "token":
 		return runToken(args[1:], stdout, stderr, opsEnv{})
 	case "help", "-h", "--help":
@@ -72,6 +76,7 @@ func usage(w io.Writer) {
 	say(w, "  token     create an API token without the web UI, for example the first one (token create; stop serve first)")
 	say(w, "  me, grants, users, commitments, occurrences, matching, tokens, audit")
 	say(w, "            manage a running server through its API with a token (ledger <command> help)")
+	say(w, "  mcp       serve the Model Context Protocol on standard input and output for a local agent (mcp stdio); the HTTP endpoint is POST /api/v1/mcp")
 	say(w, "  version   print the build version")
 	say(w, "  help      print this message")
 }

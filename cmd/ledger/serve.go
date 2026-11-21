@@ -20,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/health"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
+	"github.com/aurimasniekis/go-ledger/internal/mcpserver"
 	"github.com/aurimasniekis/go-ledger/internal/metrics"
 	"github.com/aurimasniekis/go-ledger/internal/outbox"
 	"github.com/aurimasniekis/go-ledger/internal/pulsebus"
@@ -202,9 +203,26 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// state-changing token request is audited through the recorder.
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil),
 		httpapi.WithAuthenticators(httpapi.NewTokenAuth(parts.tokens), httpapi.NewSessionAuth(parts.auth)), httpapi.WithRecentAuth(parts.auth.Recent))
-	// Automatic payment matching (X2, ADR-0038): after every bank refresh that
+	// Automatic payment matching (X2, ADR-0039): after every bank refresh that
 	// stored something, and on request through the API.
 	parts.matching = newMatcher(db, auditLog, parts.matches, zone.Zone(), nil, log)
+	if cfg.MCP.Enabled {
+		// The MCP tools run through the API's own routes, so they share its
+		// validation, grants and token-write audit (ADR-0038).
+		msrv, err := mcpserver.NewServer(mcpserver.Options{Caller: mcpserver.InProcess(srv.Handler()), Audit: auditLog, Version: version, Log: log})
+		if err != nil {
+			log.Error("cannot build the MCP server", "error", err.Error())
+			_ = ln.Close()
+			return 1
+		}
+		parts.mcp = mcpserver.Handler(msrv, mcpserver.HandlerOptions{
+			Limiter:         mcpserver.NewLimiter(cfg.MCP.RequestsPerMinute, cfg.MCP.Burst, nil),
+			MaxRequestBytes: cfg.MCP.MaxRequestBytes,
+		})
+		log.Info("MCP endpoint enabled", "path", httpapi.MCPPath, "requests_per_minute", cfg.MCP.RequestsPerMinute)
+	} else {
+		log.Info("MCP endpoint disabled")
+	}
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
@@ -339,6 +357,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Auth:        parts.auth,
 		Tokens:      parts.tokens,
 		OIDC:        parts.oidc,
+		MCP:         parts.mcp,
 		Zone:        zone,
 		Now:         now,
 	})

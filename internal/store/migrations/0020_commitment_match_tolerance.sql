@@ -1,6 +1,6 @@
 -- Per-commitment amount tolerance for automatic payment matching (task X2,
 -- decision D9: auto-confirm needs the exact amount "or within the user's
--- tolerance"; ADR-0038). Both columns are NULL when the user set none: then
+-- tolerance"; ADR-0039). Both columns are NULL when the user set none: then
 -- only an exact amount can confirm automatically. When set, the tolerance is a
 -- non-negative exact decimal in the commitment's own currency (amounts are
 -- never converted, ADR-0005); the pair is set or cleared together, and a

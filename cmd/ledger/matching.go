@@ -34,7 +34,7 @@ func matchingRun(m *mgmt, _ context.Context, args []string) int {
 }
 
 // newMatcher builds the automatic payment-matching engine (task X2,
-// ADR-0038) on the match store. Today is the current date in the reporting
+// ADR-0039) on the match store. Today is the current date in the reporting
 // zone; a run requested through the API is audited through al. now defaults to
 // time.Now.
 func newMatcher(db *store.DB, al store.AuditWriter, ms *matchstore.Store, zone calendar.Zone, now func() time.Time, log *slog.Logger) *automatch.Engine {
