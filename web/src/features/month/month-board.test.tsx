@@ -70,7 +70,7 @@ describe('MonthBoard states', () => {
 
   it('says bank data age is not available instead of implying it is fresh', () => {
     board({ data: summary([item('a')]) })
-    expect(screen.getByText(/Bank data age: not available, so none is shown/)).toBeInTheDocument()
+    expect(screen.getByText(/No bank data connected yet/)).toBeInTheDocument()
     expect(screen.queryByText(/endpoint/)).toBeNull()
   })
 })

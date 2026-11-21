@@ -5,8 +5,9 @@ export function ThemeSelect() {
   const [pref, setPref] = useState<ThemePreference>(getThemePreference)
   return (
     <label className="flex items-center gap-2 text-sm">
-      <span>Theme</span>
+      <span aria-hidden className="hidden sm:inline">Theme</span>
       <select
+        aria-label="Theme"
         className="h-8 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-ring"
         value={pref}
         onChange={(e) => {

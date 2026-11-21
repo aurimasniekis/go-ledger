@@ -12,6 +12,7 @@ import type { MonthItem, MonthSummary, MonthTotals, PaymentStatus } from './type
  * How old fetched data may get before the view calls it stale. A placeholder:
  * the freshness thresholds are an unresolved product decision.
  */
+export const OFFLINE_NOTE_ID = 'record-offline-note'
 export const STALE_AFTER_MS = 5 * 60 * 1000
 
 export interface MonthBoardProps {
@@ -30,6 +31,10 @@ export interface MonthBoardProps {
   /** The record-payment form, shown in place under the row with this id (the row that opened it). */
   formFor?: string | null
   form?: ReactNode
+  /** True while the browser reports no network: recording a payment cannot be saved then. */
+  offline?: boolean
+  /** The Undo notice, placed right under the month navigation so it reads as part of the page, not of the title. */
+  notice?: ReactNode
   /** Receives the page title (h1) so focus can fall back to it. */
   titleRef?: Ref<HTMLHeadingElement>
 }
@@ -46,7 +51,7 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           <span className="sr-only">Previous month, {monthLabel(shiftMonth(p.month, -1))}</span>
           <span aria-hidden className="hidden sm:inline">Previous</span>
         </Button>
-        <h1 id="month-title" ref={titleRef} tabIndex={-1} className="w-48 max-w-full text-center text-xl font-semibold focus:outline-none">
+        <h1 id="month-title" ref={titleRef} tabIndex={-1} className="max-w-full grow basis-32 text-center text-xl font-semibold focus:outline-none sm:w-48 sm:grow-0 sm:basis-auto">
           {label}
         </h1>
         <Button variant="outline" size="sm" onClick={() => p.onMonthChange(shiftMonth(p.month, 1))}>
@@ -55,6 +60,8 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           <ChevronRight aria-hidden className="size-4" />
         </Button>
       </div>
+
+      {p.notice}
 
       {p.status === 'pending' && <LoadingState label={label} />}
       {p.status === 'error' && !p.data && (
@@ -78,7 +85,7 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           ) : (
             <>
               {p.data.items.length > 0 && <Totals totals={p.data.totals} />}
-              <Occurrences items={p.data.items} onRecord={p.onRecord} formFor={p.formFor} form={p.form} />
+              <Occurrences items={p.data.items} onRecord={p.onRecord} offline={p.offline} formFor={p.formFor} form={p.form} />
             </>
           )}
         </>
@@ -92,11 +99,13 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
   const { data } = p
   const fetchedAge = ageLabel(p.dataUpdatedAt, p.now)
   const failedRefresh = p.status === 'error'
-  const stale = failedRefresh || p.now - p.dataUpdatedAt > STALE_AFTER_MS
+  const stale = !failedRefresh && p.now - p.dataUpdatedAt > STALE_AFTER_MS
   return (
     <section aria-label="Data freshness" className="space-y-2 rounded-md border border-border bg-surface p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        {failedRefresh ? (
+        {p.offline ? (
+          <StatusBadge status="disconnected" label="Offline" />
+        ) : failedRefresh ? (
           <StatusBadge status="error" label="Refresh failed" />
         ) : stale ? (
           <StatusBadge status="stale" label={`Stale, fetched ${fetchedAge}`} />
@@ -121,12 +130,14 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
         {data.freshness.occurrences_changed_at
           ? `Occurrences last changed ${utcStamp(data.freshness.occurrences_changed_at)}. `
           : ''}
-        {data.freshness.bank.available ? '' : 'Bank data age: not available, so none is shown.'}
+        {data.freshness.bank.available ? '' : 'No bank data connected yet.'}
       </p>
     </section>
   )
 }
 
+/** A money amount in a totals list: one line, never broken, whatever the width. */
+const AMOUNT = 'mb-1 whitespace-nowrap font-mono sm:mb-0 sm:text-right'
 const hasOverdue = (t: MonthTotals) => !isZeroAmount(t.overdue.amount)
 
 function Totals({ totals }: { totals: MonthTotals[] }) {
@@ -144,19 +155,20 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
         {totals.map((t) => (
           <li key={t.currency} className="min-w-0 rounded-md border border-border bg-surface p-3">
             <h3 className="font-semibold">{t.currency}</h3>
-            <dl className="mt-1 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-0.5 text-sm [overflow-wrap:anywhere]">
-              <dt>Due</dt>
-              <dd className="text-right font-mono">{t.due.amount}</dd>
+            {/* Below sm each label sits over its amount; from sm up label and amount share a row. Only labels wrap: an amount never breaks. */}
+            <dl className="mt-1 grid grid-cols-1 gap-x-4 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-0.5">
+              <dt>Scheduled this month</dt>
+              <dd data-total-amount className={AMOUNT}>{t.due.amount}</dd>
               <dt>Paid</dt>
-              <dd className="text-right font-mono">{t.paid.amount}</dd>
+              <dd data-total-amount className={AMOUNT}>{t.paid.amount}</dd>
               <dt>Outstanding</dt>
-              <dd className="text-right font-mono">{t.outstanding.amount}</dd>
+              <dd data-total-amount className={AMOUNT}>{t.outstanding.amount}</dd>
               <dt className={hasOverdue(t) ? 'font-semibold' : undefined}>Overdue (past original due date)</dt>
-              <dd className={hasOverdue(t) ? 'text-right font-mono font-semibold text-status-overdue' : 'text-right font-mono'}>
+              <dd data-total-amount className={hasOverdue(t) ? AMOUNT + ' font-semibold text-status-overdue' : AMOUNT}>
                 {t.overdue.amount}
               </dd>
               {t.overdue_count > 0 && (
-                <dd className="col-span-2 text-right text-xs text-muted-foreground">
+                <dd className="text-xs text-muted-foreground sm:col-span-2 sm:text-right">
                   {t.overdue_count} overdue {t.overdue_count === 1 ? 'occurrence' : 'occurrences'}
                 </dd>
               )}
@@ -179,16 +191,18 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
 function Occurrences({
   items,
   onRecord,
+  offline,
   formFor,
   form,
 }: {
   items: MonthItem[]
   onRecord: (i: MonthItem) => void
+  offline?: boolean
   formFor?: string | null
   form?: ReactNode
 }) {
   const rows = items.map((i) => (
-    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} form={i.id === formFor ? form : null} />
+    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} offline={offline} form={i.id === formFor ? form : null} />
   ))
   // The row that opened the form left the list (paid elsewhere): its place stays, in the same list under the
   // same key, so the open form keeps what was typed and can say so.
@@ -236,7 +250,7 @@ function statusOf(i: MonthItem): Status {
   return i.payment.status
 }
 
-function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; onRecord: (i: MonthItem) => void; form?: ReactNode }) {
+function OccurrenceRow({ item: i, onRecord, offline, form }: { item: MonthItem | null; onRecord: (i: MonthItem) => void; offline?: boolean; form?: ReactNode }) {
   // No item: the occurrence the open form came from has left the list. Same component, same key, so the form stays mounted.
   if (!i) {
     return (
@@ -254,14 +268,14 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
   return (
     <li className="space-y-2 rounded-md border border-border bg-surface p-3">
       <div className="space-y-1">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <p className="font-medium break-words">{i.commitment_name || i.commitment_id}</p>
           <p className="text-sm text-muted-foreground">
             Original due date <time dateTime={i.due_date}>{i.due_date}</time>
           </p>
         </div>
-        <p className="font-mono">{money(i.amount)}</p>
+        <p className="shrink-0 whitespace-nowrap font-mono">{money(i.amount)}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={statusOf(i)} />
@@ -276,6 +290,8 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
             size="sm"
             className="ml-auto h-auto min-h-8 whitespace-normal py-1 text-foreground underline underline-offset-4"
             onClick={() => onRecord(i)}
+            disabled={offline}
+            aria-describedby={offline ? OFFLINE_NOTE_ID : undefined}
             aria-label={`Record payment for ${i.commitment_name || i.commitment_id}, due ${i.due_date}`}
           >
             Record payment

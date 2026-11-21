@@ -22,7 +22,7 @@ export function ProvenanceMarker({ kind }: { kind: Provenance }) {
     <span
       data-provenance={kind}
       title={hint}
-      className="inline-flex items-center gap-1 rounded-sm border border-border-control px-1.5 py-0.5 text-xs font-medium text-foreground"
+      className="inline-flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 text-xs font-normal text-muted-foreground"
     >
       <Icon aria-hidden className="size-3.5" />
       {label}

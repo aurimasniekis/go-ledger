@@ -64,7 +64,7 @@ describe('Month page', () => {
     await userEvent.click(within(form).getByRole('button', { name: 'Save payment' }))
 
     expect(await within(form).findByText('Not saved yet')).toBeInTheDocument()
-    expect(screen.queryByText(/^Saved:/)).toBeNull()
+    expect(screen.queryByText(/EUR paid on/)).toBeNull()
     const post = calls.find((c) => c.method === 'POST')!
     expect(post.path).toBe('/api/v1/occurrences/a/manual-payments')
     expect(post.headers['X-CSRF-Token']).toBe('csrf-abc')
@@ -72,7 +72,7 @@ describe('Month page', () => {
 
     saved = true
     release(json(201, { id: 'p1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21', version: 3 }))
-    expect(await screen.findByText(/^Saved: 10.00 EUR paid on 2026-11-21 for Rent a/)).toBeInTheDocument()
+    expect(await screen.findByText(/^10.00 EUR paid on 2026-11-21 for Rent a/)).toBeInTheDocument()
     await waitFor(() => expect(screen.getAllByText('Paid').length).toBeGreaterThan(0))
 
     await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
@@ -97,7 +97,7 @@ describe('Month page', () => {
     expect(alert).toHaveTextContent('Nothing was recorded')
     expect(amount).toHaveValue('abc')
     expect(amount).toHaveAttribute('aria-invalid', 'true')
-    expect(screen.queryByText(/^Saved:/)).toBeNull()
+    expect(screen.queryByText(/EUR paid on/)).toBeNull()
     expect(screen.queryByText('Paid', { selector: '[data-status] *' })).toBeNull()
   })
 
@@ -147,7 +147,7 @@ describe('Month page', () => {
     const opener = await screen.findByRole('button', { name: /^Record payment for Rent a/ })
     await userEvent.click(opener)
     await userEvent.click(await screen.findByRole('button', { name: 'Save payment' }))
-    const notice = await screen.findByText(/^Saved:/)
+    const notice = await screen.findByText(/EUR paid on/)
     await waitFor(() => expect(notice.closest('[role="status"]')).toHaveFocus())
     await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
     await screen.findByText(/Payment removed/)
@@ -183,7 +183,7 @@ describe('Month page', () => {
     open()
     await userEvent.click(await screen.findByRole('button', { name: 'Record a payment' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Save payment' }))
-    await screen.findByText(/^Saved:/)
+    await screen.findByText(/EUR paid on/)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Record a payment' })).toBeDisabled())
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'November 2026' })).toHaveFocus())

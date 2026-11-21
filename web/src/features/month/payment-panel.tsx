@@ -120,6 +120,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
           />
           {fieldError('amount') && <span id={`${uid}-amount-err`}>{fieldError('amount')}</span>}
         </label>
+        <div className="grid content-start gap-1">
         <label className="grid gap-1 text-sm">
           Paid on
           <input
@@ -133,6 +134,8 @@ export function PaymentPanel(p: PaymentPanelProps) {
           />
           {err?.field === 'paid_on' && <span id={`${uid}-paid-on-err`}>{err.message}</span>}
         </label>
+        {paidOn && <p className="text-xs text-muted-foreground">Recorded as {paidOn}; the field uses your browser's date format.</p>}
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={pending || gone}>
@@ -171,11 +174,13 @@ export interface UndoNoticeProps {
   payment: ManualPayment
   item: MonthItem
   month: string
+  /** The month on screen; when it differs from `month` the notice names its own month first. */
+  shownMonth?: string
   onDone: () => void
 }
 
 /** Confirms a saved payment and offers its undo; the undo is itself confirmed by the server. */
-export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
+export function UndoNotice({ payment, item, month, shownMonth, onDone }: UndoNoticeProps) {
   const qc = useQueryClient()
   const box = useRef<HTMLDivElement>(null)
   const undo = useMutation({
@@ -189,8 +194,10 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
   useEffect(() => box.current?.focus(), [undo.isSuccess])
   return (
     <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3">
+      {shownMonth && shownMonth !== month && <p className="text-sm font-semibold">{monthLabel(month)}</p>}
       {undo.isSuccess ? (
         <p>
+          <StatusBadge status="deferred" label="Removed" />{' '}
           Payment removed. {name} is back as it was before; the {monthLabel(month)} view has been refreshed.{' '}
           <Button variant="ghost" size="sm" onClick={onDone}>
             Dismiss
@@ -199,7 +206,8 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
       ) : (
         <>
           <p>
-            Saved: {payment.amount.amount} {payment.amount.currency} paid on {payment.paid_on} for {name}, due {item.due_date}, in {monthLabel(month)}.
+            <StatusBadge status="paid" label="Saved" />{' '}
+            {payment.amount.amount} {payment.amount.currency} paid on {payment.paid_on} for {name}, due {item.due_date}, in {monthLabel(month)}.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => undo.mutate()} disabled={undo.isPending}>

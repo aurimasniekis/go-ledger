@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Outlet } from '@tanstack/react-router'
+import { Link, Outlet } from '@tanstack/react-router'
 import { AnnouncerProvider, useAnnounce } from '@/components/announcer'
 import { ThemeSelect } from '@/components/theme-select'
 import { DisconnectedState } from '@/components/state-panels'
@@ -24,7 +24,7 @@ export function AppShell() {
         </a>
         <header className="relative border-b border-border bg-surface">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2">
-            <span className="font-semibold">Ledger</span>
+            <Link to="/" className="font-semibold">Ledger</Link>
             <PrimaryNav />
             <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
               <AccountMenu />
