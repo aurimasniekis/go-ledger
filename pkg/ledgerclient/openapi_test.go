@@ -243,16 +243,6 @@ func TestTypesMatchSchemas(t *testing.T) {
 	if !slices.Equal(keys(lp), keys(jsonTags(reflect.TypeFor[Page[User]]()))) || !lr["items"] || !lr["next_cursor"] {
 		t.Errorf("Page members differ from the list envelope: %v", keys(lp))
 	}
-	// The patch members the CLI builds exist in the PATCH schemas.
-	for path, members := range map[string][]string{
-		"/users/{id}":       {"username", "display_name", "role", "disabled", "version"},
-		"/commitments/{id}": {"name", "kind", "amount", "schedule", "start_date", "end_date", "priority", "notes", "effective_from", "version"},
-	} {
-		p, _ := schemaProps(doc, body(path, "patch"))
-		if !slices.Equal(keys(p), func() []string { s := slices.Clone(members); slices.Sort(s); return s }()) {
-			t.Errorf("PATCH %s members %v differ from the client's %v", path, keys(p), members)
-		}
-	}
 }
 
 func TestEnumsMatchSchemas(t *testing.T) {

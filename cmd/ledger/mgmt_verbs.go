@@ -80,13 +80,19 @@ func runList[T any](m *mgmt, fs *flag.FlagSet, args []string, l *listFlags,
 }
 
 // resolveVersion returns the version a change is based on: --version when
-// given, else the object's current version read just before the write. A
+// given, else the object's current version read just before the write, which
+// is reported on standard error so the user can see what was changed. A
 // concurrent change in between still fails with version_conflict.
-func resolveVersion(explicit int64, read func() (int64, error)) (int64, error) {
+func (m *mgmt) resolveVersion(explicit int64, read func() (int64, error)) (int64, error) {
 	if explicit > 0 {
 		return explicit, nil
 	}
-	return read()
+	v, err := read()
+	if err != nil {
+		return 0, err
+	}
+	say(m.stderr, fmt.Sprintf("ledger: using version %d, the current one (pass --version to pin it)", v))
+	return v, nil
 }
 
 func visited(fs *flag.FlagSet) map[string]bool {
@@ -153,13 +159,14 @@ func usersUpdate(m *mgmt, _ context.Context, args []string) int {
 	fs := m.flags("users update")
 	var version int64
 	var username, display, role string
-	var clearDisplay, disabled bool
+	var clearDisplay bool
+	var disabled string
 	fs.Int64Var(&version, "version", 0, "")
 	fs.StringVar(&username, "username", "", "")
 	fs.StringVar(&display, "display-name", "", "")
 	fs.BoolVar(&clearDisplay, "clear-display-name", false, "")
 	fs.StringVar(&role, "role", "", "")
-	fs.BoolVar(&disabled, "disabled", false, "")
+	fs.StringVar(&disabled, "disabled", "", "")
 	id, rc := m.parse(fs, args, true)
 	if rc != 0 {
 		return max(rc, 0)
@@ -183,14 +190,20 @@ func usersUpdate(m *mgmt, _ context.Context, args []string) int {
 		patch["role"] = role
 	}
 	if seen["disabled"] {
-		patch["disabled"] = disabled
+		switch disabled {
+		case "true", "false":
+			patch["disabled"] = disabled == "true"
+		default:
+			say(m.stderr, "users update: --disabled must be true or false")
+			return 2
+		}
 	}
 	if len(patch) == 0 {
 		say(m.stderr, "users update: nothing to change")
 		return 2
 	}
 	return m.call(func(ctx context.Context, c *ledgerclient.Client) error {
-		v, err := resolveVersion(version, func() (int64, error) {
+		v, err := m.resolveVersion(version, func() (int64, error) {
 			u, err := c.GetUser(ctx, id)
 			if err != nil {
 				return 0, err
@@ -269,11 +282,14 @@ func commitmentsCreate(m *mgmt, _ context.Context, args []string) int {
 	if month > 0 {
 		in.Schedule.Month = &month
 	}
-	for v, dst := range map[string]**string{endDate: &in.EndDate, prio: &in.Priority, notes: &in.Notes} {
-		if v != "" {
-			s := v
-			*dst = &s
-		}
+	if endDate != "" {
+		in.EndDate = &endDate
+	}
+	if prio != "" {
+		in.Priority = &prio
+	}
+	if notes != "" {
+		in.Notes = &notes
 	}
 	// Anything invalid is reported by the server, field by field.
 	return m.call(func(ctx context.Context, c *ledgerclient.Client) error {
@@ -354,6 +370,9 @@ func commitmentsUpdate(m *mgmt, _ context.Context, args []string) int {
 			switch frequency {
 			case ledgerclient.FrequencyMonthly:
 				sc["month"] = nil
+				if !seen["interval"] {
+					sc["interval"] = 1 // every month, as create does
+				}
 			case ledgerclient.FrequencyAnnual:
 				sc["interval"] = nil
 			}
@@ -374,7 +393,7 @@ func commitmentsUpdate(m *mgmt, _ context.Context, args []string) int {
 		return 2
 	}
 	return m.call(func(ctx context.Context, c *ledgerclient.Client) error {
-		v, err := resolveVersion(version, func() (int64, error) {
+		v, err := m.resolveVersion(version, func() (int64, error) {
 			cm, err := c.GetCommitment(ctx, id)
 			if err != nil {
 				return 0, err
@@ -401,7 +420,7 @@ func commitmentsDelete(m *mgmt, _ context.Context, args []string) int {
 		return max(rc, 0)
 	}
 	return m.call(func(ctx context.Context, c *ledgerclient.Client) error {
-		v, err := resolveVersion(version, func() (int64, error) {
+		v, err := m.resolveVersion(version, func() (int64, error) {
 			cm, err := c.GetCommitment(ctx, id)
 			if err != nil {
 				return 0, err
@@ -414,7 +433,7 @@ func commitmentsDelete(m *mgmt, _ context.Context, args []string) int {
 		if err := c.DeleteCommitment(ctx, id, v); err != nil {
 			return err
 		}
-		return m.emit(map[string]any{"deleted": id}, func(w io.Writer) { _, _ = fmt.Fprintln(w, "deleted", id) })
+		return m.emit(map[string]any{"deleted": id}, func(w io.Writer) { _, _ = fmt.Fprintln(w, "deleted", printable(id)) })
 	})
 }
 

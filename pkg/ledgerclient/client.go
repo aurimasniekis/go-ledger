@@ -41,10 +41,12 @@ type settings struct {
 
 // WithHTTPClient replaces the HTTP client (for example to set a transport or
 // a CA pool). Its redirect policy is replaced: the client never follows
-// redirects, so the token cannot be sent anywhere unintended.
+// redirects, so the token cannot be sent anywhere unintended. If its Timeout is
+// zero, the WithTimeout value is applied to it; a non-zero Timeout is kept.
 func WithHTTPClient(hc *http.Client) Option { return func(s *settings) { s.hc = hc } }
 
-// WithTimeout sets the per-request timeout (default 30 seconds).
+// WithTimeout sets the per-request timeout (default 30 seconds) of the default
+// HTTP client, and of a WithHTTPClient client whose Timeout is zero.
 func WithTimeout(d time.Duration) Option { return func(s *settings) { s.timeout = d } }
 
 // WithInsecureHTTP allows a plain http:// URL to a host that is not a
@@ -89,6 +91,9 @@ func New(baseURL, token string, opts ...Option) (*Client, error) {
 		hc = &http.Client{Timeout: s.timeout}
 	} else {
 		cp := *hc
+		if cp.Timeout == 0 {
+			cp.Timeout = s.timeout
+		}
 		hc = &cp
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

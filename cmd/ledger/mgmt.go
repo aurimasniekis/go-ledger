@@ -144,7 +144,7 @@ func runMgmt(args []string, stdout, stderr io.Writer, env mgmtEnv) int {
 				_ = tw.Flush()
 				_, _ = fmt.Fprintln(w)
 				for _, r := range g.Roles {
-					_, _ = fmt.Fprintf(w, "role %s: %s\n", r.Name, strings.Join(r.Grants, ", "))
+					_, _ = fmt.Fprintf(w, "role %s: %s\n", printable(r.Name), strings.Join(r.Grants, ", "))
 				}
 			})
 		})
@@ -230,12 +230,12 @@ func (m *mgmt) runLeaf(name string, args []string, f func(context.Context, *ledg
 func (m *mgmt) call(f func(context.Context, *ledgerclient.Client) error) int {
 	c, err := m.client()
 	if err != nil {
-		say(m.stderr, "ledger: "+err.Error())
+		say(m.stderr, "ledger: "+printable(err.Error()))
 		return 2
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), m.timeout+5*time.Second)
-	defer cancel()
-	if err := f(ctx, c); err != nil {
+	// No overall deadline: --timeout bounds each request (the client's HTTP
+	// timeout), so a long --all walk is not cut short as a whole.
+	if err := f(context.Background(), c); err != nil {
 		m.report(err)
 		return 1
 	}
@@ -339,10 +339,10 @@ func (m *mgmt) client() (*ledgerclient.Client, error) {
 func (m *mgmt) report(err error) {
 	var ae *ledgerclient.APIError
 	if !errors.As(err, &ae) {
-		say(m.stderr, "ledger: "+err.Error())
+		say(m.stderr, "ledger: "+printable(err.Error()))
 		return
 	}
-	say(m.stderr, "ledger: "+ae.Error())
+	say(m.stderr, "ledger: "+printable(ae.Error()))
 	switch {
 	case ledgerclient.IsVersionConflict(err) && ae.Reconciliation != nil:
 		say(m.stderr, fmt.Sprintf("someone else changed this object: its version is now %d. Read it again (get), check the change, and retry with --version %d.", ae.Reconciliation.CurrentVersion, ae.Reconciliation.CurrentVersion))
@@ -354,7 +354,7 @@ func (m *mgmt) report(err error) {
 		say(m.stderr, "the token lacks the grant for this operation (see: ledger me)")
 	}
 	if ae.RequestID != "" {
-		say(m.stderr, "request id: "+ae.RequestID)
+		say(m.stderr, "request id: "+printable(ae.RequestID))
 	}
 }
 

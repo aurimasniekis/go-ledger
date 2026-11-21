@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 
 	"github.com/aurimasniekis/go-ledger/pkg/ledgerclient"
 )
@@ -26,15 +27,37 @@ func toAny(s []string) []any {
 func row(tw io.Writer, cols ...any) {
 	parts := make([]string, len(cols))
 	for i, c := range cols {
-		parts[i] = strings.ReplaceAll(fmt.Sprint(c), "\t", " ")
+		parts[i] = printable(strings.ReplaceAll(fmt.Sprint(c), "\t", " "))
 	}
 	_, _ = fmt.Fprintln(tw, strings.Join(parts, "\t"))
+}
+
+// printable makes server-supplied text printable: control characters, such as
+// newlines and escape sequences, are written as visible escapes so they cannot
+// break the table or key layout or drive the terminal. JSON output needs no
+// such care: encoding/json already escapes them.
+func printable(s string) string {
+	if !strings.ContainsFunc(s, unicode.IsControl) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case !unicode.IsControl(r):
+			b.WriteRune(r)
+		case r < 0x100:
+			_, _ = fmt.Fprintf(&b, `\x%02x`, r)
+		default:
+			_, _ = fmt.Fprintf(&b, `\u%04x`, r)
+		}
+	}
+	return b.String()
 }
 
 // kv prints "key: value" lines from alternating keys and values.
 func kv(w io.Writer, pairs ...string) {
 	for i := 0; i+1 < len(pairs); i += 2 {
-		_, _ = fmt.Fprintf(w, "%-12s %s\n", pairs[i]+":", pairs[i+1])
+		_, _ = fmt.Fprintf(w, "%-12s %s\n", pairs[i]+":", printable(pairs[i+1]))
 	}
 }
 
@@ -60,7 +83,7 @@ func scheduleText(s ledgerclient.Schedule) string {
 
 func moreHint(w io.Writer, next *string) {
 	if next != nil {
-		_, _ = fmt.Fprintf(w, "\nmore: rerun with --cursor %s (or --all)\n", *next)
+		_, _ = fmt.Fprintf(w, "\nmore: rerun with --cursor %s (or --all)\n", printable(*next))
 	}
 }
 

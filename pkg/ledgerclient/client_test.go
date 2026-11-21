@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 const secretToken = "ldgr_test_secret_value"
@@ -233,5 +234,32 @@ func TestNoRedirectAndNoTokenInErrors(t *testing.T) {
 	_, err = c2.Me(context.Background())
 	if err == nil || strings.Contains(err.Error(), secretToken) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// WithTimeout applies to a caller's HTTP client that has no timeout of its
+// own, and a timeout the caller set is kept.
+func TestWithTimeoutAppliesToCallerClient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(5 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(srv.URL, secretToken, WithHTTPClient(&http.Client{}), WithTimeout(100*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := c.GetUser(context.Background(), "x"); err == nil || time.Since(start) > 3*time.Second {
+		t.Fatalf("the timeout did not apply: err=%v after %v", err, time.Since(start))
+	}
+	kept, err := New(srv.URL, secretToken, WithHTTPClient(&http.Client{Timeout: time.Hour}), WithTimeout(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.hc.Timeout != time.Hour {
+		t.Fatalf("the caller's timeout was replaced: %v", kept.hc.Timeout)
 	}
 }
