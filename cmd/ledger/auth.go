@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
+	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	matchstore "github.com/aurimasniekis/go-ledger/internal/store/matches"
 	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
@@ -73,6 +74,11 @@ type apiParts struct {
 	mcp http.Handler
 	// banking is the bank connection service, set by ledger serve.
 	banking *bankconnect.Service
+	// facts is the bank-facts store (with audit) that ledger serve shares
+	// with the connection service and the outlook; nil makes registerAPI
+	// open a read-only one. bankStaleAfter is banking.stale_after.
+	facts          *bankfacts.Store
+	bankStaleAfter time.Duration
 	// reportingCurrency is reporting.currency: the default currency of the
 	// outlook's converted aggregate (ADR-0044); zero for none.
 	reportingCurrency moneypkg.Currency

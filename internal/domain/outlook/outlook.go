@@ -27,6 +27,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 )
 
 // Notice is the wording every presentation of the outlook carries.
@@ -130,6 +131,15 @@ type Outlook struct {
 	// OccurrencesChangedAt is the newest change among the occurrences read;
 	// nil when none was read.
 	OccurrencesChangedAt *time.Time
+	// BankStaleAfter is the staleness threshold applied to bank data (the
+	// configured one, or [banking.DefaultStaleAfter]); zero when balances are
+	// not shown.
+	BankStaleAfter time.Duration
+	// NotRecordedCount is the number of occurrences in the window that are
+	// counted nowhere because they fell due before their commitment was
+	// recorded (D38 1a): they owe nothing here, but are listed in the
+	// monthly view.
+	NotRecordedCount int
 }
 
 // CurrencyLine is the comparison for one currency. Nothing in it is
@@ -161,6 +171,32 @@ type CurrencyLine struct {
 	// UnconvertedEvidence counts occurrences with payment evidence in
 	// another currency: such evidence is never converted and counted nowhere.
 	UnconvertedEvidence int
+	// OverdueMonths says which months the overdue part comes from, oldest
+	// first (empty when nothing is overdue): the drill-down to the monthly
+	// view.
+	OverdueMonths []OverdueMonth
+	// BalanceAsOf is the date of the oldest counted balance: its reference
+	// date, or the UTC date it was obtained when the bank gave none. Zero when
+	// no balance is counted. The balance itself is never adjusted.
+	BalanceAsOf calendar.Date
+	// PaymentsAfterBalance is the payment evidence in this currency dated
+	// after BalanceAsOf: recorded payments the bank balance may not yet
+	// reflect. It is a caveat only and is never netted into Balance. Nil when
+	// no balance is counted.
+	PaymentsAfterBalance *PaymentsAfter
+}
+
+// OverdueMonth is the overdue part of one currency that falls in one month.
+type OverdueMonth struct {
+	Month  calendar.YearMonth
+	Count  int
+	Amount money.Money
+}
+
+// PaymentsAfter counts payment evidence and sums its amounts.
+type PaymentsAfter struct {
+	Count  int
+	Amount money.Money
 }
 
 // Balance is the balance of an account that the outlook counts or shows.
@@ -280,6 +316,13 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 	out := Outlook{AsOf: today, Through: through, Currencies: []CurrencyLine{}, Accounts: []Account{}}
 
 	lines := map[money.Currency]*CurrencyLine{}
+	// Payment evidence of the window, per currency, for the caveat about
+	// payments dated after a balance.
+	type paid struct {
+		date   calendar.Date
+		amount money.Money
+	}
+	evidence := map[money.Currency][]paid{}
 	line := func(cur money.Currency, scale int32) *CurrencyLine {
 		l := lines[cur]
 		if l == nil {
@@ -313,6 +356,22 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 			if sum.LatestChange != nil && sum.LatestChange.After(latest) {
 				latest = *sum.LatestChange
 			}
+			for _, row := range sum.Rows {
+				st := row.State
+				if st.Status == payments.StatusCancelled {
+					continue
+				}
+				if st.Status != payments.StatusPaid && st.Timing == payments.StatusNotRecorded {
+					out.NotRecordedCount++
+				}
+				cur := row.Occurrence.Amount.Currency()
+				for _, e := range row.Evidence {
+					// Evidence in another currency is never counted (D5).
+					if e.Amount.Currency() == cur {
+						evidence[cur] = append(evidence[cur], paid{e.Date, e.Amount})
+					}
+				}
+			}
 			for _, t := range sum.Totals {
 				if t.Outstanding.Sign() == 0 && t.Unconverted == 0 {
 					continue
@@ -322,6 +381,9 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 				l.StillDue, _ = l.StillDue.Add(t.Outstanding)
 				l.Overdue, _ = l.Overdue.Add(t.Overdue)
 				l.OverdueCount += t.OverdueCount
+				if t.OverdueCount > 0 {
+					l.OverdueMonths = append(l.OverdueMonths, OverdueMonth{Month: m, Count: t.OverdueCount, Amount: t.Overdue})
+				}
 				l.UnconvertedEvidence += t.Unconverted
 			}
 			if m, err = m.AddMonths(1); err != nil {
@@ -339,6 +401,10 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 			return Outlook{}, err
 		}
 		out.BalancesShown, out.Accounts = true, accounts
+		out.BankStaleAfter = s.BankStaleAfter
+		if out.BankStaleAfter <= 0 {
+			out.BankStaleAfter = banking.DefaultStaleAfter
+		}
 		for _, a := range accounts {
 			if a.NotCounted != "" {
 				continue
@@ -355,6 +421,13 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 				l.Accounts++
 				if a.Freshness.Stale {
 					l.StaleAccounts++
+				}
+				asOf := b.ReferenceDate
+				if asOf.IsZero() {
+					asOf, _ = calendar.NewDate(b.ObtainedAt.UTC().Year(), b.ObtainedAt.UTC().Month(), b.ObtainedAt.UTC().Day())
+				}
+				if l.BalanceAsOf.IsZero() || asOf.Before(l.BalanceAsOf) {
+					l.BalanceAsOf = asOf
 				}
 				if l.OldestBalanceAt == nil || b.ObtainedAt.Before(*l.OldestBalanceAt) {
 					at := b.ObtainedAt
@@ -375,6 +448,16 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 		if l.Balance != nil {
 			d, _ := l.Balance.Sub(l.StillDue)
 			l.BalanceLessStillDue = &d
+			z, _ := money.Zero(c, l.Balance.Amount().Scale())
+			after := PaymentsAfter{Amount: z}
+			for _, p := range evidence[c] {
+				if p.date.After(l.BalanceAsOf) {
+					after.Count++
+					// Same currency: Add cannot fail.
+					after.Amount, _ = after.Amount.Add(p.amount)
+				}
+			}
+			l.PaymentsAfterBalance = &after
 		}
 		out.Currencies = append(out.Currencies, *l)
 	}
