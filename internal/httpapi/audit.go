@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -54,6 +55,16 @@ func checkULID(v string) error {
 	return nil
 }
 
+// checkMax limits a filter value to n bytes, like the column it is compared to.
+func checkMax(n int) func(string) error {
+	return func(v string) error {
+		if len(v) > n {
+			return fmt.Errorf("must be at most %d characters", n)
+		}
+		return nil
+	}
+}
+
 func checkTime(v string) error {
 	if _, err := time.Parse(time.RFC3339Nano, v); err != nil {
 		return errors.New("must be an RFC 3339 timestamp")
@@ -77,8 +88,8 @@ var auditListSpec = ListSpec{Filters: map[string]FilterSpec{
 	}},
 	"actor_user_id":  {Ops: []FilterOp{OpEq}, Check: checkULID},
 	"actor_token_id": {Ops: []FilterOp{OpEq}, Check: checkULID},
-	"target_type":    {Ops: []FilterOp{OpEq}},
-	"target_id":      {Ops: []FilterOp{OpEq}},
+	"target_type":    {Ops: []FilterOp{OpEq}, Check: checkMax(32)},
+	"target_id":      {Ops: []FilterOp{OpEq}, Check: checkMax(64)},
 	"at":             {Ops: []FilterOp{OpGte, OpLt}, Check: checkTime},
 }}
 
@@ -90,6 +101,14 @@ func registerAudit(s *Server, rd audit.Reader) {
 		if err != nil {
 			WriteError(w, r, err)
 			return
+		}
+		// ADR-0011: a single-value filter given twice is refused, never
+		// dropped (which would widen the result to every entry).
+		for _, field := range []string{"actor_user_id", "actor_token_id", "target_type", "target_id"} {
+			if len(q.Filter(field, OpEq)) > 1 {
+				WriteError(w, r, Validation(field, "this filter must be given once"))
+				return
+			}
 		}
 		f := audit.Filter{After: q.After, Limit: q.Limit}
 		for _, v := range q.Filter("action", OpEq) {

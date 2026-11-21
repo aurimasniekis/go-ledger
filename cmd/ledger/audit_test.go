@@ -133,7 +133,14 @@ func TestAuditAPIListsChangesWithFiltersAndPages(t *testing.T) {
 		t.Errorf("walked %d entries, want 6", len(seen))
 	}
 
-	for _, bad := range []string{"?actor_kind=robot", "?actor_user_id=x", "?at[gte]=yesterday", "?nonsense=1", "?action[gt]=a", "?limit=0", "?cursor=zzz"} {
+	id, id2 := "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+	for _, bad := range []string{
+		"?actor_user_id=" + id + "&actor_user_id=" + id2,
+		"?actor_token_id=" + id + "&actor_token_id=" + id2,
+		"?target_type=a&target_type=b",
+		"?target_id=a&target_id=b",
+		"?target_type=" + strings.Repeat("a", 33),
+		"?target_id=" + strings.Repeat("a", 65), "?actor_kind=robot", "?actor_user_id=x", "?at[gte]=yesterday", "?nonsense=1", "?action[gt]=a", "?limit=0", "?cursor=zzz"} {
 		f.auditList(t, bad, "alice", 400)
 	}
 }
