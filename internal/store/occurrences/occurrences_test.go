@@ -514,8 +514,8 @@ func TestDateCorrectionRemovesUnpaidOutsideRange(t *testing.T) {
 	}
 
 	// End moved earlier with an effective date after May: the unpaid April and
-	// May ones are history by date but still go, and so does the June one the
-	// effective month materialises (each row is counted once).
+	// May ones are history by date but still go, and the June one the
+	// effective month materialises goes through the plan (each row counted once).
 	next = c2.Fields
 	e := d("2026-03-31")
 	next.EndDate = &e
@@ -525,7 +525,7 @@ func TestDateCorrectionRemovesUnpaidOutsideRange(t *testing.T) {
 	if got, want := f.all(t), "2026-01-10@10.00#1 2026-03-10@10.00#1"; got != want {
 		t.Fatalf("after end change %q, want %q", got, want)
 	}
-	if ev := f.rec.events[len(f.rec.events)-1]; ev.Details["removed_out_of_range"] != "3" || ev.Details["removed"] != "0" || ev.Details["kept_history"] != "0" {
+	if ev := f.rec.events[len(f.rec.events)-1]; ev.Details["removed_out_of_range"] != "2" || ev.Details["removed"] != "1" || ev.Details["kept_history"] != "0" {
 		t.Fatalf("audit %+v", ev)
 	}
 }
@@ -604,6 +604,75 @@ func TestDateCorrectionKeepsPaidOutsideRange(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 	if ev := f.rec.events[len(f.rec.events)-1]; ev.Details["removed_out_of_range"] != "1" {
+		t.Fatalf("audit %+v", ev)
+	}
+}
+
+// probeEdit runs the C2e probe: monthly on day 10 from 2026-01-01 materialised
+// through May, then start_date 2026-03-12 with day 20, effective 2026-03-01
+// (or effective), today 2026-03-15. override puts an active override on March.
+func probeEdit(t *testing.T, override bool, effective string) (f *fixture, marchID string, ev audit.Event) {
+	t.Helper()
+	f = newFixture(t)
+	c := f.create(t, commitments.Monthly(1, 10), "2026-01-01", "10.00")
+	f.month(t, "2026-05")
+	marchID = f.month(t, "2026-03")[0].ID
+	if override {
+		f.override(t, "01JD3Y4C8V9M2Q7W5R6T0XZB03", marchID, "paid", "active")
+	}
+	next := c.Fields
+	next.Schedule = commitments.Monthly(1, 20)
+	next.StartDate = d("2026-03-12")
+	if _, err := f.cs.Update(context.Background(), alice, c.ID, 1, next, d(effective), d("2026-03-15")); err != nil {
+		t.Fatal(err)
+	}
+	return f, marchID, f.rec.events[len(f.rec.events)-1]
+}
+
+// TestDateCorrectionRewritesInPlace: an unpaid occurrence due on or after the
+// effective date is rewritten in place (same id, version 2), not removed and
+// recreated, when a date correction also moves the due day.
+func TestDateCorrectionRewritesInPlace(t *testing.T) {
+	f, marchID, ev := probeEdit(t, false, "2026-03-01")
+	if got, want := f.all(t), "2026-03-20@10.00#2 2026-04-20@10.00#2 2026-05-20@10.00#2"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := f.month(t, "2026-03")[0].ID; got != marchID {
+		t.Fatalf("March id %s, want %s kept", got, marchID)
+	}
+	if ev.Details["updated"] != "3" || ev.Details["created"] != "0" || ev.Details["removed_out_of_range"] != "2" {
+		t.Fatalf("audit %+v", ev)
+	}
+}
+
+// TestDateCorrectionRewritesOverriddenInPlace: an overridden row due on or
+// after the effective date is rewritten in place and keeps its override; no
+// phantom created is audited.
+func TestDateCorrectionRewritesOverriddenInPlace(t *testing.T) {
+	f, marchID, ev := probeEdit(t, true, "2026-03-01")
+	if got := f.month(t, "2026-03"); len(got) != 1 || got[0].ID != marchID || got[0].DueDate.String() != "2026-03-20" {
+		t.Fatalf("March %+v", got)
+	}
+	var n int
+	if err := f.db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM occurrence_status_overrides WHERE occurrence_id = ?", marchID).Scan(&n)
+	}); err != nil || n != 1 {
+		t.Fatalf("override rows %d, %v", n, err)
+	}
+	if ev.Details["created"] != "0" || ev.Details["updated"] != "3" {
+		t.Fatalf("audit %+v", ev)
+	}
+}
+
+// TestDateCorrectionEffectiveToday: with the effective date today, the
+// history row due before it and outside the new start is removed and March's
+// new occurrence is created.
+func TestDateCorrectionEffectiveToday(t *testing.T) {
+	f, _, ev := probeEdit(t, false, "2026-03-15")
+	if got, want := f.all(t), "2026-03-20@10.00#1 2026-04-20@10.00#2 2026-05-20@10.00#2"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if ev.Details["removed_out_of_range"] != "3" || ev.Details["created"] != "1" {
 		t.Fatalf("audit %+v", ev)
 	}
 }

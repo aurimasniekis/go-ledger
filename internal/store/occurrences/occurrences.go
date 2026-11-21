@@ -117,12 +117,16 @@ func (s *Store) setHorizon(ctx context.Context, tx *sql.Tx, commitmentID string,
 	return err
 }
 
-func (s *Store) insert(ctx context.Context, tx *sql.Tx, commitmentID string, p occurrences.Planned, now time.Time) error {
-	_, err := tx.ExecContext(ctx, "INSERT INTO commitment_occurrences (id, commitment_id, month, due_date, amount, currency, created_at, updated_at)"+
+func (s *Store) insert(ctx context.Context, tx *sql.Tx, commitmentID string, p occurrences.Planned, now time.Time) (bool, error) {
+	res, err := tx.ExecContext(ctx, "INSERT INTO commitment_occurrences (id, commitment_id, month, due_date, amount, currency, created_at, updated_at)"+
 		" VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (commitment_id, month) DO NOTHING",
 		s.newID(), commitmentID, p.Month.String(), sqlvalue.Date{Date: p.DueDate}, sqlvalue.Amount{Decimal: p.Amount.Amount()},
 		sqlvalue.Currency{Currency: p.Amount.Currency()}, store.Timestamp{Time: now}, store.Timestamp{Time: now})
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // MaterialiseTx stores the occurrences t schedules in the months after the
@@ -149,7 +153,7 @@ func (s *Store) MaterialiseTx(ctx context.Context, tx *sql.Tx, commitmentID stri
 	}
 	now := s.now().UTC()
 	for _, p := range occurrences.Generate(t, from, through) {
-		if err := s.insert(ctx, tx, commitmentID, p, now); err != nil {
+		if _, err := s.insert(ctx, tx, commitmentID, p, now); err != nil {
 			return fmt.Errorf("occurrences: materialise: %w", err)
 		}
 	}
@@ -187,11 +191,13 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 	if err := s.MaterialiseTx(ctx, tx, commitmentID, old, through); err != nil {
 		return occurrences.Plan{}, err
 	}
-	// A start or end date change first drops the out-of-range occurrences, so
-	// the plan below never sees (and never counts) them.
+	// A start or end date change first drops the unpaid out-of-range
+	// occurrences due before the effective date (history, which the plan would
+	// leave alone). Those due on or after it are left to the plan, which
+	// rewrites them in place or removes them.
 	var outOfRange, keptOverride int
 	if old.Start != next.Start || !sameEnd(old.End, next.End) {
-		if outOfRange, keptOverride, err = s.removeOutOfRange(ctx, tx, commitmentID, next); err != nil {
+		if outOfRange, keptOverride, err = s.removeOutOfRange(ctx, tx, commitmentID, next, effective); err != nil {
 			return occurrences.Plan{}, err
 		}
 	}
@@ -199,16 +205,37 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 	if err != nil {
 		return occurrences.Plan{}, err
 	}
-	// An unpaid occurrence outside the terms can only be one kept for its
-	// status override: leave it alone, the plan would delete it.
-	existing := all[:0:0]
+	plan := occurrences.PlanEdit(all, through, next, effective)
+	// Unpaid history rows still outside the terms are the ones kept for an
+	// override: audit them as kept_override only, not also as kept_history.
 	for _, e := range all {
-		if !e.Paid && (e.DueDate.Before(next.Start) || (next.End != nil && e.DueDate.After(*next.End))) {
-			continue
+		if !e.Paid && e.DueDate.Before(effective) && (e.DueDate.Before(next.Start) || (next.End != nil && e.DueDate.After(*next.End))) {
+			plan.KeptHistory--
 		}
-		existing = append(existing, e)
 	}
-	plan := occurrences.PlanEdit(existing, through, next, effective)
+	// An overridden row outside the new dates that the plan would remove stays:
+	// the override would cascade away with it (D23). Count it as kept_override.
+	outside := map[string]bool{}
+	for _, e := range all {
+		if e.DueDate.Before(next.Start) || (next.End != nil && e.DueDate.After(*next.End)) {
+			outside[e.ID] = true
+		}
+	}
+	kept := plan.Remove[:0:0]
+	for _, id := range plan.Remove {
+		if outside[id] {
+			var has bool
+			if err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM occurrence_status_overrides WHERE occurrence_id = ?)", id).Scan(&has); err != nil {
+				return occurrences.Plan{}, fmt.Errorf("occurrences: check override: %w", err)
+			}
+			if has {
+				keptOverride++
+				continue
+			}
+		}
+		kept = append(kept, id)
+	}
+	plan.Remove = kept
 	plan.OutOfRange, plan.KeptOverride = outOfRange, keptOverride
 	now := s.now().UTC()
 	for _, id := range plan.Remove {
@@ -224,11 +251,17 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 			return occurrences.Plan{}, fmt.Errorf("occurrences: update: %w", err)
 		}
 	}
+	created := plan.Create[:0:0]
 	for _, p := range plan.Create {
-		if err := s.insert(ctx, tx, commitmentID, p, now); err != nil {
+		ok, err := s.insert(ctx, tx, commitmentID, p, now)
+		if err != nil {
 			return occurrences.Plan{}, fmt.Errorf("occurrences: create: %w", err)
 		}
+		if ok { // a conflict inserted nothing: never count it as created
+			created = append(created, p)
+		}
 	}
+	plan.Create = created
 	var marker any // an edit effective today or earlier leaves nothing pending
 	if effective.After(today) {
 		marker = sqlvalue.Date{Date: effective}
@@ -247,13 +280,14 @@ func sameEnd(a, b *calendar.Date) bool {
 }
 
 // removeOutOfRange deletes the unpaid occurrences due before the start date or
-// after the end date (D23 2b). It ignores the effective date. Occurrences with
+// after the end date (D23 2b) and before the effective date: later ones are
+// rewritten or removed by the edit plan. Occurrences with
 // payment evidence stay, and so do those with a status override of any state:
 // the override is the user's record and would cascade away with the row. It
 // returns how many it deleted and how many it kept for an override.
-func (s *Store) removeOutOfRange(ctx context.Context, tx *sql.Tx, commitmentID string, t occurrences.Terms) (removed, keptOverride int, err error) {
-	where := " FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT " + s.paid + " AND (due_date < ?"
-	args := []any{commitmentID, sqlvalue.Date{Date: t.Start}}
+func (s *Store) removeOutOfRange(ctx context.Context, tx *sql.Tx, commitmentID string, t occurrences.Terms, effective calendar.Date) (removed, keptOverride int, err error) {
+	where := " FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT " + s.paid + " AND due_date < ? AND (due_date < ?"
+	args := []any{commitmentID, sqlvalue.Date{Date: effective}, sqlvalue.Date{Date: t.Start}}
 	if t.End != nil {
 		where += " OR due_date > ?"
 		args = append(args, sqlvalue.Date{Date: *t.End})
