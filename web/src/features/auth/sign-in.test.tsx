@@ -46,7 +46,7 @@ describe('sign-in', () => {
     await user.tab()
     expect(screen.getByLabelText('Password')).toHaveFocus()
     await user.keyboard('correct horse battery{Enter}')
-    expect(await screen.findByRole('heading', { level: 1, name: 'Monthly view' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: /^\w+ \d{4}$/ })).toBeInTheDocument()
     const post = calls.find((c) => c.method === 'POST')!
     expect(post.body).toEqual({ username: 'alice', password: 'correct horse battery' })
     expect(post.headers['Content-Type']).toBe('application/json')

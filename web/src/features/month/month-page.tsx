@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
+import { useAnnounce } from '@/components/announcer'
+import { useFocusRestore } from '@/lib/focus'
 import { useMonthSummary } from './api'
 import { MonthBoard } from './month-board'
+import { monthLabel } from './month'
 import { PaymentPanel, UndoNotice } from './payment-panel'
 import type { ManualPayment, MonthItem } from './types'
 
@@ -16,34 +19,32 @@ export function MonthPage({ month }: { month: string }) {
     return () => clearInterval(t)
   }, [])
   const [panel, setPanel] = useState<{ item: MonthItem; inPlace: boolean } | null>(null) // the occurrence the open form starts on, and whether it sits under that row
-  const [saved, setSaved] = useState<{ payment: ManualPayment; item: MonthItem } | null>(null)
-  const opener = useRef<HTMLElement | null>(null)
+  // The notice belongs to the month the payment was recorded in, so Undo still refreshes that month after the user moves on.
+  const [saved, setSaved] = useState<{ payment: ManualPayment; item: MonthItem; month: string } | null>(null)
   const headerButton = useRef<HTMLButtonElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
+  // Give focus back to what opened the form, or to the primary button when that is gone; when nothing
+  // focusable is left (every occurrence paid) it falls back to the month title, never to BODY.
+  const focus = useFocusRestore(() => [headerButton.current, headingRef.current])
   const openPanel = (item: MonthItem | null, inPlace: boolean) => {
-    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    focus.remember()
     setPanel(item ? { item, inPlace } : null)
   }
-  // Give focus back to what opened the form, or to the primary button when that is gone.
-  // It runs after the re-render, so a button that was disabled while the form was open is usable again;
-  // when nothing focusable is left (every occurrence paid) it falls back to the heading, never to BODY.
-  const [restore, setRestore] = useState(0)
-  const restoreFocus = () => setRestore((n) => n + 1)
+  // Moving to another month is announced (focus stays on the Previous/Next button the user pressed).
+  const announce = useAnnounce()
+  const shown = useRef(month)
   useEffect(() => {
-    if (restore === 0) return
-    const usable = (el: HTMLElement | null) => (el?.isConnected && !(el as HTMLButtonElement).disabled ? el : null)
-    const el = usable(opener.current) ?? usable(headerButton.current) ?? headingRef.current
-    el?.focus()
-  }, [restore])
+    if (shown.current === month) return
+    shown.current = month
+    announce(`Showing ${monthLabel(month)}.`)
+  }, [month, announce])
   const unpaid = (q.data?.items ?? []).filter((i) => i.payment.status !== 'paid' && i.payment.status !== 'cancelled')
 
   return (
     <section className="space-y-4" aria-labelledby="month-title">
       <header className="flex flex-wrap items-center justify-between gap-2">
-        <h1 id="month-title" ref={headingRef} tabIndex={-1} className="text-2xl font-semibold focus:outline-none">
-          Monthly view
-        </h1>
-        <Button ref={headerButton} onClick={() => openPanel(unpaid[0] ?? null, false)} disabled={unpaid.length === 0 || panel !== null}>
+        <p className="text-sm font-medium text-muted-foreground">Monthly view</p>
+        <Button ref={headerButton} className="h-auto min-h-9 whitespace-normal py-1.5" onClick={() => openPanel(unpaid[0] ?? null, false)} disabled={unpaid.length === 0 || panel !== null}>
           Record a payment
         </Button>
       </header>
@@ -55,9 +56,9 @@ export function MonthPage({ month }: { month: string }) {
         </p>
       )}
 
-      {saved && <UndoNotice key={saved.payment.id} {...saved} month={month} onDone={() => {
+      {saved && <UndoNotice key={saved.payment.id} {...saved} onDone={() => {
         setSaved(null)
-        restoreFocus()
+        focus.restore()
       }} />}
 
       <MonthBoard
@@ -68,6 +69,7 @@ export function MonthPage({ month }: { month: string }) {
         isFetching={q.isFetching}
         dataUpdatedAt={q.dataUpdatedAt}
         now={now}
+        titleRef={headingRef}
         onMonthChange={(m) => {
           setPanel(null)
           void navigate({ to: '/month', search: { month: m } })
@@ -86,11 +88,11 @@ export function MonthPage({ month }: { month: string }) {
               chooser={!panel.inPlace}
               onClose={() => {
                 setPanel(null)
-                restoreFocus()
+                focus.restore()
               }}
               onSaved={(payment, item) => {
                 setPanel(null)
-                setSaved({ payment, item })
+                setSaved({ payment, item, month })
               }}
             />
           ) : null

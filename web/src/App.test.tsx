@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryHistory } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,8 +13,9 @@ afterEach(() => vi.unstubAllGlobals())
 describe('App shell', () => {
   it('leads / to the monthly view, with no placeholder overview', async () => {
     render(<App history={createMemoryHistory({ initialEntries: ['/'] })} />)
-    expect(await screen.findByRole('heading', { level: 1, name: 'Monthly view' })).toBeInTheDocument()
-    expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument()
+    // The page title (h1) is the month; "Monthly view" names the page in the navigation and above the title.
+    expect(await screen.findByRole('heading', { level: 1, name: /^\w+ \d{4}$/ })).toBeInTheDocument()
+    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('link', { name: 'Monthly view' })).toBeInTheDocument()
     expect(screen.queryByText(/will appear here/)).toBeNull()
     expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull()
   })

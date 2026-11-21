@@ -1,8 +1,9 @@
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge, type Status } from '@/components/status-badge'
-import { ApiError } from '@/lib/api'
-import type { ReactNode } from 'react'
+import { DisconnectedState, EmptyState, FailedState, LoadingState } from '@/components/state-panels'
+import { isNetworkError } from '@/lib/connection'
+import type { ReactNode, Ref } from 'react'
 import { ProvenanceMarker, provenanceOf } from './provenance'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from './month'
 import type { MonthItem, MonthSummary, MonthTotals, PaymentStatus } from './types'
@@ -29,11 +30,13 @@ export interface MonthBoardProps {
   /** The record-payment form, shown in place under the row with this id (the row that opened it). */
   formFor?: string | null
   form?: ReactNode
+  /** Receives the page title (h1) so focus can fall back to it. */
+  titleRef?: Ref<HTMLHeadingElement>
 }
 
 const money = (m: { amount: string; currency: string }) => `${m.amount} ${m.currency}`
 
-export function MonthBoard(p: MonthBoardProps) {
+export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
   const label = monthLabel(p.month)
   return (
     <div className="space-y-4">
@@ -43,9 +46,9 @@ export function MonthBoard(p: MonthBoardProps) {
           <span className="sr-only">Previous month, {monthLabel(shiftMonth(p.month, -1))}</span>
           <span aria-hidden className="hidden sm:inline">Previous</span>
         </Button>
-        <h2 className="w-48 text-center text-lg font-semibold" aria-live="polite">
+        <h1 id="month-title" ref={titleRef} tabIndex={-1} className="w-48 max-w-full text-center text-xl font-semibold focus:outline-none">
           {label}
-        </h2>
+        </h1>
         <Button variant="outline" size="sm" onClick={() => p.onMonthChange(shiftMonth(p.month, 1))}>
           <span aria-hidden className="hidden sm:inline">Next</span>
           <span className="sr-only">Next month, {monthLabel(shiftMonth(p.month, 1))}</span>
@@ -53,14 +56,26 @@ export function MonthBoard(p: MonthBoardProps) {
         </Button>
       </nav>
 
-      {p.status === 'pending' && <Loading label={label} />}
-      {p.status === 'error' && !p.data && <Failed error={p.error} onRetry={p.onRetry} />}
+      {p.status === 'pending' && <LoadingState label={label} />}
+      {p.status === 'error' && !p.data && (
+        isNetworkError(p.error) ? (
+          <DisconnectedState onRetry={p.onRetry}>No month has loaded yet, so there is nothing to show. Nothing was changed.</DisconnectedState>
+        ) : (
+          <FailedState title="Could not load this month" error={p.error} onRetry={p.onRetry}>
+            Another month may still load.
+          </FailedState>
+        )
+      )}
       {p.data && (
         <>
           <Freshness {...p} data={p.data} />
           {/* The form opened from the header sits above the list; one opened from a row sits under that row. */}
           {!p.formFor && p.form}
-          {p.data.items.length === 0 && !(p.form && p.formFor) ? <Empty label={label} /> : (
+          {p.data.items.length === 0 && !(p.form && p.formFor) ? (
+            <EmptyState id="month-empty" level={2} title={`No commitments fall due in ${label}`}>
+              Nothing is scheduled for this month. A commitment shows here once its schedule has a due date in it; use the month buttons to look at another month.
+            </EmptyState>
+          ) : (
             <>
               {p.data.items.length > 0 && <Totals totals={p.data.totals} />}
               <Occurrences items={p.data.items} onRecord={p.onRecord} formFor={p.formFor} form={p.form} />
@@ -68,48 +83,6 @@ export function MonthBoard(p: MonthBoardProps) {
           )}
         </>
       )}
-    </div>
-  )
-}
-
-function Loading({ label }: { label: string }) {
-  return (
-    <div role="status" aria-busy="true" className="space-y-2 rounded-md border border-border bg-surface p-4">
-      <p className="text-muted-foreground">Loading {label}…</p>
-      <div aria-hidden className="h-4 w-2/3 rounded-sm bg-muted" />
-      <div aria-hidden className="h-4 w-1/2 rounded-sm bg-muted" />
-    </div>
-  )
-}
-
-function Empty({ label }: { label: string }) {
-  return (
-    <section aria-labelledby="month-empty" className="space-y-1 rounded-md border border-border bg-surface p-4">
-      <h3 id="month-empty" className="font-semibold">
-        No commitments fall due in {label}
-      </h3>
-      <p className="text-sm text-muted-foreground">
-        Nothing is scheduled for this month. A commitment shows here once its schedule has a due date in it; use the month
-        buttons to look at another month.
-      </p>
-    </section>
-  )
-}
-
-function Failed({ error, onRetry }: { error?: Error | null; onRetry: () => void }) {
-  const api = error instanceof ApiError ? error : null
-  return (
-    <div role="alert" className="space-y-2 rounded-md border border-border-control bg-surface p-4">
-      <StatusBadge status="error" label="Could not load this month" />
-      <p>{error?.message ?? 'The request failed.'}</p>
-      <p className="text-sm text-muted-foreground">
-        Nothing was changed. {api?.requestId ? <>Reference <code>{api.requestId}</code>. </> : null}
-        Another month may still load.
-      </p>
-      <Button variant="outline" size="sm" onClick={onRetry}>
-        <RefreshCw aria-hidden className="size-4" />
-        Try again
-      </Button>
     </div>
   )
 }
@@ -159,9 +132,9 @@ const hasOverdue = (t: MonthTotals) => !isZeroAmount(t.overdue.amount)
 function Totals({ totals }: { totals: MonthTotals[] }) {
   return (
     <section aria-labelledby="month-totals" className="space-y-2">
-      <h3 id="month-totals" className="font-semibold">
+      <h2 id="month-totals" className="font-semibold">
         Recorded commitments, by currency
-      </h3>
+      </h2>
       <p className="text-sm text-muted-foreground">
         Each currency is totalled on its own; amounts in different currencies are never added together or converted. These
         totals cover recorded commitments and recorded payments only. They are not a forecast and not a measure of money
@@ -169,9 +142,9 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
       </p>
       <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {totals.map((t) => (
-          <li key={t.currency} className="rounded-md border border-border bg-surface p-3">
-            <h4 className="font-semibold">{t.currency}</h4>
-            <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 text-sm">
+          <li key={t.currency} className="min-w-0 rounded-md border border-border bg-surface p-3">
+            <h3 className="font-semibold">{t.currency}</h3>
+            <dl className="mt-1 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-0.5 text-sm [overflow-wrap:anywhere]">
               <dt>Due</dt>
               <dd className="text-right font-mono">{t.due.amount}</dd>
               <dt>Paid</dt>
@@ -224,9 +197,9 @@ function Occurrences({
   }
   return (
     <section aria-labelledby="month-occurrences" className="space-y-2">
-      <h3 id="month-occurrences" className="font-semibold">
+      <h2 id="month-occurrences" className="font-semibold">
         Occurrences
-      </h3>
+      </h2>
       {items.length > 0 && (
         <p data-testid="status-summary" className="text-sm text-muted-foreground">
           {statusSummary(items)}
@@ -301,7 +274,7 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
           <Button
             variant="ghost"
             size="sm"
-            className="ml-auto text-foreground underline underline-offset-4"
+            className="ml-auto h-auto min-h-8 whitespace-normal py-1 text-foreground underline underline-offset-4"
             onClick={() => onRecord(i)}
             aria-label={`Record payment for ${i.commitment_name || i.commitment_id}, due ${i.due_date}`}
           >

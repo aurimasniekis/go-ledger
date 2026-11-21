@@ -9,7 +9,9 @@ import {
   LoaderCircle,
   Ban,
   OctagonX,
+  SaveOff,
   TriangleAlert,
+  Unplug,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -58,13 +60,17 @@ export const COMMITMENT_STATUSES = {
 
 // Data state: how trustworthy or complete the data behind a row is. A separate
 // axis: a data state never replaces a commitment status, and a row may show both.
-// Pending-save was added with C4. Reserved for later work (U1, X4, B4), not yet implemented: disconnected,
-// save-failed, bank-pending, needs-review. See docs/design-system.md.
+// Pending-save was added with C4; disconnected and save-failed with U1. Reserved for later work (X4, B4), not yet
+// implemented: bank-pending, needs-review. See docs/design-system.md.
 export const DATA_STATES = {
   stale: { label: 'Stale', Icon: History, tier: 'default', color: 'stale' },
   error: { label: 'Error', Icon: OctagonX, tier: 'strong', color: 'error' },
   // A change sent to the server and not yet confirmed: it is not saved.
   pending: { label: 'Not saved yet', Icon: LoaderCircle, tier: 'default', color: 'stale' },
+  // The server or a provider cannot be reached: what is shown is the last data that loaded.
+  disconnected: { label: 'Disconnected', Icon: Unplug, tier: 'default', color: 'stale' },
+  // A change the server did not accept: it was not saved and the earlier value stands.
+  save_failed: { label: 'Not saved', Icon: SaveOff, tier: 'strong', color: 'error' },
 } satisfies Record<string, Entry>
 
 export const STATUSES = { ...COMMITMENT_STATUSES, ...DATA_STATES }
