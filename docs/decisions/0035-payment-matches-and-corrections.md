@@ -147,3 +147,11 @@ moving suggestions to a superseding transaction automatically (a guess the user 
   and MCP tools (X4), and CLI commands for matches (only the Go client methods exist).
 - **Migration number:** `0017_payment_matches` with fixture `0016_device_cookies.sql`. It was written as 0015 and renumbered (0016, then 0017) when
   tasks A6 (OIDC, `0015_oidc`) and A2c (device cookies, `0016_device_cookies`) merged first.
+
+## Amendment: the X2 seam in use (task X2, ADR-0039)
+
+The matching engine of ADR-0039 uses point 11 as written: it writes as `audit.System` with origin `auto_rule`, and
+`Store.ConfirmAuto` confirms the engine's own suggestions with the commitment's `match_tolerance`. One guard is added:
+automation (a system or anonymous actor) cannot confirm a `model_suggestion` (`matches.ErrAutoModel`), as point 5 and
+decision D9 require. A rejected match is what the engine consults: a pair a person rejected, unmatched or reversed is never
+suggested again.

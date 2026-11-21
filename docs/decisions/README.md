@@ -40,6 +40,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0036: Auth and account UI](0036-auth-and-account-ui.md)
 - [ADR-0037: App shell and shared state primitives](0037-app-shell-and-state-primitives.md)
 - [ADR-0038: MCP server core](0038-mcp-server-core.md)
-- [ADR-0039: Enable Banking setup documentation](0039-enable-banking-setup-docs.md)
+- [ADR-0039: Automatic payment matching engine](0039-automatic-payment-matching.md)
+- [ADR-0041: Enable Banking setup documentation](0041-enable-banking-setup-docs.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

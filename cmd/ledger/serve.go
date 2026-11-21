@@ -203,6 +203,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// state-changing token request is audited through the recorder.
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil),
 		httpapi.WithAuthenticators(httpapi.NewTokenAuth(parts.tokens), httpapi.NewSessionAuth(parts.auth)), httpapi.WithRecentAuth(parts.auth.Recent))
+	// Automatic payment matching (X2, ADR-0039): after every bank refresh that
+	// stored something, and on request through the API.
+	parts.matching = newMatcher(db, auditLog, parts.matches, zone.Zone(), nil, log)
 	if cfg.MCP.Enabled {
 		// The MCP tools run through the API's own routes, so they share its
 		// validation, grants and token-write audit (ADR-0038).
@@ -275,7 +278,12 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// waited for before the database closes.
 	var refreshDone chan struct{}
 	facts := bankfacts.New(db, nil)
-	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app})
+	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(ctx context.Context, _ bankimport.Result) {
+		// A failed run is retried after the next refresh, or on request.
+		if _, err := parts.matching.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
+		}
+	}})
 	if cfg.Banking.Refresh.Enabled {
 		sched := bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
 			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff,
@@ -334,12 +342,17 @@ type auditLog interface {
 // through al (ADR-0025). zone is the reporting time zone; now defaults to
 // time.Now.
 func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar.Zone, now func() time.Time) {
+	matching := parts.matching
+	if matching == nil {
+		matching = newMatcher(parts.db, al, parts.matches, zone, now, nil)
+	}
 	httpapi.RegisterAPI(srv, httpapi.Deps{
 		Users:       parts.users,
 		Commitments: parts.commitments,
 		Occurrences: parts.commitments.Occurrences(),
 		Payments:    parts.payments,
 		Matches:     parts.matches,
+		Matching:    matching,
 		Audit:       al,
 		Auth:        parts.auth,
 		Tokens:      parts.tokens,

@@ -160,6 +160,21 @@ func TestCheckAuto(t *testing.T) {
 	if err := matches.CheckAuto(booked("-12.00"), 0, eur("12.00"), occ("12.51"), eur("0.50")); !errors.Is(err, matches.ErrAutoAmount) {
 		t.Errorf("beyond tolerance: %v", err)
 	}
+	// The transaction must be dated within 3 days of the due date.
+	late := booked("-12.00")
+	late.Date = calendar.MustDate(2026, time.October, 5)
+	if err := matches.CheckAuto(late, 0, eur("12.00"), occ("12.00"), none); err != nil {
+		t.Errorf("3 days late: %v", err)
+	}
+	late.Date = calendar.MustDate(2026, time.October, 6)
+	if err := matches.CheckAuto(late, 0, eur("12.00"), occ("12.00"), none); !errors.Is(err, matches.ErrAutoDate) {
+		t.Errorf("4 days late: %v", err)
+	}
+	early := booked("-12.00")
+	early.Date = calendar.MustDate(2026, time.September, 28)
+	if err := matches.CheckAuto(early, 0, eur("12.00"), occ("12.00"), none); !errors.Is(err, matches.ErrAutoDate) {
+		t.Errorf("4 days early: %v", err)
+	}
 }
 
 func TestNeedsReview(t *testing.T) {

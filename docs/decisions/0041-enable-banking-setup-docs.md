@@ -1,8 +1,8 @@
-# ADR-0039: Enable Banking setup documentation
+# ADR-0041: Enable Banking setup documentation
 
 Status: Proposed (2026-11-21)
 
-Numbering: 0039 is the next free number on work; B5 claims it. ADR-0023 (B3) is the adapter's record.
+Numbering: 0041. ADR-0039 is automatic payment matching (X2) on work; 0040 is held for PR #77. ADR-0023 (B3) is the adapter's record.
 
 ## Context
 
@@ -20,9 +20,10 @@ public documentation, read 2026-11-20), and ADR-0023 (the adapter and the config
    unrestricted activation) and says plainly that the documentation does not use "app mode" or "developer mode".
 3. The page describes only what the code on the branch does. Connection flow, connection screens and the visible mode on a
    connection are marked as arriving with B4. The PSU headers that some banks require are marked as not sent yet.
-4. A test (`internal/config/enablebanking_docs_test.go`) fails when the page names a `LEDGER_` variable that the
-   configuration definition does not have, or when PEM key material is pasted into it. The page's configuration
-   examples therefore cannot drift from the code silently.
+4. A test (`internal/config/enablebanking_docs_test.go`) fails when the page names a `LEDGER_` variable whose exact name
+   is not in the configuration definition, when PEM key material is pasted into it, or when a UUID on it is not one of the
+   all-zero placeholders. The page's configuration examples therefore cannot drift from the code silently.
+   The test checks variable names and placeholders only; it does not check wording.
 
 ## Why
 
