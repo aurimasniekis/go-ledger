@@ -48,9 +48,9 @@ R1 found that Enable Banking's documentation uses neither "app mode" nor "develo
    | `CLOSED_SESSION`, `SESSION_DOES_NOT_EXIST`, `WRONG_SESSION_STATUS`, `ASPSP_PSU_ACTION_REQUIRED` [U: semantics not documented for account data] | reconnect_required | session_invalid |
    | `ASPSP_RATE_LIMIT_EXCEEDED` or HTTP 429 | rate_limited | RetryAfter from the header (seconds or HTTP date). Without a header, `ASPSP_RATE_LIMIT_EXCEEDED` gets 6 h, the backoff Enable Banking recommends; a bare 429 gets none, so the engine does not retry it. |
    | `ASPSP_TIMEOUT`, `ASPSP_ERROR`, 408, 5xx, network failures, timeouts | retryable | none |
-
-Retry-After is capped at 7 days in both forms. "Retryable" on a non-idempotent call (`POST /auth`, `POST /sessions`, `DELETE /sessions/{id}`) is only a classification: such calls must not be fed through a retry loop (D17: retries are for idempotent reads only). B4 must respect this. Outbound calls use a 10 s connect and 30 s total timeout (D17) in the default client.
    | Anything else, including `UNAUTHORIZED_ACCESS` (a key or app id problem), `WRONG_TRANSACTIONS_PERIOD` and an undecodable 2xx | permanent | none |
+
+   A `Retry-After` over 7 days, in either form (seconds or HTTP date), is ignored, as if absent: it is not capped. "Retryable" on a non-idempotent call (`POST /auth`, `POST /sessions`, `DELETE /sessions/{id}`) is only a classification: such calls must not be fed through a retry loop (D17: retries are for idempotent reads only). B4 must respect this. Outbound calls use a 10 s connect and 30 s total timeout (D17) in the default client.
 
    Ledger's own cancellation is `canceled`.
 8. **No leaks.** The adapter never logs. Its errors hold only the provider, the operation, the kind, the reason and a code. A response code is kept only if it looks like an error code (upper-case letters, digits and underscores), otherwise it becomes `http_<status>`. The wrapped cause is a fixed sanitized error, never a `*url.Error` (that would print the URL, which holds uids and session ids), never the response message or detail, and never a body. Response bodies are capped at 16 MiB.
