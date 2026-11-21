@@ -7,12 +7,11 @@ import { StatusBadge } from '@/components/status-badge'
 import { ApiError } from '@/lib/api'
 import { Amount, DateText } from '@/components/formatted'
 import { formatAmount, isIsoDate } from '@/lib/format'
+import { money } from './month-board'
 import { isZeroAmount, monthLabel } from './month'
 import { deletePayment, monthKey, recordPayment } from './api'
 import type { ManualPayment, MonthItem } from './types'
 
-// The same formatter as the month row's money() (month-board.tsx): the amount with its currency.
-const money = (m: { amount: string; currency: string }) => <Amount amount={m.amount} currency={m.currency} />
 
 export interface PaymentPanelProps {
   month: string
