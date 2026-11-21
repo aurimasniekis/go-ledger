@@ -96,24 +96,35 @@ banking:
       private_key_file: "/run/secrets/enablebanking-developer.pem"
 ```
 
-The same settings as environment variables (use the key only from a secret store or an `.env` file with restricted
-permissions):
+The same settings as environment variables. **Recommended: keep the key in a file and point at it with
+`PRIVATE_KEY_FILE`**, as below. The file is read at startup and never printed.
 
 ```sh
 LEDGER_BANKING_ENABLE_BANKING_APP_ENABLED=true
 LEDGER_BANKING_ENABLE_BANKING_APP_APP_ID=<application id>
 LEDGER_BANKING_ENABLE_BANKING_APP_PRIVATE_KEY_FILE=/run/secrets/enablebanking-app.pem
-# or, instead of the file: LEDGER_BANKING_ENABLE_BANKING_APP_PRIVATE_KEY=<the PEM text on one line, with \n for line breaks>
 LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_ENABLED=true
 LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_APP_ID=<application id>
 LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_PRIVATE_KEY_FILE=/run/secrets/enablebanking-developer.pem
 ```
 
+Only if you cannot use a file, `PRIVATE_KEY` takes the PEM text itself, with one `\n` for each line break. That form
+works **only** when the value is double-quoted in a `.env` file, where Ledger turns `\n` into a line break:
+
+```sh
+LEDGER_BANKING_ENABLE_BANKING_APP_PRIVATE_KEY="<PEM header line>\n<base64 lines, joined by \n>\n<PEM footer line>"
+```
+
+In a real environment (a systemd unit, a Docker `-e` or `environment:` entry, or a shell export) the value is passed
+exactly as written: the backslash-n stays two characters, the PEM is not recognised, and startup fails with "not PEM
+encoded". Use `PRIVATE_KEY_FILE` there. Never put the PEM in the YAML file or a command-line flag (rejected).
+
 Rules the configuration enforces (checked by `ledger config check` and at `ledger serve` startup):
 
-- When a slot is enabled, `app_id` (a UUID) and a key source (`private_key` or `private_key_file`) are required.
+- When a slot is enabled, `app_id` (a UUID) and a key source are required: exactly one of `private_key` or
+  `private_key_file`. Setting both is an error.
 - Application names must be unique and 1 to 64 lower-case letters, digits, `-` or `_`.
-- `base_url` must be `https`. Plain `http` is allowed only for a loopback test server.
+- `base_url` must be `https`. Plain `http` is allowed only for a loopback test server (`localhost`, `127.*` or `::1`).
 - `environment` is `production` or `sandbox`. Use `sandbox` only for a sandbox application; it is not a mode.
 
 Check the configuration without starting the server (it makes no network call):
@@ -129,8 +140,8 @@ environment and account access. It makes **no** request to Enable Banking. On th
 `Verify` (the `GET /application` check of key, environment and active flag); wiring that check into a status page
 is part of B4.
 
-Background refresh (`banking.refresh.*`) runs against every enabled application. Its interval, backoff and daily
-budget are described in [ADR-0028](decisions/0028-background-refresh-scheduler.md).
+Background refresh (`banking.refresh.*`) runs against every enabled application. Its `interval` and `max_backoff`
+are configurable; the daily fetch budget is fixed and not configurable. See [ADR-0028](decisions/0028-background-refresh-scheduler.md).
 
 ## What each mode changes
 
@@ -151,19 +162,22 @@ connection, whatever the mode:
   it keeps the last good data and its age until then.
 - **Re-authorising changes identifiers.** A new session has new account `uid`s. Ledger matches accounts by the
   stable `identification_hash`, not by `uid`, so history is not duplicated.
-- **History depth varies by bank.** A new connection may return a limited window at first (some banks give the full
-  history only some time after authorisation, and others only the last ~90 days). Ledger requests the longest history
-  the bank offers on the first import.
+- **History depth varies by bank.** Full history is usually available only for about an hour after the initial
+  authorisation; after that, many banks return only the last ~90 days. Ledger requests the longest history the bank
+  offers on the first import, so run the first import right after connecting.
 - **Pending and booked.** Pending transactions can change or disappear. Ledger keeps their status and does not treat
-  them as settled; a pending row is not a payment.
+  them as settled; a pending row is not a payment. With automatic matching on, a pending row can produce a match
+  suggestion for review but never confirms one on its own.
 - **Balances.** A bank supplies only some balance types. A balance that the bank does not give is shown as unknown,
   never as zero.
 - **Background fetches are limited.** Many banks allow only about four background fetches a day when the user is not
   online. A rate limit (`ASPSP_RATE_LIMIT_EXCEEDED` or HTTP 429) waits at least 6 hours, or the `Retry-After` the
   bank gives, and the scheduler stays within the daily budget.
 - **PSU headers are not sent yet.** Some banks need PSU headers (for example the user's IP address) on a user-triggered
-  request and reject requests without them, and most banks allow more background fetches when they are sent. The adapter
-  does not send them on this branch; how user-triggered refreshes carry them is part of B4.
+  request and reject requests without them. When PSU headers are sent, the daily background-fetch limit does not apply.
+  A bank that requires them must receive all of the headers it asks for, or the request fails (HTTP 422,
+  `PSU_HEADER_NOT_PROVIDED`). The adapter does not send them on this branch; how user-triggered refreshes carry them is
+  part of B4.
 
 ## Limitations
 
