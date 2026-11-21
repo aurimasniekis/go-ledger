@@ -46,7 +46,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runConfig(args[1:], stdout, stderr, config.Options{})
 	case "auth":
 		return runAuth(args[1:], stdout, stderr, opsEnv{Stdin: os.Stdin})
-	case "me", "grants", "users", "commitments", "occurrences", "matching", "bank", "tokens", "audit":
+	case "me", "grants", "users", "commitments", "occurrences", "matching", "bank", "rates", "tokens", "audit":
 		return runMgmt(args, stdout, stderr, mgmtEnv{})
 	case "mcp":
 		ctx, stop := mcpContext()
@@ -74,7 +74,7 @@ func usage(w io.Writer) {
 	say(w, "  config    check or document the configuration (config check, config env)")
 	say(w, "  auth      set a user's password from standard input (auth set-password), remove their two-factor authentication (auth reset-2fa) or single-sign-on link (auth unlink-oidc), or issue a one-time recovery sign-in link (auth recovery-sign-in); stop serve first")
 	say(w, "  token     create an API token without the web UI, for example the first one (token create; stop serve first)")
-	say(w, "  me, grants, users, commitments, occurrences, matching, bank, tokens, audit")
+	say(w, "  me, grants, users, commitments, occurrences, matching, bank, rates, tokens, audit")
 	say(w, "            manage a running server through its API with a token (ledger <command> help)")
 	say(w, "  mcp       serve the Model Context Protocol on standard input and output for a local agent (mcp stdio); the HTTP endpoint is POST /api/v1/mcp")
 	say(w, "  version   print the build version")

@@ -23,10 +23,12 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking/bankingtest"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
+	"github.com/aurimasniekis/go-ledger/internal/domain/fx"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
+	"github.com/aurimasniekis/go-ledger/internal/metrics"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
@@ -120,6 +122,9 @@ var permissionMatrix = map[string]string{
 	"POST /api/v1/bank-connections/{id}/refresh":               "connections:write",
 	"POST /api/v1/bank-connections/{id}/disconnect":            "connections:write",
 	"POST /api/v1/payment-matching/runs":                       "commitments:write",
+	"GET /api/v1/rates":                                        "rates:read",
+	"GET /api/v1/rates/status":                                 "rates:read",
+	"POST /api/v1/rates/refreshes":                             "rates:write",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
@@ -159,6 +164,13 @@ type apiFixture struct {
 	// connections is the bank connection service behind those routes (tests
 	// close it to simulate shutdown).
 	connections *bankconnect.Service
+	// ratesDouble is the Frankfurter test server behind the rates routes, job
+	// the refresh job and rateDeps the routes' wiring (a test may change it);
+	// metrics receives the job's run metrics. No live service is contacted.
+	ratesDouble *frankfurterDouble
+	job         *fx.RefreshJob
+	rateDeps    *httpapi.RatesDeps
+	metrics     *metrics.App
 }
 
 // addAdmin creates one more administrator with the fixture password, for the
@@ -226,6 +238,10 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	f.bank, f.devBank, parts.banking = newFakeBanking(db, al, clock)
 	f.db = db
 	f.connections = parts.banking
+	// The rates routes (FX2c) use their own rate service on a Frankfurter test
+	// double; the outlook's stays unset so its tests never reach it.
+	f.ratesDouble, f.job, f.metrics, f.rateDeps = newRatesRig(t, db, al, clock)
+	parts.rateCache = f.rateDeps
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {

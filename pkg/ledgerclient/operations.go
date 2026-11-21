@@ -60,6 +60,10 @@ var (
 	opRefreshBankConn      = operation{ID: "refreshBankConnection", Method: http.MethodPost, Path: "/bank-connections/{id}/refresh"}
 	opDisconnectBankConn   = operation{ID: "disconnectBankConnection", Method: http.MethodPost, Path: "/bank-connections/{id}/disconnect"}
 
+	opListRates    = operation{ID: "listRates", Method: http.MethodGet, Path: "/rates", Query: []string{"limit", "cursor", "provider", "source", "base", "quote", "date[gte]", "date[lte]"}}
+	opRatesStatus  = operation{ID: "getRatesStatus", Method: http.MethodGet, Path: "/rates/status"}
+	opRefreshRates = operation{ID: "refreshRates", Method: http.MethodPost, Path: "/rates/refreshes"}
+
 	// opCreateMyToken needs a root token of the root account (decision D25).
 	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
@@ -77,5 +81,6 @@ var operations = []operation{
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch,
 	opRunMatching,
 	opListBankApps, opListBankInstitutions, opListBankConns, opStartBankConn, opGetBankConn, opReconnectBankConn, opRefreshBankConn, opDisconnectBankConn,
+	opListRates, opRatesStatus, opRefreshRates,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
 }

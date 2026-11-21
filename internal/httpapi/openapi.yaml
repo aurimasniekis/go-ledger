@@ -2922,6 +2922,143 @@ paths:
                 $ref: "#/components/schemas/PaymentMatchingRun"
         default:
           $ref: "#/components/responses/Error"
+  /rates:
+    get:
+      operationId: listRates
+      x-ledger-access: rates:read
+      summary: List cached exchange rates
+      description: |
+        The exchange rates Ledger has cached (task FX2c, ADR-0047), the ones its
+        converted totals use. It reads the local cache only and never calls the
+        rate provider. Each rate carries its provenance: the provider (the
+        adapter, such as frankfurter), the source key (the publisher the
+        provider names, such as ECB, or blended), the pair, the exact rate as
+        published (`value`, a string, never rounded), its date, when Ledger last
+        retrieved it (`retrieved_at`) and when it first received that value.
+
+        `stale` applies decision D11: a rate is stale when Ledger last
+        retrieved it 5 days (rates.stale_after) ago or longer
+        (`not_retrieved_recently`), or when its date is more than that many
+        whole days before today (`rate_date_too_old`). A stale rate is never
+        used in a converted total. A rate dated before today is normal: a
+        provider publishes on working days only, and the rate date says which
+        day the rate is for (`date`). Rates stay listed, with their age, while the
+        provider is disabled or unreachable.
+
+        Ordered by provider, source, base currency and quote currency, then
+        date newest first. A rate revised by the provider shows the value
+        it replaced in `previous`.
+      tags: [rates]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: provider
+          in: query
+          description: Only rates of this provider adapter, for example frankfurter.
+          schema:
+            type: string
+            pattern: "^[a-z][a-z0-9_]{0,31}$"
+        - name: source
+          in: query
+          description: Only rates of this source key, exactly as listed, for example ECB.
+          schema:
+            type: string
+            maxLength: 32
+        - name: base
+          in: query
+          description: Only rates from this currency.
+          schema:
+            $ref: "#/components/schemas/Currency"
+        - name: quote
+          in: query
+          description: Only rates to this currency.
+          schema:
+            $ref: "#/components/schemas/Currency"
+        - name: date[gte]
+          in: query
+          description: Only rates dated on or after this date.
+          schema:
+            $ref: "#/components/schemas/Date"
+        - name: date[lte]
+          in: query
+          description: Only rates dated on or before this date.
+          schema:
+            $ref: "#/components/schemas/Date"
+      responses:
+        "200":
+          description: One page of cached rates.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CachedRate"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+  /rates/status:
+    get:
+      operationId: getRatesStatus
+      x-ledger-access: rates:read
+      summary: Exchange-rate provider and refresh status
+      description: |
+        Whether a rate provider is configured, which source it serves, the
+        freshness policy (D11) and how the last refresh went. The provider is
+        optional: this is reported here and in the
+        ledger_rates_* metrics, and it never makes /readyz fail. The last run is
+        what happened since the process started (null before the first run).
+      tags: [rates]
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RatesStatus"
+        default:
+          $ref: "#/components/responses/Error"
+  /rates/refreshes:
+    post:
+      operationId: refreshRates
+      x-ledger-access: rates:write
+      summary: Refresh the exchange rates now
+      description: |
+        Asks the rate provider for the latest rate from every currency in use
+        (bank accounts, balances, commitments) to the reporting currency, and
+        caches the answers: the same run the daily job makes. Administrators
+        only (rates:write). It only ever adds to the cache.
+
+        Bounded: the run stops when its time (below http.write_timeout) runs
+        out, never overlaps another run (409 refresh_in_progress) and is
+        limited to one a minute (429 rate_limited with Retry-After). A run
+        that fails is still a 200: its `outcome` and `error` say how it ended
+        (the provider's error kind and short code only), and the cache is
+        left as it was. 409 rates_refresh_unavailable means no refresh can
+        run: rates.enabled is false or no reporting currency is set. The
+        request is audited as rates.refresh_requested.
+      tags: [rates]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              description: No options; send nothing or an empty object.
+      responses:
+        "200":
+          description: How the run ended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RatesRefreshRun"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: mcp
     description: Model Context Protocol server.
@@ -2945,6 +3082,8 @@ tags:
     description: The outlook against recorded commitments, compared with bank balances; never money that is safe to spend.
   - name: payment-matches
     description: Links between bank transactions and occurrences (allocations), with suggestions, confirmations, corrections, unmatching and reversal.
+  - name: rates
+    description: Cached exchange rates with provenance and freshness, and refreshing them on request (administrators).
   - name: tokens
     description: API tokens (Authorization Bearer); your own, and everyone's for administrators.
 components:
@@ -4040,6 +4179,130 @@ components:
           additionalProperties:
             type: string
             maxLength: 256
+    CachedRate:
+      type: object
+      description: One cached exchange rate with its provenance, freshness and revision (FX2c, ADR-0047). One unit of base is worth value units of quote. The fields shared with ExchangeRate have the same meaning.
+      required: [provider, source, base, quote, value, date, retrieved_at, first_retrieved_at, confirmed_through, stale, stale_reason, previous]
+      properties:
+        provider:
+          type: string
+          description: The adapter that retrieved the rate, such as frankfurter.
+        source:
+          type: string
+          description: The publisher the provider names (ECB, ...), or blended. Rates of different sources are never mixed.
+        base:
+          $ref: "#/components/schemas/Currency"
+        quote:
+          $ref: "#/components/schemas/Currency"
+        value:
+          $ref: "#/components/schemas/PositiveDecimal"
+        date:
+          description: The day the provider says the rate is for (a working day for ECB).
+          $ref: "#/components/schemas/Date"
+        retrieved_at:
+          type: string
+          format: date-time
+          description: The last time the provider returned this rate for this date.
+        first_retrieved_at:
+          type: string
+          format: date-time
+          description: When Ledger first received this value.
+        confirmed_through:
+          description: The latest date up to which a retrieval confirmed this is the rate that applies.
+          $ref: "#/components/schemas/Date"
+        stale:
+          type: boolean
+          description: Decision D11, evaluated now. A stale rate is never used in a converted total.
+        stale_reason:
+          description: Why the rate is stale; null when it is not.
+          oneOf:
+            - type: string
+              enum: [not_retrieved_recently, rate_date_too_old]
+            - type: "null"
+        previous:
+          description: The value the provider revised away, when it did; null otherwise.
+          oneOf:
+            - type: object
+              required: [value, revised_at]
+              properties:
+                value:
+                  $ref: "#/components/schemas/PositiveDecimal"
+                revised_at:
+                  type: string
+                  format: date-time
+            - type: "null"
+    RatesRefreshRun:
+      type: object
+      description: One exchange-rate refresh run.
+      required: [trigger, started_at, finished_at, outcome, currencies_refreshed, error]
+      properties:
+        trigger:
+          type: string
+          enum: [scheduled, manual]
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        outcome:
+          type: string
+          enum: [succeeded, partial, failed]
+          description: succeeded when every currency was refreshed; partial when some were before a failure; failed when none were.
+        currencies_refreshed:
+          type: integer
+          minimum: 0
+        error:
+          description: The first failure; null on success. Kind and a short code only, never a URL or a provider message.
+          oneOf:
+            - type: object
+              required: [kind, code]
+              properties:
+                kind:
+                  type: string
+                  enum: [unavailable, rate_limited, permanent, internal]
+                code:
+                  type: string
+            - type: "null"
+    RatesStatus:
+      type: object
+      required: [enabled, provider, source, reporting_currency, refresh_available, refresh_interval_seconds, refresh_after_seconds, stale_after_days, last_run, last_success_at, as_of]
+      properties:
+        enabled:
+          type: boolean
+          description: A rate provider is configured (rates.enabled). When false the rates listed were cached while it was on, and nothing refreshes them.
+        provider:
+          type: string
+        source:
+          type: string
+        reporting_currency:
+          description: The currency rates are fetched to; null when reporting.currency is not set.
+          oneOf:
+            - $ref: "#/components/schemas/Currency"
+            - type: "null"
+        refresh_available:
+          type: boolean
+          description: A refresh job exists (enabled and a reporting currency), so POST /rates/refreshes can run.
+        refresh_interval_seconds:
+          type: integer
+        refresh_after_seconds:
+          type: integer
+          description: A rate retrieved more recently than this is used without asking the provider.
+        stale_after_days:
+          type: integer
+          description: Decision D11, 5 by default.
+        last_run:
+          description: The most recent finished run since the process started; null before the first.
+          oneOf:
+            - $ref: "#/components/schemas/RatesRefreshRun"
+            - type: "null"
+        last_success_at:
+          type: [string, "null"]
+          format: date-time
+          description: When a run last refreshed every currency since the process started.
+        as_of:
+          type: string
+          format: date-time
     Principal:
       type: object
       required: [kind, user_id, token_id, role, grants]
@@ -4656,6 +4919,7 @@ components:
             - duplicate_match
             - invalid_match_state
             - password_sign_in_disabled
+            - rates_refresh_unavailable
         message:
           type: string
         field:

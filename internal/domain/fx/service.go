@@ -212,6 +212,10 @@ func NewService(cache Cache, provider Provider, opts Options) (*Service, error) 
 	return s, nil
 }
 
+// HasProvider reports whether a rate provider is configured; without one the
+// service only serves the cache.
+func (s *Service) HasProvider() bool { return s.provider != nil }
+
 // ProviderName is the provider whose rates this service uses.
 func (s *Service) ProviderName() string { return s.name }
 
@@ -635,11 +639,8 @@ func (s *Service) result(c Conversion, rate Rate, date calendar.Date, now time.T
 	c.Age = now.Sub(rate.RetrievedAt)
 	c.FromCache = fromCache
 	c.RefreshError = perr
-	if date == today(now) && c.Age >= s.fresh.StaleAfter {
-		return staleOf(c, ReasonNotRetrievedRecently)
-	}
-	if rate.Date.DaysUntil(date) > s.fresh.staleDays() {
-		return staleOf(c, ReasonRateDateTooOld)
+	if reason := s.fresh.staleReason(rate, date, now); reason != ReasonNone {
+		return staleOf(c, reason)
 	}
 	exact := c.From.Amount().Mul(rate.Value)
 	value := exact

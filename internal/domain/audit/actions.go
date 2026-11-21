@@ -68,6 +68,11 @@ const (
 	// payment_match.* with the system as actor. The target is the run
 	// (target ID "run"). Details: the counts.
 	PaymentMatchingRun Action = "payment_matching.run" // Details: confirmed, suggested, dropped, skipped
+	// A person asked for an exchange-rate refresh through the API (FX2c,
+	// ADR-0047). The target is the refresh (target type "rates", ID "refresh").
+	// Details: the outcome, the number of currencies refreshed and, on failure,
+	// the error kind and code: never a URL or a provider message.
+	RatesRefreshRequested Action = "rates.refresh_requested"
 )
 
 // Fixed value sets for detail fields that are not identifiers.
@@ -178,6 +183,7 @@ var Definitions = map[Action][]Field{
 	BankRefreshRequested:           {f("provider"), f("application"), f("outcome", refreshOutcomes...)},
 	BankSessionEndFailed:           {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled")},
 	PaymentMatchingRun:             {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
+	RatesRefreshRequested:          {f("outcome", "succeeded", "partial", "failed"), f("refreshed"), f("error_kind", "unavailable", "rate_limited", "permanent", "internal"), f("error_code")},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

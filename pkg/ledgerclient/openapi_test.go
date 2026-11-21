@@ -286,6 +286,11 @@ func TestTypesMatchSchemas(t *testing.T) {
 		{"BankConnectionInstitution", reflect.TypeFor[BankConnectionInstitution](), get(ref("BankConnection"), "properties", "institution").(node), false},
 		{"BankConnection", reflect.TypeFor[BankConnection](), ref("BankConnection"), false},
 		{"BankConsentStart", reflect.TypeFor[BankConsentStart](), ref("BankConsentStart"), false},
+		{"CachedRate", reflect.TypeFor[CachedRate](), ref("CachedRate"), false},
+		{"RatePrevious", reflect.TypeFor[RatePrevious](), get(ref("CachedRate"), "properties", "previous", "oneOf").([]any)[0].(node), false},
+		{"RatesRefreshRun", reflect.TypeFor[RatesRefreshRun](), ref("RatesRefreshRun"), false},
+		{"RatesRunError", reflect.TypeFor[RatesRunError](), get(ref("RatesRefreshRun"), "properties", "error", "oneOf").([]any)[0].(node), false},
+		{"RatesStatus", reflect.TypeFor[RatesStatus](), ref("RatesStatus"), false},
 		{"NewBankConnection", reflect.TypeFor[NewBankConnection](), body("/bank-connections", "post"), true},
 	}
 	// Match action bodies also allow "version"; the client sends it as If-Match.

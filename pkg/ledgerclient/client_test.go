@@ -426,5 +426,46 @@ func TestRefreshWaitsLongerThanTheOrdinaryTimeout(t *testing.T) {
 	c2, _ := New(srv.URL, secretToken, WithTimeout(5*time.Second), WithRefreshTimeout(time.Millisecond))
 	if c2.slow.Timeout != 5*time.Second {
 		t.Errorf("slow timeout = %v", c2.slow.Timeout)
+
+func TestRatesRequestShapeAndExactValues(t *testing.T) {
+	var seen []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path+"?"+r.URL.Query().Encode())
+		switch {
+		case r.Method == http.MethodPost:
+			writeJSON(w, 200, map[string]any{"trigger": "manual", "started_at": "2026-11-21T10:00:00Z", "finished_at": "2026-11-21T10:00:01Z",
+				"outcome": "failed", "currencies_refreshed": 0, "error": map[string]string{"kind": "unavailable", "code": "timeout"}})
+		case strings.HasSuffix(r.URL.Path, "/status"):
+			writeJSON(w, 200, map[string]any{"enabled": true, "provider": "frankfurter", "source": "ECB", "reporting_currency": "EUR", "refresh_available": true,
+				"refresh_interval_seconds": 86400, "refresh_after_seconds": 86400, "stale_after_days": 5, "last_run": nil, "last_success_at": nil, "as_of": "2026-11-21T10:00:00Z"})
+		default:
+			writeJSON(w, 200, map[string]any{"items": []map[string]any{{"provider": "frankfurter", "source": "ECB", "base": "USD", "quote": "EUR", "value": "0.9200",
+				"date": "2026-11-13", "retrieved_at": "2026-11-16T09:00:00Z", "first_retrieved_at": "2026-11-16T09:00:00Z", "confirmed_through": "2026-11-16",
+				"stale": true, "stale_reason": "not_retrieved_recently", "previous": nil}}, "next_cursor": nil})
+		}
+	})
+	ctx := context.Background()
+	p, err := c.ListRates(ctx, RateFilter{ListOptions: ListOptions{Limit: 5}, Provider: "frankfurter", Source: "ECB", Base: "USD", Quote: "EUR", From: "2026-11-01", Until: "2026-11-30"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Items) != 1 || p.Items[0].Value != "0.9200" || !p.Items[0].Stale || p.Items[0].StaleReason == nil || *p.Items[0].StaleReason != "not_retrieved_recently" {
+		t.Fatalf("items %+v", p.Items)
+	}
+	st, err := c.GetRatesStatus(ctx)
+	if err != nil || !st.Enabled || st.StaleAfterDays != 5 || st.ReportingCurrency == nil || *st.ReportingCurrency != "EUR" {
+		t.Fatalf("status %+v err %v", st, err)
+	}
+	run, err := c.RefreshRates(ctx)
+	if err != nil || run.Outcome != "failed" || run.Error == nil || run.Error.Code != "timeout" {
+		t.Fatalf("run %+v err %v", run, err)
+	}
+	want := []string{
+		"GET /api/v1/rates?base=USD&date%5Bgte%5D=2026-11-01&date%5Blte%5D=2026-11-30&limit=5&provider=frankfurter&quote=EUR&source=ECB",
+		"GET /api/v1/rates/status?",
+		"POST /api/v1/rates/refreshes?",
+	}
+	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
+		t.Errorf("requests:\n%s\nwant:\n%s", strings.Join(seen, "\n"), strings.Join(want, "\n"))
 	}
 }

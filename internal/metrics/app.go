@@ -24,6 +24,12 @@ type App struct {
 	JobLength *Histogram
 	// BankAccounts is the number of bank accounts by freshness state (B6).
 	BankAccounts *Gauge
+	// Rates* describe the exchange-rate refresh (FX2c, ADR-0047). The rate
+	// provider is optional: these report on it and never gate readiness.
+	RatesRuns        *Counter // trigger, outcome
+	RatesLastSuccess *Gauge   // Unix time of the last run that refreshed every currency
+	RatesLastRun     *Gauge   // Unix time of the last finished run, whatever its outcome
+	RatesProvider    *Gauge   // 1 when a rate provider is configured, else 0
 
 	eventsPublished *Counter
 	eventsDuplicate *Counter
@@ -52,6 +58,14 @@ func NewApp(version string) *App {
 		"Background job run duration in seconds by job name.", nil, "job")
 	a.BankAccounts = r.NewGauge("ledger_bank_accounts",
 		"Bank accounts by data freshness: fresh, stale (last success over 24 hours ago), failed (latest refresh failed), reconnect_required, disconnected or never_refreshed.", "freshness")
+	a.RatesRuns = r.NewCounter("ledger_rates_refresh_runs_total",
+		"Exchange-rate refresh runs by trigger (scheduled or manual) and outcome (success: every currency refreshed; failure: otherwise). Runs cut short by shutdown are not counted.", "trigger", "outcome")
+	a.RatesLastSuccess = r.NewGauge("ledger_rates_last_success_timestamp_seconds",
+		"Unix time the last exchange-rate refresh that refreshed every currency finished; absent until one has since the process started.")
+	a.RatesLastRun = r.NewGauge("ledger_rates_last_run_timestamp_seconds",
+		"Unix time the last exchange-rate refresh finished, whatever its outcome; absent until one has since the process started.")
+	a.RatesProvider = r.NewGauge("ledger_rates_provider_enabled",
+		"1 when an exchange-rate provider is configured (rates.enabled), else 0. The provider is optional and never gates readiness.")
 	a.eventsPublished = r.NewCounter("ledger_events_published_total", "Events acknowledged by Pulse.")
 	a.eventsDuplicate = r.NewCounter("ledger_events_duplicate_total", "Published events Pulse reported as already stored (deduplicated by event id); a subset of published.")
 	a.eventsFailed = r.NewCounter("ledger_events_failed_total", "Events given up on: not delivered within the retry window, or never publishable.")
@@ -95,6 +109,29 @@ func (a *App) SetBankFreshness(counts map[string]int) {
 	for state, n := range counts {
 		a.BankAccounts.Set(float64(n), state)
 	}
+}
+
+// RatesRefreshed implements fx.Meter: it counts one finished refresh run and
+// sets the last-run and, for a fully successful run, last-success times.
+func (a *App) RatesRefreshed(trigger string, success bool, at time.Time) {
+	outcome := JobSuccess
+	if !success {
+		outcome = JobFailure
+	}
+	a.RatesRuns.Inc(trigger, outcome)
+	a.RatesLastRun.Set(float64(at.Unix()))
+	if success {
+		a.RatesLastSuccess.Set(float64(at.Unix()))
+	}
+}
+
+// SetRatesProvider sets the provider-configured gauge.
+func (a *App) SetRatesProvider(enabled bool) {
+	v := 0.0
+	if enabled {
+		v = 1
+	}
+	a.RatesProvider.Set(v)
 }
 
 // JobDone records one finished run of the named job. The name is the job's

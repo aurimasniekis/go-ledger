@@ -180,3 +180,120 @@ func TestRunIsIdleWithoutATargetAndRejectsBadSetup(t *testing.T) {
 		t.Error("empty job ran")
 	}
 }
+
+type meterSpy struct{ runs []string }
+
+func (m *meterSpy) RatesRefreshed(trigger string, ok bool, _ time.Time) {
+	o := "failure"
+	if ok {
+		o = "success"
+	}
+	m.runs = append(m.runs, trigger+"/"+o)
+}
+
+func TestRequestRecordsStatusAndMetersAndLimitsManualRuns(t *testing.T) {
+	e := newJobEnv(t, "USD", "GBP")
+	spy := &meterSpy{}
+	e.job.Meter, e.job.Now = spy, func() time.Time { return *e.clock }
+	if _, ok := e.job.Last(); ok || !e.job.LastSuccess().IsZero() {
+		t.Fatal("a status before any run")
+	}
+	st, err := e.job.Request(t.Context())
+	if err != nil || st.Outcome != fx.RunSucceeded || st.Refreshed != 2 || st.Trigger != fx.TriggerManual || st.ErrorKind != "" {
+		t.Fatalf("run = %+v, %v", st, err)
+	}
+	if last, ok := e.job.Last(); !ok || last != st || !e.job.LastSuccess().Equal(*e.clock) {
+		t.Errorf("last = %+v", last)
+	}
+	// Too soon: refused without calling the provider.
+	calls := len(e.prov.Calls())
+	*e.clock = e.clock.Add(20 * time.Second)
+	var soon *fx.TooSoonError
+	if _, err = e.job.Request(t.Context()); !errors.As(err, &soon) || soon.RetryAfter != 40*time.Second || len(e.prov.Calls()) != calls {
+		t.Fatalf("second request: %v (retry %v), calls %d -> %d", err, soon, calls, len(e.prov.Calls()))
+	}
+	// An outage is a failed run, not an error; the last success stays.
+	*e.clock = e.clock.Add(time.Minute)
+	e.prov.SetDown(&fx.ProviderError{Kind: fx.KindUnavailable, Provider: "p", Op: "latest", Code: "timeout"})
+	st, err = e.job.Request(t.Context())
+	if err != nil || st.Outcome != fx.RunFailed || st.ErrorKind != "unavailable" || st.ErrorCode != "timeout" || st.Refreshed != 0 {
+		t.Fatalf("failed run = %+v, %v", st, err)
+	}
+	if !e.job.LastSuccess().Equal(fxtest.T0) {
+		t.Errorf("last success moved to %v", e.job.LastSuccess())
+	}
+	if len(spy.runs) != 2 || spy.runs[0] != "manual/success" || spy.runs[1] != "manual/failure" {
+		t.Errorf("metered %v", spy.runs)
+	}
+}
+
+func TestRequestNeverOverlapsARunAndCancellationIsNotRecorded(t *testing.T) {
+	e := newJobEnv(t, "USD")
+	spy := &meterSpy{}
+	e.job.Meter = spy
+	release := e.prov.Hold()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { _, err := e.job.Request(ctx); done <- err }()
+	for len(e.prov.Calls()) == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := e.job.Request(t.Context()); !errors.Is(err, fx.ErrRefreshInProgress) {
+		t.Fatalf("overlapping request: %v", err)
+	}
+	cancel()
+	release()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled request: %v", err)
+	}
+	if _, ok := e.job.Last(); ok || len(spy.runs) != 0 {
+		t.Errorf("a cancelled run was recorded: %v", spy.runs)
+	}
+}
+
+func TestRequestTimeoutIsAFailedRun(t *testing.T) {
+	e := newJobEnv(t, "USD")
+	e.prov.Hold()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	st, err := e.job.Request(ctx)
+	if err != nil || st.Outcome != fx.RunFailed || st.ErrorCode != "timeout" {
+		t.Fatalf("run = %+v, %v", st, err)
+	}
+}
+
+func TestRequestWithoutATargetIsIdle(t *testing.T) {
+	e := newJobEnv(t, "USD")
+	e.job.Target = money.Currency{}
+	if _, err := e.job.Request(t.Context()); !errors.Is(err, fx.ErrRefreshIdle) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestStaleReasonFollowsD11(t *testing.T) {
+	now := fxtest.T0
+	svc, err := fx.NewService(fxtest.NewCache(), nil, fx.Options{ProviderName: "p", Source: "ECB", Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rate := func(date string, retrieved time.Time) fx.Rate {
+		d, _ := calendar.ParseDate(date)
+		return fx.Rate{Date: d, RetrievedAt: retrieved}
+	}
+	for name, c := range map[string]struct {
+		r    fx.Rate
+		want fx.Reason
+	}{
+		"fresh":                {rate("2026-11-13", now.Add(-time.Hour)), fx.ReasonNone},
+		"retrieved 5d ago":     {rate("2026-11-15", now.Add(-5*24*time.Hour)), fx.ReasonNotRetrievedRecently},
+		"retrieved 4d23h ago":  {rate("2026-11-15", now.Add(-5*24*time.Hour+time.Hour)), fx.ReasonNone},
+		"dated over 5d before": {rate("2026-11-01", now.Add(-time.Hour)), fx.ReasonRateDateTooOld},
+	} {
+		if got := svc.StaleReason(c.r); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+	if svc.HasProvider() || svc.Freshness() != fx.DefaultFreshness {
+		t.Error("provider or freshness")
+	}
+}

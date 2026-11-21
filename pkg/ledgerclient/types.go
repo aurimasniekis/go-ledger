@@ -539,3 +539,64 @@ type NewBankConnection struct {
 	// ValidForDays is the requested consent validity; 0 for the bank's own.
 	ValidForDays int `json:"valid_for_days,omitempty"`
 }
+
+// CachedRate is one cached exchange rate with its provenance and freshness
+// (task FX2c). One unit of Base is worth Value units of Quote. Value is the
+// exact decimal the provider published, never a float.
+type CachedRate struct {
+	Provider         string `json:"provider"`
+	Source           string `json:"source"`
+	Base             string `json:"base"`
+	Quote            string `json:"quote"`
+	Value            string `json:"value"`
+	Date             string `json:"date"`
+	RetrievedAt      string `json:"retrieved_at"`
+	FirstRetrievedAt string `json:"first_retrieved_at"`
+	ConfirmedThrough string `json:"confirmed_through"`
+	// Stale is decision D11 evaluated now: a stale rate is never used in a
+	// converted total. StaleReason is not_retrieved_recently or
+	// rate_date_too_old, nil when the rate is not stale.
+	Stale       bool    `json:"stale"`
+	StaleReason *string `json:"stale_reason"`
+	// Previous is the value the provider revised away, nil when it never did.
+	Previous *RatePrevious `json:"previous"`
+}
+
+// RatePrevious is a rate value a provider revised away.
+type RatePrevious struct {
+	Value     string `json:"value"`
+	RevisedAt string `json:"revised_at"`
+}
+
+// RatesRunError is the first failure of a refresh run: a kind and a short
+// code, never a URL or a provider message.
+type RatesRunError struct {
+	Kind string `json:"kind"`
+	Code string `json:"code"`
+}
+
+// RatesRefreshRun is one exchange-rate refresh run.
+type RatesRefreshRun struct {
+	Trigger    string `json:"trigger"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
+	// Outcome is succeeded, partial or failed.
+	Outcome             string         `json:"outcome"`
+	CurrenciesRefreshed int            `json:"currencies_refreshed"`
+	Error               *RatesRunError `json:"error"`
+}
+
+// RatesStatus reports on the optional rate provider and the last refresh.
+type RatesStatus struct {
+	Enabled             bool             `json:"enabled"`
+	Provider            string           `json:"provider"`
+	Source              string           `json:"source"`
+	ReportingCurrency   *string          `json:"reporting_currency"`
+	RefreshAvailable    bool             `json:"refresh_available"`
+	RefreshIntervalSecs int              `json:"refresh_interval_seconds"`
+	RefreshAfterSecs    int              `json:"refresh_after_seconds"`
+	StaleAfterDays      int              `json:"stale_after_days"`
+	LastRun             *RatesRefreshRun `json:"last_run"`
+	LastSuccessAt       *string          `json:"last_success_at"`
+	AsOf                string           `json:"as_of"`
+}
