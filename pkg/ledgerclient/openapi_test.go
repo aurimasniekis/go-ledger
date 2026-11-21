@@ -347,7 +347,7 @@ func TestEnumsMatchSchemas(t *testing.T) {
 	check("CommitmentPriority", PriorityEssential, PriorityImportant, PriorityFlexible)
 	check("Role", RoleAdministrator, RoleReadOnly)
 	check("AuditActorKind", ActorUser, ActorToken, ActorSystem, ActorAnonymous)
-	check("PaymentStatus", PaymentPaid, PaymentPartiallyPaid, PaymentUpcoming, PaymentDue, PaymentOverdue, PaymentCancelled)
+	check("PaymentStatus", PaymentPaid, PaymentPartiallyPaid, PaymentUpcoming, PaymentDue, PaymentOverdue, PaymentNotRecorded, PaymentCancelled)
 	check("OverrideStatus", OverridePaid, OverrideUnpaid)
 	check("MatchState", MatchSuggested, MatchConfirmed, MatchRejected, MatchReversed)
 	check("MatchOrigin", OriginAutoRule, OriginModel, OriginUser)

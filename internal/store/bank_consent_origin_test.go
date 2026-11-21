@@ -7,9 +7,9 @@ import (
 )
 
 func init() {
-	// Migration 0021 dates a consent that already waits for its redirect by the
+	// Migration 0022 dates a consent that already waits for its redirect by the
 	// row's last update and leaves the others without a start.
-	fixtureChecks["0020_commitment_match_tolerance.sql"] = func(t *testing.T, db *DB) {
+	fixtureChecks["0021_match_confirmed_tolerance.sql"] = func(t *testing.T, db *DB) {
 		err := db.ReadTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
 			var started sql.NullString
 			var by string

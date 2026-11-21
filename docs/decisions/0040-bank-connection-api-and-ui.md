@@ -50,7 +50,7 @@ delivers both the HTTP API and the UI. It never needs live banking access: every
    connection that never connected becomes `failed` with `consent_expired` (a reconnect that expired leaves the connection as it was),
    and expired consents are also ended whenever connections are listed or read (a cheap read finds whether any is due, so the write lock is taken
    only when one is; a failing sweep is logged and does not fail the read). Another user cannot complete it; their attempt leaves
-   the state valid for the starter. Migration 0021 adds `consent_started_at` and `consent_initiator`.
+   the state valid for the starter. Migration 0022 adds `consent_started_at` and `consent_initiator`.
 9. **Refresh on request** (D40.4) waits for the run up to a deadline 5 seconds below `http.write_timeout` (at least 1 second), so the
    answer is not dropped. At the deadline the run is **not** cancelled and not recorded as failed: it goes on in the background (detached from the
    request), the answer is 200 with `refresh_running: true`, and the UI polls the connection list every 3 seconds until no connection is

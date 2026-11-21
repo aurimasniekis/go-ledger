@@ -1,9 +1,9 @@
 -- Fixture: a database at schema version 20 (the version 19 contents plus the
--- per-commitment match tolerance columns and triggers of migration 0020),
--- holding every row of the version 19 fixture. Upgrading it must apply
--- migration 0021 (bank consent origin) and keep every row; a connection that
--- waits for a redirect takes its last update as the consent start. All
--- identifiers and hashes are synthetic.
+-- commitment match tolerance columns and triggers of migration 0020), holding
+-- every row of the version 19 fixture. Upgrading it must apply migration 0021
+-- (the tolerance a match was confirmed within) and keep every row; existing
+-- matches were confirmed within no tolerance. All identifiers and hashes are
+-- synthetic.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
     name       TEXT NOT NULL CHECK (name <> ''),
@@ -945,8 +945,5 @@ WHEN (NEW.match_tolerance_amount IS NULL) <> (NEW.match_tolerance_currency IS NU
 BEGIN
     SELECT RAISE(ABORT, 'a match tolerance has an amount and the commitment''s currency');
 END;
-
--- A connection still waiting for its redirect, to see migration 0021 date it.
-INSERT INTO bank_connections (id, provider, application, mode, environment, account_access, institution_id, institution_name, institution_country, status, consent_state, created_at, updated_at, version) VALUES ('01JZ0000000000000000000090', 'fake', 'fake-app', 'app', 'sandbox', 'all', 'Fake Bank', 'Fake Bank', 'FI', 'pending', 'waiting-state', '2026-01-22T03:04:05.000000000Z', '2026-01-22T04:00:00.000000000Z', 1);
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (20, 'commitment_match_tolerance', 'ed585e685d2a012a303fc7a4a59de3ccc741e96c3c9e8994a6ae1a34eb2fce98', '2026-01-23T03:04:05.000000000Z');

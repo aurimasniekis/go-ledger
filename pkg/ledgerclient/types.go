@@ -29,6 +29,7 @@ const (
 	PaymentDue           = "due"
 	PaymentOverdue       = "overdue"
 	PaymentCancelled     = "cancelled"
+	PaymentNotRecorded   = "not_recorded"
 
 	OverridePaid   = "paid"
 	OverrideUnpaid = "unpaid"
@@ -178,6 +179,7 @@ type PaymentState struct {
 	PaidAmount            Money            `json:"paid_amount"`
 	OutstandingAmount     Money            `json:"outstanding_amount"`
 	OverpaidAmount        Money            `json:"overpaid_amount"`
+	ShortfallAmount       Money            `json:"shortfall_amount"`
 	UnconvertedCurrencies []string         `json:"unconverted_currencies"`
 	EvidenceCount         int              `json:"evidence_count"`
 	ManualEvidenceCount   int              `json:"manual_evidence_count"`

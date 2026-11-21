@@ -3271,7 +3271,7 @@ components:
               type: string
     PaymentStatus:
       type: string
-      enum: [paid, partially_paid, upcoming, due, overdue, cancelled]
+      enum: [paid, partially_paid, upcoming, due, overdue, not_recorded, cancelled]
       description: |
         Derived payment status (decision D7). paid: payment evidence in the
         occurrence's currency covers its amount, or an applied "paid"
@@ -3280,6 +3280,11 @@ components:
         the day after it. Overdue always counts from the original due date.
         cancelled: the occurrence was cancelled (cancelled_at is set, D31); it
         is not an obligation and is never upcoming, due or overdue.
+        not_recorded: unpaid and due before its commitment was created (D38 1a,
+        ADR-0042); not overdue, left out of the overdue and outstanding
+        totals, still listed and can be marked paid. paid also covers an
+        occurrence whose confirmed bank payment falls short of the amount by no
+        more than the commitment's match_tolerance (D39 5a); see shortfall_amount.
     OverrideStatus:
       type: string
       enum: [paid, unpaid]
@@ -3291,7 +3296,7 @@ components:
         override (ADR-0031). Only evidence in the occurrence's currency is
         counted; other currencies are listed in unconverted_currencies and
         never converted or summed.
-      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, unconverted_currencies, evidence_count, manual_evidence_count, bank_evidence_count, grace_until, within_grace, override]
+      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, shortfall_amount, unconverted_currencies, evidence_count, manual_evidence_count, bank_evidence_count, grace_until, within_grace, override]
       properties:
         status:
           $ref: "#/components/schemas/PaymentStatus"
@@ -3300,9 +3305,9 @@ components:
           allOf:
             - $ref: "#/components/schemas/PaymentStatus"
         timing:
-          description: upcoming, due or overdue for an occurrence that is not paid (for partially_paid, its unpaid remainder); null when paid or cancelled.
+          description: upcoming, due, overdue or not_recorded (due before the commitment was created) for an occurrence that is not paid (for partially_paid, its unpaid remainder); null when paid or cancelled.
           type: [string, "null"]
-          enum: [upcoming, due, overdue, null]
+          enum: [upcoming, due, overdue, not_recorded, null]
         paid_amount:
           description: The sum of the evidence in the occurrence's currency (zero when none).
           $ref: "#/components/schemas/Money"
@@ -3316,6 +3321,9 @@ components:
           $ref: "#/components/schemas/Money"
         overpaid_amount:
           description: paid_amount less the amount when positive, else zero. Informational; it does not change the status.
+          $ref: "#/components/schemas/Money"
+        shortfall_amount:
+          description: How far a confirmed bank payment fell short of the amount when that is within the commitment's match_tolerance (D39 5a); the status is then paid and outstanding_amount zero. Zero otherwise.
           $ref: "#/components/schemas/Money"
         unconverted_currencies:
           type: array
