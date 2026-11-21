@@ -426,6 +426,8 @@ func TestRefreshWaitsLongerThanTheOrdinaryTimeout(t *testing.T) {
 	c2, _ := New(srv.URL, secretToken, WithTimeout(5*time.Second), WithRefreshTimeout(time.Millisecond))
 	if c2.slow.Timeout != 5*time.Second {
 		t.Errorf("slow timeout = %v", c2.slow.Timeout)
+	}
+}
 
 func TestRatesRequestShapeAndExactValues(t *testing.T) {
 	var seen []string

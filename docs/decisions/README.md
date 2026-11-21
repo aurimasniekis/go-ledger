@@ -47,5 +47,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0043: Matching and correction UI, and the MCP match tools](0043-matching-ui-and-mcp-match-tools.md)
 - [ADR-0044: The outlook against recorded commitments](0044-outlook.md)
 - [ADR-0046: Frankfurter rate adapter and daily refresh](0046-frankfurter-rate-adapter.md)
+- [ADR-0047: Exchange rates: list and refresh API, client, CLI, MCP, UI, metrics and readiness](0047-rates-api-ui-metrics-readiness.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

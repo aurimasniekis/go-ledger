@@ -163,6 +163,15 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
               staleAfter={q.data.balances.stale_after_seconds}
             />
           )}
+          {q.data.converted && (
+            <p className="text-sm text-muted-foreground" data-testid="outlook-rates-link">
+              Every rate used above shows its date and age. See all{' '}
+              <Link to="/rates" className="underline">
+                cached exchange rates
+              </Link>{' '}
+              and when they were retrieved.
+            </p>
+          )}
           <Accounts data={q.data} />
           <p className="text-sm text-muted-foreground">{q.data.planned_outflows.note}</p>
         </>
