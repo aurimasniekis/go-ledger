@@ -1,5 +1,5 @@
 // Package tokens persists API tokens (task A4, ADR-0029) in the api_tokens
-// table of migration 0011_api_tokens. It implements [tokens.Store]; writes
+// table of migration 0012_api_tokens. It implements [tokens.Store]; writes
 // record their audit events in the same transaction through a
 // [store.AuditWriter]. The table never holds a token, only its hash.
 package tokens

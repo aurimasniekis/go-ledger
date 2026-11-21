@@ -21,7 +21,7 @@ creation and decide whether a password change revokes tokens.
 1. **Format.** `ldgr_` followed by 43 characters drawn uniformly (rejection sampling over `crypto/rand`) from
    `[0-9A-Za-z]`: about 256 bits, no characters that break double-click selection or need URL escaping. Anything
    else is not a token (`tokens.WellFormed`), checked before any lookup.
-2. **Storage** (migration `0011_api_tokens`, table `api_tokens`). Only the SHA-256 of the token is stored (a fast
+2. **Storage** (migration `0012_api_tokens`, table `api_tokens`). Only the SHA-256 of the token is stored (a fast
    hash is enough for 256 random bits, as for session tokens), with `display_prefix` (`ldgr_` and the first four
    random characters) and `last_chars` (the last four), shown together as a hint (`ldgr_AbCd…wXyZ`). Also the name
    (1-100 bytes), owner, root flag, grants (canonical, comma-separated), `created_at`, `expires_at` (null = never,
@@ -103,6 +103,5 @@ creation and decide whether a password change revokes tokens.
 - A3 (TOTP) must keep exempting token principals from the second factor, and A6 (OIDC) adds no token path.
 - The UI (create with show-once dialog, grants picker, root warning; list; revoke) is A7. User documentation for
   bootstrap, rotation, least privilege and the power of root and long-lived tokens is A8.
-- Migration number: `0011` on this branch because migrations must be contiguous; it becomes `0012` if C2's `0011`
-  merges first (with the fixture for version 11 taken from C2). The fixture `0010_auth_sessions` covers the previous
-  version.
+- Migration number: `0012`, after the commitment occurrences (`0011_commitment_occurrences`, ADR-0027); the fixture
+  `0011_commitment_occurrences` covers the previous version.

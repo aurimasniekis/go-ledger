@@ -1,8 +1,10 @@
--- Fixture: a database at schema version 10 (the version 9 contents plus
--- passwords and sign-in sessions), holding the users, settings, outbox, bank,
--- rate, audit and commitment data of the version 9 fixture, one password hash
--- and one session. Upgrading it must apply migration 0011 (API tokens) and
--- keep every row. All identifiers, hashes and tokens are synthetic.
+-- Fixture: a database at schema version 10 (the version 9 contents plus the
+-- passwords and sign-in sessions of migration 0010), holding every row of the
+-- version 9 fixture, one password hash and one session. Upgrading it must
+-- apply migration 0011 (commitment occurrences) and keep every row; nothing is
+-- materialised until it is read. All identifiers, hashes and tokens are
+-- synthetic: the hash is not of any password and the token hash is not of any
+-- token.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
     name       TEXT NOT NULL CHECK (name <> ''),
@@ -440,19 +442,9 @@ CREATE TABLE commitments (
 CREATE INDEX commitments_kind ON commitments (kind, id);
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (9, 'commitments', 'b17255944e1ce602779e41686d1b55517be18a6f56bdc386895b9b3bbdff0338', '2026-01-13T03:04:05.000000000Z');
-INSERT INTO commitments (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, created_at, updated_at, version) VALUES ('01JZ0000000000000000000090', 'Hosting', 'server', '12.50', 'EUR', '{"day":15,"frequency":"monthly","interval":1,"version":1}', '2026-01-15', NULL, 'essential', NULL, '2026-01-13T04:00:00.000000000Z', '2026-01-13T04:00:00.000000000Z', 1);
+INSERT INTO commitments (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, created_at, updated_at, version) VALUES ('01JZ0000000000000000000050', 'VPS', 'server', '12.50', 'EUR', '{"version":1,"frequency":"monthly","interval":1,"day":31}', '2026-01-31', NULL, 'essential', NULL, '2026-01-13T03:04:05.000000000Z', '2026-01-13T03:04:05.000000000Z', 1);
+INSERT INTO commitments (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, created_at, updated_at, version) VALUES ('01JZ0000000000000000000051', 'example.com', 'domain', '15.000', 'USD', '{"version":1,"frequency":"annual","month":2,"day":29}', '2024-02-29', '2030-12-31', NULL, 'auto-renew off', '2026-01-13T04:05:06.000000000Z', '2026-01-13T04:05:06.000000000Z', 2);
 
--- Passwords and sign-in sessions (A2, ADR-0026).
---
--- user_passwords holds one Argon2id hash (PHC string) per user who has a
--- password; a user without a row cannot sign in with a password. Never the
--- password itself.
---
--- sessions are server-side sign-in sessions. The cookie carries a random token;
--- only its SHA-256 hash is stored, so a copy of the database cannot be replayed
--- as a session. The CSRF token is derived from the cookie token and not stored. A session ends by
--- deleting its row (sign-out, termination, password change, expiry), which the
--- next request notices because every request looks the session up.
 CREATE TABLE user_passwords (
     user_id    TEXT PRIMARY KEY REFERENCES users (id),
     hash       TEXT NOT NULL CHECK (length(hash) BETWEEN 40 AND 512 AND substr(hash, 1, 10) = '$argon2id$'),
@@ -476,5 +468,5 @@ CREATE INDEX sessions_expires_at ON sessions (expires_at);
 CREATE INDEX sessions_last_seen_at ON sessions (last_seen_at);
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (10, 'auth_sessions', 'd32d6546afacbe798638643401c7f8a34ce6f66116c5619bc2b247988beebb25', '2026-01-14T03:04:05.000000000Z');
-INSERT INTO user_passwords (user_id, hash, changed_at) VALUES ('01JZ0000000000000000000030', '$argon2id$v=19$m=65536,t=3,p=4$c3ludGhldGljc2FsdA$c3ludGhldGljLWZpeHR1cmUtaGFzaC1ub3QtcmVhbA', '2026-01-14T04:00:00.000000000Z');
-INSERT INTO sessions (id, user_id, token_hash, created_at, last_seen_at, authenticated_at, expires_at, user_agent, address) VALUES ('01JZ00000000000000000000A0', '01JZ0000000000000000000030', '0000000000000000000000000000000000000000000000000000000000000001', '2026-01-14T04:00:00.000000000Z', '2026-01-14T04:05:00.000000000Z', '2026-01-14T04:00:00.000000000Z', '2026-01-14T16:00:00.000000000Z', 'fixture', '192.0.2.1');
+INSERT INTO user_passwords (user_id, hash, changed_at) VALUES ('01JZ0000000000000000000030', '$argon2id$v=19$m=65536,t=3,p=4$c3ludGhldGljc2FsdA$c3ludGhldGljdGFnc3ludGhldGljdGFn', '2026-01-14T04:00:00.000000000Z');
+INSERT INTO sessions (id, user_id, token_hash, created_at, last_seen_at, authenticated_at, expires_at, user_agent, address) VALUES ('01JZ0000000000000000000100', '01JZ0000000000000000000030', '0000000000000000000000000000000000000000000000000000000000000001', '2026-01-14T04:00:00.000000000Z', '2026-01-14T04:10:00.000000000Z', '2026-01-14T04:00:00.000000000Z', '2026-01-14T16:00:00.000000000Z', 'fixture', '192.0.2.10');

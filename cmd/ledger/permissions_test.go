@@ -18,12 +18,14 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
 
@@ -61,6 +63,9 @@ var permissionMatrix = map[string]string{
 	"GET /api/v1/commitments/{id}":    "commitments:read",
 	"PATCH /api/v1/commitments/{id}":  "commitments:write",
 	"DELETE /api/v1/commitments/{id}": "commitments:write",
+
+	"GET /api/v1/occurrences":      "commitments:read",
+	"GET /api/v1/occurrences/{id}": "commitments:read",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
@@ -81,6 +86,9 @@ type apiFixture struct {
 	auth  *auth.Service
 	log   *bytes.Buffer
 	ids   map[string]string // subject name -> user ID
+	// now is the API's clock (zero: the real time); zone the reporting zone.
+	now  time.Time
+	zone calendar.Zone
 	// daveSession is a session of dave from before he was disabled.
 	daveSession map[string]string
 }
@@ -98,6 +106,12 @@ func (f *apiFixture) signIn(t *testing.T, name string) map[string]string {
 
 func newAPIFixture(t *testing.T) *apiFixture {
 	t.Helper()
+	return newAPIFixtureIn(t, calendar.MustLoadZone("UTC"))
+}
+
+// newAPIFixtureIn is [newAPIFixture] with the given reporting time zone.
+func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
+	t.Helper()
 	ctx := context.Background()
 	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "ledger.db"), store.Options{})
 	if err != nil {
@@ -113,7 +127,15 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	// line by line, to the log as well.
 	al := teeAudit{AuditLog: store.NewAuditLog(db), lines: store.LogAudit(log)}
 	parts := mustParts(t, db, al)
-	f := &apiFixture{users: parts.users, auth: parts.auth, log: buf, ids: map[string]string{}}
+	f := &apiFixture{users: parts.users, auth: parts.auth, log: buf, ids: map[string]string{}, zone: zone}
+	// Commitments, their occurrences and "today" follow the fixture's clock.
+	clock := func() time.Time {
+		if f.now.IsZero() {
+			return time.Now()
+		}
+		return f.now
+	}
+	parts.commitments = commitmentstore.New(db, al, clock, nil)
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {
@@ -142,7 +164,7 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	// Real session cookies first, then the test header.
 	f.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log,
 		httpapi.WithAuthenticators(httpapi.NewSessionAuth(parts.auth), testAuthn{authn}), httpapi.WithRecentAuth(testRecent(parts.auth)))
-	registerAPI(f.srv, al, parts)
+	registerAPI(f.srv, al, parts, zone, clock)
 
 	mk := func(name string, role authz.Role) users.User {
 		u, err := f.users.Create(ctx, audit.System, users.New{Username: name, Role: role})

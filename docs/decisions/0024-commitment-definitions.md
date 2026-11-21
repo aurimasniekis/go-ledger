@@ -39,7 +39,8 @@ Occurrence generation and how edits reach occurrences remain task C2.
    added as version 2 beside it. Version 1 never changes meaning, so stored version 1 values never need a
    migration. The column CHECKs that the value is a JSON object with an integer version. Code checks the members.
 5. **Dates:** `start_date` is required, `end_date` is optional and inclusive, and `end_date >= start_date` holds in code
-   and in SQL.
+   and in SQL. **Proposed (added with ADR-0027, not an operator decision):** `start_date` is not before 1900-01-01
+   (code validation only), because occurrences are materialised from it.
 6. **API:** `/api/v1/commitments` supports list (filters `kind`, `priority`, `currency`), create, get, merge-patch
    PATCH and DELETE, following ADR-0011/0015/0017 (ETag versions, If-Match or the body version, 428/409 with
    reconciliation). A PATCH is applied with RFC 7396 to the writable members, so `amount` and `schedule` merge

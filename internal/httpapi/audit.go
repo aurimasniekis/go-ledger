@@ -88,8 +88,8 @@ var auditListSpec = ListSpec{Filters: map[string]FilterSpec{
 	}},
 	"actor_user_id":  {Ops: []FilterOp{OpEq}, Check: checkULID},
 	"actor_token_id": {Ops: []FilterOp{OpEq}, Check: checkULID},
-	"target_type":    {Ops: []FilterOp{OpEq}, Check: checkMax(32)},
-	"target_id":      {Ops: []FilterOp{OpEq}, Check: checkMax(64)},
+	"target_type":    {Ops: []FilterOp{OpEq}, Check: checkMax(audit.MaxTargetType)},
+	"target_id":      {Ops: []FilterOp{OpEq}, Check: checkMax(audit.MaxTargetID)},
 	"at":             {Ops: []FilterOp{OpGte, OpLt}, Check: checkTime},
 }}
 

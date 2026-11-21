@@ -143,7 +143,7 @@ func TestCommitmentLifecycle(t *testing.T) {
 		}
 		got = append(got, s)
 	}
-	if want := "commitment.created|commitment.updated amount,notes|commitment.deleted"; strings.Join(got, "|") != want {
+	if want := "commitment.created|commitment.updated amount,notes|occurrences.regenerated|commitment.deleted"; strings.Join(got, "|") != want {
 		t.Fatalf("audit trail\n got %s\nwant %s", strings.Join(got, "|"), want)
 	}
 	for _, secret := range []string{"Hetzner-like", "Renewal moved", "20.00", "VPS"} {

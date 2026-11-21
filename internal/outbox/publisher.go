@@ -222,7 +222,7 @@ func (p *Publisher) Tick(ctx context.Context) (worked bool) {
 // when it reports one (the client library reconnects by itself).
 func (p *Publisher) syncConnected() {
 	cr, ok := p.bus.(ConnectionReporter)
-	if p.bus == nil || !ok {
+	if !ok {
 		return
 	}
 	up := cr.Connected()

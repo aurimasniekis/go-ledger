@@ -1,7 +1,10 @@
 -- Fixture: a database at schema version 9 (the version 8 contents plus the
--- commitment definitions), holding the users, settings, outbox, bank, rate and
--- audit data of the version 8 fixture and one commitment. Upgrading it must
--- apply migration 0010 (passwords and sign-in sessions) and keep every row.
+-- commitment definitions of migration 0009), holding the users, settings,
+-- outbox, bank, rate and audit data of the version 8 fixture and two
+-- commitments: a monthly one clamped to month ends and an annual February 29
+-- renewal. Upgrading it must apply migrations 0010 (passwords and sign-in
+-- sessions) and 0011 (commitment occurrences) and keep every row; nothing is
+-- materialised until it is read.
 -- All identifiers are synthetic.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
@@ -440,4 +443,5 @@ CREATE TABLE commitments (
 CREATE INDEX commitments_kind ON commitments (kind, id);
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (9, 'commitments', 'b17255944e1ce602779e41686d1b55517be18a6f56bdc386895b9b3bbdff0338', '2026-01-13T03:04:05.000000000Z');
-INSERT INTO commitments (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, created_at, updated_at, version) VALUES ('01JZ0000000000000000000090', 'Hosting', 'server', '12.50', 'EUR', '{"day":15,"frequency":"monthly","interval":1,"version":1}', '2026-01-15', NULL, 'essential', NULL, '2026-01-13T04:00:00.000000000Z', '2026-01-13T04:00:00.000000000Z', 1);
+INSERT INTO commitments (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, created_at, updated_at, version) VALUES ('01JZ0000000000000000000050', 'VPS', 'server', '12.50', 'EUR', '{"version":1,"frequency":"monthly","interval":1,"day":31}', '2026-01-31', NULL, 'essential', NULL, '2026-01-13T03:04:05.000000000Z', '2026-01-13T03:04:05.000000000Z', 1);
+INSERT INTO commitments (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, created_at, updated_at, version) VALUES ('01JZ0000000000000000000051', 'example.com', 'domain', '15.000', 'USD', '{"version":1,"frequency":"annual","month":2,"day":29}', '2024-02-29', '2030-12-31', NULL, 'auto-renew off', '2026-01-13T04:05:06.000000000Z', '2026-01-13T04:05:06.000000000Z', 2);

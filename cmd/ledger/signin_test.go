@@ -20,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
@@ -105,7 +106,7 @@ func newSignInEnv(t *testing.T, mod func(*config.Auth)) *signInEnv {
 	e.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log,
 		httpapi.WithAuthenticators(httpapi.NewTokenAuth(e.parts.tokens), httpapi.NewSessionAuth(e.parts.auth)), httpapi.WithRecentAuth(e.parts.auth.Recent),
 		httpapi.WithAuditRecorder(e.al, e.clock.now))
-	registerAPI(e.srv, e.al, e.parts)
+	registerAPI(e.srv, e.al, e.parts, calendar.MustLoadZone("UTC"), e.clock.now)
 	for _, u := range []struct {
 		name string
 		role authz.Role

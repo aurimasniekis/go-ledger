@@ -35,6 +35,7 @@ const (
 	CodeInvalidCredentials Code = "invalid_credentials"
 	CodeCSRF               Code = "csrf_failed"               // 403: a cookie-authenticated write without the session's CSRF token, or from another origin
 	CodeReauthRequired     Code = "reauthentication_required" // 403: the action needs a recent password check (POST /auth/reauthenticate)
+	CodePendingTerms       Code = "pending_terms_change"      // 409: a commitment terms edit is refused because an earlier edit takes effect later
 )
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.

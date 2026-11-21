@@ -117,6 +117,16 @@ func TestValidateFields(t *testing.T) {
 	if got := fieldsOf(bad.Validate()); got != "amount.currency" {
 		t.Errorf("fields %q", got)
 	}
+	// start_date is bounded below so a first read cannot materialise millennia.
+	bad = valid()
+	bad.StartDate = calendar.MustDate(1899, time.December, 31)
+	if got := fieldsOf(bad.Validate()); got != "start_date" {
+		t.Errorf("1899 start: %q", got)
+	}
+	bad.StartDate = MinStartDate
+	if errs := bad.Validate(); len(errs) != 0 {
+		t.Errorf("1900-01-01 start: %v", errs)
+	}
 	// The amount keeps its scale: 12.5 and 12.50 are both accepted as written.
 	bad = valid()
 	bad.Amount = money.MustParse("12.5", "JPY")
@@ -140,7 +150,7 @@ func TestChangedFieldsAndEvents(t *testing.T) {
 	actor := audit.Actor{Kind: audit.ActorUser, UserID: "01JD3Y4C8V9M2Q7W5R6T0XZBNA"}
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	c := Commitment{ID: "01JD3Y4C8V9M2Q7W5R6T0XZBNB", Fields: b}
-	for _, e := range []audit.Event{CreatedEvent(actor, c, at), UpdatedEvent(actor, c.ID, ChangedFields(a, b), at), DeletedEvent(actor, c, at)} {
+	for _, e := range []audit.Event{CreatedEvent(actor, c, at), UpdatedEvent(actor, c.ID, ChangedFields(a, b), at), DeletedEvent(actor, c, 0, at)} {
 		if e.TargetType != "commitment" || e.TargetID != c.ID || e.Actor != actor || !e.At.Equal(at) {
 			t.Errorf("event %+v", e)
 		}
@@ -165,5 +175,32 @@ func TestValidationError(t *testing.T) {
 	err := Validation([]FieldError{{"name", "bad"}, {"kind", "worse"}})
 	if err == nil || err.Error() != "invalid commitment: name: bad; kind: worse" {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestAnnualScheduleMessages(t *testing.T) {
+	for _, c := range []struct {
+		raw, field, msg string
+	}{
+		{`{"version":1,"frequency":"annual","day":1}`, "schedule.month", "month is required"},
+		{`{"version":1,"frequency":"annual","month":4,"day":31}`, "schedule.day", "day must be from 1 to 30 for month 4"},
+		{`{"version":1,"frequency":"annual","month":2,"day":30}`, "schedule.day", "day must be from 1 to 29 for month 2"},
+		{`{"version":1,"frequency":"annual","month":13,"day":1}`, "schedule.month", "month must be from 1 to 12"},
+	} {
+		_, errs := ParseSchedule([]byte(c.raw), "schedule")
+		var found bool
+		for _, e := range errs {
+			if e.Field == c.field && e.Message == c.msg {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: want %s %q, got %v", c.raw, c.field, c.msg, errs)
+		}
+	}
+	for _, e := range Annual(time.April, 31).Validate("schedule") {
+		if e.Field != "schedule.day" || e.Message != "day must be from 1 to 30 for month 4" {
+			t.Errorf("Validate: unexpected %v", e)
+		}
 	}
 }
