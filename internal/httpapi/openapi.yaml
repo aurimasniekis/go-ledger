@@ -3160,7 +3160,7 @@ components:
       type: object
       description: The secondary aggregate in one reporting currency (decision D5). Only currencies with an acceptable rate are included.
       additionalProperties: false
-      required: [currency, complete, still_due, overdue, balance, balance_less_still_due, included, excluded]
+      required: [currency, complete, still_due, overdue, balance, balance_less_still_due, balance_account_count, stale_balance_account_count, included, excluded]
       properties:
         currency:
           $ref: "#/components/schemas/Currency"
@@ -3179,6 +3179,12 @@ components:
           oneOf:
             - $ref: "#/components/schemas/SignedMoney"
             - type: "null"
+        balance_account_count:
+          type: integer
+          description: Accounts whose balance is counted in balance (included currencies only).
+        stale_balance_account_count:
+          type: integer
+          description: Of those accounts, how many have data that is not fresh. Stale balances are counted and flagged.
         included:
           type: array
           items:

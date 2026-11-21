@@ -73,7 +73,7 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
           </p>
           {shownThrough && (
             <div role="group" aria-label="Commitments counted through" className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => go(shiftMonth(shownThrough, -1))}>
+              <Button variant="outline" size="sm" disabled={shownThrough <= q.data.as_of.slice(0, 7)} onClick={() => go(shiftMonth(shownThrough, -1))}>
                 <ChevronLeft aria-hidden className="size-4" />
                 <span className="sr-only">Count commitments through {monthLabel(shiftMonth(shownThrough, -1))}</span>
                 <span aria-hidden className="hidden sm:inline">Earlier</span>
@@ -226,6 +226,12 @@ function Converted({ c, balancesShown }: { c: OutlookConverted; balancesShown: b
               </li>
             ))}
           </ul>
+        </div>
+      )}
+      {balancesShown && c.stale_balance_account_count > 0 && (
+        <div role="note" className="flex flex-wrap items-center gap-2 text-sm">
+          <StatusBadge status="stale" label={c.stale_balance_account_count + ' of ' + c.balance_account_count + (c.balance_account_count === 1 ? ' balance' : ' balances') + ' not fresh'} />
+          <span>The bank balances below include data that is not fresh.</span>
         </div>
       )}
       <dl className="grid grid-cols-1 gap-x-4 text-sm sm:max-w-md sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-0.5">

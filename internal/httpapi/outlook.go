@@ -103,14 +103,16 @@ type outlookExcludedJSON struct {
 }
 
 type outlookConvertedJSON struct {
-	Currency            money.Currency        `json:"currency"`
-	Complete            bool                  `json:"complete"`
-	StillDue            money.Money           `json:"still_due"`
-	Overdue             money.Money           `json:"overdue"`
-	Balance             *money.Money          `json:"balance"`
-	BalanceLessStillDue *money.Money          `json:"balance_less_still_due"`
-	Included            []outlookIncludedJSON `json:"included"`
-	Excluded            []outlookExcludedJSON `json:"excluded"`
+	Currency             money.Currency        `json:"currency"`
+	Complete             bool                  `json:"complete"`
+	StillDue             money.Money           `json:"still_due"`
+	Overdue              money.Money           `json:"overdue"`
+	Balance              *money.Money          `json:"balance"`
+	BalanceLessStillDue  *money.Money          `json:"balance_less_still_due"`
+	BalanceAccounts      int                   `json:"balance_account_count"`
+	StaleBalanceAccounts int                   `json:"stale_balance_account_count"`
+	Included             []outlookIncludedJSON `json:"included"`
+	Excluded             []outlookExcludedJSON `json:"excluded"`
 }
 
 type outlookJSON struct {
@@ -203,7 +205,7 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 	}
 	if c := o.Converted; c != nil {
 		cj := &outlookConvertedJSON{Currency: c.Currency, Complete: c.Complete(), StillDue: c.StillDue, Overdue: c.Overdue, Balance: c.Balance,
-			BalanceLessStillDue: c.BalanceLessStillDue, Included: make([]outlookIncludedJSON, len(c.Included)), Excluded: make([]outlookExcludedJSON, len(c.Excluded))}
+			BalanceLessStillDue: c.BalanceLessStillDue, BalanceAccounts: c.BalanceAccounts, StaleBalanceAccounts: c.StaleBalanceAccounts, Included: make([]outlookIncludedJSON, len(c.Included)), Excluded: make([]outlookExcludedJSON, len(c.Excluded))}
 		for i, u := range c.Included {
 			ij := outlookIncludedJSON{Currency: u.Currency, Rate: toOutlookRate(u.Rate), FromCache: u.FromCache, RefreshFailed: u.RefreshFailed}
 			if u.Rate != nil {

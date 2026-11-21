@@ -33,7 +33,7 @@ import (
 const Notice = "Outlook against recorded commitments: bank balances compared with the commitments Ledger has recorded as still due. " +
 	"It covers recorded commitments only, is not a forecast and does not tell you how much money is safe to spend."
 
-// MaxMonthsBack bounds how far before the window's last month the outlook
+// MaxMonthsBack bounds how far before the current month the outlook
 // reads occurrences, so one request cannot read without limit. Anything
 // older is reported through [Outlook.Truncated].
 const MaxMonthsBack = 240
@@ -87,9 +87,11 @@ type Service struct {
 
 // Request says what to build.
 type Request struct {
-	// Through is the last month whose commitments count; zero means the
-	// current month in the reporting zone. It may not be beyond the
-	// occurrence horizon ([occurrences.HorizonLimit]).
+	// Through is the last month whose commitments count; zero, or a month
+	// before the current one, means the current month in the reporting zone:
+	// everything due up to today is always counted and Through only extends
+	// the upcoming part. It may not be beyond the occurrence horizon
+	// ([occurrences.HorizonLimit]).
 	Through calendar.YearMonth
 	// Currency is the reporting currency of the secondary, converted
 	// aggregate; zero means none is built.
@@ -211,8 +213,13 @@ type Converted struct {
 	// no included currency has a balance.
 	Balance             *money.Money
 	BalanceLessStillDue *money.Money
-	Included            []RateUse
-	Excluded            []Exclusion
+	// BalanceAccounts counts the accounts behind Balance (of included
+	// currencies only); StaleBalanceAccounts those of them whose data is
+	// not fresh. Stale balances are counted, and flagged here.
+	BalanceAccounts      int
+	StaleBalanceAccounts int
+	Included             []RateUse
+	Excluded             []Exclusion
 }
 
 // Complete reports whether every currency line is in the aggregate.
@@ -261,6 +268,12 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 	if through.Compare(occurrences.HorizonLimit(today)) > 0 {
 		return Outlook{}, ErrBeyondHorizon
 	}
+	// Every occurrence due up to today is always counted: a Through before
+	// the current month never drops an overdue obligation, it only has
+	// nothing to add to the upcoming part.
+	if through.Compare(today.YearMonth()) < 0 {
+		through = today.YearMonth()
+	}
 	out := Outlook{AsOf: today, Currencies: []CurrencyLine{}, Accounts: []Account{}}
 
 	lines := map[money.Currency]*CurrencyLine{}
@@ -280,7 +293,7 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 	}
 	if ok && first.Compare(through) <= 0 {
 		from := first
-		earliest, err := through.AddMonths(-(MaxMonthsBack - 1))
+		earliest, err := today.YearMonth().AddMonths(-(MaxMonthsBack - 1))
 		if err != nil {
 			return Outlook{}, fmt.Errorf("outlook: window: %w", err)
 		}
@@ -469,7 +482,7 @@ func Latest(all []banking.StoredBalance) []Balance {
 			continue
 		}
 		if have, ok := chosen[cur]; !ok || rank < slices.Index(BalancePreference, have.Type) ||
-			rank == slices.Index(BalancePreference, have.Type) && b.ID > have.ID {
+			rank == slices.Index(BalancePreference, have.Type) && betterBalance(b, have) {
 			chosen[cur] = b
 		}
 	}
@@ -479,6 +492,36 @@ func Latest(all []banking.StoredBalance) []Balance {
 	}
 	slices.SortFunc(out, func(a, b Balance) int { return strings.Compare(a.Amount.Currency().Code(), b.Amount.Currency().Code()) })
 	return out
+}
+
+// providerRank orders provider balance codes of the same type: ITBD
+// (interim booked) over CLBD (closing booked), OPBD (opening booked) and
+// PRCD (previous closing); unknown codes rank last.
+var providerRank = []string{"ITBD", "CLBD", "OPBD", "PRCD"}
+
+func providerRankOf(code string) int {
+	if i := slices.Index(providerRank, strings.ToUpper(strings.TrimSpace(code))); i >= 0 {
+		return i
+	}
+	return len(providerRank)
+}
+
+// betterBalance reports whether a should be counted over b, both of the same
+// preference type and fetch: provider type rank, then the newest reference
+// date, then the provider code and the amount text. The stored ID is random
+// and never decides, so identical bank data counts the same balance after
+// every re-import.
+func betterBalance(a, b banking.StoredBalance) bool {
+	if ra, rb := providerRankOf(a.ProviderType), providerRankOf(b.ProviderType); ra != rb {
+		return ra < rb
+	}
+	if c := a.ReferenceDate.Compare(b.ReferenceDate); c != 0 {
+		return c > 0
+	}
+	if c := strings.Compare(a.ProviderType, b.ProviderType); c != 0 {
+		return c < 0
+	}
+	return a.Amount.String() > b.Amount.String()
 }
 
 // convert builds the secondary aggregate in to. Each currency line is
@@ -504,21 +547,25 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 		values := make([]money.Money, len(figures))
 		var use RateUse
 		var excl *Exclusion
-		for i, f := range figures {
-			c, err := s.conversion(ctx, f, to)
-			if err != nil {
-				excl = &Exclusion{Currency: l.Currency, Status: fx.StatusMissing, Reason: ReasonConversionFailed}
-				break
+		// One rate per currency, taken once: every figure of the line is
+		// converted with it, so the reported provenance is the rate used
+		// for all of them even if a refresh lands meanwhile.
+		c, err := s.conversion(ctx, figures[0], to)
+		switch {
+		case err != nil:
+			excl = &Exclusion{Currency: l.Currency, Status: fx.StatusMissing, Reason: ReasonConversionFailed}
+		case !c.Acceptable():
+			excl = &Exclusion{Currency: l.Currency, Status: c.Status, Reason: string(c.Reason), Rate: c.Rate}
+		default:
+			values[0] = c.Value
+			use = RateUse{Currency: l.Currency, Rate: c.Rate, Age: c.Age, FromCache: c.FromCache, RefreshFailed: c.RefreshError != nil}
+			if c.Identity {
+				use.Rate, use.Age, use.FromCache = nil, 0, false
 			}
-			if !c.Acceptable() {
-				excl = &Exclusion{Currency: l.Currency, Status: c.Status, Reason: string(c.Reason), Rate: c.Rate}
-				break
-			}
-			values[i] = c.Value
-			if i == 0 {
-				use = RateUse{Currency: l.Currency, Rate: c.Rate, Age: c.Age, FromCache: c.FromCache, RefreshFailed: c.RefreshError != nil}
-				if c.Identity {
-					use.Rate, use.Age, use.FromCache = nil, 0, false
+			for i := 1; i < len(figures); i++ {
+				if values[i], err = applyRate(figures[i], c, to); err != nil {
+					excl = &Exclusion{Currency: l.Currency, Status: fx.StatusMissing, Reason: ReasonConversionFailed}
+					break
 				}
 			}
 		}
@@ -527,6 +574,10 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 			continue
 		}
 		out.Included = append(out.Included, use)
+		if len(values) == 3 {
+			out.BalanceAccounts += l.Accounts
+			out.StaleBalanceAccounts += l.StaleAccounts
+		}
 		out.StillDue, _ = out.StillDue.Add(values[0])
 		out.Overdue, _ = out.Overdue.Add(values[1])
 		if len(values) == 3 {
@@ -545,6 +596,19 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 		out.BalanceLessStillDue = &d
 	}
 	return out, nil
+}
+
+// applyRate converts a figure with the rate of c, rounding like the rate
+// service does: half-even to the minor units of to.
+func applyRate(from money.Money, c fx.Conversion, to money.Currency) (money.Money, error) {
+	if c.Identity || c.Rate == nil {
+		return from, nil
+	}
+	v := from.Amount().Mul(c.Rate.Value)
+	if digits, ok := to.MinorUnits(); ok {
+		v = v.RoundHalfEven(digits)
+	}
+	return money.New(v, to)
 }
 
 // conversion converts one figure; without a rate service only the

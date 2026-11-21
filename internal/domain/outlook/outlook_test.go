@@ -3,6 +3,8 @@ package outlook_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
 // t0 is "now": Monday 2026-11-16 09:00 UTC; today is 2026-11-16.
@@ -331,6 +334,9 @@ func TestConvertedAggregateIsSecondaryAndFlagsStaleAndMissingRates(t *testing.T)
 		c.Included[1].Rate == nil || c.Included[1].Rate.Value.String() != "0.9200" || c.Included[1].Rate.Date != d(t, "2026-11-13") || c.Included[1].Age != 2*time.Hour {
 		t.Errorf("included %+v", c.Included)
 	}
+	if c.BalanceAccounts != 2 || c.StaleBalanceAccounts != 1 {
+		t.Errorf("balance accounts %d, stale %d", c.BalanceAccounts, c.StaleBalanceAccounts)
+	}
 	// The per-currency lines are untouched by the conversion.
 	if lineOf(t, o, "USD").StillDue.String() != "20.00 USD" {
 		t.Error("conversion changed a per-currency line")
@@ -458,5 +464,137 @@ func TestLatestPrefersTheNewestFetchThenBooked(t *testing.T) {
 	})
 	if len(got) != 2 || got[0].Amount.String() != "5.00 CHF" || got[1].Amount.String() != "3.00 EUR" {
 		t.Fatalf("latest %+v", got)
+	}
+}
+
+func TestLatestIsDeterministicAmongBookedTypesWhateverTheIDs(t *testing.T) {
+	at := t0
+	mk := func(id, code, amount string, ref string) banking.StoredBalance {
+		b := bal(t, id, banking.BalanceBooked, amount, "EUR", at)
+		b.ProviderType = code
+		if ref != "" {
+			b.ReferenceDate = d(t, ref)
+		}
+		return b
+	}
+	for i := 0; i < 200; i++ {
+		id := func() string { return resource.NewID() }
+		in := []banking.StoredBalance{
+			mk(id(), "OPBD", "100.00", "2026-11-15"),
+			mk(id(), "PRCD", "90.00", "2026-11-14"),
+			mk(id(), "ITBD", "250.00", "2026-11-16"),
+			mk(id(), "CLBD", "260.00", "2026-11-15"),
+		}
+		rand.Shuffle(len(in), func(a, b int) { in[a], in[b] = in[b], in[a] })
+		if got := outlook.Latest(in); len(got) != 1 || got[0].Amount.String() != "250.00 EUR" {
+			t.Fatalf("round %d: counted %+v, want ITBD 250.00", i, got)
+		}
+	}
+	// The same code twice: the newest reference date wins, never the ID.
+	for i := 0; i < 50; i++ {
+		in := []banking.StoredBalance{mk(resource.NewID(), "CLBD", "10.00", "2026-11-14"), mk(resource.NewID(), "CLBD", "20.00", "2026-11-15")}
+		rand.Shuffle(len(in), func(a, b int) { in[a], in[b] = in[b], in[a] })
+		if got := outlook.Latest(in); got[0].Amount.String() != "20.00 EUR" {
+			t.Fatalf("round %d: counted %+v, want the newest reference date", i, got)
+		}
+	}
+	// CLBD over OPBD over PRCD when ITBD is absent.
+	in := []banking.StoredBalance{mk("z", "PRCD", "1.00", ""), mk("y", "OPBD", "2.00", ""), mk("x", "CLBD", "3.00", "")}
+	if got := outlook.Latest(in); got[0].Amount.String() != "3.00 EUR" {
+		t.Errorf("counted %+v, want CLBD", got)
+	}
+}
+
+func TestAPastThroughNeverDropsOverdue(t *testing.T) {
+	e := newEnv(t)
+	s := e.service(t, false)
+	base, err := s.Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	past, err := s.Build(context.Background(), outlook.Request{Balances: true, Through: ym(t, "2026-09")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(past.Currencies) != len(base.Currencies) || past.Through != ym(t, "2026-11") {
+		t.Fatalf("past through changed the window: %s, %d lines", past.Through, len(past.Currencies))
+	}
+	for i, l := range base.Currencies {
+		p := past.Currencies[i]
+		if p.StillDue.String() != l.StillDue.String() || p.Overdue.String() != l.Overdue.String() || str(p.BalanceLessStillDue) != str(l.BalanceLessStillDue) {
+			t.Errorf("%s: past through %+v, current %+v", l.Currency.Code(), p, l)
+		}
+	}
+	if eur := lineOf(t, past, "EUR"); eur.Overdue.String() != "160.00 EUR" || lineOf(t, past, "GBP").Overdue.String() != "7.50 GBP" {
+		t.Errorf("overdue dropped: %+v", eur)
+	}
+}
+
+func TestTheBackBoundIsAnchoredToTodayNotThrough(t *testing.T) {
+	today := func() (calendar.Date, error) { return d(t, "2026-11-16"), nil }
+	view := monthview.Service{Occurrences: occReader{}, Payments: factStore{}}
+	old := commitmentList{{ID: "c", Fields: commitments.Fields{StartDate: d(t, "1990-01-01")}}}
+	o, err := outlook.Service{Months: view, Commitments: old, Today: today}.Build(context.Background(), outlook.Request{Through: ym(t, "2031-11")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Truncated || o.From != ym(t, "2006-12") || o.Through != ym(t, "2031-11") {
+		t.Errorf("window %s..%s truncated %v", o.From, o.Through, o.Truncated)
+	}
+}
+
+// driftRates returns a different rate on every call, as when a refresh lands
+// between two conversions; the reporting currency itself is an identity.
+type driftRates struct{ n int }
+
+func (r *driftRates) Convert(_ context.Context, from money.Money, to money.Currency) (fx.Conversion, error) {
+	if from.Currency() == to {
+		return fx.Conversion{Status: fx.StatusOK, From: from, To: to, Value: from, Identity: true}, nil
+	}
+	r.n++
+	rate := fx.Rate{Provider: "p", Source: "s", Pair: fxtest.Pair(from.Currency().Code(), to.Code()), Value: money.MustParseDecimal(fmt.Sprintf("1.%d0", r.n)), Date: calendar.Date{}}
+	val, err := money.New(from.Amount().Mul(rate.Value).RoundHalfEven(2), to)
+	if err != nil {
+		return fx.Conversion{}, err
+	}
+	return fx.Conversion{Status: fx.StatusOK, From: from, To: to, Value: val, Rate: &rate}, nil
+}
+
+func TestEveryFigureOfACurrencyUsesTheSingleReportedRate(t *testing.T) {
+	e := newEnv(t)
+	s := e.service(t, false)
+	s.Rates = &driftRates{}
+	o, err := s.Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("EUR")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var use outlook.RateUse
+	for _, u := range o.Converted.Included {
+		if u.Currency.Code() == "USD" {
+			use = u
+		}
+	}
+	if use.Rate == nil {
+		t.Fatalf("no USD rate in %+v", o.Converted.Included)
+	}
+	// The USD balance (10.00 USD) and still-due (20.00 USD) are both
+	// converted at the reported rate; EUR counts as is.
+	eur := lineOf(t, o, "EUR")
+	gbp := lineOf(t, o, "GBP")
+	var gbpUse outlook.RateUse
+	for _, u := range o.Converted.Included {
+		if u.Currency.Code() == "GBP" {
+			gbpUse = u
+		}
+	}
+	conv := func(a money.Money, rate money.Decimal) money.Decimal { return a.Amount().Mul(rate).RoundHalfEven(2) }
+	eurCur := money.MustParseCurrency("EUR")
+	wantBalance, _ := money.New(eur.Balance.Amount().Add(conv(m(t, "10.00", "USD"), use.Rate.Value)), eurCur)
+	if str(o.Converted.Balance) != wantBalance.String() {
+		t.Errorf("balance %s, want %s (10.00 USD at the reported %s)", str(o.Converted.Balance), wantBalance, use.Rate.Value)
+	}
+	wantDue := eur.StillDue.Amount().Add(conv(m(t, "20.00", "USD"), use.Rate.Value)).Add(conv(gbp.StillDue, gbpUse.Rate.Value))
+	if o.Converted.StillDue.Amount().String() != wantDue.String() {
+		t.Errorf("still due %s, want %s", o.Converted.StillDue, wantDue)
 	}
 }

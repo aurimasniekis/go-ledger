@@ -31,7 +31,7 @@ function outlook(over: Partial<Outlook> = {}): Outlook {
         freshness: { state: 'fresh', stale: false, last_success_at: '2026-11-16T08:00:00Z', last_attempt_at: '2026-11-16T08:00:00Z', last_error_kind: null, last_error_code: null, notice_code: null } },
     ],
     converted: {
-      currency: 'EUR', complete: false, still_due: eur('260.00'), overdue: eur('160.00'), balance: eur('1200.50'), balance_less_still_due: eur('940.50'),
+      currency: 'EUR', complete: false, still_due: eur('260.00'), overdue: eur('160.00'), balance: eur('1200.50'), balance_less_still_due: eur('940.50'), balance_account_count: 2, stale_balance_account_count: 1,
       included: [{ currency: 'EUR', rate: null, age_seconds: null, from_cache: false, refresh_failed: false }],
       excluded: [{ currency: 'GBP', status: 'stale', reason: 'not_retrieved_recently',
         rate: { provider: 'frankfurter', source: 'ECB', base: 'GBP', quote: 'EUR', value: '1.1500', date: '2026-11-09', retrieved_at: '2026-11-10T09:00:00Z', confirmed_through: '2026-11-10' } }],
@@ -75,6 +75,7 @@ describe('Outlook page', () => {
     renderApp('/outlook?currency=EUR')
     const conv = await screen.findByRole('region', { name: 'Converted to EUR (secondary)' })
     expect(within(conv).getByText('Incomplete')).toBeInTheDocument()
+    expect(within(conv).getByText('1 of 2 balances not fresh')).toBeInTheDocument()
     expect(within(conv).getByText(/GBP is not included: the exchange rate was last retrieved too long ago/)).toHaveTextContent('1 GBP = 1.1500 EUR, rate of 2026-11-09 from frankfurter (ECB)')
     expect(calls.find((c) => c.path === PATH)!.query.get('currency')).toBe('EUR')
   })

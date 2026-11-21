@@ -57,6 +57,8 @@ export interface OutlookConverted {
   overdue: Money
   balance: Money | null
   balance_less_still_due: Money | null
+  balance_account_count: number
+  stale_balance_account_count: number
   included: { currency: string; rate: ExchangeRate | null; age_seconds: number | null; from_cache: boolean; refresh_failed: boolean }[]
   excluded: { currency: string; status: 'stale' | 'missing'; reason: string; rate: ExchangeRate | null }[]
 }
