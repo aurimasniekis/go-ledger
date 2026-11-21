@@ -84,6 +84,9 @@ type Service struct {
 	// BankStaleAfter is the bank-data staleness threshold; zero means
 	// [banking.DefaultStaleAfter].
 	BankStaleAfter time.Duration
+	// Zone is the reporting zone. A balance with no reference date is dated
+	// by the day it was obtained in this zone; zero means UTC.
+	Zone calendar.Zone
 }
 
 // Request says what to build.
@@ -424,7 +427,11 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 				}
 				asOf := b.ReferenceDate
 				if asOf.IsZero() {
-					asOf, _ = calendar.NewDate(b.ObtainedAt.UTC().Year(), b.ObtainedAt.UTC().Month(), b.ObtainedAt.UTC().Day())
+					obtained, zerr := s.zone().DateOf(b.ObtainedAt)
+					if zerr != nil {
+						return Outlook{}, fmt.Errorf("outlook: balance date: %w", zerr)
+					}
+					asOf = obtained
 				}
 				if l.BalanceAsOf.IsZero() || asOf.Before(l.BalanceAsOf) {
 					l.BalanceAsOf = asOf
@@ -470,6 +477,14 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 		out.Converted = &conv
 	}
 	return out, nil
+}
+
+// zone is the reporting zone, UTC when none was set.
+func (s Service) zone() calendar.Zone {
+	if s.Zone.IsZero() {
+		return calendar.MustLoadZone("UTC")
+	}
+	return s.Zone
 }
 
 // firstMonth is the month of the earliest commitment start.
