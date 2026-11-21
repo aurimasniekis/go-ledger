@@ -985,7 +985,10 @@ paths:
         SameSite=Lax, ten minutes), which the callback must present. When
         single sign-on is not configured or the provider cannot be reached,
         the browser is sent to `/sign-in?oidc_error=not_configured` or
-        `provider_unavailable` instead. Never JSON.
+        `provider_unavailable` instead. Starts are limited per client address
+        (20 a minute): beyond that the browser is sent to
+        `/sign-in?oidc_error=rate_limited` with a Retry-After header, so a
+        flood cannot push pending sign-ins out of the store. Never JSON.
       tags: [auth]
       parameters:
         - name: return_to
@@ -1165,19 +1168,15 @@ paths:
           $ref: "#/components/responses/Error"
   /auth/recovery-sign-in:
     get:
-      operationId: recoverySignIn
+      operationId: recoverySignInPage
       x-ledger-access: public
       security: []
-      summary: Use a one-time recovery sign-in link (browser redirect)
+      summary: Confirmation page of a recovery sign-in link (HTML)
       description: |
         Break-glass (decision D16): the link printed by the host command
-        `ledger auth recovery-sign-in`. The token works once, expires
-        (15 minutes by default), skips the second factor and works whether
-        or not password sign-in is enabled. Success sets the session cookie
-        (method recovery) and redirects to /; any failure redirects to
-        `/sign-in?recovery_error=invalid_or_expired`. Audited
-        (auth.signin_succeeded and auth.signin_failed, method
-        recovery_sign_in). Never JSON.
+        `ledger auth recovery-sign-in`. This request changes nothing, so a
+        link previewer cannot use up the token: it answers a small HTML page
+        whose button posts the token to the same path.
       tags: [auth]
       parameters:
         - name: token
@@ -1186,6 +1185,42 @@ paths:
           schema:
             type: string
             maxLength: 128
+      responses:
+        "303":
+          description: Signed in, or a failure.
+          headers:
+            Location:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: recoverySignIn
+      x-ledger-access: public
+      security: []
+      summary: Use a one-time recovery sign-in link (browser redirect)
+      description: |
+        Sent by the confirmation page as a form post
+        (application/x-www-form-urlencoded, field token). The token works
+        once, expires (15 minutes by default), skips the second factor and
+        works whether or not password sign-in is enabled. Success sets the
+        session cookie (method recovery) and redirects to /; any failure
+        redirects to `/sign-in?recovery_error=invalid_or_expired`. A
+        cross-origin browser request is refused (403). Audited
+        (auth.signin_succeeded and auth.signin_failed, method
+        recovery_sign_in). Never JSON.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  maxLength: 128
       responses:
         "303":
           description: Signed in, or a failure.

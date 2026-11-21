@@ -58,6 +58,9 @@ type OIDCIdentity struct {
 	Email             string
 	PreferredUsername string
 	Name              string
+	// AuthTime is when the user last authenticated at the provider (zero when
+	// the provider did not say): it sets how recent the new session counts.
+	AuthTime time.Time
 }
 
 // OIDCLink ties one Ledger account to one provider identity. An account has
@@ -181,6 +184,15 @@ func (s *Service) SignInOIDC(ctx context.Context, in OIDCSignInInput) (Issued, e
 	if err != nil {
 		return Issued{}, err
 	}
+	// A sign-in is only as recent as the provider's own authentication: a
+	// silent single-sign-on round trip must not open the recent-authentication
+	// window. No auth_time counts as not recent.
+	authAt := now.Add(-s.cfg.ReauthWindow)
+	if !id.AuthTime.IsZero() {
+		if authAt = id.AuthTime.UTC(); authAt.After(now) {
+			authAt = now
+		}
+	}
 	cred, err := s.store.CredentialByUser(ctx, link.UserID)
 	if err != nil {
 		return Issued{}, err
@@ -203,11 +215,11 @@ func (s *Service) SignInOIDC(ctx context.Context, in OIDCSignInInput) (Issued, e
 		if st.Enabled() {
 			exp := now.Add(ChallengeTTL)
 			tok := s.challenges.add(now, &challenge{userID: cred.UserID, accKey: accountKey(cred.Username), expires: exp,
-				userAgent: in.UserAgent, method: SessionMethodOIDC})
+				userAgent: in.UserAgent, method: SessionMethodOIDC, authAt: authAt})
 			return Issued{SecondFactor: &SecondFactorChallenge{Token: tok, ExpiresAt: exp, Methods: []string{MethodTOTP, MethodRecoveryCode}}}, nil
 		}
 	}
-	return s.startSession(ctx, cred.UserID, SessionMethodOIDC, in.Address, in.UserAgent, now, audit.SignIn(actor, true, "oidc", "", now))
+	return s.startSession(ctx, cred.UserID, SessionMethodOIDC, in.Address, in.UserAgent, now, authAt, audit.SignIn(actor, true, "oidc", "", now))
 }
 
 // provisionOIDC creates an account (role auth.oidc.provisioning.role, no
@@ -481,7 +493,7 @@ func (s *Service) RecoverySignIn(ctx context.Context, in RecoverySignInInput) (I
 	if cred.Disabled {
 		return fail(actor, "account_disabled")
 	}
-	return s.startSession(ctx, r.UserID, SessionMethodRecovery, in.Address, in.UserAgent, now, audit.SignIn(actor, true, "recovery_sign_in", "", now))
+	return s.startSession(ctx, r.UserID, SessionMethodRecovery, in.Address, in.UserAgent, now, now, audit.SignIn(actor, true, "recovery_sign_in", "", now))
 }
 
 // OIDCResponseRejected records a sign-in callback whose provider response

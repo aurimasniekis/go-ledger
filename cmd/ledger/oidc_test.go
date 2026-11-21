@@ -634,6 +634,88 @@ func TestOIDCSessionsAndRequiredTwoFactor(t *testing.T) {
 	}
 }
 
+func link2Token(t *testing.T, line string) string {
+	u, err := url.Parse(line)
+	if err != nil || u.Query().Get("token") == "" {
+		t.Fatalf("link %q", line)
+	}
+	return u.Query().Get("token")
+}
+
+// A sign-in is only as recent as the provider's own authentication.
+func TestOIDCSignInRecencyFollowsAuthTime(t *testing.T) {
+	create := `{"name":"x","grants":["users:read"]}`
+	for name, c := range map[string]struct {
+		mutate func(e *oidcEnv) func(map[string]any)
+		recent bool
+	}{
+		"fresh": {func(*oidcEnv) func(map[string]any) { return nil }, true},
+		"stale": {func(e *oidcEnv) func(map[string]any) {
+			return func(c map[string]any) { c["auth_time"] = e.clock.now().Add(-30 * 24 * time.Hour).Unix() }
+		}, false},
+		"missing": {func(*oidcEnv) func(map[string]any) { return func(c map[string]any) { delete(c, "auth_time") } }, false},
+		"future": {func(e *oidcEnv) func(map[string]any) {
+			return func(c map[string]any) { c["auth_time"] = e.clock.now().Add(30 * time.Second).Unix() }
+		}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newOIDCEnv(t, nil)
+			alice, _ := e.signIn("alice")
+			e.link(alice)
+			e.op.Mutate = c.mutate(e)
+			b := e.sessionFrom(e.signInOIDC())
+			w := e.req("POST", "/api/v1/auth/tokens", create, b, nil)
+			if c.recent && w.Code != 201 {
+				t.Fatalf("recent sign-in: %d %s", w.Code, w.Body.String())
+			}
+			if !c.recent && (w.Code != 403 || errCode(w.Body.String()) != "reauthentication_required") {
+				t.Fatalf("stale sign-in: %d %s", w.Code, w.Body.String())
+			}
+			if !c.recent {
+				if r := e.req("GET", "/api/v1/auth/session", "", b, nil); !strings.Contains(r.Body.String(), `"recent_auth_until":null`) {
+					t.Fatalf("session: %s", r.Body.String())
+				}
+				// Re-authenticating at the provider restores it.
+				e.op.Mutate = nil
+				if w, _ := e.callback(e.start("/api/v1/auth/oidc/reauthenticate", b)); location(w) != "/?oidc=reauthenticated" {
+					t.Fatalf("reauth: %q", location(w))
+				}
+				if w := e.req("POST", "/api/v1/auth/tokens", create, b, nil); w.Code != 201 {
+					t.Fatalf("after re-authentication: %d %s", w.Code, w.Body.String())
+				}
+			}
+		})
+	}
+}
+
+// Anonymous sign-in starts are limited per address, so a flood cannot push a
+// pending sign-in out of the transaction store.
+func TestOIDCAuthorizeIsRateLimitedPerAddress(t *testing.T) {
+	e := newOIDCEnv(t, nil)
+	pending, cookie := e.authorize("")
+	for range httpapi.DefaultAuthorizeLimit.Max {
+		if w := e.req("GET", httpapi.OIDCAuthorizePath, "", nil, nil); w.Code != 303 {
+			t.Fatalf("within the limit: %d", w.Code)
+		}
+	}
+	w := e.req("GET", httpapi.OIDCAuthorizePath, "", nil, nil)
+	if location(w) != "/sign-in?oidc_error=rate_limited" || w.Header().Get("Retry-After") == "" || cookieValue(w, httpapi.OIDCCookie) != "" {
+		t.Fatalf("over the limit: %d %q", w.Code, location(w))
+	}
+	// Another address is not affected, and the window passing frees the first.
+	if w := e.req("GET", httpapi.OIDCAuthorizePath, "", &browser{addr: "192.0.2.77:4000"}, nil); w.Code != 303 || strings.Contains(location(w), "oidc_error") {
+		t.Fatalf("other address: %d %q", w.Code, location(w))
+	}
+	e.clock.advance(httpapi.DefaultAuthorizeLimit.Window + time.Second)
+	if w := e.req("GET", httpapi.OIDCAuthorizePath, "", nil, nil); strings.Contains(location(w), "oidc_error") {
+		t.Fatalf("after the window: %q", location(w))
+	}
+	// The sign-in that was pending before the flood still completes.
+	if w, _ := e.callback(pending, cookie); cookieValue(w, httpapi.SessionCookie) == "" && !strings.Contains(location(w), "not_linked") {
+		t.Fatalf("pending sign-in: %q", location(w))
+	}
+}
+
 func TestRecoverySignInAndUnlinkCommands(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "ledger.db")
@@ -708,8 +790,31 @@ func TestRecoverySignInAndUnlinkCommands(t *testing.T) {
 		srv.Handler().ServeHTTP(w, r)
 		return w
 	}
+	post := func(token string, hdr map[string]string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", link.Path, strings.NewReader(url.Values{"token": {token}}.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for k, v := range hdr {
+			r.Header.Set(k, v)
+		}
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, r)
+		return w
+	}
 	clk.advance(time.Minute)
-	w := get(link.RequestURI())
+	// A GET (a link previewer) only shows a confirmation page: it neither
+	// starts a session nor consumes the token, however often it is fetched.
+	for range 2 {
+		pg := get(link.RequestURI())
+		if pg.Code != 200 || cookieValue(pg, httpapi.SessionCookie) != "" || !strings.Contains(pg.Body.String(), `name="token" value="`+token+`"`) ||
+			!strings.Contains(pg.Header().Get("Content-Type"), "text/html") || pg.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("confirmation page: %d %v %s", pg.Code, pg.Header(), pg.Body.String())
+		}
+	}
+	// A cross-origin POST is refused and leaves the token usable.
+	if x := post(token, map[string]string{"Sec-Fetch-Site": "cross-site"}); x.Code != 403 || cookieValue(x, httpapi.SessionCookie) != "" {
+		t.Fatalf("cross-origin: %d %s", x.Code, x.Body.String())
+	}
+	w := post(token, map[string]string{"Sec-Fetch-Site": "same-origin"})
 	if w.Code != 303 || location(w) != "/" || cookieValue(w, httpapi.SessionCookie) == "" {
 		t.Fatalf("recovery sign-in: %d %q", w.Code, location(w))
 	}
@@ -724,14 +829,14 @@ func TestRecoverySignInAndUnlinkCommands(t *testing.T) {
 	if !strings.Contains(rw.Body.String(), `"method":"recovery"`) {
 		t.Fatalf("session: %s", rw.Body.String())
 	}
-	if w := get(link.RequestURI()); location(w) != "/sign-in?recovery_error=invalid_or_expired" {
+	if w := post(token, nil); location(w) != "/sign-in?recovery_error=invalid_or_expired" {
 		t.Fatalf("second use: %q", location(w))
 	}
 	// An expired link.
 	_, stdout, _ = run("", "recovery-sign-in", "--ttl", "1m", "owner")
 	lines = strings.Split(strings.TrimSpace(stdout), "\n")
 	clk.advance(2 * time.Minute)
-	if w := get(strings.TrimPrefix(lines[len(lines)-1], "https://ledger.example.com")); location(w) != "/sign-in?recovery_error=invalid_or_expired" {
+	if w := post(link2Token(t, lines[len(lines)-1]), nil); location(w) != "/sign-in?recovery_error=invalid_or_expired" {
 		t.Fatalf("expired: %q", location(w))
 	}
 	recs, _ := al.List(ctx, audit.Filter{Limit: 100})

@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"errors"
+	"html/template"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,7 +52,13 @@ type OIDCDeps struct {
 	Transactions *oidc.Transactions
 	// Name is the provider's name shown on the sign-in page.
 	Name string
+	// AuthorizeLimit counts anonymous sign-in starts per client address, so
+	// they cannot evict pending transactions. Nil uses a default.
+	AuthorizeLimit *auth.Limiter
 }
+
+// DefaultAuthorizeLimit is 20 sign-in starts per address per minute.
+var DefaultAuthorizeLimit = auth.Limit{Max: 20, Window: time.Minute}
 
 // RelyingParty adapts an [oidc.Client] to [OIDCRelyingParty].
 func RelyingParty(c *oidc.Client) OIDCRelyingParty { return relyingParty{c} }
@@ -78,6 +86,7 @@ const (
 	oidcErrSession       = "session_ended"
 	oidcErrMismatch      = "identity_mismatch"
 	oidcErrInternal      = "internal_error"
+	oidcErrRateLimited   = "rate_limited"
 )
 
 // returnPath reads a same-origin path to come back to: it must start with
@@ -156,8 +165,12 @@ type oidcLinkJSON struct {
 func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 	configured := d != nil && d.Client != nil && d.Transactions != nil && svc.Config().OIDC.Enabled
 	name := ""
+	var authorizeLimit *auth.Limiter
 	if configured {
 		name = d.Name
+		if authorizeLimit = d.AuthorizeLimit; authorizeLimit == nil {
+			authorizeLimit = auth.NewLimiter(DefaultAuthorizeLimit, auth.DefaultLimiterKeys, nil)
+		}
 	}
 	log := func(r *http.Request, msg string, args ...any) {
 		logging.FromContext(r.Context()).InfoContext(r.Context(), msg, args...)
@@ -194,6 +207,16 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 			redirect(w, r, fail)
 			return
 		}
+		// Anonymous and cheap to call, so every start counts against the
+		// caller's address (not only failures): a flood cannot push pending
+		// sign-ins out of the transaction store.
+		key := s.ClientAddress(r)
+		if blocked, retry, _ := authorizeLimit.Begin(key); blocked {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retry/time.Second)+1))
+			redirect(w, r, withQuery(SignInPagePath, "oidc_error", oidcErrRateLimited))
+			return
+		}
+		authorizeLimit.Confirm(key)
 		u, err := begin(w, r, oidc.Transaction{Mode: oidc.ModeSignIn, ReturnTo: returnPath(r.URL.Query().Get("return_to"))})
 		if err != nil {
 			logging.FromContext(r.Context()).WarnContext(r.Context(), "single sign-on: the identity provider is unavailable", "error", err.Error())
@@ -255,7 +278,7 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 			back(oidcErrInternal)
 			return
 		}
-		ident := auth.OIDCIdentity{Issuer: id.Issuer, Subject: id.Subject, Email: id.Email, PreferredUsername: id.PreferredUsername, Name: id.Name}
+		ident := auth.OIDCIdentity{Issuer: id.Issuer, Subject: id.Subject, Email: id.Email, PreferredUsername: id.PreferredUsername, Name: id.Name, AuthTime: id.AuthTime}
 		switch t.Mode {
 		case oidc.ModeSignIn:
 			iss, err := svc.SignInOIDC(r.Context(), auth.OIDCSignInInput{Identity: ident, Address: s.ClientAddress(r), UserAgent: r.UserAgent()})
@@ -403,10 +426,31 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 
 	// Break-glass (decision D16): a one-time sign-in issued on the host with
 	// ledger auth recovery-sign-in. The token is in the query so the printed
-	// link works in any browser; Ledger never logs query strings, and the
-	// token is consumed by its first use.
+	// link works in any browser; Ledger never logs query strings. The GET
+	// changes nothing: it shows a confirmation page, so a link previewer or URL
+	// scanner cannot consume the token. The page posts the token (in the
+	// body) to the same path, which consumes it on first use; a request from
+	// another origin is refused.
 	s.HandleAPI("GET "+AuthPath+"/recovery-sign-in", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		iss, err := svc.RecoverySignIn(r.Context(), auth.RecoverySignInInput{Token: r.URL.Query().Get("token"), Address: s.ClientAddress(r), UserAgent: r.UserAgent()})
+		noStore(w)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = recoveryPage.Execute(w, struct{ Token, Action string }{r.URL.Query().Get("token"), AuthPath + "/recovery-sign-in"})
+	}))
+
+	s.HandleAPI("POST "+AuthPath+"/recovery-sign-in", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := crossOrigin.Check(r); err != nil {
+			WriteError(w, r, csrfFailed())
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+		if err := r.ParseForm(); err != nil {
+			redirect(w, r, withQuery(SignInPagePath, "recovery_error", "invalid_or_expired"))
+			return
+		}
+		iss, err := svc.RecoverySignIn(r.Context(), auth.RecoverySignInInput{Token: r.PostForm.Get("token"), Address: s.ClientAddress(r), UserAgent: r.UserAgent()})
 		if err != nil {
 			if !errors.Is(err, auth.ErrInvalidCredentials) {
 				logging.FromContext(r.Context()).ErrorContext(r.Context(), "recovery sign-in failed", "error", err.Error())
@@ -437,6 +481,17 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 		WriteError(w, r, NotFound("no such resource"))
 	}))
 }
+
+// recoveryPage asks the person holding a recovery link to confirm the
+// sign-in. It is plain HTML with no script, so it works before the UI loads.
+var recoveryPage = template.Must(template.New("recovery").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Ledger recovery sign-in</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem}button{font:inherit;padding:.5rem 1rem}</style></head>
+<body><main><h1>Recovery sign-in</h1>
+<p>This one-time link signs you in to Ledger without a password or second factor. Continue only if you issued it on the host. It stops working once used.</p>
+<form method="post" action="{{.Action}}"><input type="hidden" name="token" value="{{.Token}}"><button type="submit">Sign in</button></form>
+</main></body></html>`))
 
 // returnBody reads an optional {"return_to": "/path"} body.
 func returnBody(r *http.Request) (string, error) {

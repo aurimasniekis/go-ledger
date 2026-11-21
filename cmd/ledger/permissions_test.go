@@ -74,6 +74,7 @@ var permissionMatrix = map[string]string{
 	"DELETE /api/v1/auth/oidc/link":         "session+recent",
 	"POST /api/v1/auth/oidc/reauthenticate": "session+enroll",
 	"GET /api/v1/auth/recovery-sign-in":     "public",
+	"POST /api/v1/auth/recovery-sign-in":    "public",
 
 	"GET /api/v1/commitments":         "commitments:read",
 	"POST /api/v1/commitments":        "commitments:write",

@@ -40,6 +40,11 @@ Research R13 (and its review) compared OIDC libraries and listed checks that go-
    client (OIDC Core 3.1.3.7, errata set 2, rejects untrusted extra audiences; R13 review finding 1), azp when present,
    an iat neither in the future nor before the request started, a non-empty subject of at most 255 bytes, a present ID
    token, and for re-authentication a fresh auth_time. `clock_skew` (default 1 minute) applies to all times.
+   A sign-in session counts as recently authenticated only as far as the provider says: its `AuthenticatedAt` is
+   `min(now, auth_time)`, and an ID token without auth_time counts as not recent (security review of PR #47, F1). A
+   silent single-sign-on round trip therefore never opens the recent-authentication window; the user re-authenticates
+   at the provider (`POST /auth/oidc/reauthenticate`) for sensitive actions. The auth_time travels with a second-factor
+   challenge when `auth.oidc.require_2fa` is on.
    Userinfo is never called: identity comes from the ID token only. Access and refresh tokens are discarded.
 5. **Provider access.** Its own HTTP client: D17 timeouts (10 s connect, 30 s total), responses capped at 1 MiB, no
    redirects followed. Discovery is fetched at the first sign-in (an unreachable provider never stops `ledger serve`
@@ -75,12 +80,20 @@ Research R13 (and its review) compared OIDC libraries and listed checks that go-
     password on the account **and** password sign-in enabled; otherwise 409. Sessions already started stay.
 12. **Break-glass (D16).** `ledger auth recovery-sign-in <username>` (with `ledger serve` stopped, instance lock)
     issues a one-time sign-in link valid for `--ttl` (default 15 minutes, at most an hour), replacing any unused one; only
-    its SHA-256 hash is stored (`recovery_sign_ins`). `GET /auth/recovery-sign-in?token=` consumes it whatever the
+    its SHA-256 hash is stored (`recovery_sign_ins`). `GET /auth/recovery-sign-in?token=` changes nothing: it serves a
+    confirmation page (no script, `no-store`, `no-referrer`, not framable) so a link previewer or URL scanner cannot use
+    the token up (review F2); the page's button posts the token in a form body to the same path, a cross-origin browser
+    request is refused, and that POST consumes it whatever the
     outcome, skips the second factor, works whether or not passwords are enabled, and starts a session with method
     `recovery` (still confined by `auth.require_2fa`). Audited: `auth.recovery_sign_in_issued` (by host) and
     `auth.signin_succeeded`/`auth.signin_failed` with method `recovery_sign_in`. Re-enabling password sign-in is a
     configuration change (`auth.password.enabled=true`, with `ledger auth set-password` when the account has no
     password). `ledger auth unlink-oidc <username>` removes a link from the host (`oidc.unlinked` by host).
+    **Sign-in starts are limited per address (review F3).** `GET /auth/oidc/authorize` is anonymous and each call stores
+    a pending transaction, so a flood could evict real ones. Every start counts against the caller's client address (the
+    existing limiter; 20 a minute): beyond that the browser is sent to `/sign-in?oidc_error=rate_limited` with
+    `Retry-After`. The limit is per address, so an attacker with many addresses is slowed, not stopped; the store stays
+    bounded at 1000 either way.
 13. **Proposed defaults (not decided by the operator):** pending requests valid ten minutes, at most 1000 in memory
     (the oldest is dropped); discovery cached one hour; 1 MiB response cap; no redirects followed; clock skew 1 minute
     (0 to 5 minutes); default scopes `openid email profile`; provisioning role `read-only`; the recovery link valid 15

@@ -333,6 +333,8 @@ type challenge struct {
 	userAgent      string
 	// method is the session method the first step used (password or oidc).
 	method string
+	// authAt is when the first step's authentication happened (see startSession).
+	authAt time.Time
 }
 
 // challenges holds pending second steps in memory: a restart discards them
@@ -485,7 +487,11 @@ func (s *Service) CompleteSignIn(ctx context.Context, in SecondFactorInput) (Iss
 	if method == MethodRecoveryCode {
 		ev.Details["recovery_codes_remaining"] = strconv.Itoa(remaining)
 	}
-	return s.startSession(ctx, ch.userID, ch.method, in.Address, ch.userAgent, now, ev)
+	authAt := ch.authAt
+	if authAt.IsZero() { // a password first step: the second factor completes the check
+		authAt = now
+	}
+	return s.startSession(ctx, ch.userID, ch.method, in.Address, ch.userAgent, now, authAt, ev)
 }
 
 // checkSecondFactor verifies a TOTP code (recording its step as used) or a

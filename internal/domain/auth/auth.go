@@ -457,12 +457,14 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 		return Issued{SecondFactor: &SecondFactorChallenge{Token: tok, ExpiresAt: exp, Methods: []string{MethodTOTP, MethodRecoveryCode}}}, nil
 	}
 	at.succeeded()
-	return s.startSession(ctx, cred.UserID, SessionMethodPassword, in.Address, in.UserAgent, now, audit.SignIn(actorFor(cred, true), true, "password", "", now))
+	return s.startSession(ctx, cred.UserID, SessionMethodPassword, in.Address, in.UserAgent, now, now, audit.SignIn(actorFor(cred, true), true, "password", "", now))
 }
 
 // startSession creates a session for userID, started by method, and records
-// ev with it.
-func (s *Service) startSession(ctx context.Context, userID, method, address, userAgent string, now time.Time, ev audit.Event) (Issued, error) {
+// ev with it. authAt is when the user last proved who they are (it starts the
+// recent-authentication window): now for a password or a recovery link, the
+// provider's auth_time for single sign-on.
+func (s *Service) startSession(ctx context.Context, userID, method, address, userAgent string, now, authAt time.Time, ev audit.Event) (Issued, error) {
 	// Expired sessions of anyone are removed here, so the table stays small
 	// without a background job.
 	if _, err := s.store.DeleteExpired(ctx, now, now.Add(-s.cfg.IdleTimeout)); err != nil {
@@ -471,7 +473,7 @@ func (s *Service) startSession(ctx context.Context, userID, method, address, use
 	tok := newSecret()
 	iss := Issued{Token: tok, CSRFToken: CSRFToken(tok)}
 	iss.Session = Session{ID: s.newID(), UserID: userID, TokenHash: hashSecret(tok),
-		CreatedAt: now, LastSeenAt: now, AuthenticatedAt: now, ExpiresAt: now.Add(s.cfg.AbsoluteTimeout),
+		CreatedAt: now, LastSeenAt: now, AuthenticatedAt: authAt, ExpiresAt: now.Add(s.cfg.AbsoluteTimeout),
 		UserAgent: clean(userAgent, 256), Address: clean(address, 64), Method: method}
 	if err := s.store.CreateSession(ctx, iss.Session, ev); err != nil {
 		return Issued{}, err

@@ -33,7 +33,8 @@ func oidcDeps(c config.AuthOIDC, now func() time.Time) (*httpapi.OIDCDeps, error
 	if err != nil {
 		return nil, err
 	}
-	return &httpapi.OIDCDeps{Client: httpapi.RelyingParty(cl), Transactions: oidc.NewTransactions(now), Name: c.Name}, nil
+	return &httpapi.OIDCDeps{Client: httpapi.RelyingParty(cl), Transactions: oidc.NewTransactions(now), Name: c.Name,
+		AuthorizeLimit: auth.NewLimiter(httpapi.DefaultAuthorizeLimit, auth.DefaultLimiterKeys, now)}, nil
 }
 
 // recoverySignInUsage is the help text of "ledger auth recovery-sign-in".

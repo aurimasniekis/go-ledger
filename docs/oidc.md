@@ -30,6 +30,13 @@ Identities that are not linked get no access. To create accounts for them on fir
 By default Ledger trusts the provider's own authentication and does not ask for a Ledger TOTP code after an OIDC
 sign-in. Set `auth.oidc.require_2fa: true` to ask for it (and to apply `auth.require_2fa` to OIDC sessions).
 
+A sign-in through the provider counts as recent authentication only when the provider reports a recent `auth_time`
+(within `auth.session.reauth_window`). Otherwise, for example after a silent single-sign-on round trip, the session
+starts without it, and credential changes, token creation and user management ask the user to re-authenticate
+(`POST /api/v1/auth/oidc/reauthenticate`). A provider that sends no `auth_time` always counts as not recent.
+Sign-in starts (`/api/v1/auth/oidc/authorize`) are limited to 20 a minute per client address; beyond that the browser
+lands on the sign-in page with `oidc_error=rate_limited`.
+
 ## Turning passwords off
 
 `auth.password.enabled: false` refuses every password sign-in and password re-authentication and sends the sign-in
@@ -45,7 +52,8 @@ On the host, with `ledger serve` stopped:
 ledger auth recovery-sign-in <username>          # --ttl 15m by default, at most 1h
 ```
 
-It prints a one-time link. Start `ledger serve` and open the link in a browser before it expires. The link signs the
+It prints a one-time link. Start `ledger serve` and open the link in a browser before it expires; the page asks you to
+confirm, and pressing the button uses the link (merely fetching it does not, so a chat preview cannot waste it). The link signs the
 user in once, without the provider and without a second factor, whether or not passwords are enabled. Treat it like a
 password: anyone with it can sign in as that user until it is used or expires. Issuing and using it are audited.
 

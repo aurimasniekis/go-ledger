@@ -154,6 +154,7 @@ var notImplemented = map[string]string{
 	"startOIDCSignIn":           "browser redirect to the identity provider (single sign-on), not a JSON operation",
 	"oidcCallback":              "browser redirect from the identity provider, not a JSON operation",
 	"recoverySignIn":            "browser redirect for a host-issued one-time sign-in link, not a JSON operation",
+	"recoverySignInPage":        "HTML confirmation page of a host-issued one-time sign-in link, not a JSON operation",
 	"getMyOIDCLink":             "session-only: single-sign-on links are managed with the browser session",
 	"startOIDCLink":             "session-only: linking needs a browser at the identity provider and recent re-authentication",
 	"unlinkMyOIDC":              "session-only: credential change with recent re-authentication",
