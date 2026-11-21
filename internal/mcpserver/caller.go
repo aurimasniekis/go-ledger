@@ -74,7 +74,7 @@ func (c inProcess) Call(ctx context.Context, hdr http.Header, r Request) (Respon
 	} else {
 		body = bytes.NewReader(nil)
 	}
-	req, err := http.NewRequestWithContext(ctx, r.Method, u, body)
+	req, err := http.NewRequestWithContext(httpapi.WithMCPCall(ctx), r.Method, u, body)
 	if err != nil {
 		return Response{}, err
 	}

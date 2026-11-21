@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -37,15 +38,28 @@ const (
 	CodeOverpaid                Code = "occurrence_overpaid"        // the occurrence would be paid past its amount without allow_overpayment
 	CodeDuplicateMatch          Code = "duplicate_match"            // the pair already has an open match
 	CodeMatchState              Code = "invalid_match_state"        // the match's state does not allow the change
+	// CodeUndoNotDecider (403): only the person who confirmed a match may
+	// unconfirm it (ADR-0045).
+	CodeUndoNotDecider Code = "match_undo_not_decider"
+	// CodeUndoWindowClosed (409): the undo window of a confirmation has
+	// closed; unmatch instead (ADR-0045).
+	CodeUndoWindowClosed Code = "match_undo_window_closed"
 )
 
 type deciderJSON struct {
 	Kind   audit.ActorKind `json:"kind"`
 	UserID *string         `json:"user_id"`
+	// Via is how the change came: session, token, mcp or system; null for
+	// changes recorded before provenance was (decision D42 3a).
+	Via *audit.Via `json:"via"`
 }
 
 func toDeciderJSON(d matches.Decider) deciderJSON {
 	out := deciderJSON{Kind: d.Kind}
+	if d.Via != "" {
+		v := d.Via
+		out.Via = &v
+	}
 	if d.UserID != "" {
 		id := d.UserID
 		out.UserID = &id
@@ -180,6 +194,10 @@ func matchError(err error) error {
 		return conflict(CodeDuplicateMatch, "")
 	case errors.Is(err, matches.ErrTransition):
 		return conflict(CodeMatchState, "")
+	case errors.Is(err, matches.ErrUndoNotDecider):
+		return &Error{Status: http.StatusForbidden, Code: CodeUndoNotDecider, Message: err.Error(), Cause: err}
+	case errors.Is(err, matches.ErrUndoWindow):
+		return conflict(CodeUndoWindowClosed, "")
 	}
 	return err
 }
@@ -360,7 +378,7 @@ func registerMatches(s *Server, st matches.Store) {
 			WriteError(w, r, fieldErrors(errs))
 			return
 		}
-		ch, err := st.Create(r.Context(), actor(r), matches.New{TransactionID: banking.TransactionID(b.transactionID), OccurrenceID: b.occurrenceID, Amount: b.amount,
+		ch, err := st.Create(r.Context(), matchActor(r), matches.New{TransactionID: banking.TransactionID(b.transactionID), OccurrenceID: b.occurrenceID, Amount: b.amount,
 			Origin: matches.OriginUser, State: matches.StateConfirmed, AllowOverpayment: b.allowOverpayment, Reason: b.reason})
 		if err != nil {
 			WriteError(w, r, matchError(err))
@@ -415,18 +433,56 @@ func registerMatches(s *Server, st matches.Store) {
 		}))
 	}
 	action("confirm", []string{"allow_overpayment"}, nil, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {
-		return st.Confirm(r.Context(), actor(r), id, v, b.allowOverpayment, b.reason)
+		return st.Confirm(r.Context(), matchActor(r), id, v, b.allowOverpayment, b.reason)
 	})
 	action("reject", nil, nil, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {
-		return st.Reject(r.Context(), actor(r), id, v, b.reason)
+		return st.Reject(r.Context(), matchActor(r), id, v, b.reason)
 	})
 	action("unmatch", nil, nil, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {
-		return st.Unmatch(r.Context(), actor(r), id, v, b.reason)
+		return st.Unmatch(r.Context(), matchActor(r), id, v, b.reason)
 	})
 	action("correct", []string{"amount", "allow_overpayment"}, []string{"amount"}, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {
-		return st.Correct(r.Context(), actor(r), id, v, b.amount, b.allowOverpayment, b.reason)
+		return st.Correct(r.Context(), matchActor(r), id, v, b.amount, b.allowOverpayment, b.reason)
 	})
 	action("reverse", nil, nil, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {
-		return st.Reverse(r.Context(), actor(r), id, v, b.reason)
+		return st.Reverse(r.Context(), matchActor(r), id, v, b.reason)
 	})
+	action("unconfirm", nil, nil, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {
+		return st.Unconfirm(r.Context(), matchActor(r), id, v, b.reason)
+	})
+}
+
+// matchActor is the actor of a match change with how it came (decision D42
+// 3a): a session, an API token, or an API token through the MCP server.
+func matchActor(r *http.Request) audit.Actor {
+	a := actor(r)
+	a.Via = viaOf(r)
+	return a
+}
+
+type mcpCallKey struct{}
+
+// WithMCPCall marks ctx as carrying an API call the in-process MCP server
+// makes for one of its tools, so the change records that it came through
+// MCP. Only code in this process can set it.
+func WithMCPCall(ctx context.Context) context.Context {
+	return context.WithValue(ctx, mcpCallKey{}, true)
+}
+
+// viaOf says how a request came. A token's call came through MCP when the
+// in-process MCP server made it (WithMCPCall) or when 'ledger mcp stdio' named
+// its tool in MCPToolHeader; that header is asserted by the client, like the
+// tool name in the audit log, and a token acts as its owner either way.
+func viaOf(r *http.Request) audit.Via {
+	p, _ := authz.FromContext(r.Context())
+	if p.Kind != authz.PrincipalToken {
+		return audit.ViaSession
+	}
+	if mcp, _ := r.Context().Value(mcpCallKey{}).(bool); mcp {
+		return audit.ViaMCP
+	}
+	if tool := r.Header.Get(MCPToolHeader); tool != "" && mcpToolName.MatchString(tool) {
+		return audit.ViaMCP
+	}
+	return audit.ViaToken
 }

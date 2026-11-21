@@ -49,6 +49,10 @@ const (
 	PaymentMatchUnmatched Action = "payment_match.unmatched"
 	PaymentMatchCorrected Action = "payment_match.corrected"
 	PaymentMatchReversed  Action = "payment_match.reversed"
+	// PaymentMatchUnconfirmed is a confirmation taken back by the person who
+	// made it, inside the undo window: the match is a suggestion again
+	// (ADR-0045).
+	PaymentMatchUnconfirmed Action = "payment_match.unconfirmed"
 
 	// Bank connections (B4, ADR-0040). The target is the connection. Details:
 	// provider and application (names only: never a session, code, account or
@@ -93,10 +97,11 @@ var (
 	refreshOutcomes   = []string{"running", "succeeded", "partial", "failed", "interrupted"}
 	matchOrigins      = []string{"auto_rule", "model_suggestion", "user"}
 	matchFromStates   = []string{"none", "suggested", "confirmed", "rejected", "reversed"}
+	matchVias         = []string{string(ViaSession), string(ViaToken), string(ViaMCP), string(ViaSystem)}
 )
 
 func matchFields() []Field {
-	return []Field{f("occurrence_id"), f("transaction_id"), f("origin", matchOrigins...), f("from", matchFromStates...), f("currency")}
+	return []Field{f("occurrence_id"), f("transaction_id"), f("origin", matchOrigins...), f("from", matchFromStates...), f("currency"), f("via", matchVias...)}
 }
 
 // Field declares one allowed detail field. Enum, when set, lists the only
@@ -164,12 +169,13 @@ var Definitions = map[Action][]Field{
 	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
 	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
 
-	PaymentMatchSuggested: matchFields(),
-	PaymentMatchConfirmed: matchFields(),
-	PaymentMatchRejected:  matchFields(),
-	PaymentMatchUnmatched: matchFields(),
-	PaymentMatchCorrected: matchFields(),
-	PaymentMatchReversed:  matchFields(),
+	PaymentMatchSuggested:   matchFields(),
+	PaymentMatchConfirmed:   matchFields(),
+	PaymentMatchRejected:    matchFields(),
+	PaymentMatchUnmatched:   matchFields(),
+	PaymentMatchCorrected:   matchFields(),
+	PaymentMatchReversed:    matchFields(),
+	PaymentMatchUnconfirmed: matchFields(),
 
 	BankConnectionStarted:          {f("provider"), f("application")},
 	BankConnectionReconnectStarted: {f("provider"), f("application")},

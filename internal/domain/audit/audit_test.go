@@ -61,6 +61,10 @@ func TestValidateRefuses(t *testing.T) {
 		"token actor no token":   {Action: UserEnabled, Actor: Actor{Kind: ActorToken, UserID: uid}, At: at},
 		"system actor with user": {Action: UserEnabled, Actor: Actor{Kind: ActorSystem, UserID: uid}, At: at},
 		"unknown actor kind":     {Action: UserEnabled, Actor: Actor{Kind: "robot"}, At: at},
+		"session via a token":    {Action: UserEnabled, Actor: Actor{Kind: ActorToken, UserID: uid, TokenID: tid, Via: ViaSession}, At: at},
+		"mcp via a user":         {Action: UserEnabled, Actor: Actor{Kind: ActorUser, UserID: uid, Via: ViaMCP}, At: at},
+		"unknown via":            {Action: UserEnabled, Actor: Actor{Kind: ActorUser, UserID: uid, Via: "fax"}, At: at},
+		"unknown via detail":     {Action: PaymentMatchConfirmed, Actor: user, At: at, Details: map[string]string{"via": "fax"}},
 		"long target":            {Action: UserEnabled, Actor: user, At: at, TargetID: strings.Repeat("a", MaxTargetID+1)},
 	}
 	for name, e := range cases {
@@ -100,8 +104,32 @@ func TestActionNamesAreStable(t *testing.T) {
 		got = append(got, string(a))
 	}
 	slices.Sort(got)
-	want := "auth.password_changed auth.reauthenticated auth.reauthentication_failed auth.recovery_sign_in_issued auth.session_ended auth.signin_failed auth.signin_succeeded bank_connection.connected bank_connection.disconnected bank_connection.reconnect_started bank_connection.refresh_requested bank_connection.session_end_failed bank_connection.started commitment.created commitment.deleted commitment.updated correction.recorded correction.reversed manual_payment.deleted manual_payment.recorded mcp.tool_called occurrence.status_overridden occurrence.status_override_undone occurrences.regenerated oidc.linked oidc.unlinked payment_match.confirmed payment_match.corrected payment_match.rejected payment_match.reversed payment_match.suggested payment_match.unmatched payment_matching.run settings.reporting_timezone_changed token.created token.revoked token.write_used two_factor.disabled two_factor.enabled two_factor.recovery_codes_regenerated user.created user.disabled user.enabled user.role_changed user.updated"
+	want := "auth.password_changed auth.reauthenticated auth.reauthentication_failed auth.recovery_sign_in_issued auth.session_ended auth.signin_failed auth.signin_succeeded bank_connection.connected bank_connection.disconnected bank_connection.reconnect_started bank_connection.refresh_requested bank_connection.session_end_failed bank_connection.started commitment.created commitment.deleted commitment.updated correction.recorded correction.reversed manual_payment.deleted manual_payment.recorded mcp.tool_called occurrence.status_overridden occurrence.status_override_undone occurrences.regenerated oidc.linked oidc.unlinked payment_match.confirmed payment_match.corrected payment_match.rejected payment_match.reversed payment_match.suggested payment_match.unconfirmed payment_match.unmatched payment_matching.run settings.reporting_timezone_changed token.created token.revoked token.write_used two_factor.disabled two_factor.enabled two_factor.recovery_codes_regenerated user.created user.disabled user.enabled user.role_changed user.updated"
 	if strings.Join(got, " ") != want {
 		t.Errorf("action names changed (they are public); got\n%s\nwant\n%s", strings.Join(got, " "), want)
+	}
+}
+
+func TestChannel(t *testing.T) {
+	for _, c := range []struct {
+		a    Actor
+		want Via
+	}{
+		{user, ViaSession},
+		{token, ViaToken},
+		{Actor{Kind: ActorToken, UserID: uid, TokenID: tid, Via: ViaMCP}, ViaMCP},
+		{System, ViaSystem},
+		{Actor{Kind: ActorAnonymous}, ""},
+	} {
+		if got := c.a.Channel(); got != c.want {
+			t.Errorf("%+v.Channel() = %q, want %q", c.a, got, c.want)
+		}
+		if c.want != "" {
+			e := Event{Action: PaymentMatchConfirmed, Actor: Actor{Kind: c.a.Kind, UserID: c.a.UserID, TokenID: c.a.TokenID, Via: c.want}, At: time.Now(),
+				Details: map[string]string{"via": string(c.want)}}
+			if err := Validate(e); err != nil {
+				t.Errorf("%s: %v", c.want, err)
+			}
+		}
 	}
 }

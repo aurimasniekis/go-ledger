@@ -2460,6 +2460,63 @@ paths:
                 $ref: "#/components/schemas/PaymentMatch"
         default:
           $ref: "#/components/responses/Error"
+  /payment-matches/{id}/unconfirm:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: unconfirmPaymentMatch
+      x-ledger-access: commitments:write
+      summary: Take back a confirmation (undo)
+      description: |
+        Undo of a confirmation (decision D42 1a, ADR-0045): the match becomes
+        a suggestion again, exactly as it was before it was confirmed. Its
+        decision (decided_by, decided_at) and the tolerance it was confirmed
+        within are cleared, its reason is the suggestion's again, it stops
+        being payment evidence and the occurrence's status is derived again;
+        its version increases. The reason given here is kept in the history
+        entry (action unconfirmed). Audited as payment_match.unconfirmed.
+
+        Only the person who confirmed it may: a token acts as its owner,
+        whether called directly or through MCP; any other caller gets 403
+        match_undo_not_decider, and a confirmation made by automation cannot
+        be unconfirmed. Only inside the undo window, checked on the server:
+        the confirmation is still the match's latest change, it is still the
+        caller's latest match decision, and nothing else has changed the
+        occurrence since (another match, a manual payment, a status override,
+        a terms change). Otherwise 409 match_undo_window_closed: unmatch
+        instead. A match created confirmed was never a suggestion: 409
+        invalid_match_state.
+      tags: [payment-matches]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  $ref: "#/components/schemas/MatchReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The match after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
   /bank-applications:
     get:
       operationId: listBankApplications
@@ -2933,7 +2990,7 @@ tags:
   - name: outlook
     description: The outlook against recorded commitments, compared with bank balances; never money that is safe to spend.
   - name: payment-matches
-    description: Links between bank transactions and occurrences (allocations), with suggestions, confirmations, corrections, unmatching and reversal.
+    description: Links between bank transactions and occurrences (allocations), with suggestions, confirmations, corrections, unmatching, reversal and the undo of a confirmation (unconfirm).
   - name: tokens
     description: API tokens (Authorization Bearer); your own, and everyone's for administrators.
 components:
@@ -3802,13 +3859,23 @@ components:
       description: Optional reason for the change, kept with the match and its history (not in the audit log).
     MatchActor:
       type: object
-      required: [kind, user_id]
+      required: [kind, user_id, via]
       properties:
         kind:
           type: string
           enum: [user, token, system]
         user_id:
           type: [string, "null"]
+        via:
+          description: |
+            How the change came (decision D42 3a): session (a signed-in
+            browser), token (an API token calling the API directly), mcp (an
+            API token through the MCP server) or system (the server itself, the
+            matching engine, a host command). Null for changes recorded before
+            provenance was. A token acts as its owner, so a token or MCP change
+            is still that person's.
+          type: [string, "null"]
+          enum: [session, token, mcp, system, null]
     PaymentMatch:
       type: object
       description: |
@@ -3855,7 +3922,7 @@ components:
           format: int64
           description: |
             The occurrence's new version. Present on the responses of create
-            and of the confirm, reject, unmatch, correct and reverse actions;
+            and of the confirm, reject, unmatch, correct, reverse and unconfirm actions;
             absent on reads.
         created_by:
           $ref: "#/components/schemas/MatchActor"
@@ -3881,7 +3948,7 @@ components:
             properties:
               action:
                 type: string
-                enum: [suggested, confirmed, rejected, unmatched, corrected, reversed]
+                enum: [suggested, confirmed, rejected, unmatched, corrected, reversed, unconfirmed]
               state:
                 $ref: "#/components/schemas/MatchState"
               amount:
@@ -4644,6 +4711,8 @@ components:
             - occurrence_overpaid
             - duplicate_match
             - invalid_match_state
+            - match_undo_not_decider
+            - match_undo_window_closed
             - password_sign_in_disabled
         message:
           type: string

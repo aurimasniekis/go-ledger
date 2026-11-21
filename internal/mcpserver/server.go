@@ -317,7 +317,12 @@ func (s *server) result(t *boundTool, resp Response) *mcp.CallToolResult {
 		if msg == "" {
 			msg = "forbidden"
 		}
-		return errorResult(codeOr(env.Code, "forbidden"), "permission denied for "+t.Name+": "+msg+" (this tool needs the "+t.Grant.String()+" grant)", json.RawMessage(resp.Body))
+		// A refusal with its own code (such as match_undo_not_decider or
+		// root_token_required) is about this call, not the token's grants.
+		if code := codeOr(env.Code, "forbidden"); code != "forbidden" {
+			return errorResult(code, fmt.Sprintf("%s refused (HTTP 403, %s): %s", t.Name, code, msg), json.RawMessage(resp.Body))
+		}
+		return errorResult("forbidden", "permission denied for "+t.Name+": "+msg+" (this tool needs the "+t.Grant.String()+" grant)", json.RawMessage(resp.Body))
 	case http.StatusUnauthorized:
 		return errorResult("unauthenticated", "the API token was refused: it is invalid, expired, revoked or its owner is disabled", nil)
 	}

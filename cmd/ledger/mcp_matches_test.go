@@ -176,8 +176,8 @@ func TestMCPPaymentMatchJourney(t *testing.T) {
 			seen++
 		}
 	}
-	if seen != 11 {
-		t.Errorf("expected 11 matching and manual payment tools, listed %d", seen)
+	if seen != 12 {
+		t.Errorf("expected 12 matching and manual payment tools, listed %d", seen)
 	}
 
 	// A read-only owner: the queue is readable with the bank text redacted, writes name the missing grant.
