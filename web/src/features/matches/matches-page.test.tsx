@@ -36,7 +36,8 @@ afterEach(() => {
 describe('the review queue', () => {
   it('lists a suggestion with the bank fact, the origin and the hint warning, and never calls a score proof', async () => {
     start()
-    const card = await screen.findByRole('article', { name: 'Rent' })
+    // The first findBy waits for the session, /me, the list, the occurrence and the commitment: more than the default 1 s on a loaded CI machine.
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
     expect(card).toHaveTextContent('Landlord Ltd · RENT NOVEMBER')
     expect(card).toHaveTextContent('Found by a matching rule')
     expect(card).toHaveTextContent('a hint, never proof')
@@ -512,6 +513,53 @@ describe('a competing suggestion after the other one was confirmed (R2)', () => 
     expect(other).toHaveTextContent('may be out of date')
     expect(within(other).getByRole('button', { name: 'Reject suggestion' }).className).toContain('bg-primary')
     expect(within(other).getByRole('button', { name: 'Confirm match' }).className).not.toContain('bg-primary')
+  })
+})
+
+describe('"Already paid" says where the existing payment comes from (N1)', () => {
+  const pay = (over: Record<string, unknown>) => ({ status: 'paid', bank_evidence_count: 0, manual_evidence_count: 0, override: null, ...over })
+  const cardWith = async (payment: Record<string, unknown>, matchOver: Record<string, unknown> = {}) => {
+    store = [match('a', matchOver)]
+    extra['GET /api/v1/occurrences/occ-a'] = () => ok({ ...occurrence('a'), payment })
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    const note = await within(card).findByTestId('already-paid')
+    return { card, note }
+  }
+  const order = (card: HTMLElement) => within(card).getAllByRole('button').map((b) => b.textContent)
+
+  it('a manual record: does not call it another transaction, does not push Reject as the primary action', async () => {
+    const { card, note } = await cardWith(pay({ manual_evidence_count: 1 }))
+    expect(note).toHaveTextContent('You recorded this occurrence as paid by hand')
+    expect(note).not.toHaveTextContent(/Another (bank )?transaction/)
+    expect(note).toHaveTextContent('cannot link')
+    expect(within(card).getByRole('button', { name: 'Reject suggestion' }).className).not.toContain('bg-primary')
+    expect(within(card).getByRole('button', { name: 'Confirm match' }).className).not.toContain('bg-primary')
+    expect(order(card)[0]).toBe('Reject suggestion')
+  })
+
+  it('a bank match: names the other bank transaction, with Reject first and primary', async () => {
+    const { card, note } = await cardWith(pay({ bank_evidence_count: 1 }))
+    expect(note).toHaveTextContent('Another bank transaction already pays')
+    expect(within(card).getByRole('button', { name: 'Reject suggestion' }).className).toContain('bg-primary')
+    expect(order(card)[0]).toBe('Reject suggestion')
+  })
+
+  it('bank and manual together: the bank wording', async () => {
+    const { note } = await cardWith(pay({ bank_evidence_count: 1, manual_evidence_count: 1 }))
+    expect(note).toHaveTextContent('Another bank transaction already pays')
+  })
+
+  it('a paid override over no evidence: says it was marked by hand', async () => {
+    const { card, note } = await cardWith(pay({ override: { status: 'paid', reason: 'cash', set_at: '2026-11-20T00:00:00Z', applied: true } }))
+    expect(note).toHaveTextContent('marked paid by hand')
+    expect(note).not.toHaveTextContent(/Another (bank )?transaction/)
+    expect(within(card).getByRole('button', { name: 'Reject suggestion' }).className).not.toContain('bg-primary')
+  })
+
+  it('drops the stale "a person has to choose" line', async () => {
+    const { card } = await cardWith(pay({ bank_evidence_count: 1 }), { reason: 'automatic match not confirmed: 2 candidates for the occurrence (ambiguous)' })
+    expect(card).not.toHaveTextContent('a person has to choose')
   })
 })
 

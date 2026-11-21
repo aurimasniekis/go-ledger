@@ -70,7 +70,14 @@ export interface OccurrenceLite {
   version: number
   cancelled_at: string | null
   /** The occurrence's derived payment state (only what this screen reads). */
-  payment?: { status: string; shortfall_amount?: Money }
+  payment?: {
+    status: string
+    shortfall_amount?: Money
+    /** Where the payment comes from: confirmed bank matches, manual records, and a status set by hand. */
+    bank_evidence_count?: number
+    manual_evidence_count?: number
+    override?: { status: 'paid' | 'unpaid'; applied: boolean } | null
+  }
 }
 
 export interface MatchingRunResult {

@@ -13,13 +13,13 @@ const occ = (id: string, name: string, due: string, status: string, timing: stri
   id, commitment_id: 'c' + id, commitment_name: name, month: '2026-11', due_date: due, amount: eur('1124.19'), version: 1, payment: payment(status, timing, '1124.19'),
 })
 
-async function signedIn(page: Page) {
+async function signedIn(page: Page, grants = ['commitments:read', 'users:read', 'tokens:read']) {
   const body = (json: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(json) })
   await page.route('**/api/v1/auth/session', (r) =>
     r.fulfill(body({ user_id: 'u1', csrf_token: 'x', recent_auth_until: now, two_factor: { enabled: false, required: false, enrollment_required: false },
       session: { id: 's1', current: true, created_at: now, last_seen_at: now, authenticated_at: now, idle_expires_at: now, expires_at: now, user_agent: 'e2e', address: '192.0.2.1' } })))
   await page.route('**/api/v1/me', (r) =>
-    r.fulfill(body({ kind: 'user', user_id: 'u1', token_id: null, role: 'administrator', grants: ['commitments:read', 'users:read', 'tokens:read'] })))
+    r.fulfill(body({ kind: 'user', user_id: 'u1', token_id: null, role: 'administrator', grants })))
   await page.route('**/api/v1/occurrences/summary*', (r) =>
     r.fulfill(body({
       month: '2026-11', as_of: '2026-11-21',
@@ -27,6 +27,12 @@ async function signedIn(page: Page) {
       totals: [{ currency: 'EUR', due: eur('2248.38'), paid: eur('0.00'), outstanding: eur('2248.38'), overdue: eur('1124.19'), overpaid: eur('0.00'), occurrence_count: 2, overdue_count: 1, unconverted_evidence_count: 0 }],
       freshness: { computed_at: now, occurrences_changed_at: null, bank: { available: false, note: '' } },
     })))
+}
+
+// SHELL_SHOTS_DIR, when set, receives screenshots for reviewers.
+const shot = async (page: Page, name: string) => {
+  const dir = process.env.SHELL_SHOTS_DIR
+  if (dir) await page.screenshot({ path: dir + '/' + name + '.png', fullPage: true })
 }
 
 const noOverflow = async (page: Page) => {
@@ -77,6 +83,27 @@ async function datesOnOneLine(page: Page) {
     expect(lines, 'date on one line: ' + text).toBe(1)
   }
 }
+
+// An administrator also holds connections:read, so the header has four links: it is still two rows at 390 px.
+test.describe('390 CSS px wide, an administrator with connections:read', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+  test('the header is two rows and keeps the full link names', async ({ page }) => {
+    await signedIn(page, ['commitments:read', 'users:read', 'tokens:read', 'connections:read'])
+    await page.goto('/month?month=2026-11')
+    const nav = page.getByRole('navigation', { name: 'Primary' })
+    await expect(nav.getByRole('link', { name: 'Bank connections' })).toBeVisible()
+    await expect(nav.getByRole('link', { name: 'Payment matches' })).toBeVisible()
+    await shot(page, 'header-390-admin')
+    const rows = await page.getByRole('banner').evaluate((h) => {
+      const items = [...h.querySelectorAll('a, button, select')].filter((el) => (el as HTMLElement).offsetParent !== null)
+      // Items on one row are centred on the same line (their heights differ): count the distinct centres, 8 px apart or more.
+      const centres = items.map((el) => { const b = el.getBoundingClientRect(); return b.top + b.height / 2 }).sort((a, b) => a - b)
+      return centres.reduce((n, c, i) => (i === 0 || c - centres[i - 1]! >= 8 ? n + 1 : n), 0)
+    })
+    expect(rows, 'rows in the header').toBe(2)
+    await noOverflow(page)
+  })
+})
 
 // One extra phone width (375), kept separate so the browser is launched for as few extra pages as possible.
 test.describe('375 CSS px wide', () => {

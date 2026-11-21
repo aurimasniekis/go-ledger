@@ -8,6 +8,19 @@ import { Button } from '@/components/ui/button'
 
 const link = 'block rounded-md px-2 py-1.5 hover:bg-muted [&.active]:font-semibold [&.active]:underline'
 
+/**
+ * A link label that is shorter on a phone, so the four links fit on one row (the header is two rows at 390 px).
+ * The accessible name is always the full one (aria-label); the short text is contained in it (WCAG 2.5.3).
+ */
+function Short({ short, full }: { short: string; full: string }) {
+  return (
+    <>
+      <span aria-hidden className="sm:hidden">{short}</span>
+      <span aria-hidden className="hidden sm:inline">{full}</span>
+    </>
+  )
+}
+
 /** The finance pages: always in the header while signed in, never while signed out or confined to enrolment. */
 export function PrimaryNav() {
   const session = useSession()
@@ -15,18 +28,18 @@ export function PrimaryNav() {
   if (!session.data || session.data.two_factor.enrollment_required) return null
   return (
     <nav aria-label="Primary" className="order-last flex w-full flex-wrap gap-x-0.5 text-sm sm:order-none sm:w-auto sm:gap-x-2 sm:text-base [&>a]:px-1.5 sm:[&>a]:px-2">
-      <Link to="/month" className={link}>
-        Monthly view
+      <Link to="/month" className={link} aria-label="Monthly view">
+        <Short short="Month" full="Monthly view" />
       </Link>
       <Link to="/outlook" className={link}>
         Outlook
       </Link>
-      <Link to="/matches" className={link}>
-        Payment matches
+      <Link to="/matches" className={link} aria-label="Payment matches">
+        <Short short="Matches" full="Payment matches" />
       </Link>
       {holds(me.data?.grants, 'connections:read') && (
-        <Link to="/connections" className={link}>
-          Bank connections
+        <Link to="/connections" className={link} aria-label="Bank connections">
+          <Short short="Connections" full="Bank connections" />
         </Link>
       )}
     </nav>

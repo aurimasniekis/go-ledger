@@ -40,7 +40,10 @@ async function stub(page: Page) {
   await page.route(/\/api\/v1\/occurrences\/occ-[a-z]+$/, (r) => {
     const id = r.request().url().split('/').pop()!
     return json(r, { id, commitment_id: 'c-' + id, month: '2026-11', due_date: '2026-11-25', amount: eur('20.00'), version: 1, cancelled_at: null,
-      payment: { status: matches.some((m) => m.occurrence_id === id && m.state === 'confirmed' && m.counts_as_evidence) ? 'paid' : 'unpaid' } })
+      payment: (() => {
+        const bank = matches.filter((m) => m.occurrence_id === id && m.state === 'confirmed' && m.counts_as_evidence).length
+        return { status: bank > 0 ? 'paid' : 'unpaid', bank_evidence_count: bank, manual_evidence_count: 0, override: null }
+      })() })
   })
   await page.route(/\/api\/v1\/commitments\/c-occ-[a-z]+$/, (r) => json(r, { id: 'c', name: r.request().url().endsWith('host') ? 'Server hosting with a rather long commitment name' : 'Flat rent' }))
   await page.route(/\/api\/v1\/payment-matches(\?.*)?$/, (r) => {
@@ -97,7 +100,7 @@ test('review queue by keyboard: ambiguity is explained, confirm names what chang
 
   // R2: the competitor is told the occurrence is already paid, instead of keeping a stale "choose" reason and a primary Confirm.
   const competitor = page.locator('article[data-match-id="b"]')
-  await expect(competitor.getByTestId('already-paid')).toContainText('Another transaction already pays this occurrence')
+  await expect(competitor.getByTestId('already-paid')).toContainText('Another bank transaction already pays this occurrence')
   await expect(competitor.getByTestId('competing')).toHaveCount(0)
   await expect(competitor.getByRole('button', { name: 'Reject suggestion' })).toHaveClass(/bg-primary/)
   await expect(competitor.getByRole('button', { name: 'Confirm match' })).not.toHaveClass(/bg-primary/)
