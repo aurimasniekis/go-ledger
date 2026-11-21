@@ -525,6 +525,11 @@ func (s *Store) decide(ctx context.Context, actor audit.Actor, id string, expect
 		if !allowed {
 			return matches.ErrTransition
 		}
+		if automation(actor) {
+			if err := refuseAutomation(ctx, tx, a, m); err != nil {
+				return err
+			}
+		}
 		if check != nil {
 			if err := check(ctx, tx, m); err != nil {
 				return err
@@ -542,6 +547,39 @@ func (s *Store) decide(ctx context.Context, actor audit.Actor, id string, expect
 		return err
 	})
 	return ch, err
+}
+
+// refuseAutomation applies decision D33 to a decision by automation. Unmatch
+// and reverse are refused outright, its own confirmations included: a
+// provider reversal signal is a warning for the user, not an automatic
+// undo. Reject is allowed only for a suggestion with no person in its history.
+func refuseAutomation(ctx context.Context, tx *sql.Tx, a matches.Action, m matches.Match) error {
+	switch a {
+	case matches.ActionUnmatched, matches.ActionReversed:
+		return matches.ErrActorUndo
+	case matches.ActionRejected:
+		return refuseUndo(ctx, tx, m)
+	}
+	return nil
+}
+
+// refuseUndo refuses a reject of a suggestion a person touched. A person
+// did when any history event (suggestion, confirmation, correction) came from
+// a user or token; a correction does not change the latest decision, so the
+// history is the rule. The DecidedBy check below is only a fast path to the
+// same answer.
+func refuseUndo(ctx context.Context, tx *sql.Tx, m matches.Match) error {
+	if m.DecidedBy != nil && (m.DecidedBy.Kind == audit.ActorUser || m.DecidedBy.Kind == audit.ActorToken) {
+		return matches.ErrActorUndo
+	}
+	var n int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_match_events WHERE match_id = ? AND actor_kind IN ('user', 'token')", m.ID).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return matches.ErrActorUndo
+	}
+	return nil
 }
 
 // Confirm confirms a suggestion: the transaction must be countable, the

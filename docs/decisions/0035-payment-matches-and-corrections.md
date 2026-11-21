@@ -106,11 +106,14 @@ so that a confirmed link becomes payment evidence for the derived payment state 
     match is the record X2 should consult so it does not suggest the same pair again.
     The store also guards by actor, not only by origin: an actor that is neither a user nor a token (system,
     anonymous) is held to the D8 automatic rules whatever origin it claims. Creating or confirming is 1:1 only,
-    the whole transaction and its only open match, with the occurrence's amount; it cannot claim origin `user`
+    the whole transaction and its only open match, with the occurrence's amount (Create applies AutoTolerance); it cannot claim origin `user`
     (`ErrActorOrigin`), cannot correct an allocation (`ErrActorCorrect`) and can never pass `AllowOverpayment`
     on create or confirm (`ErrActorOverpayment`), because deciding a payment really happened twice is a user's
-    judgement and duplicate payments are an unresolved decision. Reject, unmatch and reverse by automation are
-    unchanged: that is an open operator question.
+    judgement and duplicate payments are an unresolved decision. Decision D33: automation can only reject its
+    own suggestions; it never unmatches or reverses (`ErrActorUndo`), its own confirmations included. It cannot
+    reject a suggestion with a person in its history: any event (suggestion, confirmation, correction) from a user
+    or token. A provider reversal signal must become a visible warning for the
+    user, never an automatic reverse; no such signal exists yet, so surfacing it is X2's job.
 
 ## Why
 

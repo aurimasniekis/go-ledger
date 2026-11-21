@@ -315,6 +315,11 @@ var (
 	// ErrActorCorrect refuses a correction by an actor that is neither a
 	// user nor a token: automation cannot change an allocation.
 	ErrActorCorrect = errors.New("only a user or a token can correct a match's allocation")
+	// ErrActorUndo refuses an unmatch or reverse by automation (its own
+	// confirmations included) and a reject of a suggestion a person (user or
+	// token) made or corrected (decision D33). Automation may only drop its
+	// own suggestions.
+	ErrActorUndo = errors.New("automation cannot unmatch or reverse a match, or reject one a user or token touched")
 	// ErrDuplicate refuses a second open (suggested or confirmed) match of
 	// the same transaction and occurrence.
 	ErrDuplicate = errors.New("the transaction and the occurrence already have an open match")
