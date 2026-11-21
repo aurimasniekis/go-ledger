@@ -15,14 +15,14 @@ export function MonthPage({ month }: { month: string }) {
     const t = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(t)
   }, [])
-  const [panel, setPanel] = useState<string | null>(null) // the occurrence the open form starts on
+  const [panel, setPanel] = useState<MonthItem | null>(null) // the occurrence the open form starts on
   const [saved, setSaved] = useState<{ payment: ManualPayment; item: MonthItem } | null>(null)
   const opener = useRef<HTMLElement | null>(null)
   const headerButton = useRef<HTMLButtonElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
-  const openPanel = (id: string | null) => {
+  const openPanel = (item: MonthItem | null) => {
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    setPanel(id)
+    setPanel(item)
   }
   // Give focus back to what opened the form, or to the primary button when that is gone.
   // It runs after the re-render, so a button that was disabled while the form was open is usable again;
@@ -43,30 +43,18 @@ export function MonthPage({ month }: { month: string }) {
         <h1 id="month-title" ref={headingRef} tabIndex={-1} className="text-2xl font-semibold focus:outline-none">
           Monthly view
         </h1>
-        <Button ref={headerButton} onClick={() => openPanel(unpaid[0]?.id ?? null)} disabled={unpaid.length === 0 || panel !== null}>
+        <Button ref={headerButton} onClick={() => openPanel(unpaid[0] ?? null)} disabled={unpaid.length === 0 || panel !== null}>
           Record a payment
         </Button>
       </header>
-      {q.data && unpaid.length === 0 && q.data.items.length > 0 && (
-        <p className="text-sm text-muted-foreground">Every occurrence this month is marked paid, so there is nothing to record.</p>
+      {q.data && unpaid.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          {q.data.items.length > 0
+            ? 'Every occurrence this month is marked paid, so there is nothing to record.'
+            : 'No occurrences fall due this month, so there is nothing to record.'}
+        </p>
       )}
 
-      {panel !== null && q.data && (
-        <PaymentPanel
-          month={month}
-          asOf={q.data.as_of}
-          items={unpaid}
-          initialId={panel}
-          onClose={() => {
-            setPanel(null)
-            restoreFocus()
-          }}
-          onSaved={(payment, item) => {
-            setPanel(null)
-            setSaved({ payment, item })
-          }}
-        />
-      )}
       {saved && <UndoNotice key={saved.payment.id} {...saved} month={month} onDone={() => {
         setSaved(null)
         restoreFocus()
@@ -85,7 +73,27 @@ export function MonthPage({ month }: { month: string }) {
           void navigate({ to: '/month', search: { month: m } })
         }}
         onRetry={() => void q.refetch()}
-        onRecord={(i) => openPanel(i.id)}
+        onRecord={(i) => openPanel(i)}
+        formFor={panel?.id}
+        form={
+          panel !== null && q.data ? (
+            <PaymentPanel
+              month={month}
+              asOf={q.data.as_of}
+              items={unpaid}
+              initialId={panel.id}
+              initialItem={panel}
+              onClose={() => {
+                setPanel(null)
+                restoreFocus()
+              }}
+              onSaved={(payment, item) => {
+                setPanel(null)
+                setSaved({ payment, item })
+              }}
+            />
+          ) : null
+        }
       />
     </section>
   )

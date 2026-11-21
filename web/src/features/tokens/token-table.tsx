@@ -1,3 +1,4 @@
+import { TriangleAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Mono } from '@/components/mono'
 import { formatInstant } from '@/lib/format'
@@ -47,7 +48,10 @@ export function TokenTable({
               <td className="px-3 py-2"><Mono>{t.hint}</Mono></td>
               <td className="px-3 py-2">
                 {t.root ? (
-                  <span className="font-semibold text-status-overdue">Root (every grant of its owner)</span>
+                  <span className="inline-flex items-center gap-1 font-semibold text-warning">
+                    <TriangleAlert aria-hidden className="size-4 shrink-0" />
+                    Root (every grant of its owner)
+                  </span>
                 ) : (
                   <ul className="flex flex-wrap gap-1">
                     {t.grants.map((g) => (

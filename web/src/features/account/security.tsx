@@ -12,6 +12,7 @@ import { Mono } from '@/components/mono'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent } from '@/components/ui/dialog'
 import { QueryState } from '@/components/query-state'
 import { ShowOnceDialog } from '@/components/show-once-dialog'
+import { Notice } from '@/components/notice'
 
 /**
  * Account security: two-factor enrolment, recovery codes, disabling, password change. Under required
@@ -28,10 +29,10 @@ export function SecurityPage() {
     <section className="space-y-8">
       <h1 id="security-heading" tabIndex={-1} className="text-2xl font-semibold focus:outline-none">Account security</h1>
       {confined && (
-        <p role="note" className="rounded-md border border-status-overdue bg-status-overdue-bg p-3 text-sm text-status-overdue">
+        <Notice>
           This Ledger requires two-factor authentication. Set up an authenticator below to continue; nothing else is
           available until you do.
-        </p>
+        </Notice>
       )}
       <TwoFactor onCodes={setCodes} />
       {!confined && <PasswordForm />}

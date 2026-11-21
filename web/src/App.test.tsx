@@ -11,10 +11,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('App shell', () => {
-  it('renders the overview at /', async () => {
+  it('leads / to the monthly view, with no placeholder overview', async () => {
     render(<App history={createMemoryHistory({ initialEntries: ['/'] })} />)
-    expect(await screen.findByRole('heading', { level: 1, name: 'Ledger' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Monthly view' })).toBeInTheDocument()
     expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument()
+    expect(screen.queryByText(/will appear here/)).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Overview' })).toBeNull()
   })
 
   it('renders a not-found page for an unknown route', async () => {

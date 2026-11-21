@@ -114,6 +114,25 @@ describe('Month page', () => {
     expect(await screen.findByText(/The payment is still recorded/)).toBeInTheDocument()
   })
 
+  it('opens the payment form under the row that opened it, naming that occurrence', async () => {
+    responder = () => json(200, summary([item('a'), item('b')]))
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: /^Record payment for Rent b/ }))
+    const form = await screen.findByRole('form', { name: 'Record a payment' })
+    const row = screen.getByText('Rent b', { selector: 'p' }).closest('li')!
+    expect(row).toContainElement(form)
+    expect(within(form).getByTestId('panel-occurrence')).toHaveTextContent('Rent b')
+    expect(within(form).getByTestId('panel-occurrence')).toHaveTextContent('Upcoming')
+    await waitFor(() => expect(within(form).getByRole('heading', { name: 'Record a payment' })).toHaveFocus())
+  })
+
+  it('says why the primary action is disabled in an empty month', async () => {
+    responder = () => json(200, summary([]))
+    open()
+    expect(await screen.findByRole('button', { name: 'Record a payment' })).toBeDisabled()
+    expect(await screen.findByText(/nothing to record/)).toBeInTheDocument()
+  })
+
   it('the primary action is disabled when every occurrence is paid', async () => {
     responder = () => json(200, summary([item('a', { payment: payment({ status: 'paid' }) })]))
     open()

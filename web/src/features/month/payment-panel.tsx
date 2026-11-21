@@ -12,6 +12,8 @@ export interface PaymentPanelProps {
   /** Occurrences that can take a payment (not paid). */
   items: MonthItem[]
   initialId: string
+  /** The occurrence as it was when the form opened, for when a refetch drops it from items. */
+  initialItem: MonthItem
   onClose: () => void
   onSaved: (p: ManualPayment, item: MonthItem) => void
 }
@@ -29,7 +31,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
   // Remember the occurrence the form started on: if a refetch drops it (it was
   // paid elsewhere) the form says so and refuses to save, instead of silently
   // switching to another commitment.
-  const [known, setKnown] = useState(current ?? p.items.find((i) => i.id === p.initialId))
+  const [known, setKnown] = useState(current ?? p.items.find((i) => i.id === p.initialId) ?? p.initialItem)
   if (current && current !== known) setKnown(current)
   const item = (current ?? known)!
   const gone = !current
@@ -64,6 +66,13 @@ export function PaymentPanel(p: PaymentPanelProps) {
       </h3>
       <p className="text-sm text-muted-foreground">
         This records a payment you made. It is saved only when the server confirms it, and you can undo it afterwards.
+      </p>
+      <p data-testid="panel-occurrence" className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium break-words">{item.commitment_name || item.commitment_id}</span>
+        <span>
+          due <time dateTime={item.due_date}>{item.due_date}</time>, {item.amount.amount} {item.amount.currency}
+        </span>
+        <StatusBadge status={item.payment.status} />
       </p>
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="grid gap-1 text-sm sm:col-span-3">
