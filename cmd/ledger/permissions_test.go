@@ -223,13 +223,7 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	parts.matches = matchstore.New(db, al, clock, nil)
 	// Bank connections run against the in-memory fake provider (B4): no live
 	// bank is ever contacted.
-	f.bank = bankingtest.New(bankingtest.Options{Mode: banking.ModeApp, Now: clock}, bankingtest.Standard())
-	// A developer-mode application too (D10: modes coexist per connection): it
-	// sees only the accounts linked to it.
-	f.devBank = bankingtest.New(bankingtest.Options{Mode: banking.ModeDeveloper, Now: clock}, bankingtest.Standard())
-	facts := bankfacts.New(db, nil).WithAudit(al)
-	parts.banking = &bankconnect.Service{Facts: facts, Providers: map[string]banking.Provider{f.bank.Capabilities().Application: f.bank, f.devBank.Capabilities().Application: f.devBank},
-		Engine: bankimport.New(facts, bankimport.Options{Now: clock, Sleep: func(context.Context, time.Duration) error { return nil }}), Audit: al, RedirectURL: "https://ledger.example/connections/callback", Now: clock}
+	f.bank, f.devBank, parts.banking = newFakeBanking(db, al, clock)
 	f.db = db
 	f.connections = parts.banking
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
@@ -618,4 +612,20 @@ func TestUserAPIValidationAndConflicts(t *testing.T) {
 	if rec.Code != 200 || rec.Header().Get("ETag") != `"1"` || len(auditLines(t, f.log.String())) != 0 {
 		t.Errorf("empty patch: %d %s", rec.Code, rec.Header().Get("ETag"))
 	}
+}
+
+// newFakeBanking builds the bank connection service over two in-memory fake
+// provider applications: app mode and, beside it, developer mode (D10: modes
+// coexist per connection), which sees only the accounts linked to it. No live
+// bank is ever contacted.
+func newFakeBanking(db *store.DB, al interface {
+	store.AuditWriter
+	audit.Recorder
+}, clock func() time.Time) (app, dev *bankingtest.Provider, svc *bankconnect.Service) {
+	app = bankingtest.New(bankingtest.Options{Mode: banking.ModeApp, Now: clock}, bankingtest.Standard())
+	dev = bankingtest.New(bankingtest.Options{Mode: banking.ModeDeveloper, Now: clock}, bankingtest.Standard())
+	facts := bankfacts.New(db, nil).WithAudit(al)
+	svc = &bankconnect.Service{Facts: facts, Providers: map[string]banking.Provider{app.Capabilities().Application: app, dev.Capabilities().Application: dev},
+		Engine: bankimport.New(facts, bankimport.Options{Now: clock, Sleep: func(context.Context, time.Duration) error { return nil }}), Audit: al, RedirectURL: "https://ledger.example/connections/callback", Now: clock}
+	return app, dev, svc
 }

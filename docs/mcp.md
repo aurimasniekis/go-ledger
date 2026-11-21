@@ -60,6 +60,23 @@ and the engine of [ADR-0039](decisions/0039-automatic-payment-matching.md). The 
 - `create_commitment` takes an optional `match_tolerance` (how far short of the amount a booked payment may fall and
   still be confirmed automatically; never above the amount).
 
+## Bank connections
+
+`list_bank_applications`, `list_bank_institutions`, `list_bank_connections` and `get_bank_connection` read bank connections
+([ADR-0040](decisions/0040-bank-connection-api-and-ui.md)); `refresh_bank_connection` fetches a connection's data now. They
+need `connections:read` or `connections:write`, which are administrator-only grants: a token cannot hold them for a
+read-only owner. Rules a client must keep:
+
+- Check freshness before relying on a balance. After a failed refresh the stored figures stay, marked stale; an account
+  with no reported balance shows none, never zero. Bank account numbers appear only as a four-character hint.
+- `refresh_bank_connection` calls the bank, which limits how often it may be asked: use it on the person's request. A
+  refresh that failed is a successful call; read `last_refresh_run.error.kind`. `reconnect_required` means only a new
+  consent helps (retrying cannot); `retryable` and `rate_limited` mean try later. If `refresh_running` is true the
+  refresh continues in the background: read the connection again instead of refreshing again.
+- Starting, renewing and disconnecting a connection are not tools. They need the person at the bank's consent page or end
+  access to bank data, so they are done with `ledger bank connect|reconnect|disconnect` or the web UI. No tool returns or
+  accepts a consent code, a provider session or bank credentials.
+
 ## Resources
 
 | URI | Content |
@@ -1018,6 +1035,149 @@ Remove a manual payment record (the undo of record_manual_payment): the occurren
     "id",
     "payment_id",
     "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_bank_applications`
+
+List the configured bank-data provider applications with their mode (app or developer: the provider's own terms, not production versus sandbox), environment, which accounts they can reach and what they support. A capability of zero means not known, never none.
+
+- Kind: read
+- Operation: `GET /api/v1/bank-applications`
+- Grant: `connections:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_bank_institutions`
+
+Ask the provider which banks the named application offers in a country. A read; the provider may be slow or unavailable (the error says whether to retry later).
+
+- Kind: read
+- Operation: `GET /api/v1/bank-applications/{application}/institutions`
+- Grant: `connections:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "application": {
+      "description": "The application name, as returned by list_bank_applications.",
+      "type": "string"
+    },
+    "country": {
+      "description": "ISO 3166-1 alpha-2 code in capitals, such as DE.",
+      "pattern": "^[A-Z]{2}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "application",
+    "country"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_bank_connections`
+
+List bank connections, oldest first, one page at a time, each with its status, consent validity, accounts, latest balances and data freshness (when data was last fetched successfully, whether it is stale, and why a refresh failed). Check freshness before relying on a balance: stored figures stay visible after a failed refresh, labelled as from the last success. An account with no reported balance shows none, never zero. Bank account numbers are shown only as a four-character hint.
+
+- Kind: read
+- Operation: `GET /api/v1/bank-connections`
+- Grant: `connections:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_bank_connection`
+
+Get one bank connection with its accounts, balances, freshness, last refresh run and scheduler state. While refresh_running is true a refresh is still going on in the background: read it again later.
+
+- Kind: read
+- Operation: `GET /api/v1/bank-connections/{id}`
+- Grant: `connections:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bank connection identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `refresh_bank_connection`
+
+Fetch the connection's accounts, balances and transactions from the bank now, only on the person's request: it calls the bank, which limits how often it may be asked. A refresh that failed still answers successfully: read last_refresh_run.error.kind and the accounts' freshness. reconnect_required means only a new consent helps (the person must reconnect with the CLI or web UI; retrying cannot work); retryable and rate_limited mean try later; stored data is never changed by a failure. If refresh_running is true the refresh outlived the wait and continues in the background: read the connection again with get_bank_connection instead of calling this again.
+
+- Kind: write
+- Operation: `POST /api/v1/bank-connections/{id}/refresh`
+- Grant: `connections:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bank connection identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
   ],
   "type": "object"
 }

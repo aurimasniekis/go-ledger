@@ -113,11 +113,13 @@ func withDescription(s map[string]any, desc string) map[string]any {
 	return s
 }
 
+var grantConnectionsRead = authz.G(authz.ResourceConnections, authz.ActionRead)
+var grantConnectionsWrite = authz.G(authz.ResourceConnections, authz.ActionWrite)
 var grantCommitmentsRead = authz.G(authz.ResourceCommitments, authz.ActionRead)
 var grantCommitmentsWrite = authz.G(authz.ResourceCommitments, authz.ActionWrite)
 
 func registry() []Tool {
-	return append(coreTools(), matchTools()...)
+	return append(append(coreTools(), matchTools()...), bankTools()...)
 }
 
 func coreTools() []Tool {
@@ -271,6 +273,48 @@ func matchTools() []Tool {
 				"payment_id": idArg("manual payment"),
 				"version":    versionArg("manual payment"),
 			}, "id", "payment_id", "version"),
+		},
+	}
+}
+
+// bankTools are the bank connection tools (task B4f, ADR-0040). The grants are administrator-only
+// (connections:read|write). Only reads and refresh are exposed: starting, renewing and ending a connection involve
+// the person at the bank's consent page or end access to bank data, so they are done with the CLI or the web UI.
+// Nothing returned holds a provider session, an authorisation code, an account handle or a full account number.
+func bankTools() []Tool {
+	return []Tool{
+		{
+			Name: "list_bank_applications", Title: "List bank provider applications", Method: "GET", Path: "/bank-applications",
+			Grant: grantConnectionsRead, Kind: KindRead,
+			Description: "List the configured bank-data provider applications with their mode (app or developer: the provider's own terms, not production versus sandbox), environment, which accounts they can reach and what they support. A capability of zero means not known, never none.",
+			Schema:      object(map[string]any{}),
+		},
+		{
+			Name: "list_bank_institutions", Title: "List banks an application offers", Method: "GET", Path: "/bank-applications/{application}/institutions",
+			Grant: grantConnectionsRead, Kind: KindRead,
+			Description: "Ask the provider which banks the named application offers in a country. A read; the provider may be slow or unavailable (the error says whether to retry later).",
+			Schema: object(map[string]any{
+				"application": str("The application name, as returned by list_bank_applications."),
+				"country":     map[string]any{"type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2 code in capitals, such as DE."},
+			}, "application", "country"),
+		},
+		{
+			Name: "list_bank_connections", Title: "List bank connections", Method: "GET", Path: "/bank-connections",
+			Grant: grantConnectionsRead, Kind: KindRead,
+			Description: "List bank connections, oldest first, one page at a time, each with its status, consent validity, accounts, latest balances and data freshness (when data was last fetched successfully, whether it is stale, and why a refresh failed). Check freshness before relying on a balance: stored figures stay visible after a failed refresh, labelled as from the last success. An account with no reported balance shows none, never zero. Bank account numbers are shown only as a four-character hint.",
+			Schema:      object(pagingArgs(map[string]any{})),
+		},
+		{
+			Name: "get_bank_connection", Title: "Get a bank connection", Method: "GET", Path: "/bank-connections/{id}",
+			Grant: grantConnectionsRead, Kind: KindRead,
+			Description: "Get one bank connection with its accounts, balances, freshness, last refresh run and scheduler state. While refresh_running is true a refresh is still going on in the background: read it again later.",
+			Schema:      object(map[string]any{"id": idArg("bank connection")}, "id"),
+		},
+		{
+			Name: "refresh_bank_connection", Title: "Refresh a bank connection now", Method: "POST", Path: "/bank-connections/{id}/refresh",
+			Grant: grantConnectionsWrite, Kind: KindWrite,
+			Description: "Fetch the connection's accounts, balances and transactions from the bank now, only on the person's request: it calls the bank, which limits how often it may be asked. A refresh that failed still answers successfully: read last_refresh_run.error.kind and the accounts' freshness. reconnect_required means only a new consent helps (the person must reconnect with the CLI or web UI; retrying cannot work); retryable and rate_limited mean try later; stored data is never changed by a failure. If refresh_running is true the refresh outlived the wait and continues in the background: read the connection again with get_bank_connection instead of calling this again.",
+			Schema:      object(map[string]any{"id": idArg("bank connection")}, "id"),
 		},
 	}
 }

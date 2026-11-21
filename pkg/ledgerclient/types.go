@@ -389,3 +389,153 @@ type AuditEntry struct {
 // nested maps merge member by member. The "version" member, if present, is the
 // precondition; the Update methods send the version as If-Match instead.
 type MergePatch map[string]any
+
+// BankCapabilities is what a provider application can do. Zero means not
+// known, never none.
+type BankCapabilities struct {
+	BalanceTypes            []string `json:"balance_types"`
+	PendingTransactions     bool     `json:"pending_transactions"`
+	MaxConsentValidityDays  int      `json:"max_consent_validity_days"`
+	MaxHistoryDays          int      `json:"max_history_days"`
+	BackgroundFetchesPerDay int      `json:"background_fetches_per_day"`
+}
+
+// BankApplication is a configured provider application. Mode and Environment
+// use the provider's own terms: app and developer mode are not production and
+// sandbox.
+type BankApplication struct {
+	Provider      string           `json:"provider"`
+	Name          string           `json:"name"`
+	Mode          string           `json:"mode"`
+	Environment   string           `json:"environment"`
+	AccountAccess string           `json:"account_access"`
+	Capabilities  BankCapabilities `json:"capabilities"`
+}
+
+// BankInstitution is a bank an application offers in a country.
+type BankInstitution struct {
+	ID                     string `json:"id"`
+	Name                   string `json:"name"`
+	Country                string `json:"country"`
+	MaxConsentValidityDays int    `json:"max_consent_validity_days"`
+}
+
+// BankError says why a refresh or an account's last attempt failed. Kind is
+// reconnect_required (only a new consent helps), rate_limited or retryable
+// (try later), permanent or canceled. It carries no bank payload.
+type BankError struct {
+	Kind string `json:"kind"`
+	Code string `json:"code"`
+}
+
+// BankFreshness is how current one account's data is.
+type BankFreshness struct {
+	State         string     `json:"state"`
+	Stale         bool       `json:"stale"`
+	LastSuccessAt *string    `json:"last_success_at"`
+	LastAttemptAt *string    `json:"last_attempt_at"`
+	LastError     *BankError `json:"last_error"`
+	NoticeCode    *string    `json:"notice_code"`
+}
+
+// BankBalance is the latest balance of one type, with when Ledger obtained it.
+type BankBalance struct {
+	Type          string  `json:"type"`
+	Amount        Money   `json:"amount"`
+	ReferenceDate *string `json:"reference_date"`
+	ObtainedAt    string  `json:"obtained_at"`
+}
+
+// BankAccount is an account of a connection. IdentifierHint is only the last
+// four characters of the account number.
+type BankAccount struct {
+	ID                  string        `json:"id"`
+	Name                string        `json:"name"`
+	Product             string        `json:"product"`
+	Currency            string        `json:"currency"`
+	IdentifierHint      *string       `json:"identifier_hint"`
+	NoLongerReported    bool          `json:"no_longer_reported"`
+	TransactionsThrough *string       `json:"transactions_through"`
+	Freshness           BankFreshness `json:"freshness"`
+	Balances            []BankBalance `json:"balances"`
+}
+
+// BankRefreshRun is one refresh of a connection and what it stored.
+type BankRefreshRun struct {
+	ID                   string     `json:"id"`
+	StartedAt            string     `json:"started_at"`
+	FinishedAt           *string    `json:"finished_at"`
+	Outcome              string     `json:"outcome"`
+	Error                *BankError `json:"error"`
+	AccountsFailed       int        `json:"accounts_failed"`
+	TransactionsInserted int        `json:"transactions_inserted"`
+	TransactionsRejected int        `json:"transactions_rejected"`
+}
+
+// BankSchedule is the background scheduler's view of a connection.
+type BankSchedule struct {
+	State               string  `json:"state"`
+	NextAttemptAt       *string `json:"next_attempt_at"`
+	ConsecutiveFailures int     `json:"consecutive_failures"`
+}
+
+// BankConnectionInstitution is the bank a connection is with.
+type BankConnectionInstitution struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Country string `json:"country"`
+}
+
+// BankConnection is a connection to a bank with its accounts. Status is what
+// the connection is, Freshness how current its data is; a failed refresh never
+// changes stored data. NeedsReconnect is true only when a new consent is the
+// way forward. While RefreshRunning is true a refresh is still going on:
+// read the connection again later.
+type BankConnection struct {
+	ID                 string                    `json:"id"`
+	Provider           string                    `json:"provider"`
+	Application        string                    `json:"application"`
+	Mode               string                    `json:"mode"`
+	Environment        string                    `json:"environment"`
+	AccountAccess      string                    `json:"account_access"`
+	Institution        BankConnectionInstitution `json:"institution"`
+	Status             string                    `json:"status"`
+	NeedsReconnect     bool                      `json:"needs_reconnect"`
+	Freshness          string                    `json:"freshness"`
+	ConsentGrantedAt   *string                   `json:"consent_granted_at"`
+	ConsentValidUntil  *string                   `json:"consent_valid_until"`
+	ConsentExpiresSoon bool                      `json:"consent_expires_soon"`
+	LastError          *BankError                `json:"last_error"`
+	Accounts           []BankAccount             `json:"accounts"`
+	LastRefreshRun     *BankRefreshRun           `json:"last_refresh_run"`
+	RefreshRunning     bool                      `json:"refresh_running"`
+	Schedule           *BankSchedule             `json:"schedule"`
+	AsOf               string                    `json:"as_of"`
+	Version            int64                     `json:"version"`
+	CreatedAt          string                    `json:"created_at"`
+	UpdatedAt          string                    `json:"updated_at"`
+	// PreviousSessionEndFailed is only set by the completion of a reconnect.
+	PreviousSessionEndFailed bool `json:"previous_session_end_failed,omitempty"`
+}
+
+// BankConsentStart is the answer of starting or renewing a connection.
+// AuthorizationURL is the bank's or provider's page: the person opens it in a
+// browser and approves there. Ledger and this client never see bank
+// credentials; the connection becomes active when the bank redirects to
+// Ledger's callback page.
+type BankConsentStart struct {
+	Connection       BankConnection `json:"connection"`
+	AuthorizationURL string         `json:"authorization_url"`
+}
+
+// NewBankConnection starts a connection (needs connections:write).
+type NewBankConnection struct {
+	Application   string `json:"application"`
+	InstitutionID string `json:"institution_id"`
+	// Country is an ISO 3166-1 alpha-2 code in capitals.
+	Country string `json:"country"`
+	// PSUType is "personal" or "business"; empty for the default.
+	PSUType string `json:"psu_type,omitempty"`
+	// ValidForDays is the requested consent validity; 0 for the bank's own.
+	ValidForDays int `json:"valid_for_days,omitempty"`
+}
