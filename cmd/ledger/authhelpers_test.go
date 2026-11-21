@@ -23,7 +23,7 @@ var cheapParams = auth.Params{MemoryKiB: 64, Time: 1, Threads: 1, SaltLen: 16, K
 
 func testAuthConfig() config.Auth {
 	return config.Auth{
-		Password: config.AuthPassword{MinLength: 12},
+		Password: config.AuthPassword{Enabled: true, MinLength: 12},
 		Session:  config.AuthSession{IdleTimeout: 30 * time.Minute, AbsoluteTimeout: 12 * time.Hour, ReauthWindow: 10 * time.Minute},
 		SignIn:   config.AuthSignIn{AccountMaxFailures: 10, AddressMaxFailures: 1000, Window: 15 * time.Minute},
 	}

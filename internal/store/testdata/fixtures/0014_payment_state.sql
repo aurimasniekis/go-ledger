@@ -1,7 +1,8 @@
 -- Fixture: a database at schema version 14 (the version 13 contents plus the
 -- payment state of migration 0014), holding every row of the version 13
--- fixture and one manual payment. Upgrading it must apply migration 0015
--- (payment matches) and keep every row. All identifiers are synthetic.
+-- fixture, with no manual payment or override. Upgrading it must apply
+-- migration 0015 (single sign-on) and keep every row; existing sessions
+-- become password sessions. All identifiers are synthetic.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
     name       TEXT NOT NULL CHECK (name <> ''),
@@ -561,20 +562,6 @@ CREATE TABLE user_recovery_codes (
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (13, 'totp', '3fca5b1d67e9bb9664d8b4a2633b0c0aa8c6322451d1d63e9e29f461210b0cb2', '2026-01-16T03:04:05.000000000Z');
 
--- Payment state (C3, ADR-0031). Payment status is never stored: it is derived
--- from payment evidence and dates when read (decision D7 option a). This
--- migration adds the user-entered inputs of that derivation:
---
--- manual_payments holds payments the user recorded by hand. They are user
--- data, kept apart from bank facts (ADR-0013) and from match links (task X1).
--- A record pays one occurrence; amount is exact positive decimal text in
--- currency (ADR-0005), never summed in SQL. Code refuses an amount in another
--- currency than the occurrence's (amounts are never converted). Records are
--- not edited: a mistake is deleted and recorded again, so version stays 1
--- and serves the delete's If-Match. A record is payment evidence: it refers
--- to its occurrence with ON DELETE RESTRICT, so a paid occurrence (and with
--- it its commitment) cannot be deleted, and occurrence regeneration keeps it
--- (ADR-0027 DefaultEvidence).
 CREATE TABLE manual_payments (
     id            TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     occurrence_id TEXT NOT NULL REFERENCES commitment_occurrences (id) ON DELETE RESTRICT CHECK (length(occurrence_id) = 26 AND occurrence_id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
@@ -589,16 +576,6 @@ CREATE TABLE manual_payments (
 
 CREATE INDEX manual_payments_occurrence ON manual_payments (occurrence_id, id);
 
--- occurrence_status_overrides is the history of manual status overrides,
--- each with the user's reason. At most one row per occurrence is active; it
--- overrides the derived status ("paid" only while evidence exists). Setting
--- an override supersedes the active one and remembers it in previous_id;
--- undoing the active one marks it undone and makes previous_id active again,
--- so an undo restores exactly the state before the change. Rows are never
--- deleted except with their occurrence (CASCADE): an override is not
--- payment evidence, so it does not keep an unpaid occurrence from being
--- regenerated or deleted. Concurrency is the occurrence's version, which
--- every change increases, so this table has no version of its own.
 CREATE TABLE occurrence_status_overrides (
     id            TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     occurrence_id TEXT NOT NULL REFERENCES commitment_occurrences (id) ON DELETE CASCADE CHECK (length(occurrence_id) = 26 AND occurrence_id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
@@ -616,4 +593,3 @@ CREATE UNIQUE INDEX occurrence_status_overrides_active ON occurrence_status_over
 CREATE INDEX occurrence_status_overrides_occurrence ON occurrence_status_overrides (occurrence_id, set_at);
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (14, 'payment_state', '90d35392cfc52b69987b18ffbbd27cbf333a65aad9af0a0e76fc61e811c235b7', '2026-01-17T03:04:05.000000000Z');
-INSERT INTO manual_payments (id, occurrence_id, amount, currency, paid_on, note, created_at, updated_at, version) VALUES ('01JZ0000000000000000000130', '01JZ0000000000000000000110', '12.50', 'EUR', '2026-01-30', NULL, '2026-01-17T04:00:00.000000000Z', '2026-01-17T04:00:00.000000000Z', 1);

@@ -717,6 +717,9 @@ paths:
         address within the window are 429 `rate_limited` with Retry-After.
         A browser request from another origin is 403 `csrf_failed`. Success
         and failure are audited; a failure never records the username.
+        When `auth.password.enabled` is false, every request is 403
+        `password_sign_in_disabled` before any check: sign in with
+        `GET /auth/oidc/authorize`.
 
         When the user has TOTP enabled, a right password starts no session:
         the answer is 202 with a challenge for
@@ -896,7 +899,9 @@ paths:
         session counts as recently authenticated until recent_auth_until. A
         wrong password is 403 `invalid_credentials` (the session stays
         valid) and counts towards the sign-in limits (429 with Retry-After).
-        Audited (auth.reauthenticated, auth.reauthentication_failed).
+        403 `password_sign_in_disabled` when `auth.password.enabled` is
+        false: use `POST /auth/oidc/reauthenticate`. Audited
+        (auth.reauthenticated, auth.reauthentication_failed).
       tags: [auth]
       requestBody:
         required: true
@@ -945,6 +950,284 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PasswordSet"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/methods:
+    get:
+      operationId: getSignInMethods
+      x-ledger-access: public
+      security: []
+      summary: Which sign-in methods are available
+      description: |
+        Tells the sign-in page what to offer: password sign-in (off when
+        `auth.password.enabled` is false) and single sign-on with the
+        configured OpenID Connect provider (ADR-0033).
+      tags: [auth]
+      responses:
+        "200":
+          description: The methods.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignInMethods"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/oidc/authorize:
+    get:
+      operationId: startOIDCSignIn
+      x-ledger-access: public
+      security: []
+      summary: Sign in with single sign-on (browser redirect)
+      description: |
+        Starts an authorization code flow with PKCE (S256), state and nonce,
+        and redirects the browser (303) to the identity provider. The state
+        is also set in the `__Host-ledger_oidc` cookie (Secure, HttpOnly,
+        SameSite=Lax, ten minutes), which the callback must present. When
+        single sign-on is not configured or the provider cannot be reached,
+        the browser is sent to `/sign-in?oidc_error=not_configured` or
+        `provider_unavailable` instead. Starts are limited per client address
+        (20 a minute): beyond that the browser is sent to
+        `/sign-in?oidc_error=rate_limited` with a Retry-After header, so a
+        flood cannot push pending sign-ins out of the store. Never JSON.
+      tags: [auth]
+      parameters:
+        - name: return_to
+          in: query
+          required: false
+          description: A same-origin path to go to after signing in; anything else means /.
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        "303":
+          description: To the identity provider, or to the sign-in page with oidc_error.
+          headers:
+            Location:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/oidc/callback:
+    get:
+      operationId: oidcCallback
+      x-ledger-access: public
+      security: []
+      summary: Where the identity provider sends the browser back (browser redirect)
+      description: |
+        Completes a sign-in, link or re-authentication started by Ledger.
+        The state must match a pending request (single use, ten minutes) and
+        the `__Host-ledger_oidc` cookie. The code is redeemed with the PKCE
+        verifier, and the ID token must pass: its signature against the
+        provider's keys, issuer, an audience of exactly this client, azp
+        when present, nonce, expiry, an iat within this request (with
+        `auth.oidc.clock_skew`), a non-empty subject and, for
+        re-authentication, a fresh auth_time. The account is found by the
+        (issuer, subject) pair only, never by email address.
+
+        Sign-in: an identity linked to no account is refused unless
+        `auth.oidc.provisioning.enabled` is true. Success sets the session
+        cookie (an ordinary session, method oidc) and redirects to the
+        request's return path. With `auth.oidc.require_2fa` and TOTP
+        enabled, it redirects to `/sign-in#second_factor=<challenge>` for
+        `POST /auth/sign-in/second-factor`. A failure redirects to
+        `/sign-in?oidc_error=<code>`: not_configured, invalid_state,
+        access_denied, invalid_response, provider_unavailable, not_linked,
+        sign_in_failed or internal_error.
+
+        Link and re-authentication: redirect back to the return path with
+        `oidc=linked` or `oidc=reauthenticated`, or with `oidc_error`
+        (also already_linked, session_ended, identity_mismatch).
+
+        Audited: auth.signin_succeeded and auth.signin_failed (method oidc;
+        reasons identity_not_linked, invalid_credentials, account_disabled),
+        oidc.linked, auth.reauthenticated and auth.reauthentication_failed;
+        provisioning adds user.created. Never JSON.
+      tags: [auth]
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Signed in, linked or re-authenticated, or a failure; see the description.
+          headers:
+            Location:
+              schema:
+                type: string
+            Set-Cookie:
+              description: The session cookie after a sign-in; always clears the single-sign-on cookie.
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/oidc/link:
+    get:
+      operationId: getMyOIDCLink
+      x-ledger-access: session
+      summary: Your single-sign-on link
+      description: Shown even when single sign-on is no longer configured, so a stale link stays visible.
+      tags: [auth]
+      responses:
+        "200":
+          description: The link, or linked false.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCLink"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: startOIDCLink
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Link a single-sign-on identity to your account
+      description: |
+        Starts linking: returns the provider's authorization URL for the
+        browser to visit, and sets the `__Host-ledger_oidc` cookie. The
+        callback links the identity, keyed by issuer and subject, to this
+        account if this session is still live. An account has one link: 409
+        `conflict` when it already has one (unlink first), and the callback
+        answers already_linked when the identity belongs to another account.
+        Linking never disables password sign-in. 404 `not_found` when
+        single sign-on is not configured; 503 when the provider is
+        unavailable. Audited at the callback (oidc.linked, by self).
+      tags: [auth]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReturnTo"
+      responses:
+        "200":
+          description: Visit authorization_url.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationURL"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: unlinkMyOIDC
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Remove your single-sign-on link
+      description: |
+        Needs another sign-in method to remain: 409 `conflict` unless the
+        account has a password and password sign-in is enabled (the host
+        command `ledger auth unlink-oidc` can always remove it). Sessions
+        already started stay. 404 when there is no link. Audited
+        (oidc.unlinked, by self).
+      tags: [auth]
+      responses:
+        "204":
+          description: Unlinked.
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/oidc/reauthenticate:
+    post:
+      operationId: startOIDCReauthentication
+      x-ledger-access: session
+      x-ledger-during-enrollment: true
+      summary: Re-authenticate with the identity provider for sensitive actions
+      description: |
+        Returns the provider's authorization URL with prompt=login and
+        max_age=0; the callback requires a fresh auth_time and the identity
+        linked to this account, then counts the session as recently
+        authenticated (as `POST /auth/reauthenticate` does with a
+        password). The way to re-authenticate when password sign-in is
+        disabled. 409 `conflict` when the account has no link; 404 when
+        single sign-on is not configured.
+      tags: [auth]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReturnTo"
+      responses:
+        "200":
+          description: Visit authorization_url.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationURL"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/recovery-sign-in:
+    get:
+      operationId: recoverySignInPage
+      x-ledger-access: public
+      security: []
+      summary: Confirmation page of a recovery sign-in link (HTML)
+      description: |
+        Break-glass (decision D16): the link printed by the host command
+        `ledger auth recovery-sign-in`. This request changes nothing, so a
+        link previewer cannot use up the token: it answers a small HTML page
+        whose button posts the token to the same path.
+      tags: [auth]
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        "303":
+          description: Signed in, or a failure.
+          headers:
+            Location:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: recoverySignIn
+      x-ledger-access: public
+      security: []
+      summary: Use a one-time recovery sign-in link (browser redirect)
+      description: |
+        Sent by the confirmation page as a form post
+        (application/x-www-form-urlencoded, field token). The token works
+        once, expires (15 minutes by default), skips the second factor and
+        works whether or not password sign-in is enabled. Success sets the
+        session cookie (method recovery) and redirects to /; any failure
+        redirects to `/sign-in?recovery_error=invalid_or_expired`. A
+        cross-origin browser request is refused (403). Audited
+        (auth.signin_succeeded and auth.signin_failed, method
+        recovery_sign_in). Never JSON.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  maxLength: 128
+      responses:
+        "303":
+          description: Signed in, or a failure.
+          headers:
+            Location:
+              schema:
+                type: string
         default:
           $ref: "#/components/responses/Error"
   /auth/two-factor:
@@ -1111,6 +1394,51 @@ paths:
                       $ref: "#/components/schemas/Occurrence"
                   next_cursor:
                     type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+  /occurrences/summary:
+    get:
+      operationId: getOccurrencesSummary
+      x-ledger-access: commitments:read
+      summary: Get the monthly view of one reporting month
+      description: |
+        Every occurrence of the month (the same ones, in the same order, as
+        listOccurrences, but all of them in one response, not paged) with its
+        derived payment state, and exact totals per currency (ADR-0034).
+        Totals are computed on the server with exact decimals and are never
+        summed across currencies: each currency has its own entry.
+
+        due is the sum of the occurrence amounts; paid the sum of payment
+        evidence in that currency; outstanding what is still owed (with an
+        "unpaid" status override the evidence still counts in paid while
+        outstanding is the full amount, so paid + outstanding can exceed due);
+        overdue the
+        part of outstanding on occurrences past their original due date (a
+        documented grace period does not reduce it); overpaid evidence above
+        an amount. They describe recorded commitments and recorded payments
+        only: they are not a statement of money that is safe to spend.
+
+        freshness says how current the view is. Statuses are derived on every
+        read (computed_at, as_of). occurrences_changed_at is when the month's
+        occurrences last changed. Bank data age is not exposed by this
+        endpoint yet (bank.available is false).
+
+        Months more than 60 months after the current month are refused.
+      tags: [occurrences]
+      parameters:
+        - name: month
+          in: query
+          required: true
+          description: The reporting month, given once.
+          schema:
+            $ref: "#/components/schemas/YearMonth"
+      responses:
+        "200":
+          description: The month.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthSummary"
         default:
           $ref: "#/components/responses/Error"
   /occurrences/{id}:
@@ -2137,6 +2465,82 @@ components:
           format: date-time
         payment:
           $ref: "#/components/schemas/PaymentState"
+    MonthSummary:
+      type: object
+      description: The monthly view (ADR-0034).
+      additionalProperties: false
+      required: [month, as_of, items, totals, freshness]
+      properties:
+        month:
+          $ref: "#/components/schemas/YearMonth"
+        as_of:
+          $ref: "#/components/schemas/Date"
+        items:
+          type: array
+          description: Every occurrence of the month, by due date, then ID, each with its commitment's name.
+          items:
+            allOf:
+              - $ref: "#/components/schemas/Occurrence"
+              - type: object
+                required: [commitment_name]
+                properties:
+                  commitment_name:
+                    type: string
+                    description: The name of the commitment the occurrence belongs to.
+        totals:
+          type: array
+          description: One entry per currency present, sorted by currency code. Empty for an empty month.
+          items:
+            $ref: "#/components/schemas/MonthTotals"
+        freshness:
+          $ref: "#/components/schemas/MonthFreshness"
+    MonthTotals:
+      type: object
+      description: Exact totals of the occurrences in one currency. Evidence in another currency is not converted or counted.
+      additionalProperties: false
+      required: [currency, due, paid, outstanding, overdue, overpaid, occurrence_count, overdue_count, unconverted_evidence_count]
+      properties:
+        currency:
+          $ref: "#/components/schemas/Currency"
+        due:
+          $ref: "#/components/schemas/Money"
+        paid:
+          $ref: "#/components/schemas/Money"
+        outstanding:
+          $ref: "#/components/schemas/Money"
+        overdue:
+          $ref: "#/components/schemas/Money"
+        overpaid:
+          $ref: "#/components/schemas/Money"
+        occurrence_count:
+          type: integer
+        overdue_count:
+          type: integer
+        unconverted_evidence_count:
+          type: integer
+          description: Occurrences with payment evidence in another currency, which no total includes.
+    MonthFreshness:
+      type: object
+      additionalProperties: false
+      required: [computed_at, occurrences_changed_at, bank]
+      properties:
+        computed_at:
+          type: string
+          format: date-time
+        occurrences_changed_at:
+          type: [string, "null"]
+          format: date-time
+          description: The newest update among the month's occurrences; null for an empty month.
+        bank:
+          type: object
+          additionalProperties: false
+          required: [available, note]
+          properties:
+            available:
+              type: boolean
+              description: Always false until bank freshness is exposed over the API.
+            note:
+              type: string
     PaymentStatus:
       type: string
       enum: [paid, partially_paid, upcoming, due, overdue]
@@ -2581,7 +2985,7 @@ components:
     Session:
       type: object
       description: A sign-in session. Never includes its token.
-      required: [id, current, created_at, last_seen_at, authenticated_at, idle_expires_at, expires_at, user_agent, address]
+      required: [id, current, created_at, last_seen_at, authenticated_at, idle_expires_at, expires_at, user_agent, address, method]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -2598,7 +3002,7 @@ components:
         authenticated_at:
           type: string
           format: date-time
-          description: The last password check (sign-in or re-authentication).
+          description: The last authentication (sign-in, or re-authentication with a password or the identity provider).
         idle_expires_at:
           type: string
           format: date-time
@@ -2614,6 +3018,10 @@ components:
           type: string
           maxLength: 64
           description: The client address at sign-in.
+        method:
+          type: string
+          enum: [password, oidc, recovery]
+          description: How the session started (password includes a second factor when the user has one; recovery is a host-issued recovery sign-in).
     CurrentSession:
       type: object
       required: [user_id, session, csrf_token, recent_auth_until, two_factor]
@@ -2640,7 +3048,68 @@ components:
               description: auth.require_2fa.
             enrollment_required:
               type: boolean
-              description: The session reaches only the operations marked x-ledger-during-enrollment until an authenticator is enrolled.
+              description: The session reaches only the operations marked x-ledger-during-enrollment until an authenticator is enrolled. Never true for an OIDC session unless auth.oidc.require_2fa is on.
+    SignInMethods:
+      type: object
+      required: [password, oidc]
+      properties:
+        password:
+          type: object
+          required: [enabled]
+          properties:
+            enabled:
+              type: boolean
+              description: auth.password.enabled.
+        oidc:
+          type: object
+          required: [enabled, name, authorize_url]
+          properties:
+            enabled:
+              type: boolean
+            name:
+              type: [string, "null"]
+              description: The provider's name to show (auth.oidc.name); null when single sign-on is off.
+            authorize_url:
+              type: [string, "null"]
+              description: Where to send the browser to sign in; null when single sign-on is off.
+    OIDCLink:
+      type: object
+      required: [configured, linked, provider, subject, email, created_at, last_used_at]
+      properties:
+        configured:
+          type: boolean
+          description: Single sign-on is configured now.
+        linked:
+          type: boolean
+        provider:
+          type: [string, "null"]
+        subject:
+          type: [string, "null"]
+          description: The provider's stable identifier of the identity (with the issuer, the link's key).
+        email:
+          type: [string, "null"]
+          description: The address the provider last reported; display only.
+        created_at:
+          type: [string, "null"]
+          format: date-time
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+    AuthorizationURL:
+      type: object
+      required: [authorization_url]
+      properties:
+        authorization_url:
+          type: string
+          description: The identity provider's authorization URL; send the browser there.
+    ReturnTo:
+      type: object
+      additionalProperties: false
+      properties:
+        return_to:
+          type: string
+          maxLength: 512
+          description: A same-origin path to come back to (default /).
     SecondFactorChallenge:
       type: object
       required: [second_factor_required, challenge, expires_at, methods]
@@ -2855,6 +3324,7 @@ components:
             - occurrence_overpaid
             - duplicate_match
             - invalid_match_state
+            - password_sign_in_disabled
         message:
           type: string
         field:

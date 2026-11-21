@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ShowOnceDialog } from '@/components/show-once-dialog'
@@ -7,11 +7,12 @@ import { ShowOnceDialog } from '@/components/show-once-dialog'
 const SECRET = 'ldgr_' + 'A'.repeat(43)
 
 // A host like the real pages: the secret lives in state only while the dialog is open.
-function Host({ warning }: { warning?: string | null }) {
+function Host({ warning, returnFocusId }: { warning?: string | null; returnFocusId?: string }) {
   const [secret, setSecret] = useState<string | null>(SECRET)
   return (
     <div>
       <button>before</button>
+      <button id="opener">opener</button>
       {secret && (
         <ShowOnceDialog
           title="Token created"
@@ -19,6 +20,7 @@ function Host({ warning }: { warning?: string | null }) {
           lines={[secret]}
           listLabel="API token"
           warning={warning}
+          returnFocusId={returnFocusId}
           filename="token.txt"
           onDone={() => setSecret(null)}
         />
@@ -70,6 +72,25 @@ describe('ShowOnceDialog', () => {
     expect(screen.queryByRole('button', { name: /show|reveal|reopen/i })).not.toBeInTheDocument()
   })
 
+  it('returns focus to the named element after Done, as the opener may be gone', async () => {
+    const user = userEvent.setup()
+    render(<Host returnFocusId="opener" />)
+    await user.click(await screen.findByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'opener' })).toHaveFocus())
+  })
+
+  it('falls back to the page heading, not the body, when no element is named', async () => {
+    const user = userEvent.setup()
+    render(
+      <>
+        <h1>Page</h1>
+        <Host />
+      </>,
+    )
+    await user.click(await screen.findByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Page' })).toHaveFocus())
+  })
+
   it('copies the secret and says so', async () => {
     const user = userEvent.setup()
     render(<Host />)
@@ -93,12 +114,15 @@ describe('ShowOnceDialog', () => {
     const create = vi.fn(() => 'blob:x')
     const revoke = vi.fn()
     Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke })
+    // The revoke is deferred to a timer, not run during the click.
+    const timer = vi.spyOn(globalThis, 'setTimeout')
     render(<Host />)
     await user.click(await screen.findByRole('button', { name: 'Download' }))
     expect(create).toHaveBeenCalledOnce()
     const blob = (create.mock.calls[0] as unknown as [Blob])[0]
     expect(await blob.text()).toBe(SECRET + '\n')
-    expect(revoke).toHaveBeenCalledWith('blob:x')
+    expect(timer.mock.calls.some(([, ms]) => ms === 0)).toBe(true)
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith('blob:x'))
     expect(await screen.findByText('Download started.')).toBeInTheDocument()
   })
 })

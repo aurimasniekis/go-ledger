@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fail, installApi, none, ok, renderApp, signedIn, token } from '@/test/fake-api'
@@ -81,10 +81,42 @@ describe('my API tokens', () => {
     await user.keyboard('{Enter}')
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // Focus goes back to the Create token button, not to the body.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create token' })).toHaveFocus())
     expect(document.body.textContent).not.toContain(SECRET)
     // The list shows the new token by its hint only.
     expect(await screen.findByText('ldgr_ZZZZ…ZZZZ')).toBeInTheDocument()
     expect(await screen.findByRole('rowheader', { name: 'ci' })).toBeInTheDocument()
+  })
+
+  it('ties a root-token error to the root checkbox', async () => {
+    const user = userEvent.setup()
+    installApi({
+      ...signedIn(),
+      ...list(),
+      'POST /api/v1/auth/tokens': fail(422, 'validation_failed', 'invalid', { errors: [{ field: 'root', message: 'Root tokens are not allowed here.' }] }),
+    })
+    renderApp('/account/tokens')
+    await user.click(await screen.findByRole('button', { name: 'Create token' }))
+    const dlg = await screen.findByRole('dialog')
+    await user.type(await within(dlg).findByLabelText('Name'), 'ci')
+    const root = await within(dlg).findByRole('checkbox', { name: 'Root token' })
+    await user.click(root)
+    await user.click(within(dlg).getByRole('button', { name: 'Create token' }))
+    const msg = await within(dlg).findByText('Root tokens are not allowed here.')
+    expect(root).toBeInvalid()
+    expect(root.getAttribute('aria-describedby')).toContain(msg.id)
+  })
+
+  it('does not request the user list without users:read', async () => {
+    const calls = installApi({
+      ...signedIn(undefined, ['tokens:read']),
+      'GET /api/v1/tokens': ok({ items: [token()], next_cursor: null }),
+    })
+    renderApp('/admin/tokens')
+    await screen.findByRole('table', { name: 'All API tokens' })
+    expect(calls.some((c) => c.path === '/api/v1/users')).toBe(false)
+    expect(screen.queryByLabelText('Owner')).not.toBeInTheDocument()
   })
 
   it('offers only the grants the user holds, and no root option without every grant', async () => {

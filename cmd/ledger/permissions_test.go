@@ -67,14 +67,25 @@ var permissionMatrix = map[string]string{
 	"POST /api/v1/auth/two-factor/totp/confirm":   "session+recent+enroll",
 	"POST /api/v1/auth/two-factor/recovery-codes": "session+recent",
 
+	"GET /api/v1/auth/methods":              "public",
+	"GET /api/v1/auth/oidc/authorize":       "public",
+	"GET /api/v1/auth/oidc/callback":        "public",
+	"GET /api/v1/auth/oidc/link":            "session",
+	"POST /api/v1/auth/oidc/link":           "session+recent",
+	"DELETE /api/v1/auth/oidc/link":         "session+recent",
+	"POST /api/v1/auth/oidc/reauthenticate": "session+enroll",
+	"GET /api/v1/auth/recovery-sign-in":     "public",
+	"POST /api/v1/auth/recovery-sign-in":    "public",
+
 	"GET /api/v1/commitments":         "commitments:read",
 	"POST /api/v1/commitments":        "commitments:write",
 	"GET /api/v1/commitments/{id}":    "commitments:read",
 	"PATCH /api/v1/commitments/{id}":  "commitments:write",
 	"DELETE /api/v1/commitments/{id}": "commitments:write",
 
-	"GET /api/v1/occurrences":      "commitments:read",
-	"GET /api/v1/occurrences/{id}": "commitments:read",
+	"GET /api/v1/occurrences":         "commitments:read",
+	"GET /api/v1/occurrences/summary": "commitments:read",
+	"GET /api/v1/occurrences/{id}":    "commitments:read",
 
 	"GET /api/v1/occurrences/{id}/manual-payments":                 "commitments:read",
 	"POST /api/v1/occurrences/{id}/manual-payments":                "commitments:write",

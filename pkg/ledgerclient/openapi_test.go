@@ -149,6 +149,17 @@ var notImplemented = map[string]string{
 	"startTOTPEnrollment":     "session-only: two-factor enrolment, not reachable with a bearer token",
 	"confirmTOTPEnrollment":   "session-only: two-factor enrolment, not reachable with a bearer token",
 	"regenerateRecoveryCodes": "session-only: recovery codes, not reachable with a bearer token",
+
+	"getOccurrencesSummary":     "the monthly view serves the browser UI (task C4); a typed client method and CLI view come with the MCP read tool (P-MCP2), which reuses internal/domain/monthview",
+	"getSignInMethods":          "what the browser sign-in page offers; the client authenticates with API tokens",
+	"startOIDCSignIn":           "browser redirect to the identity provider (single sign-on), not a JSON operation",
+	"oidcCallback":              "browser redirect from the identity provider, not a JSON operation",
+	"recoverySignIn":            "browser redirect for a host-issued one-time sign-in link, not a JSON operation",
+	"recoverySignInPage":        "HTML confirmation page of a host-issued one-time sign-in link, not a JSON operation",
+	"getMyOIDCLink":             "session-only: single-sign-on links are managed with the browser session",
+	"startOIDCLink":             "session-only: linking needs a browser at the identity provider and recent re-authentication",
+	"unlinkMyOIDC":              "session-only: credential change with recent re-authentication",
+	"startOIDCReauthentication": "session-only: re-authentication of a browser session at the identity provider",
 }
 
 func TestOperationsMatchOpenAPI(t *testing.T) {

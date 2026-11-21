@@ -22,7 +22,7 @@ so that a confirmed link becomes payment evidence for the derived payment state 
 
 ## Decision
 
-1. **Entity.** `payment_matches` (migration `0015_payment_matches`) holds one row per transaction, occurrence and
+1. **Entity.** `payment_matches` (migration `0016_payment_matches`) holds one row per transaction, occurrence and
    decision: the allocated amount and currency, the `origin` (`auto_rule`, `model_suggestion`, `user`), the
    `state` (`suggested`, `confirmed`, `rejected`, `reversed`), who created it, who made the latest decision and
    when, the latest reason, and a version. `payment_match_events` is its append-only history (action, state and
@@ -135,6 +135,5 @@ moving suggestions to a superseding transaction automatically (a guess the user 
   (kept indefinitely); the explicit purge refuses facts with matches.
 - **Not built here:** the matching engine and its review queue (X2), the optional TypeSafe matcher (X3), the UI
   and MCP tools (X4), and CLI commands for matches (only the Go client methods exist).
-- **Migration number:** written as `0015_payment_matches` with fixture `0014_payment_state.sql`. Task A6 (OIDC) is
-  taking 0015 in parallel; whichever merges second renumbers (this one becomes `0016_payment_matches` and needs a
-  fixture for version 15).
+- **Migration number:** `0016_payment_matches` with fixture `0015_oidc.sql`. It was written as 0015 and renumbered when
+  task A6 (OIDC, `0015_oidc`) merged first.

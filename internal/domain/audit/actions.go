@@ -15,14 +15,19 @@ const (
 	PasswordChanged        Action = "auth.password_changed"        // Details: by (self, administrator, host), sessions_ended
 	Reauthenticated        Action = "auth.reauthenticated"         // Details: method
 	ReauthenticationFailed Action = "auth.reauthentication_failed" // Details: method, reason
+	// A one-time recovery sign-in issued from the host (break-glass, A6,
+	// ADR-0033); its use is auth.signin_succeeded with method
+	// recovery_sign_in. The target is the user.
+	RecoverySignInIssued Action = "auth.recovery_sign_in_issued" // Details: by (host), expires_at
 
 	// Second factors (A3, ADR-0030). The target is the user.
 	TwoFactorEnabled   Action = "two_factor.enabled"                    // Details: method, replaced (true, false), sessions_ended
 	TwoFactorDisabled  Action = "two_factor.disabled"                   // Details: method, by (self, administrator, host)
 	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated" // Details: count
 
-	OIDCLinked   Action = "oidc.linked"   // Details: provider
-	OIDCUnlinked Action = "oidc.unlinked" // Details: provider
+	// Single-sign-on links (A6, ADR-0033). The target is the user.
+	OIDCLinked   Action = "oidc.linked"   // Details: provider, by (self, provisioning)
+	OIDCUnlinked Action = "oidc.unlinked" // Details: provider, by (self, host)
 
 	TokenCreated   Action = "token.created"    // Details: grants, root, expires_at (never the token)
 	TokenRevoked   Action = "token.revoked"    // the actor is the owner, an administrator or a token with tokens:write
@@ -48,10 +53,13 @@ const (
 
 // Fixed value sets for detail fields that are not identifiers.
 var (
-	signInMethods = []string{"password", "totp", "recovery_code", "oidc"}
+	signInMethods = []string{"password", "totp", "recovery_code", "oidc", "recovery_sign_in"}
 	// Reasons never say which part was wrong beyond the stage: a failed
 	// password and an unknown username are both invalid_credentials.
-	signInReasons = []string{"invalid_credentials", "invalid_second_factor", "account_disabled", "locked_out"}
+	// identity_not_linked: an OIDC identity linked to no account (and no
+	// provisioning); identity_mismatch: an OIDC re-authentication returned
+	// another identity than the linked one.
+	signInReasons = []string{"invalid_credentials", "invalid_second_factor", "account_disabled", "locked_out", "identity_not_linked", "identity_mismatch"}
 	mcpOutcomes   = []string{"succeeded", "failed", "denied"}
 	// A session ended by its own user signing out, or terminated from
 	// another session of the same user. Sessions ended by a password change
@@ -94,13 +102,14 @@ var Definitions = map[Action][]Field{
 	PasswordChanged:        {f("by", passwordChangedBy...), f("sessions_ended")},
 	Reauthenticated:        {f("method", signInMethods...)},
 	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...)},
+	RecoverySignInIssued:   {f("by", "host"), f("expires_at")},
 
 	TwoFactorEnabled:   {f("method", "totp"), f("replaced", "true", "false"), f("sessions_ended")},
 	TwoFactorDisabled:  {f("method", "totp"), f("by", passwordChangedBy...)},
 	RecoveryCodesReset: {f("count")},
 
-	OIDCLinked:   {f("provider")},
-	OIDCUnlinked: {f("provider")},
+	OIDCLinked:   {f("provider"), f("by", "self", "provisioning")},
+	OIDCUnlinked: {f("provider"), f("by", "self", "host")},
 
 	TokenCreated: {f("grants"), f("root", "true", "false"), f("expires_at")},
 	TokenRevoked: nil,

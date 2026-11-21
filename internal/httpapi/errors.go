@@ -46,6 +46,10 @@ const (
 	// enrolment). The same answer for every reason.
 	CodeInvalidSecondFactor Code = "invalid_second_factor"
 	CodeEvidenceRequired    Code = "payment_evidence_required" // 409: a "paid" status override for an occurrence with no payment evidence
+	// CodePasswordSignInDisabled: 403, auth.password.enabled is false, so
+	// password sign-in and password re-authentication are refused; use
+	// single sign-on (ADR-0033).
+	CodePasswordSignInDisabled Code = "password_sign_in_disabled"
 )
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.

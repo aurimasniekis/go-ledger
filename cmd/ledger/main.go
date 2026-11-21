@@ -68,7 +68,7 @@ func usage(w io.Writer) {
 	say(w, "  backup    write a verified copy of the database (backup, backup prune)")
 	say(w, "  restore   replace the database with a backup (stop serve first)")
 	say(w, "  config    check or document the configuration (config check, config env)")
-	say(w, "  auth      set a user's password from standard input (auth set-password) or remove their two-factor authentication (auth reset-2fa); stop serve first")
+	say(w, "  auth      set a user's password from standard input (auth set-password), remove their two-factor authentication (auth reset-2fa) or single-sign-on link (auth unlink-oidc), or issue a one-time recovery sign-in link (auth recovery-sign-in); stop serve first")
 	say(w, "  token     create an API token without the web UI, for example the first one (token create; stop serve first)")
 	say(w, "  me, grants, users, commitments, occurrences, tokens, audit")
 	say(w, "            manage a running server through its API with a token (ledger <command> help)")
