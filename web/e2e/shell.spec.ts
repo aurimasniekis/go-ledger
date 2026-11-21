@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test'
 
 test('the shell loads and deep links work', async ({ page }) => {
+  // The overview needs a session now (A7): a signed-out visitor lands on sign-in.
   await page.goto('/')
-  await expect(page.getByRole('heading', { level: 1, name: 'Ledger' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
   await page.goto('/no/such/page')
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible()
 })
@@ -32,4 +33,25 @@ test('unknown API paths return the JSON error envelope', async ({ request }) => 
   const res = await request.get('/api/nope')
   expect(res.status()).toBe(404)
   expect((await res.json()).code).toBe('not_found')
+})
+
+test('a protected page sends a signed-out visitor to sign-in, which works by keyboard', async ({ page }) => {
+  await page.goto('/account/tokens')
+  await expect(page).toHaveURL(/\/sign-in\?redirect=%2Faccount%2Ftokens/)
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+  await expect(page.getByLabel('Username')).toBeFocused()
+  // Empty submit: field-associated errors, no request needed.
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Enter')
+  await expect(page.getByLabel('Username')).toHaveAttribute('aria-invalid', 'true')
+  await expect(page.getByLabel('Username')).toHaveAccessibleDescription('Enter your username.')
+})
+
+test('wrong credentials show one alert and no account detail', async ({ page }) => {
+  await page.goto('/sign-in')
+  await page.getByLabel('Username').fill('nobody')
+  await page.getByLabel('Password').fill('not-a-real-password')
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('alert')).toContainText('incorrect')
 })
