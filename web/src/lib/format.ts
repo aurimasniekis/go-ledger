@@ -8,6 +8,13 @@ export function formatInstant(v: string | number | null | undefined): string {
   return Number.isNaN(d.getTime()) ? '—' : fmt.format(d)
 }
 
+/** An instant as ISO date and UTC time ("2026-11-21 19:41 UTC"), whatever the locale (D38-3a). */
+export function formatInstantUtc(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return '—'
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+}
+
 // Display only. Amounts and dates arrive from the server as exact decimal strings and ISO dates; nothing here
 // parses an amount into a number or does arithmetic. Grouping is done on the decimal text itself, with a fixed
 // separator, so it never depends on the browser's locale (decision D38-3a).

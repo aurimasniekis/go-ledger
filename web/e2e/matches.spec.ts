@@ -39,7 +39,11 @@ async function stub(page: Page) {
   await page.route('**/api/v1/me', (r) => json(r, { kind: 'user', user_id: 'u1', token_id: null, role: 'administrator', grants: ['commitments:read', 'commitments:write', 'banking:read'] }))
   await page.route(/\/api\/v1\/occurrences\/occ-[a-z]+$/, (r) => {
     const id = r.request().url().split('/').pop()!
-    return json(r, { id, commitment_id: 'c-' + id, month: '2026-11', due_date: '2026-11-25', amount: eur('20.00'), version: 1, cancelled_at: null })
+    return json(r, { id, commitment_id: 'c-' + id, month: '2026-11', due_date: '2026-11-25', amount: eur('20.00'), version: 1, cancelled_at: null,
+      payment: (() => {
+        const bank = matches.filter((m) => m.occurrence_id === id && m.state === 'confirmed' && m.counts_as_evidence).length
+        return { status: bank > 0 ? 'paid' : 'unpaid', bank_evidence_count: bank, manual_evidence_count: 0, override: null }
+      })() })
   })
   await page.route(/\/api\/v1\/commitments\/c-occ-[a-z]+$/, (r) => json(r, { id: 'c', name: r.request().url().endsWith('host') ? 'Server hosting with a rather long commitment name' : 'Flat rent' }))
   await page.route(/\/api\/v1\/payment-matches(\?.*)?$/, (r) => {
@@ -94,6 +98,13 @@ test('review queue by keyboard: ambiguity is explained, confirm names what chang
   await expect(notice).toBeFocused()
   expect(posts).toEqual(['confirm:a'])
 
+  // R2: the competitor is told the occurrence is already paid, instead of keeping a stale "choose" reason and a primary Confirm.
+  const competitor = page.locator('article[data-match-id="b"]')
+  await expect(competitor.getByTestId('already-paid')).toContainText('Another bank transaction already pays this occurrence')
+  await expect(competitor.getByTestId('competing')).toHaveCount(0)
+  await expect(competitor.getByRole('button', { name: 'Reject suggestion' })).toHaveClass(/bg-primary/)
+  await expect(competitor.getByRole('button', { name: 'Confirm match' })).not.toHaveClass(/bg-primary/)
+
   // The Confirmed list tells the engine's confirmation from the person's.
   await page.getByRole('button', { name: 'Confirmed', exact: true }).click()
   const engine = page.locator('article[data-match-id="c"]')
@@ -102,6 +113,25 @@ test('review queue by keyboard: ambiguity is explained, confirm names what chang
   const mine = page.locator('article[data-match-id="a"]')
   await expect(mine.getByTestId('decision')).toHaveText('Confirmed by you.')
   await expect(mine).not.toContainText('Decided by the engine')
+})
+
+test('a conflict while the Reject form is open leaves no enabled submit and puts focus on the explanation (R1)', async ({ page }) => {
+  const posts = await stub(page)
+  await page.route(/\/api\/v1\/payment-matches\/a\/reject$/, (r) => {
+    const current = { ...bankMatch('a', { occurrence_id: 'occ-host' }), state: 'rejected', version: 2, decided_by: { kind: 'user', user_id: 'u2' } }
+    return r.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ code: 'version_conflict', message: 'The match changed since you read it.', request_id: 'r1', reconciliation: { current_version: 2, current } }) })
+  })
+  await page.goto('/matches')
+  const card = page.locator('article[data-match-id="a"]')
+  await card.getByRole('button', { name: 'Reject suggestion' }).click()
+  await card.getByLabel('Reason (optional)').fill('not this one')
+  await card.getByRole('button', { name: 'Reject now' }).click()
+  const alert = card.getByRole('alert')
+  await expect(alert).toContainText('Not saved: changed elsewhere')
+  await expect(alert).toBeFocused()
+  await expect(card.getByRole('button', { name: 'Reject now' })).toHaveCount(0)
+  await expect(card.getByRole('form')).toHaveCount(0)
+  expect(posts).toEqual([])
 })
 
 const sizes = [

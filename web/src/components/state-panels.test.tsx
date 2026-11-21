@@ -58,6 +58,13 @@ describe('state panels', () => {
 
 describe('QueryState', () => {
   const base = { isFetching: false, dataUpdatedAt: Date.UTC(2026, 10, 21, 9, 0), refetch: vi.fn() }
+  it('shows the Updated time as ISO UTC, not in the browser locale', () => {
+    render(<QueryState label="sessions" query={{ ...base, data: [], error: null, isError: false, isPending: false, isFetching: false }}>{() => null}</QueryState>)
+    const t = screen.getByText('2026-11-21 09:00 UTC')
+    expect(t.tagName).toBe('TIME')
+    expect(t).toHaveAttribute('datetime', '2026-11-21T09:00:00.000Z')
+  })
+
   it('is disconnected, not failed, when the request never reached the server and nothing has loaded', () => {
     render(<QueryState label="sessions" query={{ ...base, data: undefined, error: new NetworkError(), isError: true, isPending: false }}>{() => null}</QueryState>)
     expect(screen.getByRole('alert')).toHaveTextContent('Cannot reach the server')

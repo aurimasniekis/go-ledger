@@ -46,6 +46,21 @@ describe('Month page', () => {
     expect(note.closest('li')).toHaveTextContent('Rent a')
   })
 
+  it('reads every page of the waiting suggestions, so a suggestion on a later page still gets its pointer', async () => {
+    responder = () => json(200, summary([item('a'), item('b')]))
+    calls = installApi({
+      ...signedIn(),
+      ['GET ' + MONTH]: (r) => responder(r),
+      'GET /api/v1/payment-matches': (r) => ({
+        json: r.query.get('state') !== 'suggested' ? { items: [], next_cursor: null }
+          : r.query.get('cursor') ? { items: [{ id: 'm2', occurrence_id: 'b' }], next_cursor: null }
+          : { items: [{ id: 'm1', occurrence_id: 'a' }], next_cursor: 'c2' },
+      }),
+    })
+    open()
+    await waitFor(() => expect(screen.getAllByTestId('suggestion-waiting')).toHaveLength(2))
+  })
+
   it('loads the month from the summary endpoint and shows rows', async () => {
     responder = () => json(200, summary([item('a')]))
     open()

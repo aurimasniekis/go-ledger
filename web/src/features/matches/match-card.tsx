@@ -66,6 +66,18 @@ export const OFFLINE_NOTE_ID = 'matches-offline-note'
 const STATE_WORD: Record<MatchState, string> = { suggested: 'a suggestion', confirmed: 'confirmed', rejected: 'rejected', reversed: 'reversed' }
 const DECIMAL_AMOUNT = /^\d+(\.\d+)?$/
 const AMOUNT_HELP = 'Enter an amount such as 12.50, more than zero.'
+type PaidBy = 'bank' | 'manual' | 'override' | 'unknown'
+/**
+ * What the already-paid note says, by where the payment comes from. The server counts manual records and a bank match
+ * alike when it checks an overpayment, and has no way to link a bank transaction to a manual record: so for a manual
+ * payment, confirming records the same payment twice unless the overpayment is allowed on purpose.
+ */
+const PAID_NOTE: Record<PaidBy, string> = {
+  bank: 'Another bank transaction already pays this occurrence in full. Confirming this one would pay more than the amount due, so the server refuses it unless you allow an overpayment. Reject it unless you mean to pay twice.',
+  manual: 'You recorded this occurrence as paid by hand. If this bank transaction is that same payment, reject this suggestion: your record already counts, and confirming would count the payment a second time (the server refuses that unless you allow an overpayment). Ledger cannot link a bank transaction to a manual record. Confirm it only if you really paid twice.',
+  override: 'This occurrence was marked paid by hand, with a reason, over what the payments show. Confirming this bank transaction would add a payment on top of that, and the server refuses it unless you allow an overpayment. If the transaction is that payment, reject this suggestion; confirm it only if you really paid twice.',
+  unknown: 'This occurrence is already paid in full. Confirming this transaction would pay more than the amount due, so the server refuses it unless you allow an overpayment. Reject it unless you mean to pay twice.',
+}
 const CTRL = 'h-auto min-h-8 whitespace-normal py-1 text-left aria-disabled:cursor-not-allowed aria-disabled:opacity-50'
 
 export interface MatchCardProps {
@@ -108,6 +120,8 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
     rebase: rebaseInput,
     onSaved: (saved, v) => {
       void qc.invalidateQueries({ queryKey: ['occurrences'] })
+      // A confirmation changes what its competitors can do: reload them so they show their new state (R2).
+      void qc.invalidateQueries({ queryKey: matchesKey })
       setForm(null)
       onSaved(saved, v.action, m, { name: name.data, month: occ.data?.month })
     },
@@ -139,11 +153,24 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
   }, [form])
 
   const actions = staleUnknown ? [] : actionsFor(m.state)
+  // After a conflict that cannot be re-applied the form has nothing left to send: it is hidden, not left enabled (R1).
+  const formLive = form !== null && !(conflict && !rebased)
+  // Another transaction already pays this occurrence: a suggestion for it is no longer a choice (R2).
+  const pay = occ.data?.payment
+  const alreadyPaid = m.state === 'suggested' && pay?.status === 'paid'
+  // Where the existing payment comes from decides what is honest to say: a bank match, a manual record or a status set by hand.
+  const paidBy: PaidBy = !pay?.override?.applied ? ((pay?.bank_evidence_count ?? 0) > 0 ? 'bank' : (pay?.manual_evidence_count ?? 0) > 0 ? 'manual' : 'unknown') : ((pay.bank_evidence_count ?? 0) > 0 ? 'bank' : 'override')
+  const alertBox = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (conflict) alertBox.current?.focus()
+  }, [conflict])
   const t = m.transaction
   const booked = t.booking_status === 'booked'
   const canConfirm = booked && t.countable
   const heading = name.data ?? (occ.isError || name.isError ? 'Unnamed commitment' : 'Loading commitment…')
   const plain = plainReason(m.reason)
+  // The reason was written when the suggestion was made: once the occurrence is paid its "a person has to choose" line is stale.
+  const reasonLines = alreadyPaid ? plain.lines.filter((l) => !/a person has to choose/.test(l)) : plain.lines
   const decision = decisionLine(m, me)
   const marker = deciderMarker(m)
   const shortfall = m.state === 'confirmed' && occ.data?.payment?.status === 'paid' && occ.data.payment.shortfall_amount && !isZeroAmount(occ.data.payment.shortfall_amount.amount) ? occ.data.payment.shortfall_amount : null
@@ -167,7 +194,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
   const when = t.booking_date ?? t.value_date ?? t.date
   const btn = (a: MatchAction, variant: 'default' | 'outline' = 'outline') => (
     <Button key={a} size="sm" variant={variant} className={CTRL} aria-disabled={pending || undefined} aria-describedby={offline ? OFFLINE_NOTE_ID : undefined}
-      disabled={!!offline || form !== null || (a === 'confirm' && !canConfirm)}
+      disabled={!!offline || formLive || (a === 'confirm' && !canConfirm)}
       onClick={() => {
         if (pending) return
         if (a === 'confirm') run('confirm')
@@ -238,18 +265,24 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
             <dd className="min-w-0" data-testid="decision">{decision}</dd>
           </>
         )}
-        {(plain.lines.length > 0 || plain.hint || plain.verbatim) && (
+        {(reasonLines.length > 0 || plain.hint || plain.verbatim || alreadyPaid) && (
           <>
             <dt className="text-muted-foreground">Why</dt>
             <dd className="min-w-0 break-words">
-              {plain.lines.length > 0 && <ul className="list-disc space-y-0.5 pl-4">{plain.lines.map((l) => <li key={l}>{l}</li>)}</ul>}
+              {reasonLines.length > 0 && <ul className="list-disc space-y-0.5 pl-4">{reasonLines.map((l) => <li key={l}>{l}</li>)}</ul>}
               {plain.verbatim && <p>{plain.verbatim}</p>}
               {plain.hint && <p className="text-xs text-muted-foreground">{plain.hint}</p>}
+              {alreadyPaid && <p className="text-xs text-muted-foreground">This reason was written when the suggestion was made and may be out of date.</p>}
             </dd>
           </>
         )}
       </dl>
-      {m.state === 'suggested' && competing > 1 && (
+      {alreadyPaid && (
+        <p role="note" data-testid="already-paid" className="text-xs">
+          <StatusBadge status="stale" label="Already paid" /> {PAID_NOTE[paidBy]}
+        </p>
+      )}
+      {m.state === 'suggested' && competing > 1 && !alreadyPaid && (
         <p role="note" data-testid="competing" className="text-xs">
           <StatusBadge status="stale" label="Needs your choice" /> {competing} suggestions compete for this occurrence. Check which transaction is the payment, confirm that one and reject the rest.
         </p>
@@ -261,7 +294,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
       )}
       {m.state === 'confirmed' && m.needs_review && (
         <p role="note" className="text-xs">
-          <StatusBadge status="stale" label="Needs review" /> The bank no longer reports this transaction, so it does not count as payment until it is reported again. Your decision is kept.
+          <StatusBadge status="stale" label="Bank no longer reports it" /> The bank no longer reports this transaction, so it does not count as payment until it is reported again. Your decision is kept.
         </p>
       )}
       {m.history.length > 0 && (
@@ -281,12 +314,12 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
 
       {actions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          {actions.map((a) => btn(a, a === 'confirm' ? 'default' : 'outline'))}
+          {(alreadyPaid ? [...actions].sort((a, b) => Number(b === 'reject') - Number(a === 'reject')) : actions).map((a) => btn(a, a === (alreadyPaid ? (paidBy === 'bank' || paidBy === 'unknown' ? 'reject' : '') : 'confirm') ? 'default' : 'outline'))}
           {pending && form === null && <span role="status"><StatusBadge status="pending" label="Not saved yet" /></span>}
         </div>
       )}
 
-      {form !== null && (
+      {form !== null && formLive && (
         <form
           noValidate
           aria-label={VERB[form].button}
@@ -336,9 +369,13 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
               className="h-auto min-h-9 w-full min-w-0 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
           </label>
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" size="sm" className={CTRL} aria-disabled={pending || undefined} disabled={!!offline} aria-describedby={offline ? OFFLINE_NOTE_ID : undefined}>
-              {pending ? VERB[form].busy : VERB[form].submit}
-            </Button>
+            {conflict ? (
+              <span className="text-xs">The match changed. Use "Save again on the latest version" below, or cancel.</span>
+            ) : (
+              <Button type="submit" size="sm" className={CTRL} aria-disabled={pending || undefined} disabled={!!offline} aria-describedby={offline ? OFFLINE_NOTE_ID : undefined}>
+                {pending ? VERB[form].busy : VERB[form].submit}
+              </Button>
+            )}
             <Button type="button" size="sm" variant="ghost" className={CTRL} aria-disabled={pending || undefined} onClick={() => { if (!pending) close() }}>Cancel</Button>
             {pending && <span role="status"><StatusBadge status="pending" label="Not saved yet" /></span>}
           </div>
@@ -347,7 +384,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
       {pending && <p className="text-xs text-muted-foreground">Waiting for the server. Nothing has changed yet: this match is still {STATE_WORD[m.state]}.</p>}
 
       {failed && (
-        <div role="alert" className="space-y-2">
+        <div ref={alertBox} tabIndex={-1} role="alert" className="space-y-2 focus:outline-none">
           <StatusBadge status="save_failed" label={conflict ? 'Not saved: changed elsewhere' : 'Not saved'} />
           {conflict && err ? (
             <p>
@@ -357,7 +394,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           ) : invalid ? (
             <p>{amountInvalid ? 'Nothing was saved. Fix the amount above and save again.' : `${save.error?.message} Nothing was saved.`}</p>
           ) : (
-            <p>{overpaid ? 'This would pay more than the amount due. ' : ''}{save.error?.message} Nothing was saved; the match is unchanged.</p>
+            <p>{overpaid ? 'This would pay more than the amount due.' : save.error?.message} Nothing was saved; the match is unchanged.</p>
           )}
           <div className="flex flex-wrap gap-2">
             {conflict && rebased && <Button size="sm" className={CTRL} onClick={() => save.retry()}>Save again on the latest version</Button>}

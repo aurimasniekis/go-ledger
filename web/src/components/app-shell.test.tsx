@@ -43,7 +43,7 @@ describe('shell while signed in', () => {
   it('keeps the finance pages primary and groups account and administration pages under one menu', async () => {
     const button = await open()
     const primary = screen.getByRole('navigation', { name: 'Primary' })
-    expect(within(primary).getAllByRole('link').map((l) => l.textContent)).toEqual(['Monthly view', 'Payment matches', 'Outlook'])
+    expect(within(primary).getAllByRole('link').map((l) => l.getAttribute('aria-label') ?? l.textContent)).toEqual(['Monthly view', 'Outlook', 'Payment matches'])
     expect(within(primary).getByRole('link', { name: 'Monthly view' })).toHaveAttribute('aria-current', 'page')
     expect(button).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('link', { name: 'Security' })).toBeNull() // hidden until opened
