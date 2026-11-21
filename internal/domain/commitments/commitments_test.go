@@ -167,3 +167,30 @@ func TestValidationError(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestAnnualScheduleMessages(t *testing.T) {
+	for _, c := range []struct {
+		raw, field, msg string
+	}{
+		{`{"version":1,"frequency":"annual","day":1}`, "schedule.month", "month is required"},
+		{`{"version":1,"frequency":"annual","month":4,"day":31}`, "schedule.day", "day must be from 1 to 30 for month 4"},
+		{`{"version":1,"frequency":"annual","month":2,"day":30}`, "schedule.day", "day must be from 1 to 29 for month 2"},
+		{`{"version":1,"frequency":"annual","month":13,"day":1}`, "schedule.month", "month must be from 1 to 12"},
+	} {
+		_, errs := ParseSchedule([]byte(c.raw), "schedule")
+		var found bool
+		for _, e := range errs {
+			if e.Field == c.field && e.Message == c.msg {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: want %s %q, got %v", c.raw, c.field, c.msg, errs)
+		}
+	}
+	for _, e := range Annual(time.April, 31).Validate("schedule") {
+		if e.Field != "schedule.day" || e.Message != "day must be from 1 to 30 for month 4" {
+			t.Errorf("Validate: unexpected %v", e)
+		}
+	}
+}
