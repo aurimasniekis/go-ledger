@@ -26,6 +26,7 @@ type Client struct {
 	base  string // scheme://host[:port], no trailing slash
 	token string
 	hc    *http.Client
+	slow  *http.Client // hc with a timeout above the server's refresh bound
 	ua    string
 }
 
@@ -36,6 +37,7 @@ type settings struct {
 	hc       *http.Client
 	insecure bool
 	timeout  time.Duration
+	refresh  time.Duration
 	ua       string
 }
 
@@ -48,6 +50,18 @@ func WithHTTPClient(hc *http.Client) Option { return func(s *settings) { s.hc = 
 // WithTimeout sets the per-request timeout (default 30 seconds) of the default
 // HTTP client, and of a WithHTTPClient client whose Timeout is zero.
 func WithTimeout(d time.Duration) Option { return func(s *settings) { s.timeout = d } }
+
+// DefaultRefreshTimeout is the default per-request timeout of a bank refresh.
+// The server waits for a refresh up to its write timeout minus 5 seconds (55
+// seconds by default), so the client must wait longer than that or a slow
+// refresh would be reported as a client timeout instead of refresh_running.
+const DefaultRefreshTimeout = 90 * time.Second
+
+// WithRefreshTimeout sets the per-request timeout of RefreshBankConnection (and
+// of a Raw call to POST /bank-connections/{id}/refresh). The effective value is
+// never below the ordinary timeout. Set it above the server's write_timeout
+// when that was raised. Default [DefaultRefreshTimeout].
+func WithRefreshTimeout(d time.Duration) Option { return func(s *settings) { s.refresh = d } }
 
 // WithInsecureHTTP allows a plain http:// URL to a host that is not a
 // loopback address. Without it New refuses, because the token would cross the
@@ -62,7 +76,7 @@ func WithUserAgent(ua string) Option { return func(s *settings) { s.ua = ua } }
 // "/api/v1" is accepted). token is an API token sent as "Authorization:
 // Bearer"; it is never included in an error or log line by this package.
 func New(baseURL, token string, opts ...Option) (*Client, error) {
-	s := settings{timeout: 30 * time.Second, ua: "ledgerclient"}
+	s := settings{timeout: 30 * time.Second, refresh: DefaultRefreshTimeout, ua: "ledgerclient"}
 	for _, o := range opts {
 		o(&s)
 	}
@@ -97,7 +111,17 @@ func New(baseURL, token string, opts ...Option) (*Client, error) {
 		hc = &cp
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{base: u.Scheme + "://" + u.Host, token: token, hc: hc, ua: s.ua}, nil
+	slow := *hc
+	slow.Timeout = max(hc.Timeout, s.refresh)
+	return &Client{base: u.Scheme + "://" + u.Host, token: token, hc: hc, slow: &slow, ua: s.ua}, nil
+}
+
+// httpFor picks the HTTP client for a call: refreshes wait longer.
+func (c *Client) httpFor(method, path string) *http.Client {
+	if method == http.MethodPost && strings.HasPrefix(path, "/bank-connections/") && strings.HasSuffix(path, "/refresh") {
+		return c.slow
+	}
+	return c.hc
 }
 
 func isLoopback(host string) bool {
@@ -159,7 +183,7 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 	if req.version > 0 {
 		hr.Header.Set("If-Match", strconv.Quote(strconv.FormatInt(req.version, 10)))
 	}
-	resp, err := c.hc.Do(hr)
+	resp, err := c.httpFor(req.op.Method, path).Do(hr)
 	if err != nil {
 		// net/http errors name the URL, never the headers.
 		var ue *url.Error
@@ -246,7 +270,7 @@ func (c *Client) RawHeader(ctx context.Context, method, path string, query url.V
 			hr.Header[http.CanonicalHeaderKey(k)] = append([]string(nil), v...)
 		}
 	}
-	resp, err := c.hc.Do(hr)
+	resp, err := c.httpFor(method, path).Do(hr)
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) {

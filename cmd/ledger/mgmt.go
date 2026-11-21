@@ -134,7 +134,11 @@ Common flags (after the command):
   --client-config P  client config file (env LEDGER_CLIENT_CONFIG; default ~/.config/ledger/client.yaml)
   --output FMT       text (default) or json
   --insecure         allow plain http:// to a non-loopback host
-  --timeout D        per-request timeout, greater than zero (default 30s)
+  --timeout D        per-request timeout, greater than zero (default 30s); a bank refresh
+                     (bank refresh, MCP refresh_bank_connection) waits at least 90s, above
+                     the server's own bound (write_timeout minus 5s), so a slow refresh
+                     is reported as running, not as a timeout. Raise --timeout above
+                     write_timeout if the server's was raised.
 The token comes from --token-file, then LEDGER_TOKEN, then the config file's
 token_file, then its token (the file must not be readable by others). It is
 never printed.`

@@ -398,3 +398,33 @@ func TestBankConnectionRequestShape(t *testing.T) {
 		t.Errorf("requests:\n%s\nwant:\n%s", strings.Join(seen, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+func TestRefreshWaitsLongerThanTheOrdinaryTimeout(t *testing.T) {
+	slow := func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		writeJSON(w, 200, map[string]any{"id": "bc_1", "refresh_running": true})
+	}
+	srv := httptest.NewServer(http.HandlerFunc(slow))
+	t.Cleanup(srv.Close)
+	c, err := New(srv.URL, secretToken, WithTimeout(100*time.Millisecond), WithRefreshTimeout(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := c.RefreshBankConnection(context.Background(), "bc_1")
+	if err != nil || !b.RefreshRunning {
+		t.Fatalf("refresh = %+v, %v; want the slow answer", b, err)
+	}
+	// The same wait through the raw call (the stdio MCP path).
+	if _, err := c.Raw(context.Background(), "POST", "/bank-connections/bc_1/refresh", nil, []byte("{}"), ""); err != nil {
+		t.Errorf("raw refresh: %v", err)
+	}
+	// Any other call keeps the ordinary timeout.
+	if _, err := c.Raw(context.Background(), "GET", "/bank-connections/bc_1", nil, nil, ""); err == nil {
+		t.Error("an ordinary slow call must time out")
+	}
+	// The refresh timeout never lowers the ordinary one.
+	c2, _ := New(srv.URL, secretToken, WithTimeout(5*time.Second), WithRefreshTimeout(time.Millisecond))
+	if c2.slow.Timeout != 5*time.Second {
+		t.Errorf("slow timeout = %v", c2.slow.Timeout)
+	}
+}

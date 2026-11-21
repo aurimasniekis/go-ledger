@@ -104,7 +104,6 @@ func NewServer(o Options) (*mcp.Server, error) {
 		}
 		bt := &boundTool{Tool: t, schema: res}
 		s.tools[t.Name] = bt
-		no := false
 		srv.AddTool(&mcp.Tool{
 			Name:        t.Name,
 			Title:       t.Title,
@@ -116,7 +115,7 @@ func NewServer(o Options) (*mcp.Server, error) {
 				ReadOnlyHint:    t.Kind == KindRead,
 				DestructiveHint: boolPtr(t.Kind == KindDestructive),
 				IdempotentHint:  t.Kind == KindRead || t.Kind == KindDestructive,
-				OpenWorldHint:   &no,
+				OpenWorldHint:   boolPtr(t.OpenWorld),
 			},
 		}, s.toolHandler(bt))
 	}
