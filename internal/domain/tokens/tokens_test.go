@@ -1,12 +1,16 @@
 package tokens
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -215,6 +219,7 @@ func TestCreateValidates(t *testing.T) {
 	e := newEnv(t)
 	admin, _ := e.users.Principal(context.Background(), adminID)
 	past := e.now.Add(-time.Second)
+	beyond := time.Date(9999, 12, 31, 23, 59, 59, 0, time.FixedZone("west", -3600))
 	cases := map[string]struct {
 		n     New
 		field string
@@ -227,6 +232,7 @@ func TestCreateValidates(t *testing.T) {
 		"root with grants":  {New{Name: "a", Root: true, Grants: authz.Grants{commitmentsRead}}, "grants"},
 		"unknown grant":     {New{Name: "a", Grants: authz.Grants{{Resource: "nope", Action: authz.ActionRead}}}, "grants"},
 		"expired":           {New{Name: "a", Grants: authz.Grants{commitmentsRead}, ExpiresAt: &past}, "expires_at"},
+		"year 10000 in UTC": {New{Name: "a", Grants: authz.Grants{commitmentsRead}, ExpiresAt: &beyond}, "expires_at"},
 	}
 	for name, c := range cases {
 		_, err := e.svc.Create(context.Background(), audit.ActorOf(admin), admin, c.n)
@@ -356,5 +362,114 @@ func TestExpiryAndLastUsed(t *testing.T) {
 	e.now = exp
 	if _, err := e.svc.Authenticate(ctx, iss.Secret); !errors.Is(err, ErrInvalidToken) || tk.Status(e.now) != StatusExpired {
 		t.Fatalf("at expiry: %v %s", err, tk.Status(e.now))
+	}
+}
+
+// slowStore makes Touch behave like a writer that is held: it waits for its
+// context and fails, as the real store does behind a long write transaction.
+type slowStore struct {
+	*memStore
+	calls atomic.Int32
+}
+
+func (s *slowStore) Touch(ctx context.Context, _ string, _ time.Time) error {
+	s.calls.Add(1)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestAuthenticateSurvivesAFailedLastUseWrite: a last-use write that cannot
+// finish neither fails nor holds up the request, and is logged.
+func TestAuthenticateSurvivesAFailedLastUseWrite(t *testing.T) {
+	e := newEnv(t)
+	iss := e.create(t, adminID, New{Name: "ci", Grants: authz.Grants{commitmentsRead}})
+	var logs bytes.Buffer
+	st := &slowStore{memStore: e.store}
+	svc := NewService(st, e.users, Options{Now: func() time.Time { return e.now }, TouchTimeout: 20 * time.Millisecond,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	start := time.Now()
+	if _, err := svc.Authenticate(context.Background(), iss.Secret); err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("request waited %s", d)
+	}
+	if !strings.Contains(logs.String(), "last-use update skipped") || strings.Contains(logs.String(), iss.Secret) {
+		t.Fatalf("log: %s", logs.String())
+	}
+}
+
+// ctxStore records whether a last-use write was given a live context.
+type ctxStore struct {
+	*memStore
+	cancelled chan error
+}
+
+func (s *ctxStore) Touch(ctx context.Context, id string, at time.Time) error {
+	s.cancelled <- ctx.Err()
+	return s.memStore.Touch(ctx, id, at)
+}
+
+// TestLastUseOutlivesTheRequest: the write is not tied to the request's
+// context, so a request that is cancelled before or during Authenticate still
+// records its use.
+func TestLastUseOutlivesTheRequest(t *testing.T) {
+	e := newEnv(t)
+	iss := e.create(t, adminID, New{Name: "ci", Grants: authz.Grants{commitmentsRead}})
+	st := &ctxStore{memStore: e.store, cancelled: make(chan error, 1)}
+	svc := NewService(st, e.users, Options{Now: func() time.Time { return e.now }, TouchTimeout: time.Second,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.Authenticate(ctx, iss.Secret); err != nil {
+		t.Fatalf("authenticate with a cancelled request: %v", err)
+	}
+	if err := <-st.cancelled; err != nil {
+		t.Fatalf("last-use write got a dead context: %v", err)
+	}
+	if tk, _ := e.store.Get(context.Background(), iss.Token.ID); tk.LastUsedAt == nil {
+		t.Fatal("the cancelled request's use was not recorded")
+	}
+}
+
+// TestExpiryProblem pins the rule Create and the CLI share.
+func TestExpiryProblem(t *testing.T) {
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	beyond := time.Date(9999, 12, 31, 23, 59, 59, 0, time.FixedZone("west", -3600))
+	for name, c := range map[string]struct {
+		at   time.Time
+		want string
+	}{
+		"now":               {now, "must be in the future"},
+		"future":            {now.Add(time.Hour), ""},
+		"last UTC instant":  {time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC), ""},
+		"year 10000 in UTC": {beyond, "must be before the year 10000 (UTC)"},
+	} {
+		if got := ExpiryProblem(c.at, now); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+}
+
+// TestLastUseIsSingleFlight: concurrent requests of one token issue one write.
+func TestLastUseIsSingleFlight(t *testing.T) {
+	e := newEnv(t)
+	iss := e.create(t, adminID, New{Name: "ci", Grants: authz.Grants{commitmentsRead}})
+	st := &slowStore{memStore: e.store}
+	svc := NewService(st, e.users, Options{Now: func() time.Time { return e.now }, TouchTimeout: 300 * time.Millisecond,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := svc.Authenticate(context.Background(), iss.Secret); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := st.calls.Load(); n != 1 {
+		t.Fatalf("%d last-use writes for concurrent requests, want 1", n)
 	}
 }

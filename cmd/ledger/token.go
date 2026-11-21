@@ -106,6 +106,12 @@ func runToken(args []string, stdout, stderr io.Writer, env opsEnv) int {
 		say(stderr, "ledger token: "+err.Error())
 		return 2
 	}
+	if expiry != nil {
+		if problem := tokens.ExpiryProblem(*expiry, env.now()); problem != "" {
+			say(stderr, "ledger token: --expires "+problem)
+			return 2
+		}
+	}
 	if err := tokens.ValidateName(*name); err != nil {
 		say(stderr, "ledger token: --"+err.Error())
 		return 2

@@ -90,11 +90,17 @@ info:
     identifier: Apache-2.0
 servers:
   - url: /api/v1
+# Every operation needs a bearer API token or a session cookie, unless it
+# says `security: []` (x-ledger-access: public).
+security:
+  - bearerAuth: []
+  - sessionCookie: []
 paths:
   /openapi.json:
     get:
       operationId: getOpenAPIJSON
       x-ledger-access: public
+      security: []
       summary: This document as JSON
       tags: [meta]
       responses:
@@ -110,6 +116,7 @@ paths:
     get:
       operationId: getOpenAPIYAML
       x-ledger-access: public
+      security: []
       summary: This document as YAML
       tags: [meta]
       responses:
@@ -699,6 +706,7 @@ paths:
     post:
       operationId: signIn
       x-ledger-access: public
+      security: []
       summary: Sign in with a username and password
       description: |
         Starts a session: sets the `__Host-ledger_session` cookie (Secure, HttpOnly,
@@ -757,6 +765,7 @@ paths:
     post:
       operationId: signInSecondFactor
       x-ledger-access: public
+      security: []
       summary: Complete a sign-in with a TOTP code or a recovery code
       description: |
         The second step of a sign-in for a user with TOTP enabled. Send the
@@ -947,6 +956,7 @@ paths:
     get:
       operationId: getSignInMethods
       x-ledger-access: public
+      security: []
       summary: Which sign-in methods are available
       description: |
         Tells the sign-in page what to offer: password sign-in (off when
@@ -966,6 +976,7 @@ paths:
     get:
       operationId: startOIDCSignIn
       x-ledger-access: public
+      security: []
       summary: Sign in with single sign-on (browser redirect)
       description: |
         Starts an authorization code flow with PKCE (S256), state and nonce,
@@ -997,6 +1008,7 @@ paths:
     get:
       operationId: oidcCallback
       x-ledger-access: public
+      security: []
       summary: Where the identity provider sends the browser back (browser redirect)
       description: |
         Completes a sign-in, link or re-authentication started by Ledger.
@@ -1155,6 +1167,7 @@ paths:
     get:
       operationId: recoverySignIn
       x-ledger-access: public
+      security: []
       summary: Use a one-time recovery sign-in link (browser redirect)
       description: |
         Break-glass (decision D16): the link printed by the host command
@@ -1751,6 +1764,16 @@ tags:
   - name: tokens
     description: API tokens (Authorization Bearer); your own, and everyone's for administrators.
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: An API token (ldgr_ followed by 43 characters) in Authorization Bearer. Which operations a token may call follows its grants; see x-ledger-access.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-ledger_session
+      description: The browser session cookie set by sign-in. State-changing requests made with it also send X-CSRF-Token.
   parameters:
     Limit:
       name: limit

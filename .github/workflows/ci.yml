@@ -131,7 +131,7 @@ jobs:
       - name: Smoke test the binary serves the embedded UI and the JSON API 404
         env:
           LEDGER_HTTP_LISTEN: 127.0.0.1:18080
-          LEDGER_KEK_VALUE: ci-smoke-not-a-secret
+          LEDGER_KEK_VALUE: ci-smoke-not-a-secret-0123456789abcdef
           LEDGER_REPORTING_TIMEZONE: UTC
         # The store refuses in-memory databases, so the smoke test uses a file under the runner's temp dir.
         run: |

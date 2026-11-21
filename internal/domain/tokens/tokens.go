@@ -24,7 +24,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -132,7 +134,7 @@ type Store interface {
 	// to that owner's tokens. It returns resource.ErrNotFound when no such
 	// token exists, and revoked=false (writing nothing) when it already was.
 	Revoke(ctx context.Context, id, ownerID string, at time.Time, events ...audit.Event) (revoked bool, err error)
-	// Touch records that the token was used.
+	// Touch records that the token was used. It never moves last use backwards.
 	Touch(ctx context.Context, id string, at time.Time) error
 }
 
@@ -182,6 +184,9 @@ type Service struct {
 	now        func() time.Time
 	random     io.Reader
 	newID      func() string
+	log        *slog.Logger
+	touchLimit time.Duration
+	touching   sync.Map // token ID -> struct{}: last-use writes in flight
 }
 
 // Options are the service's replaceable parts, for tests.
@@ -189,6 +194,10 @@ type Options struct {
 	Now    func() time.Time
 	Random io.Reader
 	NewID  func() string
+	// Logger receives last-use write failures; slog.Default when nil.
+	Logger *slog.Logger
+	// TouchTimeout bounds one last-use write; 250ms when zero.
+	TouchTimeout time.Duration
 }
 
 // NewService returns a Service.
@@ -202,7 +211,13 @@ func NewService(st Store, principals Principals, o Options) *Service {
 	if o.NewID == nil {
 		o.NewID = resource.NewID
 	}
-	return &Service{store: st, principals: principals, now: o.Now, random: o.Random, newID: o.NewID}
+	if o.Logger == nil {
+		o.Logger = slog.Default()
+	}
+	if o.TouchTimeout <= 0 {
+		o.TouchTimeout = 250 * time.Millisecond
+	}
+	return &Service{store: st, principals: principals, now: o.Now, random: o.Random, newID: o.NewID, log: o.Logger, touchLimit: o.TouchTimeout}
 }
 
 // Now is the service's clock.
@@ -270,10 +285,10 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.P
 	}
 	var expires *time.Time
 	if n.ExpiresAt != nil {
-		e := n.ExpiresAt.UTC()
-		if !e.After(now) {
-			return Issued{}, &FieldError{Field: "expires_at", Message: "expires_at must be in the future"}
+		if problem := ExpiryProblem(*n.ExpiresAt, now); problem != "" {
+			return Issued{}, &FieldError{Field: "expires_at", Message: "expires_at " + problem}
 		}
+		e := n.ExpiresAt.UTC()
 		expires = &e
 	}
 	secret, err := s.generate()
@@ -286,6 +301,21 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.P
 		return Issued{}, err
 	}
 	return Issued{Token: t, Secret: secret}, nil
+}
+
+// ExpiryProblem says why expires cannot be a token's expiry as of now, in words
+// that follow the field name, or is "" when it can. Create applies it, and the
+// ledger token CLI applies it before it creates anything, so a refused expiry
+// never leaves a user behind.
+func ExpiryProblem(expires, now time.Time) string {
+	e := expires.UTC()
+	switch {
+	case !e.After(now):
+		return "must be in the future"
+	case e.Year() > 9999:
+		return "must be before the year 10000 (UTC)"
+	}
+	return ""
 }
 
 // CreatedEvent is the audit event of a new token. It names the grants (or
@@ -390,11 +420,25 @@ func (s *Service) Authenticate(ctx context.Context, secret string) (authz.Princi
 		grants = owner.Role.Grants()
 	}
 	if t.LastUsedAt == nil || now.Sub(*t.LastUsedAt) >= touchEvery {
-		if err := s.store.Touch(ctx, t.ID, now); err != nil {
-			return authz.Principal{}, err
-		}
+		s.touch(ctx, t.ID, now)
 	}
 	return authz.TokenPrincipal(t.ID, t.OwnerID, owner.Role, grants), nil
+}
+
+// touch records the token's use, best effort: it never fails the request. It
+// runs under its own short deadline (not the request's), one write per token
+// at a time (a concurrent request skips it), and the store only moves the
+// value forward. A failure is logged and the request goes on.
+func (s *Service) touch(ctx context.Context, id string, at time.Time) {
+	if _, busy := s.touching.LoadOrStore(id, struct{}{}); busy {
+		return
+	}
+	defer s.touching.Delete(id)
+	tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.touchLimit)
+	defer cancel()
+	if err := s.store.Touch(tctx, id, at); err != nil {
+		s.log.WarnContext(ctx, "API token last-use update skipped", "token_id", id, "error", err.Error())
+	}
 }
 
 // Get returns a token. ownerID, when set, limits it to that owner's tokens
