@@ -307,7 +307,7 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 		if err != nil {
 			return occurrences.Plan{}, fmt.Errorf("occurrences: create: %w", err)
 		}
-		if ok { // a conflict inserted nothing: never count it as created
+		if ok { // defensive: the plan creates only into months with no live row, so a conflict inserted nothing; never count it as created
 			created = append(created, p)
 		}
 	}

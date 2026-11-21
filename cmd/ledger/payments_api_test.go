@@ -249,7 +249,7 @@ func TestPaymentStateAPI(t *testing.T) {
 		t.Fatalf("audit trail\n got %s\nwant %s", strings.Join(got, "|"), want)
 	}
 	// Notes and reasons appear nowhere in the log; amounts not in audit lines
-	// (other log lines carry timings, which may contain the same digits).
+	// (the logger adds its own wall-clock time, which may contain the same digits).
 	for _, secret := range []string{"first half", "bounced"} {
 		if strings.Contains(f.log.String(), secret) {
 			t.Errorf("log contains %q", secret)
@@ -264,6 +264,11 @@ func TestPaymentStateAPI(t *testing.T) {
 			continue
 		}
 		for k, v := range l {
+			// The logger's own wall-clock "time" (and request_id) are not audit
+			// content: a time such as 12:34:44.003 contains "4.00" by chance.
+			if k == "time" || k == "request_id" {
+				continue
+			}
 			if s := fmt.Sprint(v); strings.Contains(s, "4.00") || strings.Contains(s, "6.00") {
 				t.Errorf("audit line carries an amount in %s: %v", k, l)
 			}

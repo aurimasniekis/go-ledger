@@ -676,3 +676,17 @@ func TestDateCorrectionEffectiveToday(t *testing.T) {
 		t.Fatalf("audit %+v", ev)
 	}
 }
+
+// TestDateCorrectionOverrideEffectiveToday: with the effective date today and
+// an override on March, the history row outside the new start stays for its
+// override (id and date unchanged) and is audited once, as kept_override and
+// not also as kept_history.
+func TestDateCorrectionOverrideEffectiveToday(t *testing.T) {
+	f, marchID, ev := probeEdit(t, true, "2026-03-15")
+	if got := f.month(t, "2026-03"); len(got) != 1 || got[0].ID != marchID || got[0].DueDate.String() != "2026-03-10" {
+		t.Fatalf("March %+v", got)
+	}
+	if ev.Details["kept_override"] != "1" || ev.Details["kept_history"] != "0" || ev.Details["created"] != "0" {
+		t.Fatalf("audit %+v", ev)
+	}
+}
