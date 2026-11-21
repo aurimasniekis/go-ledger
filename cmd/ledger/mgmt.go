@@ -21,7 +21,7 @@ import (
 )
 
 // The management commands (ledger me, grants, users, commitments, occurrences,
-// matching, tokens, audit) talk to a running server through the public Management API with an
+// matching, bank, tokens, audit) talk to a running server through the public Management API with an
 // API token, using pkg/ledgerclient. They never open the database and have no
 // other way in (ADR-0032): what a token may do is exactly what the server's
 // grants allow.
@@ -106,6 +106,16 @@ var mgmtVerbs = map[string]map[string]verb{
 	},
 	"matching": {
 		"run": {"run   (run the automatic payment matching once; needs commitments:write)", matchingRun},
+	},
+	"bank": {
+		"applications": {"applications   (configured provider applications; needs connections:read)", bankApplications},
+		"institutions": {"institutions <application> --country DE   (banks an application offers)", bankInstitutions},
+		"list":         {"list [--limit N] [--cursor C] [--all]   (connections with account freshness)", bankList},
+		"get":          {"get <id>", bankGet},
+		"connect":      {"connect --application A --institution-id I --country DE [--psu-type personal|business] [--valid-for-days N]   (prints the bank's consent page; needs connections:write)", bankConnect},
+		"reconnect":    {"reconnect <id> [--valid-for-days N]   (new consent for an existing connection)", bankReconnect},
+		"refresh":      {"refresh <id>   (fetch now; a failed refresh keeps stored data and is shown in the answer)", bankRefresh},
+		"disconnect":   {"disconnect <id> [--version N]   (ends the provider session; stored data stays as history)", bankDisconnect},
 	},
 	"tokens": {
 		"list":   {"list [--owner-id ID] [--limit N] [--cursor C] [--all]   (every user's tokens; needs tokens:read)", tokensList},

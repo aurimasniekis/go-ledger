@@ -85,6 +85,7 @@ func NewServer(o Options) (*mcp.Server, error) {
 		Instructions: "Ledger tracks recurring commitments, their monthly occurrences and payment state. " +
 			"Amounts are exact decimal strings with a currency; currencies are never added together. " +
 			"The monthly view describes recorded commitments and recorded payments, not money that is safe to spend. " +
+			"Bank data has a freshness: check it before relying on a balance. " +
 			"A tool needs the grant it names; an error says which one is missing. Read the ledger://me resource for this token's grants.",
 		Logger: o.Log,
 	})

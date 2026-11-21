@@ -74,8 +74,10 @@ delivers both the HTTP API and the UI. It never needs live banking access: every
 
 ## Consequences
 
-- **Limitations, in the open:** (a) the Go client and CLI have no bank methods yet (the new operations are listed in the client's
-  not-implemented table); the MCP server does not expose bank tools. (b) A refresh is waited for inside the HTTP request, bounded below the write timeout (point 9). When
+- **Limitations, in the open:** (a) the Go client, the `ledger bank` CLI commands and the MCP server (task B4f) cover every operation except
+  completing a consent: that stays with the browser callback page, so the client lists `completeBankConnection` as not implemented and no
+  CLI command or MCP tool takes a consent code. MCP exposes the reads and `refresh_bank_connection` only; start, reconnect and disconnect
+  are CLI or UI actions (the person is at the bank's consent page, or access to bank data ends). (b) A refresh is waited for inside the HTTP request, bounded below the write timeout (point 9). When
   the bound is hit the run continues and the answer says it is running; a 202 job model is the alternative if banks are routinely slow. (c) The refresh audit entry is written after the run (point 10); the entries of the other actions are not.
   (c2) The reporting of a failed end of a replaced session is a boolean on the completion answer; the UI does not yet show it. (d) Only the latest 64 refresh runs feed the scheduler; the UI shows just the latest run. (e) Purging a connection's
   facts has no endpoint. (f) Balances are read from all snapshots of an account to find the latest of each type; a retention policy

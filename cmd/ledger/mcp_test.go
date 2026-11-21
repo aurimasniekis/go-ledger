@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking/bankingtest"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -40,6 +41,8 @@ type mcpFixture struct {
 	parts apiParts
 	admin users.User
 	ro    users.User
+	// bank is the fake provider behind the bank connection routes.
+	bank *bankingtest.Provider
 }
 
 type mcpOpts struct {
@@ -64,7 +67,9 @@ func newMCPFixture(t *testing.T, o mcpOpts) *mcpFixture {
 	parts.commitments = commitmentstore.New(db, al, clock, nil)
 	parts.payments = paymentstore.New(db, al, clock, nil)
 	parts.matches = matchstore.New(db, al, clock, nil)
-	f := &mcpFixture{db: db, al: al, parts: parts}
+	bank, _, svc := newFakeBanking(db, al, clock)
+	parts.banking = svc
+	f := &mcpFixture{db: db, al: al, parts: parts, bank: bank}
 	f.admin, err = parts.users.Create(ctx, audit.System, users.New{Username: "alice", Role: authz.RoleAdministrator})
 	if err != nil {
 		t.Fatal(err)
@@ -584,6 +589,14 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"delete_manual_payment": func() (string, string, string) {
 			return "DELETE", "/occurrences/" + fakeID + "/manual-payments/" + fakeID, ""
 		},
+
+		"list_bank_applications": func() (string, string, string) { return "GET", "/bank-applications", "" },
+		"list_bank_institutions": func() (string, string, string) {
+			return "GET", "/bank-applications/fake-app/institutions?country=FI", ""
+		},
+		"list_bank_connections":   func() (string, string, string) { return "GET", "/bank-connections", "" },
+		"get_bank_connection":     func() (string, string, string) { return "GET", "/bank-connections/" + fakeID, "" },
+		"refresh_bank_connection": func() (string, string, string) { return "POST", "/bank-connections/" + fakeID + "/refresh", "{}" },
 	}
 	mcpArgs := map[string]map[string]any{
 		"list_commitments":  nil,
@@ -605,6 +618,12 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"run_payment_matching":  nil,
 		"record_manual_payment": {"id": fakeID, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}, "paid_on": "2026-11-01"},
 		"delete_manual_payment": {"id": fakeID, "payment_id": fakeID, "version": 1},
+
+		"list_bank_applications":  nil,
+		"list_bank_institutions":  {"application": "fake-app", "country": "FI"},
+		"list_bank_connections":   nil,
+		"get_bank_connection":     {"id": fakeID},
+		"refresh_bank_connection": {"id": fakeID},
 	}
 	subjects := []struct {
 		name   string
@@ -616,6 +635,8 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		{"users:read only", f.admin, []string{"users:read"}},
 		{"banking:read only", f.admin, []string{"banking:read"}},
 		{"audit:read only", f.admin, []string{"audit:read"}},
+		{"connections:read", f.admin, []string{"connections:read"}},
+		{"connections:write", f.admin, []string{"connections:write"}},
 		{"read grant of a read-only owner", f.ro, []string{"commitments:read"}},
 	}
 	for _, sub := range subjects {
