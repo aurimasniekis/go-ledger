@@ -124,7 +124,7 @@ test('connect, consent redirect, refresh; then a withdrawn consent and an outage
   // At the bank, approve: back on the callback page, which finishes once and cleans the address.
   await expect(page.getByRole('heading', { name: 'Fake bank' })).toBeVisible()
   await page.getByRole('link', { name: 'Approve access' }).click()
-  await expect(page.getByText('Fake Bank is connected')).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Fake Bank is connected' })).toBeVisible()
   await expect(page).toHaveURL(/\/connections\/callback$/)
   expect(page.url()).not.toContain('fake-code')
   expect(bank.calls.filter((c) => c === 'POST /bank-connections/complete')).toHaveLength(1)
@@ -159,7 +159,7 @@ test('connect, consent redirect, refresh; then a withdrawn consent and an outage
   // Reconnect: back through the bank, and the connection is usable again.
   await card.getByRole('button', { name: 'Reconnect bank' }).click()
   await page.getByRole('link', { name: 'Approve access' }).click()
-  await expect(page.getByText('Fake Bank is connected')).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Fake Bank is connected' })).toBeVisible()
 })
 
 test('the connections page fits a 320 px screen without sideways scrolling', async ({ page }) => {
