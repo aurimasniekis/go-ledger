@@ -22,6 +22,8 @@ type App struct {
 	JobRuns   *Counter // job, outcome
 	JobLast   *Gauge   // job: Unix time of the last run
 	JobLength *Histogram
+	// BankAccounts is the number of bank accounts by freshness state (B6).
+	BankAccounts *Gauge
 
 	eventsPublished *Counter
 	eventsDuplicate *Counter
@@ -48,6 +50,8 @@ func NewApp(version string) *App {
 		"Unix time the job last finished, by job name.", "job")
 	a.JobLength = r.NewHistogram("ledger_job_duration_seconds",
 		"Background job run duration in seconds by job name.", nil, "job")
+	a.BankAccounts = r.NewGauge("ledger_bank_accounts",
+		"Bank accounts by data freshness: fresh, stale (last success over 24 hours ago), failed (latest refresh failed), reconnect_required, disconnected or never_refreshed.", "freshness")
 	a.eventsPublished = r.NewCounter("ledger_events_published_total", "Events acknowledged by Pulse.")
 	a.eventsDuplicate = r.NewCounter("ledger_events_duplicate_total", "Published events Pulse reported as already stored (deduplicated by event id); a subset of published.")
 	a.eventsFailed = r.NewCounter("ledger_events_failed_total", "Events given up on: not delivered within the retry window, or never publishable.")
@@ -83,6 +87,14 @@ func (a *App) SetConnected(up bool) {
 		v = 1
 	}
 	a.pulseConnected.Set(v)
+}
+
+// SetBankFreshness sets how many accounts are in each freshness state. The
+// states are a closed set chosen by the scheduler, so cardinality is fixed.
+func (a *App) SetBankFreshness(counts map[string]int) {
+	for state, n := range counts {
+		a.BankAccounts.Set(float64(n), state)
+	}
 }
 
 // JobDone records one finished run of the named job. The name is the job's

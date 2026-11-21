@@ -13,6 +13,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
 	"github.com/aurimasniekis/go-ledger/internal/health"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
@@ -22,6 +23,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/store/users"
 	"github.com/aurimasniekis/go-ledger/internal/web"
@@ -237,6 +239,23 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		defer close(retentionDone)
 		outbox.NewRetention(outbox.RetentionConfig{DB: db, Log: log, Meter: app, Publishing: cfg.Events.Pulse.Enabled}).Run(rctx)
 	}()
+	// Background refresh of bank connections (B6, ADR-0028). One engine is shared
+	// with every other trigger of a refresh (the connection API, B4), so one
+	// connection is never refreshed twice at once. It stops with rctx and is
+	// waited for before the database closes.
+	var refreshDone chan struct{}
+	facts := bankfacts.New(db, nil)
+	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app})
+	if cfg.Banking.Refresh.Enabled {
+		sched := bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
+			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff,
+		})
+		refreshDone = make(chan struct{})
+		go func() { defer close(refreshDone); sched.Run(rctx) }()
+		log.Info("background bank refresh is enabled", "interval", cfg.Banking.Refresh.Interval.String(), "applications", len(bankProviders))
+	} else {
+		log.Info("background bank refresh is disabled; connections are refreshed on request only")
+	}
 	var pulseDone chan struct{}
 	if cfg.Events.Pulse.Enabled {
 		dial := env.PulseDial
@@ -264,6 +283,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		stop()
 	}
 	<-retentionDone // before the database closes
+	if refreshDone != nil {
+		<-refreshDone
+	}
 	if pulseDone != nil {
 		<-pulseDone
 	}
