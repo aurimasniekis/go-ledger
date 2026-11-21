@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 )
 
@@ -122,7 +124,7 @@ func TestCSRFAndRecentAuthentication(t *testing.T) {
 		{"CSRF is checked before recent auth", fixed(admin, nil), recentNo, Requires(write).WithRecentAuth(), "POST", map[string]string{"X-Test-CSRF": "bad"}, 403, CodeCSRF},
 	}
 	for _, c := range cases {
-		opts := []Option{WithAuthenticators(c.authn)}
+		opts := []Option{WithAuthenticators(c.authn), WithAuditRecorder(nopRecorder{}, nil)}
 		if c.recent != nil {
 			opts = append(opts, WithRecentAuth(c.recent))
 		}
@@ -352,4 +354,27 @@ func TestAuthorizationRunsBeforeAPIMiddleware(t *testing.T) {
 	if rec := do(s.Handler(), req); rec.Code != 200 || ran != 1 || !sawPrincipal {
 		t.Fatalf("authorised: status %d, ran %d, principal in context %v", rec.Code, ran, sawPrincipal)
 	}
+}
+
+type nopRecorder struct{}
+
+func (nopRecorder) Record(context.Context, audit.Event) error { return nil }
+
+// TestTokenWritesNeedAnAuditRecorder: a token's state-changing request is
+// refused when the server cannot audit it, and a server with the bearer-token
+// authenticator cannot be built without the recorder (ADR-0029).
+func TestTokenWritesNeedAnAuditRecorder(t *testing.T) {
+	token := authz.TokenPrincipal("01JD3Y4C8V9M2Q7W5R6T0XZBNT", "01JD3Y4C8V9M2Q7W5R6T0XZBNA", authz.RoleAdministrator, authz.AllGrants())
+	authn := AuthenticatorFunc(func(*http.Request) (authz.Principal, error) { return token, nil })
+	s := apiServer(t, WithAuthenticators(authn))
+	ran := false
+	s.HandleAPI("POST /api/v1/t", Requires(authz.G(authz.ResourceUsers, authz.ActionWrite)), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { ran = true }))
+	s.HandleAPI("GET /api/v1/t", Requires(authz.G(authz.ResourceUsers, authz.ActionRead)), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	if rec := do(s.Handler(), httptest.NewRequest("POST", "/api/v1/t", nil)); rec.Code != 500 || ran {
+		t.Fatalf("unaudited token write: status %d, handler ran %v", rec.Code, ran)
+	}
+	if rec := do(s.Handler(), httptest.NewRequest("GET", "/api/v1/t", nil)); rec.Code != 200 {
+		t.Fatalf("token read: status %d", rec.Code)
+	}
+	mustPanic(t, "token authenticator without a recorder", func() { apiServer(t, WithAuthenticators(NewTokenAuth(nil))) })
 }

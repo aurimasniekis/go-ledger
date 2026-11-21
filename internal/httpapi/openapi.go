@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
@@ -55,6 +56,8 @@ type Deps struct {
 	Audit audit.Reader
 	// Auth is sign-in, sessions and passwords.
 	Auth *auth.Service
+	// Tokens is API tokens.
+	Tokens *tokens.Service
 }
 
 // RegisterAPI registers every route of the Management API under [APIPrefix].
@@ -81,6 +84,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerUserPassword(s, d.Auth)
 	registerSessions(s, d.Auth)
 	registerAudit(s, d.Audit)
+	registerTokens(s, d.Tokens)
 	registerCommitments(s, d.Commitments)
 }
 

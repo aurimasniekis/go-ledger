@@ -29,5 +29,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0025: Audit log](0025-audit-log.md)
 - [ADR-0026: Passwords, sign-in, sessions, CSRF and recent authentication](0026-passwords-sign-in-and-sessions.md)
 - [ADR-0028: Background refresh scheduler](0028-background-refresh-scheduler.md)
+- [ADR-0029: API tokens and the bootstrap command](0029-api-tokens-and-bootstrap.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

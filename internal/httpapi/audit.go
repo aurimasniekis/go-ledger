@@ -160,7 +160,7 @@ func WithAuditRecorder(rec audit.Recorder, now func() time.Time) Option {
 	return func(s *Server) {
 		s.auditTokenWrites = func(r *http.Request, p authz.Principal, pattern string) error {
 			e := audit.Event{Action: audit.TokenWriteUsed, Actor: audit.ActorOf(p), TargetType: "route", TargetID: truncate(pattern, audit.MaxTargetID),
-				At: now().UTC(), Details: map[string]string{"method": r.Method, "route": truncate(pattern, audit.MaxValueBytes)}}
+				At: now().UTC(), Details: map[string]string{"method": r.Method, "route": truncate(pattern, audit.MaxValueBytes), "interactive_steps": "skipped"}}
 			return rec.Record(r.Context(), e)
 		}
 	}
@@ -173,11 +173,18 @@ func truncate(s string, n int) string {
 	return s
 }
 
-// auditTokenWrite records a token's state-changing request, if configured.
-// It reports whether the request may proceed.
+// auditTokenWrite records a token's state-changing request. It reports
+// whether the request may proceed. Without a recorder ([WithAuditRecorder])
+// a token's state-changing request is refused: a token write is never
+// unaudited (ADR-0029).
 func (s *Server) auditTokenWrite(w http.ResponseWriter, r *http.Request, p authz.Principal, pattern string) bool {
-	if s.auditTokenWrites == nil || p.Kind != authz.PrincipalToken || safeMethod(r.Method) {
+	if p.Kind != authz.PrincipalToken || safeMethod(r.Method) {
 		return true
+	}
+	if s.auditTokenWrites == nil {
+		logging.FromContext(r.Context()).ErrorContext(r.Context(), "a token write was refused: the server has no audit recorder")
+		WriteError(w, r, Internal(errors.New("httpapi: token writes need an audit recorder")))
+		return false
 	}
 	// pattern is "METHOD /path"; keep the path.
 	if _, path, ok := strings.Cut(pattern, " "); ok {

@@ -48,6 +48,13 @@ var permissionMatrix = map[string]string{
 	"DELETE /api/v1/auth/sessions/{id}": "session",
 	"POST /api/v1/auth/reauthenticate":  "session",
 	"PUT /api/v1/auth/password":         "session+recent",
+	"GET /api/v1/auth/tokens":           "session",
+	"POST /api/v1/auth/tokens":          "session+recent",
+	"GET /api/v1/auth/tokens/{id}":      "session",
+	"DELETE /api/v1/auth/tokens/{id}":   "session",
+	"GET /api/v1/tokens":                "tokens:read",
+	"GET /api/v1/tokens/{id}":           "tokens:read",
+	"DELETE /api/v1/tokens/{id}":        "tokens:write",
 
 	"GET /api/v1/commitments":         "commitments:read",
 	"POST /api/v1/commitments":        "commitments:write",
