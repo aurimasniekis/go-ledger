@@ -1,5 +1,6 @@
 # Release pipeline (F10, ADR-0018). A tag push (v*) builds, publishes the container images (publish-images fails if the
-# Docker Hub secret is missing), and creates a draft GitHub Release. A workflow_dispatch run is a dry run: it builds the artefacts and never
+# repository secret DOCKERHUB_TOKEN is missing), and creates a draft GitHub Release. There is no approval gate: anyone who
+# can push a v* tag starts publishing (the accepted residual risk, ADR-0018). A workflow_dispatch run is a dry run: it builds the artefacts and never
 # publishes. Top-level permissions are read-only. Only github-release requests a write scope (contents: write), and
 # scripts/check-workflow-permissions.sh enforces that it stays a job-level block limited to a tag push.
 name: release
@@ -81,9 +82,8 @@ jobs:
     name: publish container images (Docker Hub)
     needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    # Waits for approval (required reviewers); DOCKERHUB_TOKEN is an environment secret (ADR-0018). The token check
-    # runs here, inside the environment, so it sees the secret; a missing token fails the job instead of skipping it.
-    environment: release
+    # No approval gate (ADR-0018). DOCKERHUB_TOKEN is a repository secret. The token check fails the job instead of
+    # skipping it when the secret is missing.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -92,7 +92,7 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           if [ -z "$DOCKERHUB_TOKEN" ]; then
-            echo "::error::DOCKERHUB_TOKEN is not set in the release environment, so no container image was published"
+            echo "::error::DOCKERHUB_TOKEN is not set (repository secret), so no container image was published"
             exit 1
           fi
       - name: Check out
@@ -134,8 +134,7 @@ jobs:
     name: create the draft GitHub Release
     needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    # Waits for approval (required reviewers) before the draft release is created (ADR-0018).
-    environment: release
+    # No approval gate: a tag push creates the draft release (ADR-0018).
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
