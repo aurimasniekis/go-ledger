@@ -403,6 +403,38 @@ func TestBankConnectionRequestShape(t *testing.T) {
 	}
 }
 
+// Only POST /bank-connections/{id}/refresh takes the refresh client: the method and each path segment must match exactly.
+func TestHTTPForRefreshClientIsOnlyForPostRefresh(t *testing.T) {
+	c, err := New("https://ledger.example.com", secretToken, WithTimeout(time.Second), WithRefreshTimeout(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		method, path string
+		slow         bool
+	}{
+		{http.MethodPost, "/bank-connections/bc_1/refresh", true},
+		{"post", "/bank-connections/bc_1/refresh", true},
+		{http.MethodGet, "/bank-connections/bc_1/refresh", false},
+		{http.MethodPost, "/bank-connections/bc_1", false},
+		{http.MethodPost, "/bank-connections/bc_1/reconnect", false},
+		{http.MethodPost, "/bank-connections/bc_1/refresh/extra", false},
+		{http.MethodPost, "/bank-connections//refresh", false},
+		{http.MethodPost, "/bank-connections/refresh", false},
+		{http.MethodPost, "/other/bc_1/refresh", false},
+		{http.MethodPost, "/bank-connections/bc_1/refreshed", false},
+	}
+	for _, tc := range cases {
+		want := c.hc
+		if tc.slow {
+			want = c.slow
+		}
+		if got := c.httpFor(tc.method, tc.path); got != want {
+			t.Errorf("%s %s: got the refresh client %v, want %v", tc.method, tc.path, got == c.slow, tc.slow)
+		}
+	}
+}
+
 func TestRefreshWaitsLongerThanTheOrdinaryTimeout(t *testing.T) {
 	slow := func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)

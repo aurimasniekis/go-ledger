@@ -9,14 +9,16 @@ import { Button } from '@/components/ui/button'
 const link = 'block rounded-md px-2 py-1.5 hover:bg-muted [&.active]:font-semibold [&.active]:underline'
 
 /**
- * A link label that is shorter on a phone, so the four links fit on one row (the header is two rows at 390 px).
- * The accessible name is always the full one (aria-label); the short text is contained in it (WCAG 2.5.3).
+ * A link label that is shorter below 768 px, so the header stays at most two rows from 320 px up. Below sm the links
+ * have no gap and only 2 px of padding each side: the four links with an administrator's Connections need 283 of the 288 px
+ * available at 320 px, so they stay on one row.
+ * The accessible name is always the full one (aria-label), and the short text is one of its words (WCAG 2.5.3).
  */
 function Short({ short, full }: { short: string; full: string }) {
   return (
     <>
-      <span aria-hidden className="sm:hidden">{short}</span>
-      <span aria-hidden className="hidden sm:inline">{full}</span>
+      <span aria-hidden className="md:hidden">{short}</span>
+      <span aria-hidden className="hidden md:inline">{full}</span>
     </>
   )
 }
@@ -27,9 +29,9 @@ export function PrimaryNav() {
   const me = useMe()
   if (!session.data || session.data.two_factor.enrollment_required) return null
   return (
-    <nav aria-label="Primary" className="order-last flex w-full flex-wrap gap-x-0.5 text-sm sm:order-none sm:w-auto sm:gap-x-2 sm:text-base [&>a]:px-1.5 sm:[&>a]:px-2">
+    <nav aria-label="Primary" className="order-last flex w-full flex-wrap gap-x-0 text-sm sm:order-none sm:w-auto sm:gap-x-2 sm:text-base [&>a]:px-0.5 sm:[&>a]:px-2">
       <Link to="/month" className={link} aria-label="Monthly view">
-        <Short short="Month" full="Monthly view" />
+        <Short short="Monthly" full="Monthly view" />
       </Link>
       <Link to="/outlook" className={link}>
         Outlook
