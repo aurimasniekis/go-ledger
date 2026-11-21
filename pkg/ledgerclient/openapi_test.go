@@ -142,6 +142,7 @@ func keys(m map[string]bool) []string {
 var notImplemented = map[string]string{
 	"getOpenAPIJSON":    "the API description itself; the client is built against the document",
 	"getOpenAPIYAML":    "the API description itself",
+	"postMCP":           "the Model Context Protocol endpoint (ADR-0037); MCP clients speak JSON-RPC to it, and 'ledger mcp stdio' reaches the API through Client.Raw",
 	"setUserPassword":   "credential change; session/password flows are for the UI and 'ledger auth set-password', and need recent authentication that a token is not meant to bypass",
 	"signIn":            "cookie sessions belong to the browser UI; the client authenticates with API tokens",
 	"signOut":           "cookie sessions",

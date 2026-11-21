@@ -396,3 +396,30 @@ auth:
   # reset-2fa can).
   # Environment: LEDGER_AUTH_REQUIRE_2FA  Flag: --auth.require_2fa
   require_2fa: false
+
+mcp:
+
+  # Serve the MCP endpoint (streamable HTTP, POST /api/v1/mcp). Every call
+  # needs an API token and is limited to what the token's grants allow,
+  # exactly as through the HTTP API. false removes the endpoint (404). The
+  # stdio mode (ledger mcp stdio) is a separate client-side command and is not
+  # affected.
+  # Environment: LEDGER_MCP_ENABLED  Flag: --mcp.enabled
+  enabled: true
+
+  # Sustained MCP requests allowed per API token per minute (1 to 100000);
+  # more are refused with 429 rate_limited and Retry-After. Counted in memory
+  # per process, reset on restart.
+  # Environment: LEDGER_MCP_REQUESTS_PER_MINUTE  Flag: --mcp.requests_per_minute
+  requests_per_minute: 120
+
+  # Most MCP requests one API token may send at once before the per-minute
+  # rate applies (1 to 10000).
+  # Environment: LEDGER_MCP_BURST  Flag: --mcp.burst
+  burst: 30
+
+  # Maximum size of one MCP request body in bytes (1024 to 16777216); larger
+  # bodies are refused with 413. The general http.max_body_bytes applies as
+  # well.
+  # Environment: LEDGER_MCP_MAX_REQUEST_BYTES  Flag: --mcp.max_request_bytes
+  max_request_bytes: 262144

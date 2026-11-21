@@ -185,6 +185,66 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 	return nil
 }
 
+// RawResponse is an answer of [Client.Raw].
+type RawResponse struct {
+	Status int
+	Body   []byte
+}
+
+// Raw performs one call of the API and returns the answer whatever its
+// status, for callers (the MCP stdio mode) that relay answers unchanged. path
+// is relative to /api/v1 and starts with "/"; query and ifMatch (an entity tag
+// such as "3", or empty) are optional. A body is sent as JSON, or as a merge
+// patch for PATCH. Transport problems are errors; a 4xx or 5xx answer is not.
+// The token is never part of an error.
+func (c *Client) Raw(ctx context.Context, method, path string, query url.Values, body []byte, ifMatch string) (*RawResponse, error) {
+	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") {
+		return nil, errors.New("ledgerclient: path must start with / and hold no query")
+	}
+	u := c.base + APIPath + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	hr, err := http.NewRequestWithContext(ctx, method, u, rd)
+	if err != nil {
+		return nil, fmt.Errorf("ledgerclient: build request: %w", err)
+	}
+	hr.Header.Set("Authorization", "Bearer "+c.token)
+	hr.Header.Set("Accept", "application/json")
+	hr.Header.Set("User-Agent", c.ua)
+	if body != nil {
+		ct := "application/json"
+		if method == http.MethodPatch {
+			ct = "application/merge-patch+json"
+		}
+		hr.Header.Set("Content-Type", ct)
+	}
+	if ifMatch != "" {
+		hr.Header.Set("If-Match", ifMatch)
+	}
+	resp, err := c.hc.Do(hr)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return nil, fmt.Errorf("ledgerclient: %s %s: %w", method, APIPath+path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("ledgerclient: read response: %w", err)
+	}
+	if len(data) > maxResponseBytes {
+		return nil, errors.New("ledgerclient: response is too large")
+	}
+	return &RawResponse{Status: resp.StatusCode, Body: data}, nil
+}
+
 func decodeError(status int, data []byte) *APIError {
 	e := &APIError{Status: status}
 	if json.Unmarshal(data, e) != nil || e.Code == "" {

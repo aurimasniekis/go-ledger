@@ -2344,7 +2344,58 @@ paths:
                 $ref: "#/components/schemas/PaymentMatch"
         default:
           $ref: "#/components/responses/Error"
+  /mcp:
+    post:
+      operationId: postMCP
+      x-ledger-access: token
+      security:
+        - bearerAuth: []
+      summary: Model Context Protocol endpoint (streamable HTTP)
+      description: |
+        The MCP server (ADR-0037): JSON-RPC 2.0 messages over streamable
+        HTTP, stateless, with plain JSON answers (no event stream, no
+        session). Send `Authorization: Bearer <API token>`; sessions are
+        refused with 403. A client lists the tools with `tools/list` and
+        calls them with `tools/call`.
+
+        Every tool maps to one operation of this API and runs through that
+        operation's own route with the caller's token, so validation, grants
+        and audit are the same as a direct call: a tool that needs
+        `commitments:write` answers a token without it with a tool error
+        (`isError`) naming the grant, and every state-changing call is
+        recorded as `mcp.tool_called` (tool and outcome, never arguments)
+        besides the `token.write_used` entry of the operation itself.
+        Tools are annotated read-only, write or destructive. Read-only
+        context (the caller's identity and grants, the grant vocabulary and
+        this API description) is offered as resources. Nothing secret is in a
+        tool result or a resource.
+
+        Requests are limited per token (`mcp.requests_per_minute`,
+        `mcp.burst`): more are 429 `rate_limited` with Retry-After. A body
+        above `mcp.max_request_bytes` is 413. GET and DELETE are 405. With
+        `mcp.enabled: false` the endpoint answers 404 `not_found`.
+      tags: [mcp]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: A JSON-RPC 2.0 request, notification or batch of the Model Context Protocol.
+      responses:
+        "200":
+          description: The JSON-RPC response.
+          content:
+            application/json:
+              schema:
+                type: object
+        "202":
+          description: A notification or response was accepted; there is no body.
+        default:
+          $ref: "#/components/responses/Error"
 tags:
+  - name: mcp
+    description: Model Context Protocol server.
   - name: meta
     description: The API description itself.
   - name: access

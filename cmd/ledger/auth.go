@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -61,6 +62,8 @@ type apiParts struct {
 	tokens      *tokens.Service
 	// oidc is single sign-on, set by ledger serve when it is configured.
 	oidc *httpapi.OIDCDeps
+	// mcp serves the MCP endpoint, set by ledger serve when mcp.enabled.
+	mcp http.Handler
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their

@@ -1,0 +1,187 @@
+package mcpserver
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/jsonschema-go/jsonschema"
+
+	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+)
+
+var toolName = regexp.MustCompile(`^[a-z][a-z0-9_]{2,63}$`)
+
+func TestRegistryIsConsistent(t *testing.T) {
+	seen := map[string]bool{}
+	for _, tl := range Tools() {
+		if !toolName.MatchString(tl.Name) || seen[tl.Name] {
+			t.Errorf("tool name %q is invalid or duplicated", tl.Name)
+		}
+		seen[tl.Name] = true
+		if tl.Title == "" || len(tl.Description) < 40 {
+			t.Errorf("%s needs a title and a real description", tl.Name)
+		}
+		if !tl.Grant.Valid() {
+			t.Errorf("%s declares unknown grant %s", tl.Name, tl.Grant)
+		}
+		switch {
+		case tl.Kind == KindRead && tl.Method != http.MethodGet:
+			t.Errorf("%s is a read tool on %s", tl.Name, tl.Method)
+		case tl.Kind != KindRead && tl.Method == http.MethodGet:
+			t.Errorf("%s is a %s tool on GET", tl.Name, tl.Kind)
+		case tl.Method == http.MethodDelete && tl.Kind != KindDestructive:
+			t.Errorf("%s deletes but is not marked destructive", tl.Name)
+		case tl.Kind != KindRead && tl.Grant.Action != authz.ActionWrite:
+			t.Errorf("%s changes state but needs %s", tl.Name, tl.Grant)
+		}
+		raw, _ := json.Marshal(tl.Schema)
+		var sc jsonschema.Schema
+		if err := json.Unmarshal(raw, &sc); err != nil {
+			t.Fatalf("%s schema: %v", tl.Name, err)
+		}
+		if _, err := sc.Resolve(nil); err != nil {
+			t.Errorf("%s schema does not resolve: %v", tl.Name, err)
+		}
+		if sc.Type != "object" || sc.AdditionalProperties == nil {
+			t.Errorf("%s schema must be an object that refuses unknown members", tl.Name)
+		}
+		for name, p := range sc.Properties {
+			if p.Description == "" && len(p.Enum) == 0 && p.Items == nil {
+				t.Errorf("%s.%s has no description", tl.Name, name)
+			}
+		}
+	}
+}
+
+func TestSchemasRejectBadArguments(t *testing.T) {
+	if srv, err := NewServer(Options{}); err == nil || srv != nil {
+		t.Fatal("a server without a caller must be refused")
+	}
+	s := &server{tools: map[string]*boundTool{}}
+	for _, tl := range registry() {
+		raw, _ := json.Marshal(tl.Schema)
+		var sc jsonschema.Schema
+		_ = json.Unmarshal(raw, &sc)
+		res, _ := sc.Resolve(nil)
+		s.tools[tl.Name] = &boundTool{Tool: tl, schema: res}
+	}
+	const id = "01JD3Y4C8V9M2Q7W5R6T0XZBNT"
+	const sched = `"schedule":{"version":1,"frequency":"monthly","interval":1,"day":1}`
+	cases := []struct {
+		tool, args string
+		ok         bool
+	}{
+		{"list_commitments", "{}", true},
+		{"list_commitments", "", true},
+		{"list_commitments", `{"kind":["service"],"limit":10}`, true},
+		{"list_commitments", `{"kind":["bogus"]}`, false},
+		{"list_commitments", `{"limit":0}`, false},
+		{"list_commitments", `{"limit":201}`, false},
+		{"list_commitments", `{"extra":1}`, false},
+		{"list_commitments", "[1]", false},
+		{"list_occurrences", "{}", false},
+		{"list_occurrences", `{"month":"2026-13"}`, false},
+		{"list_occurrences", `{"month":"2026-11"}`, true},
+		{"get_commitment", `{"id":"nope"}`, false},
+		{"get_commitment", `{"id":"` + id + `"}`, true},
+		{"delete_commitment", `{"id":"` + id + `"}`, false},
+		{"delete_commitment", `{"id":"` + id + `","version":2}`, true},
+		{"create_commitment", `{"name":"x","kind":"service","amount":{"amount":"1.5","currency":"EUR"},"schedule":{"version":1,"frequency":"annual","month":2,"day":29},"start_date":"2026-01-01"}`, true},
+		{"create_commitment", `{"name":"x","kind":"service","amount":{"amount":1.5,"currency":"EUR"},` + sched + `,"start_date":"2026-01-01"}`, false},
+		{"create_commitment", `{"name":"x","kind":"service","amount":{"amount":"1.5","currency":"eur"},` + sched + `,"start_date":"2026-01-01"}`, false},
+		{"create_commitment", `{"name":"x","kind":"service","amount":{"amount":"1.5","currency":"EUR"},"schedule":{"version":1,"frequency":"weekly"},"start_date":"2026-01-01"}`, false},
+	}
+	for _, c := range cases {
+		_, bad := s.parse(s.tools[c.tool], json.RawMessage(c.args))
+		if (bad == nil) != c.ok {
+			t.Errorf("%s %s: accepted=%v, want %v", c.tool, c.args, bad == nil, c.ok)
+		}
+	}
+}
+
+func TestBuildRequest(t *testing.T) {
+	get := func(name string) Tool { tl, _ := ToolByName(name); return tl }
+	id := "01JD3Y4C8V9M2Q7W5R6T0XZBNT"
+	r, err := buildRequest(get("list_occurrences"), map[string]any{"month": "2026-11", "commitment_id": []any{id, id}, "include_cancelled": true, "limit": float64(5)})
+	if err != nil || r.Method != "GET" || r.Path != "/occurrences" || r.Body != nil {
+		t.Fatal(r, err)
+	}
+	want := url.Values{"month": {"2026-11"}, "commitment_id": {id, id}, "include_cancelled": {"true"}, "limit": {"5"}}
+	if r.Query.Encode() != want.Encode() {
+		t.Errorf("query %v, want %v", r.Query, want)
+	}
+	r, err = buildRequest(get("delete_commitment"), map[string]any{"id": id, "version": float64(7)})
+	if err != nil || r.Path != "/commitments/"+id || r.IfMatch != `"7"` || len(r.Query) != 0 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	r, err = buildRequest(get("create_commitment"), map[string]any{"name": "a/b?c", "kind": "service"})
+	if err != nil || r.Path != "/commitments" || r.IfMatch != "" || !strings.Contains(string(r.Body), `"name":"a/b?c"`) {
+		t.Fatalf("%+v %v", r, err)
+	}
+	// A path member is escaped, never spliced.
+	r, err = buildRequest(get("get_commitment"), map[string]any{"id": "../users?x=1"})
+	if err != nil || r.Path != "/commitments/..%2Fusers%3Fx=1" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if _, err := buildRequest(get("get_commitment"), map[string]any{}); err == nil {
+		t.Error("a missing path member must be an error")
+	}
+}
+
+func TestLimiter(t *testing.T) {
+	now := time.Unix(0, 0)
+	l := NewLimiter(60, 3, func() time.Time { return now })
+	for i := 0; i < 3; i++ {
+		if ok, _ := l.Allow("a"); !ok {
+			t.Fatalf("burst request %d refused", i)
+		}
+	}
+	ok, wait := l.Allow("a")
+	if ok || wait <= 0 || wait > time.Second {
+		t.Fatalf("over the burst: ok=%v wait=%v", ok, wait)
+	}
+	if ok, _ := l.Allow("b"); !ok {
+		t.Error("keys are independent")
+	}
+	now = now.Add(wait)
+	if ok, _ := l.Allow("a"); !ok {
+		t.Error("a token is available after the advised wait")
+	}
+	now = now.Add(time.Hour)
+	l.Allow("c")
+	if len(l.buckets) != 1 {
+		t.Errorf("idle buckets were not pruned: %d", len(l.buckets))
+	}
+}
+
+// TestDocsListEveryTool keeps docs/mcp.md in step with the registry: it embeds
+// Doc() between markers. Run with UPDATE_DOCS=1 to rewrite it.
+func TestDocsListEveryTool(t *testing.T) {
+	const path = "../../docs/mcp.md"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	const start, end = "<!-- tools:start -->\n", "<!-- tools:end -->"
+	i, j := strings.Index(doc, start), strings.Index(doc, end)
+	if i < 0 || j < i {
+		t.Fatal("docs/mcp.md lacks the tools markers")
+	}
+	want := doc[:i+len(start)] + "\n" + Doc() + doc[j:]
+	if os.Getenv("UPDATE_DOCS") != "" {
+		if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if doc != want {
+		t.Error("docs/mcp.md is out of date: run UPDATE_DOCS=1 go test ./internal/mcpserver -run TestDocsListEveryTool")
+	}
+}
