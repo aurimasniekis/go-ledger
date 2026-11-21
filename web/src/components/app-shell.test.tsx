@@ -59,6 +59,16 @@ describe('shell while signed in', () => {
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 
+  it('makes each visible link label one of the words in its accessible name (WCAG 2.5.3)', async () => {
+    await open()
+    for (const link of within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link')) {
+      // A shortened link shows its short text in the first span; the others show their whole text.
+      const visible = (link.querySelector('span')?.textContent ?? link.textContent ?? '').toLowerCase()
+      const words = (link.getAttribute('aria-label') ?? link.textContent ?? '').toLowerCase().split(/\W+/)
+      expect(words, `"${visible}" is a word of "${link.getAttribute('aria-label')}"`).toContain(visible)
+    }
+  })
+
   it('closes the Account menu when a link to the page already shown is followed, and keeps focus on its button', async () => {
     // Navigating to another page closes the menu by itself (it is open only on the path it was opened on), so only a
     // link to the current page exercises the close.

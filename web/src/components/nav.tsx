@@ -9,14 +9,14 @@ import { Button } from '@/components/ui/button'
 const link = 'block rounded-md px-2 py-1.5 hover:bg-muted [&.active]:font-semibold [&.active]:underline'
 
 /**
- * A link label that is shorter on a phone, so the four links fit on one row (the header is two rows at 390 px).
- * The accessible name is always the full one (aria-label); the short text is contained in it (WCAG 2.5.3).
+ * A link label that is shorter below 768 px, so the header stays at most two rows from 640 px up.
+ * The accessible name is always the full one (aria-label), and the short text is one of its words (WCAG 2.5.3).
  */
 function Short({ short, full }: { short: string; full: string }) {
   return (
     <>
-      <span aria-hidden className="sm:hidden">{short}</span>
-      <span aria-hidden className="hidden sm:inline">{full}</span>
+      <span aria-hidden className="md:hidden">{short}</span>
+      <span aria-hidden className="hidden md:inline">{full}</span>
     </>
   )
 }
@@ -29,7 +29,7 @@ export function PrimaryNav() {
   return (
     <nav aria-label="Primary" className="order-last flex w-full flex-wrap gap-x-0.5 text-sm sm:order-none sm:w-auto sm:gap-x-2 sm:text-base [&>a]:px-1.5 sm:[&>a]:px-2">
       <Link to="/month" className={link} aria-label="Monthly view">
-        <Short short="Month" full="Monthly view" />
+        <Short short="Monthly" full="Monthly view" />
       </Link>
       <Link to="/outlook" className={link}>
         Outlook

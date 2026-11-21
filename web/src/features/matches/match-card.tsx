@@ -10,7 +10,7 @@ import { ProvenanceMarker } from '@/features/month/provenance'
 import { isZeroAmount, monthLabel, utcStamp } from '@/features/month/month'
 import { useSession } from '@/lib/auth'
 import { Bot, KeyRound } from 'lucide-react'
-import { actorPhrase, decisionLine, deciderMarker, historyVerb, originLine, plainReason } from './explain'
+import { AMBIGUITY_CODES, actorPhrase, decisionLine, deciderMarker, historyVerb, originLine, plainReason } from './explain'
 import { matchAction, matchesKey, useCommitmentName, useOccurrence, type ActionInput } from './api'
 import type { MatchAction, MatchState, PaymentMatch } from './types'
 
@@ -74,7 +74,7 @@ type PaidBy = 'bank' | 'manual' | 'override' | 'unknown'
  */
 const PAID_NOTE: Record<PaidBy, string> = {
   bank: 'Another bank transaction already pays this occurrence in full. Confirming this one would pay more than the amount due, so the server refuses it unless you allow an overpayment. Reject it unless you mean to pay twice.',
-  manual: 'You recorded this occurrence as paid by hand. If this bank transaction is that same payment, reject this suggestion: your record already counts, and confirming would count the payment a second time (the server refuses that unless you allow an overpayment). Ledger cannot link a bank transaction to a manual record. Confirm it only if you really paid twice.',
+  manual: 'You recorded this occurrence as paid by hand. If this transaction is that payment, reject it: your record already counts, and confirming would count it twice (the server refuses that unless you allow an overpayment). Ledger cannot link the two, so confirm only if you paid twice.',
   override: 'This occurrence was marked paid by hand, with a reason, over what the payments show. Confirming this bank transaction would add a payment on top of that, and the server refuses it unless you allow an overpayment. If the transaction is that payment, reject this suggestion; confirm it only if you really paid twice.',
   unknown: 'This occurrence is already paid in full. Confirming this transaction would pay more than the amount due, so the server refuses it unless you allow an overpayment. Reject it unless you mean to pay twice.',
 }
@@ -169,8 +169,8 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
   const canConfirm = booked && t.countable
   const heading = name.data ?? (occ.isError || name.isError ? 'Unnamed commitment' : 'Loading commitment…')
   const plain = plainReason(m.reason)
-  // The reason was written when the suggestion was made: once the occurrence is paid its "a person has to choose" line is stale.
-  const reasonLines = alreadyPaid ? plain.lines.filter((l) => !/a person has to choose/.test(l)) : plain.lines
+  // The reason was written when the suggestion was made: once the occurrence is paid, its ambiguity lines (by engine code) are stale.
+  const reasonLines = alreadyPaid ? plain.lines.filter((l) => !(l.code !== null && AMBIGUITY_CODES.includes(l.code))) : plain.lines
   const decision = decisionLine(m, me)
   const marker = deciderMarker(m)
   const shortfall = m.state === 'confirmed' && occ.data?.payment?.status === 'paid' && occ.data.payment.shortfall_amount && !isZeroAmount(occ.data.payment.shortfall_amount.amount) ? occ.data.payment.shortfall_amount : null
@@ -269,7 +269,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           <>
             <dt className="text-muted-foreground">Why</dt>
             <dd className="min-w-0 break-words">
-              {reasonLines.length > 0 && <ul className="list-disc space-y-0.5 pl-4">{reasonLines.map((l) => <li key={l}>{l}</li>)}</ul>}
+              {reasonLines.length > 0 && <ul className="list-disc space-y-0.5 pl-4">{reasonLines.map((l) => <li key={l.text}>{l.text}</li>)}</ul>}
               {plain.verbatim && <p>{plain.verbatim}</p>}
               {plain.hint && <p className="text-xs text-muted-foreground">{plain.hint}</p>}
               {alreadyPaid && <p className="text-xs text-muted-foreground">This reason was written when the suggestion was made and may be out of date.</p>}
