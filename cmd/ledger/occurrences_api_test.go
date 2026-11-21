@@ -93,6 +93,54 @@ func TestOccurrencesTimezoneBoundary(t *testing.T) {
 	}
 }
 
+// TestOccurrencesSummaryAPI covers the monthly view: exact per-currency totals,
+// freshness, the grant and parameter validation (task C4).
+func TestOccurrencesSummaryAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	f.createCommitment(t, strings.Replace(monthEndBody, `"day":31`, `"day":5`, 1))
+	f.createCommitment(t, strings.Replace(strings.Replace(monthEndBody, `"day":31`, `"day":28`, 1), `"currency":"EUR"`, `"currency":"USD"`, 1))
+	rec := f.do("GET", "/api/v1/occurrences/summary?month=2026-11", "", map[string]string{"X-Test-User": f.ids["alice"]})
+	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("summary: %d %s", rec.Code, rec.Body.String())
+	}
+	var s struct {
+		AsOf  string `json:"as_of"`
+		Items []struct {
+			ID             string `json:"id"`
+			CommitmentName string `json:"commitment_name"`
+		} `json:"items"`
+		Totals []struct {
+			Currency    string                  `json:"currency"`
+			Due         struct{ Amount string } `json:"due"`
+			Outstanding struct{ Amount string } `json:"outstanding"`
+			Overdue     struct{ Amount string } `json:"overdue"`
+			Count       int                     `json:"occurrence_count"`
+		} `json:"totals"`
+		Freshness struct {
+			ComputedAt string `json:"computed_at"`
+			Bank       struct {
+				Available bool `json:"available"`
+			} `json:"bank"`
+		} `json:"freshness"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.AsOf != "2026-11-21" || len(s.Items) != 2 || s.Items[0].CommitmentName != "VPS" || len(s.Totals) != 2 || s.Freshness.Bank.Available || s.Freshness.ComputedAt != "2026-11-21T12:00:00Z" {
+		t.Fatalf("summary body: %s", rec.Body.String())
+	}
+	eur, usd := s.Totals[0], s.Totals[1]
+	if eur.Currency != "EUR" || eur.Due.Amount != "10.00" || eur.Overdue.Amount != "10.00" || usd.Currency != "USD" || usd.Due.Amount != "10.00" || usd.Overdue.Amount != "0.00" || eur.Count != 1 {
+		t.Fatalf("totals: %s", rec.Body.String())
+	}
+	for _, q := range []string{"", "?month=2026-13", "?month=2026-01&month=2026-02", "?month=2031-12", "?month=2026-11&limit=2"} {
+		if rec := f.do("GET", "/api/v1/occurrences/summary"+q, "", map[string]string{"X-Test-User": f.ids["alice"]}); rec.Code != 400 {
+			t.Errorf("summary%s: %d %s", q, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestOccurrencesAPI(t *testing.T) {
 	f := newAPIFixture(t)
 	f.now = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)

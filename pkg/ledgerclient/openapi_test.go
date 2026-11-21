@@ -149,6 +149,8 @@ var notImplemented = map[string]string{
 	"startTOTPEnrollment":     "session-only: two-factor enrolment, not reachable with a bearer token",
 	"confirmTOTPEnrollment":   "session-only: two-factor enrolment, not reachable with a bearer token",
 	"regenerateRecoveryCodes": "session-only: recovery codes, not reachable with a bearer token",
+
+	"getOccurrencesSummary": "the monthly view serves the browser UI (task C4); a typed client method and CLI view come with the MCP read tool (P-MCP2), which reuses internal/domain/monthview",
 }
 
 func TestOperationsMatchOpenAPI(t *testing.T) {

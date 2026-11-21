@@ -12,7 +12,7 @@ export interface Req {
   headers: Record<string, string>
 }
 export type Reply = { status?: number; json?: unknown; headers?: Record<string, string> }
-export type Handler = Reply | ((req: Req) => Reply)
+export type Handler = Reply | ((req: Req) => Reply | Promise<Reply>)
 
 export const ok = (json: unknown, status = 200): Reply => ({ status, json })
 export const none = (): Reply => ({ status: 204 })
@@ -37,7 +37,7 @@ export function installApi(routes: Record<string, Handler>) {
       }
       calls.push(req)
       const h = routes[`${req.method} ${req.path}`]
-      const reply = h === undefined ? fail(404, 'not_found', `no fake for ${req.method} ${req.path}`) : typeof h === 'function' ? h(req) : h
+      const reply = await (h === undefined ? fail(404, 'not_found', `no fake for ${req.method} ${req.path}`) : typeof h === 'function' ? h(req) : h)
       const status = reply.status ?? 200
       return new Response(status === 204 ? null : JSON.stringify(reply.json ?? {}), { status, headers: reply.headers })
     }),

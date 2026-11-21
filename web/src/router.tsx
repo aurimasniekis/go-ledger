@@ -9,6 +9,8 @@ import type { QueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { ThemeSelect } from '@/components/theme-select'
 import { DesignPage } from '@/routes-design'
+import { MonthPage } from '@/features/month/month-page'
+import { isMonth, monthOf } from '@/features/month/month'
 import { AccountNav } from '@/features/auth/account-nav'
 import { RequireSession } from '@/features/auth/require-session'
 import { SignInPage } from '@/features/auth/sign-in'
@@ -39,6 +41,9 @@ function Shell() {
         <nav aria-label="Main" className="flex flex-wrap items-center gap-2">
           <Link to="/" className="rounded-md px-2 py-1 hover:bg-muted [&.active]:font-semibold">
             Overview
+          </Link>
+          <Link to="/month" className="rounded-md px-2 py-1 hover:bg-muted [&.active]:font-semibold">
+            Month
           </Link>
           <AccountNav />
           <ThemeSelect />
@@ -96,11 +101,23 @@ const appRoute = createRoute({ getParentRoute: () => rootRoute, id: 'app', compo
 const child = <P extends string>(path: P, component: () => React.JSX.Element) =>
   createRoute({ getParentRoute: () => appRoute, path, component })
 
+// The month comes from the address (?month=YYYY-MM); without a valid one it is the current month in the browser's zone (limitation: the server's reporting zone may differ near a month boundary).
+const monthRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/month',
+  validateSearch: (s: Record<string, unknown>): { month?: string } => (isMonth(s.month) ? { month: s.month } : {}),
+  component: function MonthRoute() {
+    const { month } = monthRoute.useSearch()
+    return <MonthPage month={month ?? monthOf(new Date())} />
+  },
+})
+
 const routeTree = rootRoute.addChildren([
   signInRoute,
   designRoute,
   appRoute.addChildren([
     child('/', Overview),
+    monthRoute,
     child('/account/security', SecurityPage),
     child('/account/sessions', SessionsPage),
     child('/account/tokens', MyTokensPage),
