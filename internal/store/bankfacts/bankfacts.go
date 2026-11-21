@@ -737,6 +737,12 @@ func (s *Store) PurgeConnection(ctx context.Context, id banking.ConnectionID, ex
 // RESTRICT action with the trigger-class code, an unresolved plain foreign
 // key with the foreign-key one; neither can come from anything else in the
 // purge, whose statements fire no triggers that raise.
+//
+// SQLITE_CONSTRAINT_TRIGGER is also the code of any RAISE(ABORT, ...) in a
+// trigger, not only of an ON DELETE RESTRICT violation. A future BEFORE DELETE
+// trigger on a bank table, or on a table the purge deletes from, that raises
+// would therefore be reported as ErrPurgeBlocked too. Whoever adds such a
+// trigger must revisit this mapping and the purge's statements (B1 re-review N1).
 func purgeError(id banking.ConnectionID, err error) error {
 	if serr, ok := errors.AsType[*sqlite.Error](err); ok && (serr.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY || serr.Code() == sqlite3.SQLITE_CONSTRAINT_TRIGGER) {
 		return fmt.Errorf("bankfacts: purge connection %s: %w", id, banking.ErrPurgeBlocked)
