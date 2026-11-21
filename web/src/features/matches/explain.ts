@@ -87,7 +87,7 @@ export function actorPhrase(d: Decider | null | undefined, me?: string): string 
   if (!d) return 'nobody yet'
   if (d.kind === 'system') return 'the matching engine'
   if (d.kind === 'user') return !d.user_id || !me || d.user_id === me ? 'you' : 'another person'
-  if (d.kind === 'token') return 'an API token or MCP client (not this screen)'
+  if (d.kind === 'token') return d.via === 'mcp' ? 'an MCP client (not this screen)' : d.via === 'token' ? 'an API token (not this screen)' : 'an API token or MCP client (not this screen)'
   return d.kind
 }
 
@@ -95,7 +95,7 @@ export function actorPhrase(d: Decider | null | undefined, me?: string): string 
 export function deciderMarker(m: PaymentMatch): { kind: 'system' | 'token'; label: string } | null {
   const d = m.decided_by ?? m.created_by
   if (d.kind === 'system') return { kind: 'system', label: m.state === 'suggested' ? 'Engine suggestion' : 'Decided by the engine' }
-  if (d.kind === 'token') return { kind: 'token', label: 'Via API token or MCP' }
+  if (d.kind === 'token') return { kind: 'token', label: d.via === 'mcp' ? 'Via MCP' : d.via === 'token' ? 'Via API token' : 'Via API token or MCP' }
   return null
 }
 
@@ -124,6 +124,7 @@ const HISTORY_VERB: Record<string, string> = {
   unmatched: 'Unmatched',
   corrected: 'Corrected to',
   reversed: 'Reversed',
+  unconfirmed: 'Confirmation undone, back to a suggestion',
 }
 
 /** The verb of a history row ("Corrected to", "Confirmed"); the raw action when it is not known. */

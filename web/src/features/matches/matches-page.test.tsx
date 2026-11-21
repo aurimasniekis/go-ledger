@@ -96,22 +96,42 @@ describe('confirming: nothing is shown as saved before the server confirms it', 
     await waitFor(() => expect(screen.queryByRole('article', { name: 'Rent' })).not.toBeInTheDocument())
   })
 
-  it('the unmatch after a confirmation is its own save, confirmed by the server, and the notice stays until dismissed', async () => {
+  it('the undo after a confirmation is the server unconfirm, its own save, and the suggestion comes back', async () => {
     extra['POST /api/v1/payment-matches/a/confirm'] = () => {
       store = [match('a', { state: 'confirmed', version: 2, counts_as_evidence: true })]
       return ok(store[0])
     }
-    extra['POST /api/v1/payment-matches/a/unmatch'] = () => {
-      store = [match('a', { state: 'rejected', version: 3 })]
+    extra['POST /api/v1/payment-matches/a/unconfirm'] = () => {
+      store = [match('a', { version: 3 })]
       return ok(store[0])
     }
     start()
     await userEvent.click(within(await screen.findByRole('article', { name: 'Rent' })).getByRole('button', { name: 'Confirm match' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Unmatch (final)' }))
-    expect(await screen.findByText('Unmatched')).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole('button', { name: 'Undo confirmation' }))
+    expect(await screen.findByText('Undone')).toBeInTheDocument()
+    expect(screen.getByText(/The match is a suggestion again/)).toHaveTextContent('Rent, November 2026')
+    expect(posts()[1]!.path).toMatch(/payment-matches\/a\/unconfirm$/)
     expect(posts()[1]!.headers['If-Match']).toBe('"2"')
+    // The suggestion is back in the queue.
+    expect(await screen.findByRole('article', { name: 'Rent' })).toHaveAttribute('data-state', 'suggested')
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
-    expect(screen.queryByText('Unmatched')).not.toBeInTheDocument()
+    expect(screen.queryByText('Undone')).not.toBeInTheDocument()
+  })
+
+  it('says why an undo was refused (window closed) and leaves the match confirmed, with the final Unmatch still on the card', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm'] = () => {
+      store = [match('a', { state: 'confirmed', version: 2, counts_as_evidence: true })]
+      return ok(store[0])
+    }
+    extra['POST /api/v1/payment-matches/a/unconfirm'] = () => fail(409, 'match_undo_window_closed', 'closed')
+    start()
+    await userEvent.click(within(await screen.findByRole('article', { name: 'Rent' })).getByRole('button', { name: 'Confirm match' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Undo confirmation' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Undo not saved')
+    expect(alert).toHaveTextContent('Undo is no longer possible')
+    expect(alert).toHaveTextContent('Unmatch in the Confirmed list (final)')
+    expect(screen.queryByText('Undone')).not.toBeInTheDocument()
   })
 
   it('a failed save says it was not saved, keeps the suggestion as it was, and can be tried again', async () => {
@@ -701,7 +721,7 @@ describe('focus stays put while a save is pending', () => {
 })
 
 describe('the notice after a save names what changed and is honest about Unmatch', () => {
-  it('names the commitment and the month, and warns that the unmatch is final', async () => {
+  it('names the commitment and the month, offers a real undo, and says the Confirmed list Unmatch is final', async () => {
     extra['POST /api/v1/payment-matches/a/confirm'] = () => {
       confirmedStore()
       return ok(store[0])
@@ -710,12 +730,12 @@ describe('the notice after a save names what changed and is honest about Unmatch
     await userEvent.click(within(await screen.findByRole('article', { name: 'Rent' })).getByRole('button', { name: 'Confirm match' }))
     const notice = (await screen.findByText(/Match confirmed/)).closest('[role="status"]')!
     expect(notice).toHaveTextContent('Match confirmed for Rent, November 2026')
-    expect(notice).toHaveTextContent('Unmatching below is final for now')
-    expect(within(notice as HTMLElement).queryByRole('button', { name: /^Undo/ })).not.toBeInTheDocument()
-    expect(within(notice as HTMLElement).getByRole('button', { name: 'Unmatch (final)' })).toBeInTheDocument()
+    expect(notice).toHaveTextContent('Unmatch in the Confirmed list is final')
+    expect(within(notice as HTMLElement).getByRole('button', { name: 'Undo confirmation' })).toBeInTheDocument()
+    expect(within(notice as HTMLElement).queryByRole('button', { name: /Unmatch/ })).not.toBeInTheDocument()
   })
 
-  it('stays self-describing after switching view, and the unmatch says it closed the pair', async () => {
+  it('the final Unmatch on the Confirmed list stays self-describing after switching view, and says it closed the pair', async () => {
     extra['POST /api/v1/payment-matches/a/confirm'] = () => {
       confirmedStore()
       return ok(store[0])
@@ -730,8 +750,11 @@ describe('the notice after a save names what changed and is honest about Unmatch
     await screen.findByText(/Match confirmed/)
     await user.click(screen.getByRole('button', { name: 'Confirmed' }))
     await user.click((await screen.findAllByRole('button', { name: 'Unmatch (final)' }))[0]!)
-    expect(await screen.findByText('Unmatched')).toBeInTheDocument()
-    expect(screen.getByText(/this pair is closed and will not be suggested again/)).toHaveTextContent('Rent, November 2026')
+    await user.click(await screen.findByRole('button', { name: 'Unmatch now' }))
+    const saved = (await screen.findByText(/Match removed for/)).closest('[role="status"]')!
+    expect(saved).toHaveTextContent('Match removed for Rent, November 2026')
+    expect(saved).toHaveTextContent('This decision is final; the pair will not be suggested again.')
+    expect(within(saved as HTMLElement).queryByRole('button', { name: /Undo/ })).not.toBeInTheDocument()
   })
 })
 
@@ -744,5 +767,62 @@ describe('the page says offline once', () => {
     expect(card).not.toHaveTextContent(/offline/)
     expect(within(card).getByRole('button', { name: 'Confirm match' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Run matching now' })).toBeDisabled()
+  })
+})
+
+describe('the Closed list: rejected and reversed matches, read only', () => {
+  const closed = () => [
+    match('a', { state: 'rejected', version: 2, decided_by: { kind: 'user', user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA', via: 'session' }, reason: 'wrong month' }),
+    match('b', { state: 'reversed', version: 3, decided_by: { kind: 'token', user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA', via: 'mcp' }, origin: 'user' }),
+  ]
+  it('lists both outcomes with no action, says who closed each and how, and asks the server for both states', async () => {
+    store = closed()
+    extra['GET /api/v1/occurrences/occ-b'] = ok(occurrence('b'))
+    extra['GET /api/v1/commitments/c-b'] = ok({ id: 'c-b', name: 'Gym' })
+    extra['GET /api/v1/payment-matches'] = (r) => ok({ items: store.filter((m) => r.query.getAll('state').includes(m.state)), next_cursor: null })
+    start()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Closed' }))
+    const list = await screen.findByRole('list', { name: 'Closed matches' })
+    const rent = await within(list).findByRole('article', { name: 'Rent' })
+    expect(rent).toHaveTextContent('Rejected by you.')
+    expect(rent.querySelectorAll('button:not(summary)')).toHaveLength(0)
+    const gym = await within(list).findByRole('article', { name: 'Gym' })
+    expect(gym).toHaveTextContent('Reversed by an MCP client (not this screen).')
+    expect(gym).toHaveTextContent('Via MCP')
+    expect(within(gym).queryByRole('button')).not.toBeInTheDocument()
+    const get = calls.find((c) => c.method === 'GET' && c.path.endsWith('/payment-matches') && c.query.getAll('state').length === 2)!
+    expect(get.query.getAll('state')).toEqual(['rejected', 'reversed'])
+  })
+
+  it('filters by outcome and origin on the server, and pages with Load more', async () => {
+    store = closed()
+    const seen: string[] = []
+    extra['GET /api/v1/payment-matches'] = (r) => {
+      seen.push(r.query.toString())
+      const states = r.query.getAll('state')
+      const origin = r.query.get('origin')
+      const items = store.filter((m) => states.includes(m.state) && (!origin || m.origin === origin))
+      return r.query.get('cursor') ? ok({ items: [], next_cursor: null }) : ok({ items, next_cursor: states.length === 2 && !origin ? 'c2' : null })
+    }
+    start()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Closed' }))
+    await user.click(await screen.findByRole('button', { name: 'Load more' }))
+    await waitFor(() => expect(seen.some((q) => q.includes('cursor=c2'))).toBe(true))
+    await user.selectOptions(screen.getByLabelText('Outcome'), 'reversed')
+    await waitFor(() => expect(seen.some((q) => q === 'state=reversed')).toBe(true))
+    await user.selectOptions(screen.getByLabelText('Origin'), 'user')
+    await waitFor(() => expect(seen.some((q) => q === 'state=reversed&origin=user')).toBe(true))
+  })
+
+  it('says so when nothing is closed, and when filters hide everything', async () => {
+    store = []
+    start()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Closed' }))
+    expect(await screen.findByText(/Nothing is closed yet/)).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Origin'), 'user')
+    expect(await screen.findByText(/No closed matches fit these filters/)).toBeInTheDocument()
   })
 })

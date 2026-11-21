@@ -27,6 +27,7 @@ const VERB: Record<MatchAction, { button: string; submit: string; busy: string; 
   unmatch: { button: 'Unmatch (final)', submit: 'Unmatch now', busy: 'Unmatching…', done: 'Match removed' },
   correct: { button: 'Correct amount', submit: 'Save correction', busy: 'Saving…', done: 'Amount corrected' },
   reverse: { button: 'Reverse (payment bounced)', submit: 'Reverse now', busy: 'Reversing…', done: 'Match reversed' },
+  unconfirm: { button: 'Undo confirmation', submit: 'Undo confirmation', busy: 'Undoing…', done: 'Confirmation undone' },
 }
 
 const EXPLAIN: Partial<Record<MatchAction, string>> = {
