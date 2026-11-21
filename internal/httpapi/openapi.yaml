@@ -592,7 +592,8 @@ paths:
         plan's) cancels it instead (decision D31): it leaves the totals, the
         monthly view and the outlook, stays readable, and is audited as
         cancelled_referenced (never also as removed). A later edit that
-        schedules its month again revives it. Without
+        schedules its month again revives it: the row keeps its id and history
+        and is counted in created. Without
         effective_from the change applies from today in the reporting time
         zone, so overdue unpaid occurrences keep their terms. Audited as
         occurrences.regenerated with the effective date and the counts
@@ -1489,7 +1490,8 @@ paths:
           description: |
             When true, also returns cancelled occurrences (decision D31),
             which are left out by default. They carry cancelled_at and
-            cancelled_reason and are never part of the monthly totals.
+            cancelled_reason, have payment status cancelled and are never part
+            of the monthly totals. May be given once; a repeat is a 400.
           schema:
             type: boolean
       responses:
@@ -2604,7 +2606,13 @@ components:
         cancelled_reason:
           type: [string, "null"]
           enum: [out_of_range, terms_change, commitment_deleted, null]
-          description: Why it was cancelled; null unless cancelled_at is set.
+          description: |
+            Why it was cancelled; null unless cancelled_at is set. It follows
+            the removal path, not the cause of the edit: out_of_range for the
+            rows before an edit's effective date that a start or end date
+            correction removes, terms_change for the rows the edit's plan
+            removes (an end-date correction therefore gives both), and
+            commitment_deleted for a commitment delete.
         payment:
           $ref: "#/components/schemas/PaymentState"
     MonthSummary:
@@ -2685,13 +2693,15 @@ components:
               type: string
     PaymentStatus:
       type: string
-      enum: [paid, partially_paid, upcoming, due, overdue]
+      enum: [paid, partially_paid, upcoming, due, overdue, cancelled]
       description: |
         Derived payment status (decision D7). paid: payment evidence in the
         occurrence's currency covers its amount, or an applied "paid"
         override. partially_paid: some, not all. Otherwise by date in the
         reporting zone: upcoming before the due date, due on it, overdue from
         the day after it. Overdue always counts from the original due date.
+        cancelled: the occurrence was cancelled (cancelled_at is set, D31); it
+        is not an obligation and is never upcoming, due or overdue.
     OverrideStatus:
       type: string
       enum: [paid, unpaid]
@@ -2712,7 +2722,7 @@ components:
           allOf:
             - $ref: "#/components/schemas/PaymentStatus"
         timing:
-          description: upcoming, due or overdue for an occurrence that is not paid (for partially_paid, its unpaid remainder); null when paid.
+          description: upcoming, due or overdue for an occurrence that is not paid (for partially_paid, its unpaid remainder); null when paid or cancelled.
           type: [string, "null"]
           enum: [upcoming, due, overdue, null]
         paid_amount:
@@ -2723,6 +2733,7 @@ components:
             The amount less paid_amount, never below zero; zero when paid. Under an
             applied "unpaid" override it is the full amount (the evidence is declared
             not to settle the occurrence), so it is never zero while the status is not paid.
+            Always zero for a cancelled occurrence; paid_amount and evidence_count stay as history.
           $ref: "#/components/schemas/Money"
         overpaid_amount:
           description: paid_amount less the amount when positive, else zero. Informational; it does not change the status.

@@ -35,7 +35,7 @@ export function MonthPage({ month }: { month: string }) {
     const el = usable(opener.current) ?? usable(headerButton.current) ?? headingRef.current
     el?.focus()
   }, [restore])
-  const unpaid = (q.data?.items ?? []).filter((i) => i.payment.status !== 'paid')
+  const unpaid = (q.data?.items ?? []).filter((i) => i.payment.status !== 'paid' && i.payment.status !== 'cancelled')
 
   return (
     <section className="space-y-4" aria-labelledby="month-title">

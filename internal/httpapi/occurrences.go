@@ -159,8 +159,13 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 			WriteError(w, r, Validation("month", fmt.Sprintf("month must be within %d months after the current month", occurrences.MaxMonthsAhead)))
 			return
 		}
+		inc := q.Filter("include_cancelled", OpEq)
+		if len(inc) > 1 {
+			WriteError(w, r, Validation("include_cancelled", "include_cancelled may be given once"))
+			return
+		}
 		items, err := st.List(r.Context(), occurrences.ListFilter{Month: month, CommitmentIDs: q.Filter("commitment_id", OpEq), After: q.After, Limit: q.Limit,
-			IncludeCancelled: slices.Contains(q.Filter("include_cancelled", OpEq), "true")})
+			IncludeCancelled: slices.Contains(inc, "true")})
 		if err != nil {
 			if errors.Is(err, occurrences.ErrCursorGone) {
 				err = Validation("cursor", "cursor is not valid; start again from the first page")

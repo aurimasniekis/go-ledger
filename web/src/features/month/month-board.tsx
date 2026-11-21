@@ -211,7 +211,7 @@ function statusOf(i: MonthItem): Status {
 
 function OccurrenceRow({ item: i, onRecord }: { item: MonthItem; onRecord: (i: MonthItem) => void }) {
   const p = i.payment
-  const settled = p.status === 'paid'
+  const settled = p.status === 'paid' || p.status === 'cancelled'
   return (
     <li className="space-y-1 rounded-md border border-border bg-surface p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">

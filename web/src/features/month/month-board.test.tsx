@@ -107,6 +107,13 @@ describe('MonthBoard content', () => {
     expect(screen.getByText('Remainder due today').closest('[data-status="due"]')?.querySelector('svg')).not.toBeNull()
   })
 
+  it('a cancelled occurrence shows "Cancelled", never overdue, and offers no payment', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'cancelled', derived_status: 'cancelled', timing: null }), due_date: '2026-11-05' })]) })
+    expect(screen.getByText('Cancelled').closest('[data-status="cancelled"]')).not.toBeNull()
+    expect(screen.queryByText('Overdue')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Record payment/ })).toBeNull()
+  })
+
   it('a partly paid occurrence not yet late shows no overdue text', () => {
     board({ data: summary([item('a', { payment: payment({ status: 'partially_paid', timing: 'upcoming' }) })]) })
     expect(screen.queryByText(/Remainder/)).toBeNull()

@@ -28,6 +28,7 @@ const (
 	PaymentUpcoming      = "upcoming"
 	PaymentDue           = "due"
 	PaymentOverdue       = "overdue"
+	PaymentCancelled     = "cancelled"
 
 	OverridePaid   = "paid"
 	OverrideUnpaid = "unpaid"
