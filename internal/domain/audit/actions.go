@@ -166,6 +166,8 @@ var Definitions = map[Action][]Field{
 
 	ManualPaymentRecorded:          {f("payment_id"), f("currency")},
 	ManualPaymentDeleted:           {f("payment_id"), f("amount"), f("currency")},
+	ManualPaymentReplaced:          {f("payment_id"), f("match_id"), f("amount"), f("currency"), f("via", matchVias...)},
+	ManualPaymentRestored:          {f("payment_id"), f("match_id"), f("amount"), f("currency"), f("via", matchVias...), f("by", "unconfirmed", "unmatched")},
 	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
 	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
 

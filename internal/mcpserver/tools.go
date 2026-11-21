@@ -250,6 +250,13 @@ func matchTools() []Tool {
 		action("unconfirm_payment_match", "Undo a confirmation", "/payment-matches/{id}/unconfirm",
 			"Take back a confirmation right after it was made, on the person's instruction: the match becomes a suggestion again, exactly as before, and stops counting as payment. Only the person who confirmed it may (this token counts as its owner); otherwise match_undo_not_decider. Only while the confirmation is still the match's latest change, the person's latest match decision, and nothing else changed the occurrence since; otherwise match_undo_window_closed, and unmatch_payment_match is the way to take it back. A match created confirmed cannot be unconfirmed (invalid_match_state).",
 			KindWrite, nil),
+		action("confirm_payment_match_replacing", "Confirm a match as the payment already recorded", "/payment-matches/{id}/confirm-replacing",
+			"Confirm a suggestion as the payment the person already recorded by hand (\"this is the payment I recorded\"): the listed manual payments of the match's occurrence are marked replaced by the match and stop counting, so the payment is not counted twice; they stay listed with replaced_by_match_id. Only on the person's instruction, for the records they name; never infer it from similar amounts or dates. Each record must be of the match's occurrence (manual_payment_other_occurrence), in its currency, not deleted and not already replaced (manual_payment_not_replaceable). An overpayment by what remains is refused unless allow_overpayment is set. unconfirm_payment_match inside the undo window makes the records count again.",
+			KindWrite, map[string]any{
+				"manual_payment_ids": map[string]any{"type": "array", "items": idArg("manual payment"), "minItems": 1, "maxItems": 20, "uniqueItems": true,
+					"description": "The manual payments of the match's occurrence that this bank payment is."},
+				"allow_overpayment": allow,
+			}, "manual_payment_ids"),
 		action("reverse_payment_match", "Reverse a confirmed match", "/payment-matches/{id}/reverse",
 			"Record that a confirmed match was right but the payment was reversed (bounced, refunded, returned): the occurrence reopens and the history of both decisions is kept. Final. Destructive; confirm with the person first.",
 			KindDestructive, nil),

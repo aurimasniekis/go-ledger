@@ -45,6 +45,7 @@ var (
 	opRejectMatch    = operation{ID: "rejectPaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/reject"}
 	opUnmatchMatch   = operation{ID: "unmatchPaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/unmatch"}
 	opUnconfirmMatch = operation{ID: "unconfirmPaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/unconfirm"}
+	opReplaceMatch   = operation{ID: "confirmPaymentMatchReplacing", Method: http.MethodPost, Path: "/payment-matches/{id}/confirm-replacing"}
 	opCorrectMatch   = operation{ID: "correctPaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/correct"}
 	opReverseMatch   = operation{ID: "reversePaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/reverse"}
 	opRunMatching    = operation{ID: "runPaymentMatching", Method: http.MethodPost, Path: "/payment-matching/runs"}
@@ -75,7 +76,7 @@ var operations = []operation{
 	opListOccur, opGetOccur,
 	opListManualPayments, opRecordManualPayment, opGetManualPayment, opDeleteManualPayment,
 	opSetOverride, opUndoOverride,
-	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch, opUnconfirmMatch,
+	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch, opUnconfirmMatch, opReplaceMatch,
 	opRunMatching,
 	opListBankApps, opListBankInstitutions, opListBankConns, opStartBankConn, opGetBankConn, opReconnectBankConn, opRefreshBankConn, opDisconnectBankConn,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,

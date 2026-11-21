@@ -921,6 +921,62 @@ Take back a confirmation right after it was made, on the person's instruction: t
 
 </details>
 
+### `confirm_payment_match_replacing`
+
+Confirm a suggestion as the payment the person already recorded by hand ("this is the payment I recorded"): the listed manual payments of the match's occurrence are marked replaced by the match and stop counting, so the payment is not counted twice; they stay listed with replaced_by_match_id. Only on the person's instruction, for the records they name; never infer it from similar amounts or dates. Each record must be of the match's occurrence (manual_payment_other_occurrence), in its currency, not deleted and not already replaced (manual_payment_not_replaceable). An overpayment by what remains is refused unless allow_overpayment is set. unconfirm_payment_match inside the undo window makes the records count again.
+
+- Kind: write
+- Operation: `POST /api/v1/payment-matches/{id}/confirm-replacing`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "allow_overpayment": {
+      "description": "Set true only when the person has said the payment really is larger than the amount due. Without it an overpayment is refused (occurrence_overpaid).",
+      "type": "boolean"
+    },
+    "id": {
+      "description": "The payment match identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "manual_payment_ids": {
+      "description": "The manual payments of the match's occurrence that this bank payment is.",
+      "items": {
+        "description": "The manual payment identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; kept on the match and in its history. Optional.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the payment match this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "manual_payment_ids"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
 ### `reverse_payment_match`
 
 Record that a confirmed match was right but the payment was reversed (bounced, refunded, returned): the occurrence reopens and the history of both decisions is kept. Final. Destructive; confirm with the person first.
