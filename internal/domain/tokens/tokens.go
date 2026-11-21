@@ -285,13 +285,10 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.P
 	}
 	var expires *time.Time
 	if n.ExpiresAt != nil {
+		if problem := ExpiryProblem(*n.ExpiresAt, now); problem != "" {
+			return Issued{}, &FieldError{Field: "expires_at", Message: "expires_at " + problem}
+		}
 		e := n.ExpiresAt.UTC()
-		if !e.After(now) {
-			return Issued{}, &FieldError{Field: "expires_at", Message: "expires_at must be in the future"}
-		}
-		if e.Year() > 9999 {
-			return Issued{}, &FieldError{Field: "expires_at", Message: "expires_at must be before the year 10000 (UTC)"}
-		}
 		expires = &e
 	}
 	secret, err := s.generate()
@@ -304,6 +301,21 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.P
 		return Issued{}, err
 	}
 	return Issued{Token: t, Secret: secret}, nil
+}
+
+// ExpiryProblem says why expires cannot be a token's expiry as of now, in words
+// that follow the field name, or is "" when it can. Create applies it, and the
+// ledger token CLI applies it before it creates anything, so a refused expiry
+// never leaves a user behind.
+func ExpiryProblem(expires, now time.Time) string {
+	e := expires.UTC()
+	switch {
+	case !e.After(now):
+		return "must be in the future"
+	case e.Year() > 9999:
+		return "must be before the year 10000 (UTC)"
+	}
+	return ""
 }
 
 // CreatedEvent is the audit event of a new token. It names the grants (or

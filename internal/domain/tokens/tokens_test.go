@@ -399,6 +399,58 @@ func TestAuthenticateSurvivesAFailedLastUseWrite(t *testing.T) {
 	}
 }
 
+// ctxStore records whether a last-use write was given a live context.
+type ctxStore struct {
+	*memStore
+	cancelled chan error
+}
+
+func (s *ctxStore) Touch(ctx context.Context, id string, at time.Time) error {
+	s.cancelled <- ctx.Err()
+	return s.memStore.Touch(ctx, id, at)
+}
+
+// TestLastUseOutlivesTheRequest: the write is not tied to the request's
+// context, so a request that is cancelled before or during Authenticate still
+// records its use.
+func TestLastUseOutlivesTheRequest(t *testing.T) {
+	e := newEnv(t)
+	iss := e.create(t, adminID, New{Name: "ci", Grants: authz.Grants{commitmentsRead}})
+	st := &ctxStore{memStore: e.store, cancelled: make(chan error, 1)}
+	svc := NewService(st, e.users, Options{Now: func() time.Time { return e.now }, TouchTimeout: time.Second,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.Authenticate(ctx, iss.Secret); err != nil {
+		t.Fatalf("authenticate with a cancelled request: %v", err)
+	}
+	if err := <-st.cancelled; err != nil {
+		t.Fatalf("last-use write got a dead context: %v", err)
+	}
+	if tk, _ := e.store.Get(context.Background(), iss.Token.ID); tk.LastUsedAt == nil {
+		t.Fatal("the cancelled request's use was not recorded")
+	}
+}
+
+// TestExpiryProblem pins the rule Create and the CLI share.
+func TestExpiryProblem(t *testing.T) {
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	beyond := time.Date(9999, 12, 31, 23, 59, 59, 0, time.FixedZone("west", -3600))
+	for name, c := range map[string]struct {
+		at   time.Time
+		want string
+	}{
+		"now":               {now, "must be in the future"},
+		"future":            {now.Add(time.Hour), ""},
+		"last UTC instant":  {time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC), ""},
+		"year 10000 in UTC": {beyond, "must be before the year 10000 (UTC)"},
+	} {
+		if got := ExpiryProblem(c.at, now); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+}
+
 // TestLastUseIsSingleFlight: concurrent requests of one token issue one write.
 func TestLastUseIsSingleFlight(t *testing.T) {
 	e := newEnv(t)
