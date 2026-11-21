@@ -105,3 +105,12 @@ creation and decide whether a password change revokes tokens.
   bootstrap, rotation, least privilege and the power of root and long-lived tokens is A8.
 - Migration number: `0012`, after the commitment occurrences (`0011_commitment_occurrences`, ADR-0027); the fixture
   `0011_commitment_occurrences` covers the previous version.
+
+## Amendment: re-enabling a user (Proposed, pending the operator)
+
+Tokens are re-checked on every request against their owner's current state. Disabling a user therefore stops their
+tokens at once, but nothing is revoked: **re-enabling the user revives every token that was not revoked and has not
+expired.** Disabling is a suspension, not a revocation. Anyone who must also end a token for good revokes it (or
+revokes all of the user's tokens) before or after disabling. Ledger does not revoke tokens on disable because that
+would make the suspension irreversible and silently break unattended automation on a temporary disable. This note is
+Proposed until the operator confirms it, together with points 8 and 9; the user documentation (A8) must repeat it.
