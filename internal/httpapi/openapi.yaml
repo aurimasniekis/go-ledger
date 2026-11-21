@@ -2573,7 +2573,7 @@ components:
         (version increases, id stays). The version also increases with every
         payment-state change (manual payment, override, payment match), so the ETag covers
         the payment state (ADR-0031).
-      required: [id, commitment_id, month, due_date, amount, version, created_at, updated_at, payment]
+      required: [id, commitment_id, month, due_date, amount, version, created_at, updated_at, cancelled_at, cancelled_reason, payment]
       properties:
         id:
           $ref: "#/components/schemas/ID"

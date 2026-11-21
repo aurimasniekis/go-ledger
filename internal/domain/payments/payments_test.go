@@ -28,6 +28,13 @@ func ev(amount, currency string) payments.Evidence {
 		Amount: money.MustParse(amount, currency), Date: d("2026-03-10")}
 }
 
+func bank(amount, currency string) payments.Evidence {
+	e := ev(amount, currency)
+	e.Kind = payments.EvidenceBankTransaction
+	e.ID = "01JD3Y4C8V9M2Q7W5R6T0XZBN4"
+	return e
+}
+
 func ov(s payments.OverrideStatus) *payments.Override {
 	return &payments.Override{ID: "01JD3Y4C8V9M2Q7W5R6T0XZBN3", OccurrenceID: occ.ID, Status: s, Reason: "settled by phone"}
 }
@@ -70,6 +77,10 @@ func TestDerive(t *testing.T) {
 			status: "overdue", derived: "overdue", timing: "overdue", paid: "0.00 EUR", outstanding: "50.00 EUR"},
 		{name: "unpaid override over full evidence", facts: payments.Facts{Evidence: []payments.Evidence{ev("50.00", "EUR")}, Override: ov(payments.OverrideUnpaid)}, today: "2026-03-15",
 			status: "due", derived: "paid", timing: "due", paid: "50.00 EUR", outstanding: "50.00 EUR", applied: true},
+		{name: "manual and bank evidence add up", facts: payments.Facts{Evidence: []payments.Evidence{ev("20.00", "EUR"), bank("30.00", "EUR")}}, today: "2026-03-16",
+			status: "paid", derived: "paid", paid: "50.00 EUR", outstanding: "0.00 EUR"},
+		{name: "bank match only", facts: payments.Facts{Evidence: []payments.Evidence{bank("20.00", "EUR")}}, today: "2026-03-20",
+			status: "partially_paid", derived: "partially_paid", timing: "overdue", paid: "20.00 EUR", outstanding: "30.00 EUR"},
 		{name: "unpaid override over full evidence when overdue", facts: payments.Facts{Evidence: []payments.Evidence{ev("50.00", "EUR")}, Override: ov(payments.OverrideUnpaid)}, today: "2026-03-20",
 			status: "overdue", derived: "paid", timing: "overdue", paid: "50.00 EUR", outstanding: "50.00 EUR", applied: true},
 	}
@@ -90,6 +101,48 @@ func TestDerive(t *testing.T) {
 			}
 			if st.EvidenceCount != len(c.facts.Evidence) {
 				t.Errorf("evidence count = %d", st.EvidenceCount)
+			}
+			// The per-kind counts are checked against the evidence kinds
+			// themselves, and must add up to EvidenceCount.
+			var wantManual, wantBank int
+			for _, e := range c.facts.Evidence {
+				if e.Kind == payments.EvidenceManual {
+					wantManual++
+				} else {
+					wantBank++
+				}
+			}
+			if st.ManualEvidenceCount != wantManual || st.BankEvidenceCount != wantBank {
+				t.Errorf("manual, bank = %d, %d; want %d, %d", st.ManualEvidenceCount, st.BankEvidenceCount, wantManual, wantBank)
+			}
+			if st.ManualEvidenceCount+st.BankEvidenceCount != st.EvidenceCount {
+				t.Errorf("manual + bank = %d, evidence count = %d", st.ManualEvidenceCount+st.BankEvidenceCount, st.EvidenceCount)
+			}
+		})
+	}
+}
+
+// TestDeriveCountsEvidenceByKind pins the per-kind counts with explicit values:
+// a manual payment and a confirmed bank match are counted separately. Facts
+// hold only live evidence: a soft-deleted payment never reaches Derive.
+func TestDeriveCountsEvidenceByKind(t *testing.T) {
+	cases := []struct {
+		name         string
+		evidence     []payments.Evidence
+		manual, bank int
+	}{
+		{name: "no evidence", manual: 0, bank: 0},
+		{name: "one manual payment", evidence: []payments.Evidence{ev("10", "EUR")}, manual: 1},
+		{name: "one bank match", evidence: []payments.Evidence{bank("10", "EUR")}, bank: 1},
+		{name: "manual and bank", evidence: []payments.Evidence{ev("10", "EUR"), bank("20", "EUR"), ev("5", "EUR")}, manual: 2, bank: 1},
+		{name: "other-currency manual payment is still counted by kind", evidence: []payments.Evidence{ev("10", "USD")}, manual: 1},
+		{name: "bank match left once the manual payment is gone", evidence: []payments.Evidence{bank("20", "EUR")}, bank: 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st := payments.Derive(occ, payments.Facts{Evidence: c.evidence}, d("2026-03-20"), nil)
+			if st.ManualEvidenceCount != c.manual || st.BankEvidenceCount != c.bank || st.EvidenceCount != c.manual+c.bank {
+				t.Errorf("manual=%d bank=%d evidence=%d; want manual=%d bank=%d", st.ManualEvidenceCount, st.BankEvidenceCount, st.EvidenceCount, c.manual, c.bank)
 			}
 		})
 	}

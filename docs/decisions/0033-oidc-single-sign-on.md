@@ -1,7 +1,6 @@
 # ADR-0033: Optional OIDC single sign-on, password disablement and break-glass
 
-Status: Accepted (2026-11-21) for the points decision D16 settled; the defaults in point 13 are **proposed** and wait
-for an operator decision.
+Status: Accepted (2026-11-21): decision D16, and the defaults in point 13, which the operator accepted the same day.
 
 ## Context
 

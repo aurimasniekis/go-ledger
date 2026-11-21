@@ -134,7 +134,8 @@ func TestPaymentStateAPI(t *testing.T) {
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &pay)
 	o = f.getOccurrence(t, occID)
-	if o.Version != 2 || o.Payment.Status != "partially_paid" || *o.Payment.Timing != "overdue" || o.Payment.Paid.Amount != "4.00" || o.Payment.Outstanding.Amount != "6.00" {
+	if o.Version != 2 || o.Payment.Status != "partially_paid" || *o.Payment.Timing != "overdue" || o.Payment.Paid.Amount != "4.00" || o.Payment.Outstanding.Amount != "6.00" ||
+		o.Payment.ManualEvidenceCount != 1 || o.Payment.BankEvidenceCount != 0 {
 		t.Fatalf("after 4.00: v%d %+v", o.Version, o.Payment)
 	}
 	rec = f.do("POST", base+"/manual-payments", `{"amount":{"amount":"6.00","currency":"EUR"},"paid_on":"2026-11-21"}`, admin)
@@ -142,7 +143,8 @@ func TestPaymentStateAPI(t *testing.T) {
 		t.Fatalf("second payment: %d %s", rec.Code, rec.Body.String())
 	}
 	o = f.getOccurrence(t, occID)
-	if o.Version != 3 || o.Payment.Status != "paid" || o.Payment.Timing != nil || o.Payment.Outstanding.Amount != "0.00" || o.Payment.EvidenceCount != 2 {
+	if o.Version != 3 || o.Payment.Status != "paid" || o.Payment.Timing != nil || o.Payment.Outstanding.Amount != "0.00" || o.Payment.EvidenceCount != 2 ||
+		o.Payment.ManualEvidenceCount != 2 || o.Payment.BankEvidenceCount != 0 {
 		t.Fatalf("after 10.00: v%d %+v", o.Version, o.Payment)
 	}
 	rec = f.do("GET", base+"/manual-payments?limit=1", "", map[string]string{"X-Test-User": f.ids["bob"]})
@@ -212,7 +214,9 @@ func TestPaymentStateAPI(t *testing.T) {
 	if rec := f.do("DELETE", base+"/manual-payments/"+pay.ID, "", with(admin, "If-Match", `"1"`)); rec.Code != 204 {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
 	}
-	if o := f.getOccurrence(t, occID); o.Payment.Status != "partially_paid" || o.Payment.Paid.Amount != "6.00" || o.Version != 6 {
+	// The soft-deleted payment leaves every count: only the 6.00 payment is manual evidence now.
+	if o := f.getOccurrence(t, occID); o.Payment.Status != "partially_paid" || o.Payment.Paid.Amount != "6.00" || o.Version != 6 ||
+		o.Payment.EvidenceCount != 1 || o.Payment.ManualEvidenceCount != 1 || o.Payment.BankEvidenceCount != 0 {
 		t.Fatalf("after delete: %+v", o)
 	}
 	// A deleted payment is gone for the API: neither read nor deleted again.

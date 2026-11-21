@@ -26,7 +26,7 @@ func (r *callRecorder) handler() http.HandlerFunc {
 		"payment": map[string]any{
 			"status": "paid", "derived_status": "partially_paid", "timing": nil,
 			"paid_amount": map[string]any{"amount": "4.00", "currency": "EUR"}, "outstanding_amount": money, "overpaid_amount": money,
-			"unconverted_currencies": []string{"USD"}, "evidence_count": 1, "grace_until": nil, "within_grace": false,
+			"unconverted_currencies": []string{"USD"}, "evidence_count": 1, "manual_evidence_count": 1, "bank_evidence_count": 0, "grace_until": nil, "within_grace": false,
 			"override": map[string]any{"status": "paid", "reason": "settled by cash", "set_at": "2026-11-02T00:00:00Z", "applied": true, "previous_status": nil},
 		},
 	}

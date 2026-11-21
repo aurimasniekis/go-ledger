@@ -30,7 +30,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Proposed defaults (ADR-0033); none is an operator decision.
+// Defaults (ADR-0033 point 13, accepted by the operator 2026-11-21).
 const (
 	// DiscoveryTTL is how long a fetched discovery document (and with it the
 	// cached signing keys) is used before it is fetched again. go-oidc never
