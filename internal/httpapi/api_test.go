@@ -70,7 +70,7 @@ func TestOpenAPIDocumentVersionMatchesPrefix(t *testing.T) {
 func TestOpenAPIDocumentListsEveryErrorCode(t *testing.T) {
 	codes := []Code{CodeValidation, CodeUnauthenticated, CodeForbidden, CodeConflict, CodeRateLimited,
 		CodeUnavailable, CodeInternal, CodeNotFound, CodeTooLarge, CodeMethod, CodePrecondition,
-		CodeVersionConflict, CodeUnsupportedType, CodeInvalidCredentials, CodeCSRF, CodeReauthRequired, CodePendingTerms,
+		CodeVersionConflict, CodeUnsupportedType, CodeInvalidCredentials, CodeCSRF, CodeReauthRequired, CodeRootTokenRequired, CodePendingTerms,
 		CodeEnrollmentRequired, CodeInvalidSecondFactor, CodePasswordSignInDisabled, CodeEvidenceRequired, CodeOccurrenceCancelled,
 		CodeTransactionNotCountable, CodeTransactionNotDebit, CodeOverAllocated, CodeOverpaid, CodeDuplicateMatch, CodeMatchState}
 	var doc map[string]any

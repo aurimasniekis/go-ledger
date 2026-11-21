@@ -500,6 +500,10 @@ func registerUserPassword(s *Server, svc *auth.Service) {
 			return
 		}
 		p := principal(r)
+		if err := refuseUnlessRootToken(p, "setting a password"); err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		by := auth.ByAdministrator
 		if p.Kind == authz.PrincipalUser && p.UserID == r.PathValue("id") {
 			by = auth.ByUser

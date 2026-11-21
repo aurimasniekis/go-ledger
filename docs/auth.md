@@ -179,10 +179,10 @@ Treat a root token like a password for the whole instance:
 
 - **Tokens skip recent authentication and the second factor by design.** Their writes are audited as `token.write_used`
   with `interactive_steps: skipped`. Routes that need recent authentication for a session do not ask a token for it.
-- **A token holding `users:write` can change accounts.** It can set any user's password (`PUT /api/v1/users/{id}/password`)
-  and create users (`POST /api/v1/users`, including administrators), then set a new user's password with a second call
-  (`PUT /api/v1/users/{id}/password`). Treat that grant as the power to take over any account, and give it only to tokens you would
-  trust that far.
+- **Only the root token of the root account can escalate accounts** (decision D32). Creating an administrator, promoting a
+  user to administrator, re-enabling a disabled administrator and setting any password (`PUT /api/v1/users/{id}/password`)
+  are refused to every other token with 403 `root_token_required`, even one holding `users:write`. A `users:write` token can
+  still create non-administrators, edit profiles, demote and disable users. Sessions are unchanged (recent sign-in).
 - **The root token of the root account** is the only token that can create tokens through the API. Its power is therefore the
   power to make any other token, bounded by its own grants.
 - **Long-lived tokens** outlive sign-outs, password changes and session timeouts. They end only by revocation, by expiry, by a
