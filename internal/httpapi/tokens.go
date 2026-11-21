@@ -224,6 +224,19 @@ func registerTokens(s *Server, svc *tokens.Service) {
 	}))
 
 	s.HandleAPI("DELETE "+TokensPath+"/{id}", Requires(grantTokensWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Decision D34: only the root token itself or a session may revoke
+		// the root token of the root account (which ends its children too).
+		if p := principal(r); p.Kind == authz.PrincipalToken && !p.CanCreateTokens {
+			protected, err := svc.IsProtectedRoot(r.Context(), r.PathValue("id"))
+			if err != nil {
+				WriteError(w, r, err)
+				return
+			}
+			if protected {
+				WriteError(w, r, rootTokenRequired("revoking the root token"))
+				return
+			}
+		}
 		revokeToken(w, r, svc, "")
 	}))
 }
