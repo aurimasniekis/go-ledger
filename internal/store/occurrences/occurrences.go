@@ -211,6 +211,13 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 			return occurrences.Plan{}, fmt.Errorf("occurrences: create: %w", err)
 		}
 	}
+	if old.Start != next.Start || !sameEnd(old.End, next.End) {
+		n, err := s.removeOutOfRange(ctx, tx, commitmentID, next)
+		if err != nil {
+			return occurrences.Plan{}, err
+		}
+		plan.OutOfRange = n
+	}
 	var marker any // an edit effective today or earlier leaves nothing pending
 	if effective.After(today) {
 		marker = sqlvalue.Date{Date: effective}
@@ -219,6 +226,31 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 		return occurrences.Plan{}, fmt.Errorf("occurrences: pending marker: %w", err)
 	}
 	return plan, nil
+}
+
+func sameEnd(a, b *calendar.Date) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// removeOutOfRange deletes the unpaid occurrences due before the start date or
+// after the end date (D23 2b). It ignores the effective date. Occurrences with
+// payment evidence stay. It returns how many it deleted.
+func (s *Store) removeOutOfRange(ctx context.Context, tx *sql.Tx, commitmentID string, t occurrences.Terms) (int, error) {
+	q := "DELETE FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT " + s.paid + " AND (due_date < ?"
+	args := []any{commitmentID, sqlvalue.Date{Date: t.Start}}
+	if t.End != nil {
+		q += " OR due_date > ?"
+		args = append(args, sqlvalue.Date{Date: *t.End})
+	}
+	res, err := tx.ExecContext(ctx, q+")", args...)
+	if err != nil {
+		return 0, fmt.Errorf("occurrences: remove out of range: %w", err)
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 // RemoveUnpaidTx deletes the commitment's occurrences that no payment

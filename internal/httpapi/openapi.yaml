@@ -569,11 +569,17 @@ paths:
         transaction, from effective_from forward: unpaid occurrences due on
         or after it are rewritten in place (same id), removed when the new
         terms no longer schedule that month, or added; unpaid occurrences
-        due before it and every paid occurrence stay as they are. Without
+        due before it and every paid occurrence stay as they are. The one
+        exception is a start_date or end_date change (decision D23): it
+        always removes the unpaid occurrences left outside the new
+        [start_date, end_date], whatever the effective date. Occurrences with
+        payment state (a payment, an override or a confirmed match) are never
+        removed. Without
         effective_from the change applies from today in the reporting time
         zone, so overdue unpaid occurrences keep their terms. Audited as
         occurrences.regenerated with the effective date and the counts
-        created, updated, removed, kept_paid and kept_history.
+        created, updated, removed, kept_paid, kept_history and
+        removed_out_of_range (the D23 removals).
 
         An effective_from after today is allowed and recorded as pending.
         Until that date passes, a later change to these terms whose effective

@@ -238,3 +238,30 @@ func TestStartDateLowerBoundAPI(t *testing.T) {
 		t.Fatalf("1899: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestDateCorrectionRemovesUnpaidAPI checks decision D23 2b over HTTP: moving
+// start_date later or end_date earlier removes the unpaid occurrences outside
+// the new range, though they are history by the effective date.
+func TestDateCorrectionRemovesUnpaidAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)
+	admin := map[string]string{"X-Test-User": f.ids["alice"]}
+	id := f.createCommitment(t, strings.Replace(monthEndBody, `"day":31`, `"day":10`, 1))
+	f.occurrences(t, "month=2026-05", "alice")
+	count := func(m string) int { return len(f.occurrences(t, "month="+m, "alice").Items) }
+	if count("2026-01") != 1 || count("2026-02") != 1 {
+		t.Fatal("January and February should exist before the correction")
+	}
+	if rec := f.do("PATCH", "/api/v1/commitments/"+id, `{"start_date":"2026-03-01","version":1}`, admin); rec.Code != 200 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	if count("2026-01") != 0 || count("2026-02") != 0 || count("2026-03") != 1 {
+		t.Fatal("earlier unpaid occurrences should be removed")
+	}
+	if rec := f.do("PATCH", "/api/v1/commitments/"+id, `{"end_date":"2026-03-31","effective_from":"2026-06-01","version":2}`, admin); rec.Code != 200 {
+		t.Fatalf("end: %d %s", rec.Code, rec.Body.String())
+	}
+	if count("2026-03") != 1 || count("2026-04") != 0 || count("2026-05") != 0 {
+		t.Fatal("later unpaid occurrences should be removed")
+	}
+}

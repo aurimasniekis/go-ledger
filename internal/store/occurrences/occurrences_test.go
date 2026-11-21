@@ -479,3 +479,72 @@ func TestOccurrenceReferencesAreEvidenceOrCascade(t *testing.T) {
 		t.Fatalf("uncovered reference not reported: %v", p)
 	}
 }
+
+func TestDateCorrectionRemovesUnpaidOutsideRange(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	c := f.create(t, commitments.Monthly(1, 10), "2026-01-01", "10.00")
+	occs := f.month(t, "2026-05")
+	if len(occs) != 1 {
+		t.Fatalf("month %v", occs)
+	}
+	var jan string
+	for _, m := range []string{"2026-01", "2026-05"} {
+		for _, o := range f.month(t, m) {
+			if o.DueDate == d("2026-01-10") {
+				jan = o.ID
+			}
+		}
+	}
+	f.pay(t, jan)
+
+	// Start moved later, effective today (after January and February): the
+	// unpaid February one goes although it is history; the paid January stays.
+	next := c.Fields
+	next.StartDate = d("2026-03-01")
+	c2, err := f.cs.Update(ctx, alice, c.ID, 1, next, d("2026-03-15"), d("2026-03-15"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := f.all(t), "2026-01-10@10.00#1 2026-03-10@10.00#1 2026-04-10@10.00#1 2026-05-10@10.00#1"; got != want {
+		t.Fatalf("after start change %q, want %q", got, want)
+	}
+	if ev := f.rec.events[len(f.rec.events)-1]; ev.Action != audit.OccurrencesRegenerated || ev.Details["removed_out_of_range"] != "1" {
+		t.Fatalf("audit %+v", ev)
+	}
+
+	// End moved earlier with an effective date after May: the unpaid April and
+	// May ones are history by date but still go.
+	next = c2.Fields
+	e := d("2026-03-31")
+	next.EndDate = &e
+	if _, err := f.cs.Update(ctx, alice, c.ID, c2.Version, next, d("2026-06-01"), d("2026-03-15")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := f.all(t), "2026-01-10@10.00#1 2026-03-10@10.00#1"; got != want {
+		t.Fatalf("after end change %q, want %q", got, want)
+	}
+	if ev := f.rec.events[len(f.rec.events)-1]; ev.Details["removed_out_of_range"] != "2" {
+		t.Fatalf("audit %+v", ev)
+	}
+}
+
+func TestDateCorrectionKeepsPaidOutsideRange(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	c := f.create(t, commitments.Monthly(1, 10), "2026-01-01", "10.00")
+	f.month(t, "2026-03")
+	f.pay(t, f.month(t, "2026-02")[0].ID)
+	next := c.Fields
+	e := d("2026-01-31")
+	next.EndDate = &e
+	if _, err := f.cs.Update(ctx, alice, c.ID, 1, next, d("2026-03-15"), d("2026-03-15")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := f.all(t), "2026-01-10@10.00#1 2026-02-10@10.00#1"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if ev := f.rec.events[len(f.rec.events)-1]; ev.Details["removed_out_of_range"] != "1" {
+		t.Fatalf("audit %+v", ev)
+	}
+}
