@@ -112,7 +112,7 @@ var Definitions = map[Action][]Field{
 	CommitmentUpdated: {f("fields")},
 	CommitmentDeleted: {f("kind"), f("unpaid_occurrences_removed")},
 
-	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history"), f("removed_out_of_range")},
+	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history"), f("removed_out_of_range"), f("kept_override")},
 
 	ManualPaymentRecorded:          {f("payment_id"), f("currency")},
 	ManualPaymentDeleted:           {f("payment_id"), f("currency")},

@@ -187,11 +187,29 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 	if err := s.MaterialiseTx(ctx, tx, commitmentID, old, through); err != nil {
 		return occurrences.Plan{}, err
 	}
-	existing, err := s.existing(ctx, tx, commitmentID, effective.YearMonth(), through)
+	// A start or end date change first drops the out-of-range occurrences, so
+	// the plan below never sees (and never counts) them.
+	var outOfRange, keptOverride int
+	if old.Start != next.Start || !sameEnd(old.End, next.End) {
+		if outOfRange, keptOverride, err = s.removeOutOfRange(ctx, tx, commitmentID, next); err != nil {
+			return occurrences.Plan{}, err
+		}
+	}
+	all, err := s.existing(ctx, tx, commitmentID, effective.YearMonth(), through)
 	if err != nil {
 		return occurrences.Plan{}, err
 	}
+	// An unpaid occurrence outside the terms can only be one kept for its
+	// status override: leave it alone, the plan would delete it.
+	existing := all[:0:0]
+	for _, e := range all {
+		if !e.Paid && (e.DueDate.Before(next.Start) || (next.End != nil && e.DueDate.After(*next.End))) {
+			continue
+		}
+		existing = append(existing, e)
+	}
 	plan := occurrences.PlanEdit(existing, through, next, effective)
+	plan.OutOfRange, plan.KeptOverride = outOfRange, keptOverride
 	now := s.now().UTC()
 	for _, id := range plan.Remove {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE id = ? AND NOT "+s.paid, id); err != nil {
@@ -210,13 +228,6 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 		if err := s.insert(ctx, tx, commitmentID, p, now); err != nil {
 			return occurrences.Plan{}, fmt.Errorf("occurrences: create: %w", err)
 		}
-	}
-	if old.Start != next.Start || !sameEnd(old.End, next.End) {
-		n, err := s.removeOutOfRange(ctx, tx, commitmentID, next)
-		if err != nil {
-			return occurrences.Plan{}, err
-		}
-		plan.OutOfRange = n
 	}
 	var marker any // an edit effective today or earlier leaves nothing pending
 	if effective.After(today) {
@@ -237,20 +248,27 @@ func sameEnd(a, b *calendar.Date) bool {
 
 // removeOutOfRange deletes the unpaid occurrences due before the start date or
 // after the end date (D23 2b). It ignores the effective date. Occurrences with
-// payment evidence stay. It returns how many it deleted.
-func (s *Store) removeOutOfRange(ctx context.Context, tx *sql.Tx, commitmentID string, t occurrences.Terms) (int, error) {
-	q := "DELETE FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT " + s.paid + " AND (due_date < ?"
+// payment evidence stay, and so do those with a status override of any state:
+// the override is the user's record and would cascade away with the row. It
+// returns how many it deleted and how many it kept for an override.
+func (s *Store) removeOutOfRange(ctx context.Context, tx *sql.Tx, commitmentID string, t occurrences.Terms) (removed, keptOverride int, err error) {
+	where := " FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT " + s.paid + " AND (due_date < ?"
 	args := []any{commitmentID, sqlvalue.Date{Date: t.Start}}
 	if t.End != nil {
-		q += " OR due_date > ?"
+		where += " OR due_date > ?"
 		args = append(args, sqlvalue.Date{Date: *t.End})
 	}
-	res, err := tx.ExecContext(ctx, q+")", args...)
+	where += ")"
+	const hasOverride = " AND EXISTS (SELECT 1 FROM occurrence_status_overrides so WHERE so.occurrence_id = o.id)"
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*)"+where+hasOverride, args...).Scan(&keptOverride); err != nil {
+		return 0, 0, fmt.Errorf("occurrences: count kept overrides: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, "DELETE"+where+" AND NOT EXISTS (SELECT 1 FROM occurrence_status_overrides so WHERE so.occurrence_id = o.id)", args...)
 	if err != nil {
-		return 0, fmt.Errorf("occurrences: remove out of range: %w", err)
+		return 0, 0, fmt.Errorf("occurrences: remove out of range: %w", err)
 	}
 	n, err := res.RowsAffected()
-	return int(n), err
+	return int(n), keptOverride, err
 }
 
 // RemoveUnpaidTx deletes the commitment's occurrences that no payment

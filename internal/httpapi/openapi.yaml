@@ -573,8 +573,9 @@ paths:
         exception is a start_date or end_date change (decision D23): it
         always removes the unpaid occurrences left outside the new
         [start_date, end_date], whatever the effective date. Occurrences with
-        payment state (a payment, an override or a confirmed match) are never
-        removed. Without
+        payment evidence (a payment or a confirmed match) or a status override
+        of any state are never removed; the audit counts the latter as
+        kept_override. Without
         effective_from the change applies from today in the reporting time
         zone, so overdue unpaid occurrences keep their terms. Audited as
         occurrences.regenerated with the effective date and the counts

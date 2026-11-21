@@ -169,6 +169,9 @@ type Plan struct {
 	// date change left them outside [start, end] (D23 2b), whatever the
 	// effective date. The store fills it in; PlanEdit does not.
 	OutOfRange int
+	// KeptOverride counts the unpaid occurrences outside the dates that stay
+	// because they carry a status override (any state). The store fills it in.
+	KeptOverride int
 }
 
 // Empty reports whether the plan changes nothing.
@@ -254,6 +257,7 @@ func RegeneratedEvent(actor audit.Actor, commitmentID string, effective calendar
 			"kept_paid":            strconv.Itoa(p.KeptPaid),
 			"kept_history":         strconv.Itoa(p.KeptHistory),
 			"removed_out_of_range": strconv.Itoa(p.OutOfRange),
+			"kept_override":        strconv.Itoa(p.KeptOverride),
 		}}
 }
 

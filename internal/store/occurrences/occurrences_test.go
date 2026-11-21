@@ -514,7 +514,8 @@ func TestDateCorrectionRemovesUnpaidOutsideRange(t *testing.T) {
 	}
 
 	// End moved earlier with an effective date after May: the unpaid April and
-	// May ones are history by date but still go.
+	// May ones are history by date but still go, and so does the June one the
+	// effective month materialises (each row is counted once).
 	next = c2.Fields
 	e := d("2026-03-31")
 	next.EndDate = &e
@@ -524,8 +525,66 @@ func TestDateCorrectionRemovesUnpaidOutsideRange(t *testing.T) {
 	if got, want := f.all(t), "2026-01-10@10.00#1 2026-03-10@10.00#1"; got != want {
 		t.Fatalf("after end change %q, want %q", got, want)
 	}
-	if ev := f.rec.events[len(f.rec.events)-1]; ev.Details["removed_out_of_range"] != "2" {
+	if ev := f.rec.events[len(f.rec.events)-1]; ev.Details["removed_out_of_range"] != "3" || ev.Details["removed"] != "0" || ev.Details["kept_history"] != "0" {
 		t.Fatalf("audit %+v", ev)
+	}
+}
+
+func (f *fixture) override(t *testing.T, id, occID, status, state string) {
+	t.Helper()
+	if err := f.db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO occurrence_status_overrides (id, occurrence_id, status, reason, state, set_at, ended_at) VALUES (?, ?, ?, 'because', ?, '2026-03-01T00:00:00.000000000Z', CASE WHEN ? = 'active' THEN NULL ELSE '2026-03-02T00:00:00.000000000Z' END)",
+			id, occID, status, state, state)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDateCorrectionKeepsOverriddenOutsideRange: an occurrence with a status
+// override stays when it falls outside the new dates, whatever the override's
+// state or whether payment evidence remains (a paid override whose payment was
+// deleted), and the audit counts it once as kept_override, not as removed or
+// kept_history.
+func TestDateCorrectionKeepsOverriddenOutsideRange(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	c := f.create(t, commitments.Monthly(1, 10), "2026-01-01", "10.00")
+	f.month(t, "2026-05")
+	ids := map[string]string{}
+	for _, m := range []string{"2026-01", "2026-02", "2026-03"} {
+		ids[m] = f.month(t, m)[0].ID
+	}
+	f.override(t, "01JD3Y4C8V9M2Q7W5R6T0XZB01", ids["2026-01"], "paid", "active") // payment since deleted: no evidence
+	f.override(t, "01JD3Y4C8V9M2Q7W5R6T0XZB02", ids["2026-02"], "unpaid", "undone")
+
+	next := c.Fields
+	next.StartDate = d("2026-04-01")
+	if _, err := f.cs.Update(ctx, alice, c.ID, 1, next, d("2026-03-15"), d("2026-03-15")); err != nil {
+		t.Fatal(err)
+	}
+	// March (no override) goes; January and February stay.
+	if got, want := f.all(t), "2026-01-10@10.00#1 2026-02-10@10.00#1 2026-04-10@10.00#1 2026-05-10@10.00#1"; got != want {
+		t.Fatalf("after start change %q, want %q", got, want)
+	}
+	ev := f.rec.events[len(f.rec.events)-1]
+	if ev.Action != audit.OccurrencesRegenerated || ev.Details["removed_out_of_range"] != "1" || ev.Details["kept_override"] != "2" || ev.Details["kept_history"] != "0" || ev.Details["removed"] != "0" {
+		t.Fatalf("audit %+v", ev)
+	}
+	var n int
+	if err := f.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM occurrence_status_overrides").Scan(&n)
+	}); err != nil || n != 2 {
+		t.Fatalf("overrides left %d, %v", n, err)
+	}
+
+	// A later unrelated edit does not remove them either.
+	next.Amount = money.MustParse("11.00", "EUR")
+	if _, err := f.cs.Update(ctx, alice, c.ID, 2, next, d("2026-01-01"), d("2026-03-15")); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.all(t); !strings.HasPrefix(got, "2026-01-10@10.00#1 2026-02-10@10.00#1 ") {
+		t.Fatalf("after amount edit %q", got)
 	}
 }
 
