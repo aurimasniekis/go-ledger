@@ -81,7 +81,7 @@ Research R13 (and its review) compared OIDC libraries and listed checks that go-
 12. **Break-glass (D16).** `ledger auth recovery-sign-in <username>` (with `ledger serve` stopped, instance lock)
     issues a one-time sign-in link valid for `--ttl` (default 15 minutes, at most an hour), replacing any unused one; only
     its SHA-256 hash is stored (`recovery_sign_ins`). `GET /auth/recovery-sign-in?token=` changes nothing: it serves a
-    confirmation page (no script, `no-store`, `no-referrer`, not framable) so a link previewer or URL scanner cannot use
+    confirmation page (no script, `no-store`, `Referrer-Policy: same-origin`, not framable) so a link previewer or URL scanner cannot use
     the token up (review F2); the page's button posts the token in a form body to the same path, a cross-origin browser
     request is refused, and that POST consumes it whatever the
     outcome, skips the second factor, works whether or not passwords are enabled, and starts a session with method
@@ -129,9 +129,12 @@ Research R13 (and its review) compared OIDC libraries and listed checks that go-
   that user starts again.
 - An attacker who can reach `/auth/oidc/authorize` can fill the 1000 pending slots and so make a legitimate user's
   pending request drop; the user retries. There is no per-address limit on starting requests.
-- The UI (A7) must handle `/sign-in` with `oidc_error`, `recovery_error` and `#second_factor=`, the link outcomes
-  (`oidc=linked`, `oidc=reauthenticated`, `oidc_error`), offer the provider from `GET /auth/methods`, and use
-  `POST /auth/oidc/reauthenticate` when `reauthentication_required` arrives and passwords are off.
+- The UI (A6c) handles `/sign-in` with `oidc_error`, `recovery_error` and `#second_factor=`, the link outcomes
+  (`oidc=linked`, `oidc_error` on Account security), offers the provider from `GET /auth/methods`, and uses
+  `POST /auth/oidc/reauthenticate` when `reauthentication_required` arrives and passwords are off. The recovery page
+  uses `Referrer-Policy: same-origin` rather than `no-referrer`: a form POST from a no-referrer page sends
+  `Origin: null`, which the cross-origin check would refuse in browsers without `Sec-Fetch-Site`. After a
+  re-authentication round trip the user repeats the action (the interrupted request is not replayed).
 - Not built: RP-initiated logout at the provider (local sign-out always works), back-channel logout, group or claim to
   role mapping, more than one provider, a per-user password disable (D16 calls it optional), an administrator route to
   unlink another user, and interoperability tests with real providers (all tests use a local fake provider).

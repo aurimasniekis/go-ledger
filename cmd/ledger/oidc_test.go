@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -654,6 +655,11 @@ func TestOIDCSignInRecencyFollowsAuthTime(t *testing.T) {
 			return func(c map[string]any) { c["auth_time"] = e.clock.now().Add(-30 * 24 * time.Hour).Unix() }
 		}, false},
 		"missing": {func(*oidcEnv) func(map[string]any) { return func(c map[string]any) { delete(c, "auth_time") } }, false},
+		// A claim far in the future is clamped to now (not kept as a window that
+		// would only open later).
+		"far future": {func(e *oidcEnv) func(map[string]any) {
+			return func(c map[string]any) { c["auth_time"] = e.clock.now().Add(time.Hour).Unix() }
+		}, true},
 		"future": {func(e *oidcEnv) func(map[string]any) {
 			return func(c map[string]any) { c["auth_time"] = e.clock.now().Add(30 * time.Second).Unix() }
 		}, true},
@@ -713,6 +719,63 @@ func TestOIDCAuthorizeIsRateLimitedPerAddress(t *testing.T) {
 	// The sign-in that was pending before the flood still completes.
 	if w, _ := e.callback(pending, cookie); cookieValue(w, httpapi.SessionCookie) == "" && !strings.Contains(location(w), "not_linked") {
 		t.Fatalf("pending sign-in: %q", location(w))
+	}
+}
+
+// One IPv6 host owns a whole /64, so its starts are counted together.
+func TestOIDCAuthorizeIsRateLimitedPerIPv6Prefix(t *testing.T) {
+	e := newOIDCEnv(t, nil)
+	limited := 0
+	for i := range 200 {
+		b := &browser{addr: fmt.Sprintf("[2001:db8:0:0:%x::1]:4000", i+1)}
+		if w := e.req("GET", httpapi.OIDCAuthorizePath, "", b, nil); strings.Contains(location(w), "oidc_error=rate_limited") {
+			limited++
+		}
+	}
+	if want := 200 - httpapi.DefaultAuthorizeLimit.Max; limited != want {
+		t.Fatalf("%d of 200 starts from one /64 were limited, want %d", limited, want)
+	}
+	// Another /64 is not affected.
+	if w := e.req("GET", httpapi.OIDCAuthorizePath, "", &browser{addr: "[2001:db8:0:1::1]:4000"}, nil); strings.Contains(location(w), "oidc_error") {
+		t.Fatalf("other prefix: %q", location(w))
+	}
+}
+
+// The provider's auth_time survives the second-factor step: a stale one stays
+// stale, a fresh one is recent.
+func TestOIDCAuthTimeSurvivesSecondFactor(t *testing.T) {
+	for name, c := range map[string]struct {
+		mutate func(e *oidcEnv) func(map[string]any)
+		recent bool
+	}{
+		"fresh": {func(*oidcEnv) func(map[string]any) { return nil }, true},
+		"stale": {func(e *oidcEnv) func(map[string]any) {
+			return func(c map[string]any) { c["auth_time"] = e.clock.now().Add(-30 * 24 * time.Hour).Unix() }
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newOIDCEnv(t, func(c *config.Auth) { c.Require2FA = true; c.OIDC.Require2FA = true })
+			if err := authstore.New(e.db, e.al).CreateOIDCLink(context.Background(), auth.OIDCLink{ID: "01JD3Y4C8V9M2Q7W5R6T0XZBN4", UserID: e.ids["alice"],
+				Issuer: e.op.Issuer, Subject: "subject-0001", CreatedAt: e.clock.now()}); err != nil {
+				t.Fatal(err)
+			}
+			en := e.enrol(e.sessionFrom(e.signInOIDC()))
+			e.op.Mutate = c.mutate(e)
+			w := e.signInOIDC()
+			challenge, _ := url.QueryUnescape(strings.TrimPrefix(location(w), "/sign-in#second_factor="))
+			e.clock.advance(31 * time.Second)
+			res := e.secondStep(challenge, "code", auth.TOTPCode(en.secret, e.clock.now()))
+			if res.code != 200 || res.b == nil {
+				t.Fatalf("second step: %d %s", res.code, res.body)
+			}
+			tw := e.req("POST", "/api/v1/auth/tokens", `{"name":"x","grants":["users:read"]}`, res.b, nil)
+			if c.recent && tw.Code != 201 {
+				t.Fatalf("recent: %d %s", tw.Code, tw.Body.String())
+			}
+			if !c.recent && (tw.Code != 403 || errCode(tw.Body.String()) != "reauthentication_required") {
+				t.Fatalf("stale: %d %s", tw.Code, tw.Body.String())
+			}
+		})
 	}
 }
 
@@ -808,6 +871,16 @@ func TestRecoverySignInAndUnlinkCommands(t *testing.T) {
 		if pg.Code != 200 || cookieValue(pg, httpapi.SessionCookie) != "" || !strings.Contains(pg.Body.String(), `name="token" value="`+token+`"`) ||
 			!strings.Contains(pg.Header().Get("Content-Type"), "text/html") || pg.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("confirmation page: %d %v %s", pg.Code, pg.Header(), pg.Body.String())
+		}
+		// The page holds a live token: it must not be framed or leak it. The
+		// referrer policy is same-origin (not no-referrer) so that browsers
+		// without Sec-Fetch-Site still send a real Origin on the POST.
+		h := pg.Header()
+		if h.Get("Referrer-Policy") != "same-origin" || h.Get("X-Frame-Options") != "DENY" ||
+			!strings.Contains(h.Get("Content-Security-Policy"), "default-src 'none'") ||
+			!strings.Contains(h.Get("Content-Security-Policy"), "form-action 'self'") ||
+			!strings.Contains(h.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+			t.Fatalf("confirmation page headers: %v", h)
 		}
 	}
 	// A cross-origin POST is refused and leaves the token usable.

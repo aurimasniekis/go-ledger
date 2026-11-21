@@ -433,7 +433,10 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 	// another origin is refused.
 	s.HandleAPI("GET "+AuthPath+"/recovery-sign-in", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		noStore(w)
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		// same-origin, not no-referrer: a form POST from a no-referrer page sends
+		// Origin: null, which browsers without Sec-Fetch-Site would have refused
+		// by the cross-origin check. Nothing leaves the origin either way.
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

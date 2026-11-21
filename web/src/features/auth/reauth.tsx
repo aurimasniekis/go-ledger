@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, setReauthHandler, splitErrors } from '@/lib/api'
 import { api } from '@/lib/auth'
+import { methodsQuery, navigation } from '@/lib/oidc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -19,6 +20,10 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false)
   const waiters = useRef<((ok: boolean) => void)[]>([])
   const [password, setPassword] = useState('')
+  // With passwords off the prompt re-authenticates at the identity provider instead. An unreadable
+  // answer keeps the password prompt.
+  const methods = useQuery(methodsQuery)
+  const passwordOff = methods.data?.password.enabled === false
 
   const settle = useCallback((ok: boolean) => {
     const w = waiters.current
@@ -59,6 +64,17 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
       settle(true)
     },
   })
+  const provider = useMutation({
+    mutationFn: async () => {
+      const here = window.location.pathname + window.location.search
+      const r = await apiFetch<{ authorization_url: string }>(api('/auth/oidc/reauthenticate'), {
+        method: 'POST',
+        json: { return_to: here.startsWith('/sign-in') ? '/' : here },
+        noReauth: true,
+      })
+      navigation.goTo(r.authorization_url)
+    },
+  })
   const { fields, form } = splitErrors(check.error, ['password'])
 
   return (
@@ -74,9 +90,33 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
         }}
       >
         <DialogContent
-          title="Confirm your password"
-          description="This action needs a recent password check. Your change has not been made yet; it runs as soon as you confirm."
+          title={passwordOff ? 'Confirm with your identity provider' : 'Confirm your password'}
+          description={
+            passwordOff
+              ? 'This action needs a recent sign-in at your identity provider. Your change has not been made yet; you will be sent there and back, then can repeat it.'
+              : 'This action needs a recent password check. Your change has not been made yet; it runs as soon as you confirm.'
+          }
         >
+          {passwordOff ? (
+            <div className="space-y-4">
+              <FormError message={provider.error?.message} />
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    provider.reset()
+                    settle(false)
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="button" disabled={provider.isPending} onClick={() => provider.mutate()}>
+                  {provider.isPending ? 'Starting…' : 'Continue to your provider'}
+                </Button>
+              </div>
+            </div>
+          ) : (
           <form
             className="space-y-4"
             onSubmit={(e) => {
@@ -114,6 +154,7 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
               </Button>
             </div>
           </form>
+          )}
         </DialogContent>
       </Dialog>
     </>
