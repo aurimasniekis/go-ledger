@@ -22,6 +22,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/store/users"
 	"github.com/aurimasniekis/go-ledger/internal/web"
 )
@@ -265,8 +266,9 @@ type auditLog interface {
 // record their audit entries in the same transaction through al (ADR-0025).
 func registerAPI(srv *httpapi.Server, db *store.DB, al auditLog) {
 	httpapi.RegisterAPI(srv, httpapi.Deps{
-		Users: users.New(db, al, nil, nil),
-		Audit: al,
+		Users:       users.New(db, al, nil, nil),
+		Commitments: commitmentstore.New(db, al, nil, nil),
+		Audit:       al,
 	})
 }
 
