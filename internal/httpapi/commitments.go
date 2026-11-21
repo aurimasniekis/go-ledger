@@ -38,14 +38,16 @@ type commitmentJSON struct {
 	EndDate   *calendar.Date        `json:"end_date"`
 	Priority  *commitments.Priority `json:"priority"`
 	Notes     *string               `json:"notes"`
-	Version   int64                 `json:"version"`
-	CreatedAt time.Time             `json:"created_at"`
-	UpdatedAt time.Time             `json:"updated_at"`
+	// MatchTolerance is null when the user set none (ADR-0039).
+	MatchTolerance *money.Money `json:"match_tolerance"`
+	Version        int64        `json:"version"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
 func toCommitmentJSON(c commitments.Commitment) commitmentJSON {
 	return commitmentJSON{ID: c.ID, Name: c.Name, Kind: c.Kind, Amount: c.Amount, Schedule: c.Schedule, StartDate: c.StartDate,
-		EndDate: c.EndDate, Priority: c.Priority, Notes: c.Notes, Version: c.Version, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
+		EndDate: c.EndDate, Priority: c.Priority, Notes: c.Notes, MatchTolerance: c.MatchTolerance, Version: c.Version, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 }
 
 // editableJSON is the part of a commitment a client writes: the body of a
@@ -59,10 +61,13 @@ type editableJSON struct {
 	EndDate   *calendar.Date        `json:"end_date"`
 	Priority  *commitments.Priority `json:"priority"`
 	Notes     *string               `json:"notes"`
+	// MatchTolerance is omitted when nil, so a patch target without one
+	// matches a create body without one.
+	MatchTolerance *money.Money `json:"match_tolerance,omitempty"`
 }
 
 // commitmentMembers are the writable members, in the order errors are listed.
-var commitmentMembers = []string{"name", "kind", "amount", "schedule", "start_date", "end_date", "priority", "notes"}
+var commitmentMembers = []string{"name", "kind", "amount", "schedule", "start_date", "end_date", "priority", "notes", "match_tolerance"}
 
 // requiredCommitmentMembers cannot be absent from a create or null in a patch.
 var requiredCommitmentMembers = map[string]bool{"name": true, "kind": true, "amount": true, "schedule": true, "start_date": true}
@@ -208,6 +213,11 @@ func decodeCommitment(doc map[string]json.RawMessage) (commitments.Fields, []com
 			f.Notes = &s
 		}
 	}
+	if raw, ok := present("match_tolerance"); ok {
+		if t := decodeMoney("match_tolerance", raw, fail); t.IsValid() {
+			f.MatchTolerance = &t
+		}
+	}
 	for _, e := range f.Validate() {
 		top, _, _ := strings.Cut(e.Field, ".")
 		if !bad[top] {
@@ -225,9 +235,15 @@ func decodeCommitment(doc map[string]json.RawMessage) (commitments.Fields, []com
 // decodeAmount decodes {"amount":"12.50","currency":"EUR"}, naming the
 // member that is wrong.
 func decodeAmount(raw json.RawMessage, fail func(member, field, msg string)) money.Money {
+	return decodeMoney("amount", raw, fail)
+}
+
+// decodeMoney decodes the money object of member (such as amount or
+// match_tolerance), naming the member that is wrong.
+func decodeMoney(member string, raw json.RawMessage, fail func(member, field, msg string)) money.Money {
 	var m map[string]json.RawMessage
 	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) || json.Unmarshal(raw, &m) != nil {
-		fail("amount", "amount", `amount must be an object such as {"amount":"12.50","currency":"EUR"}`)
+		fail(member, member, member+` must be an object such as {"amount":"12.50","currency":"EUR"}`)
 		return money.Money{}
 	}
 	var unknown []string
@@ -238,23 +254,23 @@ func decodeAmount(raw json.RawMessage, fail func(member, field, msg string)) mon
 	}
 	slices.Sort(unknown)
 	for _, k := range unknown {
-		fail("amount", "amount."+k, "unknown field amount."+k)
+		fail(member, member+"."+k, "unknown field "+member+"."+k)
 	}
 	var amount money.Decimal
 	var currency money.Currency
 	ok := true
 	if v, has := m["amount"]; !has || isJSONNull(v) {
-		fail("amount", "amount.amount", "amount.amount is required")
+		fail(member, member+".amount", member+".amount is required")
 		ok = false
 	} else if !bytes.HasPrefix(bytes.TrimSpace(v), []byte(`"`)) || json.Unmarshal(v, &amount) != nil {
-		fail("amount", "amount.amount", `amount.amount must be a decimal string such as "12.50"`)
+		fail(member, member+".amount", member+`.amount must be a decimal string such as "12.50"`)
 		ok = false
 	}
 	if v, has := m["currency"]; !has || isJSONNull(v) {
-		fail("amount", "amount.currency", "amount.currency is required")
+		fail(member, member+".currency", member+".currency is required")
 		ok = false
 	} else if json.Unmarshal(v, &currency) != nil {
-		fail("amount", "amount.currency", "amount.currency must be an ISO 4217 code of three upper-case letters")
+		fail(member, member+".currency", member+".currency must be an ISO 4217 code of three upper-case letters")
 		ok = false
 	}
 	if !ok || len(unknown) > 0 {
@@ -262,7 +278,7 @@ func decodeAmount(raw json.RawMessage, fail func(member, field, msg string)) mon
 	}
 	out, err := money.New(amount, currency)
 	if err != nil {
-		fail("amount", "amount.currency", "amount.currency is required")
+		fail(member, member+".currency", member+".currency is required")
 	}
 	return out
 }
@@ -477,7 +493,7 @@ func registerCommitments(s *Server, st commitments.Store, todayFn today) {
 // 7396) and decodes the result.
 func applyCommitmentPatch(cur commitments.Commitment, patch MergePatch) (commitments.Fields, []commitments.FieldError, error) {
 	target, err := json.Marshal(editableJSON{Name: cur.Name, Kind: cur.Kind, Amount: cur.Amount, Schedule: cur.Schedule,
-		StartDate: cur.StartDate, EndDate: cur.EndDate, Priority: cur.Priority, Notes: cur.Notes})
+		StartDate: cur.StartDate, EndDate: cur.EndDate, Priority: cur.Priority, Notes: cur.Notes, MatchTolerance: cur.MatchTolerance})
 	if err != nil {
 		return commitments.Fields{}, nil, Internal(err)
 	}

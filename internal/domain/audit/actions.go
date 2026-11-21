@@ -49,6 +49,12 @@ const (
 	PaymentMatchUnmatched Action = "payment_match.unmatched"
 	PaymentMatchCorrected Action = "payment_match.corrected"
 	PaymentMatchReversed  Action = "payment_match.reversed"
+
+	// A person asked for an automatic matching run through the API (X2,
+	// ADR-0039). The matches it wrote are audited one by one as
+	// payment_match.* with the system as actor. The target is the run
+	// (target ID "run"). Details: the counts.
+	PaymentMatchingRun Action = "payment_matching.run" // Details: confirmed, suggested, dropped, skipped
 )
 
 // Fixed value sets for detail fields that are not identifiers.
@@ -150,6 +156,8 @@ var Definitions = map[Action][]Field{
 	PaymentMatchUnmatched: matchFields(),
 	PaymentMatchCorrected: matchFields(),
 	PaymentMatchReversed:  matchFields(),
+
+	PaymentMatchingRun: {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account
