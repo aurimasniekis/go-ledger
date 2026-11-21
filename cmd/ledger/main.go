@@ -64,7 +64,7 @@ func usage(w io.Writer) {
 	say(w, "  backup    write a verified copy of the database (backup, backup prune)")
 	say(w, "  restore   replace the database with a backup (stop serve first)")
 	say(w, "  config    check or document the configuration (config check, config env)")
-	say(w, "  auth      set a user's password from standard input (auth set-password; stop serve first)")
+	say(w, "  auth      set a user's password from standard input (auth set-password) or remove their two-factor authentication (auth reset-2fa); stop serve first")
 	say(w, "  version   print the build version")
 	say(w, "  help      print this message")
 }

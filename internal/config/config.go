@@ -41,6 +41,8 @@ type Auth struct {
 	Password AuthPassword `cfg:"password"`
 	Session  AuthSession  `cfg:"session"`
 	SignIn   AuthSignIn   `cfg:"sign_in"`
+	// Require2FA confines signed-in users without TOTP to enrolment (ADR-0030).
+	Require2FA bool `cfg:"require_2fa" default:"false" desc:"Require two-factor authentication (TOTP) for everyone. A signed-in user without it can only enrol an authenticator, see their session, re-authenticate and sign out; every other request is refused with 403 two_factor_enrollment_required. API tokens are not affected. While it is on, users cannot disable their own TOTP (the host command ledger auth reset-2fa can)."`
 }
 
 // AuthPassword configures the password policy.
@@ -158,6 +160,6 @@ func (e EnableBanking) Slots() []struct {
 // KEK configures the key-encryption key that protects stored credentials. It
 // is required: set exactly one of kek.value (environment only) and kek.file.
 type KEK struct {
-	Value string `cfg:"value" secret:"true" desc:"Key-encryption key for stored credentials. Required unless LEDGER_KEK_FILE is set. Secret: environment only, never in the YAML file and never a flag."`
+	Value string `cfg:"value" secret:"true" desc:"Key-encryption key for stored credentials (TOTP secrets are encrypted with a key derived from it). Use a long random value, for example 32 random bytes in base64. Changing it makes enrolled authenticators unusable: users then sign in with a recovery code, or the host resets their two-factor authentication. Required unless LEDGER_KEK_FILE is set. Secret: environment only, never in the YAML file and never a flag."`
 	File  string `cfg:"file" desc:"Path of a file that contains the key-encryption key. Alternative to LEDGER_KEK_VALUE; trailing newlines are ignored."`
 }

@@ -6,7 +6,7 @@ import "time"
 // are read by the audit API and by people. Each is registered in [Definitions]
 // with the detail fields it may carry.
 const (
-	SignInSucceeded Action = "auth.signin_succeeded" // Details: method
+	SignInSucceeded Action = "auth.signin_succeeded" // Details: method, recovery_codes_remaining (method recovery_code)
 	SignInFailed    Action = "auth.signin_failed"    // Details: method, reason
 
 	// Sessions and credentials (A2, ADR-0026). The target of a session event
@@ -16,9 +16,10 @@ const (
 	Reauthenticated        Action = "auth.reauthenticated"         // Details: method
 	ReauthenticationFailed Action = "auth.reauthentication_failed" // Details: method, reason
 
-	TwoFactorEnabled   Action = "two_factor.enabled"
-	TwoFactorDisabled  Action = "two_factor.disabled"
-	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated"
+	// Second factors (A3, ADR-0030). The target is the user.
+	TwoFactorEnabled   Action = "two_factor.enabled"                    // Details: method, replaced (true, false), sessions_ended
+	TwoFactorDisabled  Action = "two_factor.disabled"                   // Details: method, by (self, administrator, host)
+	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated" // Details: count
 
 	OIDCLinked   Action = "oidc.linked"   // Details: provider
 	OIDCUnlinked Action = "oidc.unlinked" // Details: provider
@@ -68,7 +69,7 @@ var Definitions = map[Action][]Field{
 	UserDisabled:    nil,
 	UserEnabled:     nil,
 
-	SignInSucceeded: {f("method", signInMethods...)},
+	SignInSucceeded: {f("method", signInMethods...), f("recovery_codes_remaining")},
 	SignInFailed:    {f("method", signInMethods...), f("reason", signInReasons...)},
 
 	SessionEnded:           {f("reason", sessionEndReasons...)},
@@ -76,9 +77,9 @@ var Definitions = map[Action][]Field{
 	Reauthenticated:        {f("method", signInMethods...)},
 	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...)},
 
-	TwoFactorEnabled:   {f("method", "totp")},
-	TwoFactorDisabled:  {f("method", "totp")},
-	RecoveryCodesReset: nil,
+	TwoFactorEnabled:   {f("method", "totp"), f("replaced", "true", "false"), f("sessions_ended")},
+	TwoFactorDisabled:  {f("method", "totp"), f("by", passwordChangedBy...)},
+	RecoveryCodesReset: {f("count")},
 
 	OIDCLinked:   {f("provider")},
 	OIDCUnlinked: {f("provider")},

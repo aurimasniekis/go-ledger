@@ -18,6 +18,9 @@ type Access struct {
 	// recent: a signed-in user must have proved their password within the
 	// re-authentication window (ADR-0026). API tokens are exempt by design.
 	recent bool
+	// enrollment: the route stays reachable for a session confined to
+	// enrolling a second factor (auth.require_2fa, ADR-0030).
+	enrollment bool
 }
 
 type accessKind int
@@ -65,6 +68,20 @@ func (a Access) WithRecentAuth() Access {
 
 // RecentAuth reports whether the route requires recent authentication.
 func (a Access) RecentAuth() bool { return a.recent }
+
+// DuringEnrollment returns a with the route reachable by a session whose user
+// must enrol a second factor first (auth.require_2fa). Every other non-public
+// route refuses such a session with 403 two_factor_enrollment_required. Only
+// [SessionOnly] routes may be marked: enrolment, the current session,
+// re-authentication and sign-out (ADR-0030).
+func (a Access) DuringEnrollment() Access {
+	a.enrollment = true
+	return a
+}
+
+// AllowedDuringEnrollment reports whether the route is reachable during
+// required enrolment (OpenAPI x-ledger-during-enrollment).
+func (a Access) AllowedDuringEnrollment() bool { return a.enrollment }
 
 // Grant returns the required grant, if the route requires one.
 func (a Access) Grant() (authz.Grant, bool) { return a.grant, a.kind == accessGrant }
@@ -150,6 +167,9 @@ func checkAccess(method string, a Access) {
 	if a.recent && a.kind != accessGrant && a.kind != accessSession {
 		panic("httpapi: recent authentication applies to grant and session routes only")
 	}
+	if a.enrollment && a.kind != accessSession {
+		panic("httpapi: only session routes may be reachable during required two-factor enrolment")
+	}
 	if a.kind == accessAuthenticated && !safeMethod(method) {
 		panic(fmt.Sprintf("httpapi: %s route is Authenticated: state-changing routes must require a write grant", method))
 	}
@@ -180,6 +200,12 @@ func (s *Server) authorize(pattern string, a Access, h http.Handler) http.Handle
 		}
 		if a.kind == accessSession && (p.Kind != authz.PrincipalUser || p.SessionID == "") {
 			WriteError(w, r, Forbidden("this requires a signed-in session; API tokens cannot use it"))
+			return
+		}
+		// Required 2FA (ADR-0030): a session whose user has not enrolled a
+		// second factor reaches only the routes marked DuringEnrollment.
+		if p.EnrollmentRequired && !a.enrollment {
+			WriteError(w, r, enrollmentRequired())
 			return
 		}
 		// CSRF (ADR-0026): every state-changing request of a signed-in user

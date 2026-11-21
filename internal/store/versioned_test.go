@@ -142,6 +142,8 @@ var unversionedTables = map[string]string{
 	"user_passwords":                 "credential hashes (ADR-0026), keyed by user and written only by password changes; never read or edited as an API object",
 	"sessions":                       "server-side sign-in sessions (ADR-0026), created by sign-in and deleted when they end; never edited through the API",
 	"commitment_occurrence_horizons": "materialisation bookkeeping written only by the occurrence generator (ADR-0027), never edited through the API",
+	"user_totp":                      "sealed TOTP secrets (ADR-0030), keyed by user and written only by enrolment, sign-in and disabling; never read or edited as an API object",
+	"user_recovery_codes":            "recovery code hashes (ADR-0030), replaced as a set and deleted when used; never read or edited as an API object",
 }
 
 // versionProblems checks the optimistic-concurrency convention: every table

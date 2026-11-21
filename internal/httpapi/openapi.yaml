@@ -65,6 +65,17 @@ info:
       `reauthentication_required`; confirm with
       `POST /auth/reauthenticate`. API tokens are exempt by design (their
       writes are audited as `token.write_used`).
+    - **Two-factor authentication** (ADR-0030). A user may enrol a TOTP
+      authenticator (RFC 6238: SHA-1, 6 digits, 30 s) under
+      `/auth/two-factor`; enabling it returns recovery codes once. Sign-in
+      then takes two steps: `POST /auth/sign-in` answers 202 with a
+      challenge, and `POST /auth/sign-in/second-factor` takes a TOTP code
+      or a recovery code and starts the session. When `auth.require_2fa`
+      is on, a session whose user has no authenticator reaches only the
+      operations marked `x-ledger-during-enrollment: true` (enrolment,
+      the current session, re-authentication, sign-out); every other
+      request is 403 `two_factor_enrollment_required`. API tokens skip
+      interactive steps by design and are not affected.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -689,6 +700,11 @@ paths:
         address within the window are 429 `rate_limited` with Retry-After.
         A browser request from another origin is 403 `csrf_failed`. Success
         and failure are audited; a failure never records the username.
+
+        When the user has TOTP enabled, a right password starts no session:
+        the answer is 202 with a challenge for
+        `POST /auth/sign-in/second-factor`, valid for five minutes. Only
+        a complete sign-in clears the username's failure count.
       tags: [auth]
       requestBody:
         required: true
@@ -717,12 +733,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CurrentSession"
+        "202":
+          description: The password was right; a second factor must follow. No cookie is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecondFactorChallenge"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/sign-in/second-factor:
+    post:
+      operationId: signInSecondFactor
+      x-ledger-access: public
+      summary: Complete a sign-in with a TOTP code or a recovery code
+      description: |
+        The second step of a sign-in for a user with TOTP enabled. Send the
+        challenge from `POST /auth/sign-in` and exactly one of `code`
+        (from the authenticator; accepted within one 30-second step either
+        side, and only once) or `recovery_code` (consumed by its use). On
+        success the session starts exactly as after a password-only sign-in.
+        A wrong, malformed or reused code is 401 `invalid_second_factor` and
+        counts towards the same per-username and per-address limits as a
+        wrong password (429 `rate_limited` with Retry-After); a challenge
+        takes at most five wrong codes. An unknown, expired or used-up
+        challenge is 401 `unauthenticated`: sign in again. A browser
+        request from another origin is 403 `csrf_failed`. Audited
+        (auth.signin_succeeded and auth.signin_failed with method totp or
+        recovery_code).
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge]
+              properties:
+                challenge:
+                  type: string
+                  maxLength: 128
+                code:
+                  type: string
+                  description: The 6-digit code from the authenticator.
+                  examples: ["123456"]
+                recovery_code:
+                  type: string
+                  format: password
+                  description: One unused recovery code, with or without its dashes.
+      responses:
+        "200":
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              description: The session cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentSession"
         default:
           $ref: "#/components/responses/Error"
   /auth/sign-out:
     post:
       operationId: signOut
       x-ledger-access: session
+      x-ledger-during-enrollment: true
       summary: End the current session
       description: Ends the session the request was made with and clears the cookie. Audited (auth.session_ended, reason signed_out).
       tags: [auth]
@@ -735,6 +812,7 @@ paths:
     get:
       operationId: getCurrentSession
       x-ledger-access: session
+      x-ledger-during-enrollment: true
       summary: The current session and its CSRF token
       tags: [auth]
       responses:
@@ -793,6 +871,7 @@ paths:
     post:
       operationId: reauthenticate
       x-ledger-access: session
+      x-ledger-during-enrollment: true
       summary: Confirm your password for sensitive actions
       description: |
         Checks the signed-in user's password again; when it matches, the
@@ -848,6 +927,123 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PasswordSet"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/two-factor:
+    get:
+      operationId: getMyTwoFactor
+      x-ledger-access: session
+      x-ledger-during-enrollment: true
+      summary: Your two-factor authentication status
+      tags: [auth]
+      responses:
+        "200":
+          description: The status. Never includes secrets or recovery codes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TwoFactorStatus"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: disableMyTwoFactor
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Disable your two-factor authentication
+      description: |
+        Removes the authenticator and every recovery code. 409 `conflict`
+        when TOTP is not enabled, or when `auth.require_2fa` is on (enrol a
+        new authenticator to replace it instead; the host command
+        `ledger auth reset-2fa` can still remove it). Audited
+        (two_factor.disabled, by self).
+      tags: [auth]
+      responses:
+        "204":
+          description: Disabled.
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/two-factor/totp:
+    post:
+      operationId: startTOTPEnrollment
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      x-ledger-during-enrollment: true
+      summary: Start enrolling a TOTP authenticator
+      description: |
+        Generates a new secret and returns it, with its otpauth:// URI for a
+        QR code. This is the only time the secret is shown; it is stored
+        encrypted. Confirm with a code from the authenticator within ten
+        minutes (`POST /auth/two-factor/totp/confirm`). Starting again
+        replaces an unconfirmed enrolment. An enabled authenticator keeps
+        working until the new one is confirmed, so this also replaces one.
+        503 `dependency_unavailable` when no key-encryption key is
+        configured.
+      tags: [auth]
+      responses:
+        "201":
+          description: The enrolment was started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPEnrollment"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/two-factor/totp/confirm:
+    post:
+      operationId: confirmTOTPEnrollment
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      x-ledger-during-enrollment: true
+      summary: Confirm a TOTP enrolment and receive recovery codes
+      description: |
+        Checks a code from the authenticator against the started enrolment.
+        When it matches, TOTP is enabled (replacing an earlier
+        authenticator), ten new recovery codes are returned (shown only
+        here; earlier codes stop working) and every other session of the
+        user ends; the current session stays and is no longer confined by
+        `auth.require_2fa`. A wrong code is 400 `invalid_second_factor`;
+        no started or an expired enrolment is 409 `conflict`. Audited
+        (two_factor.enabled).
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  examples: ["123456"]
+      responses:
+        "200":
+          description: TOTP is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodes"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/two-factor/recovery-codes:
+    post:
+      operationId: regenerateRecoveryCodes
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Replace your recovery codes
+      description: |
+        Issues ten new recovery codes, shown only here; every earlier code
+        stops working. 409 `conflict` when TOTP is not enabled. Audited
+        (two_factor.recovery_codes_regenerated).
+      tags: [auth]
+      responses:
+        "200":
+          description: The new codes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodes"
         default:
           $ref: "#/components/responses/Error"
   /occurrences:
@@ -1358,7 +1554,7 @@ components:
           description: The client address at sign-in.
     CurrentSession:
       type: object
-      required: [user_id, session, csrf_token, recent_auth_until]
+      required: [user_id, session, csrf_token, recent_auth_until, two_factor]
       properties:
         user_id:
           $ref: "#/components/schemas/ID"
@@ -1371,6 +1567,95 @@ components:
           type: [string, "null"]
           format: date-time
           description: When the last password check stops counting as recent; null when it already has.
+        two_factor:
+          type: object
+          required: [enabled, required, enrollment_required]
+          properties:
+            enabled:
+              type: boolean
+            required:
+              type: boolean
+              description: auth.require_2fa.
+            enrollment_required:
+              type: boolean
+              description: The session reaches only the operations marked x-ledger-during-enrollment until an authenticator is enrolled.
+    SecondFactorChallenge:
+      type: object
+      required: [second_factor_required, challenge, expires_at, methods]
+      properties:
+        second_factor_required:
+          type: boolean
+          const: true
+        challenge:
+          type: string
+          description: Send it to POST /auth/sign-in/second-factor. A secret; it starts a session with a valid code.
+        expires_at:
+          type: string
+          format: date-time
+        methods:
+          type: array
+          items:
+            type: string
+            enum: [totp, recovery_code]
+    TwoFactorStatus:
+      type: object
+      required: [enabled, method, enabled_at, recovery_codes_remaining, required, pending_enrollment_until]
+      properties:
+        enabled:
+          type: boolean
+        method:
+          type: [string, "null"]
+          enum: [totp, null]
+        enabled_at:
+          type: [string, "null"]
+          format: date-time
+        recovery_codes_remaining:
+          type: integer
+          minimum: 0
+        required:
+          type: boolean
+          description: auth.require_2fa.
+        pending_enrollment_until:
+          type: [string, "null"]
+          format: date-time
+          description: When a started, unconfirmed enrolment stops being confirmable; null when none is pending.
+    TOTPEnrollment:
+      type: object
+      required: [secret, otpauth_uri, algorithm, digits, period, expires_at]
+      properties:
+        secret:
+          type: string
+          description: The base32 secret (no padding), shown only in this response.
+        otpauth_uri:
+          type: string
+          description: otpauth://totp URI with the secret, issuer Ledger and the parameters, for a QR code.
+        algorithm:
+          type: string
+          const: SHA1
+        digits:
+          type: integer
+          const: 6
+        period:
+          type: integer
+          const: 30
+        expires_at:
+          type: string
+          format: date-time
+          description: Confirm before this time.
+    RecoveryCodes:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          description: Shown only in this response; each works once. Stored only as hashes.
+          items:
+            type: string
+            pattern: "^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$"
+        sessions_ended:
+          type: integer
+          minimum: 0
+          description: Sessions of the user ended by enabling TOTP (confirmation only).
     ID:
       type: string
       description: A ULID.
@@ -1406,6 +1691,8 @@ components:
             - csrf_failed
             - reauthentication_required
             - pending_terms_change
+            - two_factor_enrollment_required
+            - invalid_second_factor
         message:
           type: string
         field:
