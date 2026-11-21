@@ -525,6 +525,11 @@ func (s *Store) decide(ctx context.Context, actor audit.Actor, id string, expect
 		if !allowed {
 			return matches.ErrTransition
 		}
+		if a != matches.ActionConfirmed && automation(actor) {
+			if err := refuseUndo(ctx, tx, m); err != nil {
+				return err
+			}
+		}
 		if check != nil {
 			if err := check(ctx, tx, m); err != nil {
 				return err
@@ -542,6 +547,25 @@ func (s *Store) decide(ctx context.Context, actor audit.Actor, id string, expect
 		return err
 	})
 	return ch, err
+}
+
+// refuseUndo applies decision D33: automation may not reject, unmatch or
+// reverse a match a person decided. A person decided it when its latest
+// decision is a user's or token's, or when any history event (suggestion,
+// confirmation, correction) came from one; a correction does not change the
+// latest decision, so the history is what shows it.
+func refuseUndo(ctx context.Context, tx *sql.Tx, m matches.Match) error {
+	if m.DecidedBy != nil && (m.DecidedBy.Kind == audit.ActorUser || m.DecidedBy.Kind == audit.ActorToken) {
+		return matches.ErrActorUndo
+	}
+	var n int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_match_events WHERE match_id = ? AND actor_kind IN ('user', 'token')", m.ID).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return matches.ErrActorUndo
+	}
+	return nil
 }
 
 // Confirm confirms a suggestion: the transaction must be countable, the
