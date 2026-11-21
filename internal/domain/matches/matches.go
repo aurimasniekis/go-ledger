@@ -308,6 +308,10 @@ var (
 	// ErrActorOrigin refuses a match that claims origin user from an actor
 	// that is neither a user nor a token.
 	ErrActorOrigin = errors.New("a match with origin user needs a user or token actor")
+	// ErrActorOverpayment refuses AllowOverpayment from automation: deciding
+	// that a payment really happened twice is a user's judgement (duplicate
+	// payments are an unresolved decision).
+	ErrActorOverpayment = errors.New("only a user or a token can allow an overpayment")
 	// ErrActorCorrect refuses a correction by an actor that is neither a
 	// user nor a token: automation cannot change an allocation.
 	ErrActorCorrect = errors.New("only a user or a token can correct a match's allocation")

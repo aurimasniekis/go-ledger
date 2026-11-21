@@ -223,7 +223,12 @@ func TestDatabaseRefusesOriginStateMismatch(t *testing.T) {
 // TestAutomationActorIsHeldToTheAutoRules: a system actor cannot go around the
 // 1:1 guard by suggesting first, by claiming origin user or by correcting.
 func TestAutomationActorIsHeldToTheAutoRules(t *testing.T) {
-	sys := audit.System
+	for _, sys := range []audit.Actor{audit.System, {Kind: audit.ActorAnonymous}} {
+		t.Run(string(sys.Kind), func(t *testing.T) { automationGuard(t, sys) })
+	}
+}
+
+func automationGuard(t *testing.T, sys audit.Actor) {
 	create := func(f *fixture, tx banking.StoredTransaction, o occurrences.Occurrence, amount string, origin matches.Origin, st matches.State) (matches.Change, error) {
 		return f.ms.Create(f.ctx, sys, matches.New{TransactionID: tx.ID, OccurrenceID: o.ID, Amount: money.MustParse(amount, "EUR"), Origin: origin, State: st})
 	}
@@ -292,6 +297,20 @@ func TestAutomationActorIsHeldToTheAutoRules(t *testing.T) {
 		}
 		if _, err := create(f, rent, o, "800.00", matches.OriginAutoRule, matches.StateConfirmed); err != nil {
 			t.Errorf("system exact confirmation: %v", err)
+		}
+	})
+	t.Run("overpayment never allowed", func(t *testing.T) {
+		f, rent, o, _ := setup(t)
+		if _, err := f.ms.Create(f.ctx, sys, matches.New{TransactionID: rent.ID, OccurrenceID: o.ID, Amount: money.MustParse("800.00", "EUR"),
+			Origin: matches.OriginAutoRule, State: matches.StateConfirmed, AllowOverpayment: true}); !errors.Is(err, matches.ErrActorOverpayment) {
+			t.Errorf("create with AllowOverpayment: %v", err)
+		}
+		s, err := create(f, rent, o, "800.00", matches.OriginModel, matches.StateSuggested)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.ms.Confirm(f.ctx, sys, s.Match.ID, s.Match.Version, true, nil); !errors.Is(err, matches.ErrActorOverpayment) {
+			t.Errorf("confirm with allow: %v", err)
 		}
 	})
 }
