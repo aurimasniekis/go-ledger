@@ -324,7 +324,9 @@ describe('a correction by keyboard when the save does not go through', () => {
     expect(within(card).getByLabelText(/Allocated amount/)).toHaveValue('7.50')
     expect(screen.queryByText('Saved')).not.toBeInTheDocument()
     expect(card).toHaveTextContent('10.00')
-    await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+    const retry = within(alert).getByRole('button', { name: 'Try again' })
+    while (document.activeElement !== retry) await user.tab()
+    await user.keyboard('{Enter}')
     await screen.findByText(/Amount corrected/)
     expect(posts()).toHaveLength(2)
     expect(posts()[1]!.body).toEqual(posts()[0]!.body)
@@ -434,6 +436,82 @@ describe('reasons and unsaved text do not leak', () => {
     expect(within(card).queryByRole('form')).not.toBeInTheDocument()
     await user.click(within(card).getByRole('button', { name: 'Reject suggestion' }))
     expect(within(card).getByLabelText(/Reason/)).toHaveValue('')
+  })
+})
+
+describe('a conflict while a form is open (R1)', () => {
+  it('replaces the submit with a pointer to "Save again on the latest version" and moves focus to the alert', async () => {
+    let n = 0
+    extra['POST /api/v1/payment-matches/a/correct'] = () => {
+      const current = match('a', { state: 'confirmed', version: 4, counts_as_evidence: true })
+      store = [current]
+      if (++n > 1) return ok(current)
+      return fail(409, 'version_conflict', 'The match changed since you read it.', { reconciliation: { current_version: 4, current } })
+    }
+    confirmedStore()
+    start()
+    const user = userEvent.setup()
+    const card = await openCorrection(user)
+    await user.tab()
+    await user.tab()
+    await user.keyboard('{Enter}')
+    const alert = await within(card).findByRole('alert')
+    const form = within(card).getByRole('form', { name: 'Correct amount' })
+    expect(within(form).queryByRole('button', { name: 'Save correction' })).not.toBeInTheDocument()
+    expect(form).toHaveTextContent('Save again on the latest version')
+    expect(alert).toHaveFocus()
+    await user.click(within(alert).getByRole('button', { name: 'Save again on the latest version' }))
+    await screen.findByText(/Amount corrected/)
+    expect(posts()).toHaveLength(2)
+  })
+
+  it('closes the form when the latest copy no longer allows the change, so nothing can be sent', async () => {
+    extra['POST /api/v1/payment-matches/a/reject'] = () => {
+      const current = match('a', { state: 'rejected', version: 2 })
+      store = [current]
+      return fail(409, 'version_conflict', 'The match changed since you read it.', { reconciliation: { current_version: 2, current } })
+    }
+    start()
+    const user = userEvent.setup()
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await user.click(within(card).getByRole('button', { name: 'Reject suggestion' }))
+    await user.type(within(card).getByLabelText(/Reason/), 'not it')
+    await user.click(within(card).getByRole('button', { name: 'Reject now' }))
+    const alert = await within(card).findByRole('alert')
+    expect(within(card).queryByRole('form')).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Reject now' })).not.toBeInTheDocument()
+    expect(alert).toHaveFocus()
+    expect(posts()).toHaveLength(1)
+  })
+})
+
+describe('a competing suggestion after the other one was confirmed (R2)', () => {
+  it('shows it as already paid, with Reject first, and never offers Confirm as the primary action', async () => {
+    let paid = false
+    store = [match('a'), match('b', { occurrence_id: 'occ-a' })]
+    extra['GET /api/v1/occurrences/occ-a'] = () => ok({ ...occurrence('a'), payment: paid ? { status: 'paid' } : { status: 'unpaid' } })
+    extra['POST /api/v1/payment-matches/a/confirm'] = () => {
+      paid = true
+      store = [match('a', { state: 'confirmed', version: 2, counts_as_evidence: true }), match('b', { occurrence_id: 'occ-a' })]
+      return ok(store[0])
+    }
+    start()
+    const cards = await screen.findAllByRole('article', { name: 'Rent' })
+    expect(cards).toHaveLength(2)
+    expect(within(cards[1]!).getByTestId('competing')).toBeInTheDocument()
+    await userEvent.click(within(cards[0]!).getByRole('button', { name: 'Confirm match' }))
+    await screen.findByText(/Match confirmed/)
+    const other = await waitFor(() => {
+      const rest = screen.getAllByRole('article', { name: 'Rent' })
+      expect(rest).toHaveLength(1)
+      expect(within(rest[0]!).getByTestId('already-paid')).toBeInTheDocument()
+      return rest[0]!
+    })
+    expect(other).toHaveAttribute('data-match-id', 'b')
+    expect(within(other).queryByTestId('competing')).not.toBeInTheDocument()
+    expect(other).toHaveTextContent('may be out of date')
+    expect(within(other).getByRole('button', { name: 'Reject suggestion' }).className).toContain('bg-primary')
+    expect(within(other).getByRole('button', { name: 'Confirm match' }).className).not.toContain('bg-primary')
   })
 })
 

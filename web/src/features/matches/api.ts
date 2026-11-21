@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
 import { usePagedList } from '@/lib/paged'
@@ -38,10 +38,17 @@ export function runMatching(): Promise<MatchingRunResult> {
   return apiFetch<MatchingRunResult>('/api/v1/payment-matching/runs', { method: 'POST', json: {} })
 }
 
-/** The occurrences that have a suggestion waiting (first page of the queue only), for a pointer from the month view. A failure just means no pointer. */
+/**
+ * The occurrences that have a suggestion waiting, for a pointer from the month view. It reads every page of the queue,
+ * and is unknown (no pointer) until the last one has loaded. A failure just means no pointer.
+ */
 export function useWaitingSuggestions(): ReadonlySet<string> | undefined {
   const q = usePagedList<PaymentMatch>(matchesKey, base, { state: 'suggested' })
-  return useMemo(() => (q.data ? new Set(q.data.map((m) => m.occurrence_id)) : undefined), [q.data])
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = q
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage && !isFetchNextPageError) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage])
+  return useMemo(() => (q.data && !hasNextPage ? new Set(q.data.map((m) => m.occurrence_id)) : undefined), [q.data, hasNextPage])
 }
 
 export function useOccurrence(id: string) {
