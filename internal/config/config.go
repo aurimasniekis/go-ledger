@@ -41,13 +41,15 @@ type Auth struct {
 	Password AuthPassword `cfg:"password"`
 	Session  AuthSession  `cfg:"session"`
 	SignIn   AuthSignIn   `cfg:"sign_in"`
+	OIDC     AuthOIDC     `cfg:"oidc"`
 	// Require2FA confines signed-in users without TOTP to enrolment (ADR-0030).
 	Require2FA bool `cfg:"require_2fa" default:"false" desc:"Require two-factor authentication (TOTP) for everyone. A signed-in user without it can only enrol an authenticator, see their session, re-authenticate and sign out; every other request is refused with 403 two_factor_enrollment_required. API tokens are not affected. While it is on, users cannot disable their own TOTP (the host command ledger auth reset-2fa can)."`
 }
 
 // AuthPassword configures the password policy.
 type AuthPassword struct {
-	MinLength int `cfg:"min_length" default:"12" desc:"Minimum password length in bytes (1 to 1024). Length is the only rule: there are no composition rules."`
+	Enabled   bool `cfg:"enabled" default:"true" desc:"Allow signing in with a username and password. false refuses password sign-in and password re-authentication for everyone (403 password_sign_in_disabled) and sends the sign-in page to single sign-on; it needs auth.oidc.enabled. Linking an OIDC identity never turns password sign-in off by itself. If the identity provider is unavailable while this is false, the host can issue a one-time sign-in with ledger auth recovery-sign-in (docs/oidc.md)."`
+	MinLength int  `cfg:"min_length" default:"12" desc:"Minimum password length in bytes (1 to 1024). Length is the only rule: there are no composition rules."`
 }
 
 // AuthSession configures sign-in sessions.
@@ -55,6 +57,32 @@ type AuthSession struct {
 	IdleTimeout     time.Duration `cfg:"idle_timeout" default:"30m" desc:"A session not used for this long ends. Must not exceed the absolute timeout."`
 	AbsoluteTimeout time.Duration `cfg:"absolute_timeout" default:"12h" desc:"A session ends this long after sign-in, however much it is used."`
 	ReauthWindow    time.Duration `cfg:"reauth_window" default:"10m" desc:"How long a password check counts as recent for sensitive actions (credential changes, token creation, user management). After it, the user confirms their password again."`
+}
+
+// OIDCCallbackPath is the path of the OIDC redirect (callback) route; the
+// path of auth.oidc.redirect_url must be exactly this.
+const OIDCCallbackPath = "/api/v1/auth/oidc/callback"
+
+// AuthOIDC configures sign-in with one OpenID Connect provider (ADR-0033).
+// The defaults are proposals, except those decision D16 settled.
+type AuthOIDC struct {
+	Enabled          bool                 `cfg:"enabled" default:"false" desc:"Allow signing in with one OpenID Connect identity provider (authorization code flow with PKCE). Users link their identity while signed in; an identity that is not linked gets no access unless auth.oidc.provisioning.enabled is true."`
+	Name             string               `cfg:"name" default:"Single sign-on" desc:"Name of the identity provider shown on the sign-in page and recorded in audit entries: 1 to 64 printable characters."`
+	Issuer           string               `cfg:"issuer" desc:"Issuer URL of the provider, exactly as its discovery document states it (a trailing slash matters), for example https://id.example.com/realms/home. https only (plain http only for a loopback test provider). Links are keyed by issuer and subject: changing the issuer leaves every existing link unusable."`
+	ClientID         string               `cfg:"client_id" desc:"Client ID registered for Ledger at the provider. Required when auth.oidc.enabled is true."`
+	ClientSecret     string               `cfg:"client_secret" secret:"true" desc:"Client secret registered for Ledger at the provider. Secret: environment only, never in the YAML file and never a flag. Set this or client_secret_file."`
+	ClientSecretFile string               `cfg:"client_secret_file" desc:"Path of a file that contains the client secret. Alternative to the client_secret variable; trailing newlines are ignored. Only the path is configuration; the secret is never logged."`
+	RedirectURL      string               `cfg:"redirect_url" desc:"Callback URL registered at the provider: Ledger's external address followed by /api/v1/auth/oidc/callback, for example https://ledger.example.com/api/v1/auth/oidc/callback. https only (plain http only on loopback)."`
+	Scopes           []string             `cfg:"scopes" default:"openid,email,profile" desc:"Scopes requested (a list in YAML, comma separated in the variable). Must include openid. email and profile only fill in display data and a provisioned account's username; identity is never taken from them."`
+	Require2FA       bool                 `cfg:"require_2fa" default:"false" desc:"Ask users who have Ledger TOTP enabled for their code after an OIDC sign-in too, and apply auth.require_2fa to OIDC sessions. false (the default, decision D16) trusts the identity provider's own authentication."`
+	ClockSkew        time.Duration        `cfg:"clock_skew" default:"1m" desc:"Clock difference tolerated when checking ID token times (exp, nbf, iat, auth_time): 0 to 5m."`
+	Provisioning     AuthOIDCProvisioning `cfg:"provisioning"`
+}
+
+// AuthOIDCProvisioning configures accounts created on first OIDC sign-in.
+type AuthOIDCProvisioning struct {
+	Enabled bool   `cfg:"enabled" default:"false" desc:"Create an account, with no password, the first time an identity that is linked to no account signs in, and link it. Off by default: unknown identities are refused. Accounts are never matched by email address."`
+	Role    string `cfg:"role" default:"read-only" enum:"administrator,read-only" desc:"Role of accounts created by provisioning."`
 }
 
 // AuthSignIn configures sign-in rate limits. They are kept in memory and

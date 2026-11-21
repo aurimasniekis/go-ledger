@@ -1,5 +1,6 @@
 // Package auth persists passwords and sign-in sessions (task A2, ADR-0026)
-// in the tables of migration 0010_auth_sessions. It implements [auth.Store];
+// in the tables of migration 0010_auth_sessions, second factors (ADR-0030)
+// and single-sign-on links and recovery sign-ins (ADR-0033). It implements [auth.Store];
 // writes record their audit events in the same transaction through a
 // [store.AuditWriter].
 package auth
@@ -105,12 +106,12 @@ func (s *Store) SetPassword(ctx context.Context, userID, hash, keep string, at t
 	return ended, err
 }
 
-const sessionColumns = "id, user_id, token_hash, created_at, last_seen_at, authenticated_at, expires_at, user_agent, address"
+const sessionColumns = "id, user_id, token_hash, created_at, last_seen_at, authenticated_at, expires_at, user_agent, address, method"
 
 func scanSession(row interface{ Scan(...any) error }) (auth.Session, error) {
 	var x auth.Session
 	var created, seen, authed, expires store.Timestamp
-	if err := row.Scan(&x.ID, &x.UserID, &x.TokenHash, &created, &seen, &authed, &expires, &x.UserAgent, &x.Address); err != nil {
+	if err := row.Scan(&x.ID, &x.UserID, &x.TokenHash, &created, &seen, &authed, &expires, &x.UserAgent, &x.Address, &x.Method); err != nil {
 		return auth.Session{}, err
 	}
 	x.CreatedAt, x.LastSeenAt, x.AuthenticatedAt, x.ExpiresAt = created.Time, seen.Time, authed.Time, expires.Time
@@ -120,9 +121,13 @@ func scanSession(row interface{ Scan(...any) error }) (auth.Session, error) {
 // CreateSession inserts a session and its events.
 func (s *Store) CreateSession(ctx context.Context, x auth.Session, events ...audit.Event) error {
 	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO sessions ("+sessionColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		method := x.Method
+		if method == "" {
+			method = auth.SessionMethodPassword
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO sessions ("+sessionColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			x.ID, x.UserID, x.TokenHash, store.Timestamp{Time: x.CreatedAt}, store.Timestamp{Time: x.LastSeenAt},
-			store.Timestamp{Time: x.AuthenticatedAt}, store.Timestamp{Time: x.ExpiresAt}, x.UserAgent, x.Address); err != nil {
+			store.Timestamp{Time: x.AuthenticatedAt}, store.Timestamp{Time: x.ExpiresAt}, x.UserAgent, x.Address, method); err != nil {
 			return fmt.Errorf("store: create session: %w", err)
 		}
 		return s.writeEvents(ctx, tx, events)

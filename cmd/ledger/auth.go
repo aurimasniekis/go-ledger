@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
+	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
@@ -40,6 +41,10 @@ func authConfig(c config.Auth) auth.Config {
 		AccountLimit:    auth.Limit{Max: c.SignIn.AccountMaxFailures, Window: c.SignIn.Window},
 		AddressLimit:    auth.Limit{Max: c.SignIn.AddressMaxFailures, Window: c.SignIn.Window},
 		Require2FA:      c.Require2FA,
+		// Linking an identity never disables passwords: only this setting does.
+		PasswordSignInDisabled: !c.Password.Enabled,
+		OIDC: auth.OIDCPolicy{Enabled: c.OIDC.Enabled, Issuer: c.OIDC.Issuer, Provider: c.OIDC.Name, Require2FA: c.OIDC.Require2FA,
+			Provisioning: c.OIDC.Provisioning.Enabled, ProvisionRole: authz.Role(c.OIDC.Provisioning.Role)},
 	}
 }
 
@@ -50,6 +55,8 @@ type apiParts struct {
 	payments    *paymentstore.Store
 	auth        *auth.Service
 	tokens      *tokens.Service
+	// oidc is single sign-on, set by ledger serve when it is configured.
+	oidc *httpapi.OIDCDeps
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their
@@ -61,7 +68,7 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.
 	if err != nil {
 		return apiParts{}, err
 	}
-	svc, err := auth.NewService(authConfig(c), authstore.New(db, al), us, hasher, recorder{db: db, w: al}, auth.Options{Now: now, Sealer: sealer})
+	svc, err := auth.NewService(authConfig(c), authstore.New(db, al), us, hasher, recorder{db: db, w: al}, auth.Options{Now: now, Sealer: sealer, Users: us})
 	if err != nil {
 		return apiParts{}, err
 	}
@@ -98,12 +105,21 @@ const reset2FAUsage = `usage: ledger auth reset-2fa [flags] <username>
 
 // runAuth implements "ledger auth set-password" and "ledger auth reset-2fa".
 func runAuth(args []string, stdout, stderr io.Writer, env opsEnv) int {
-	if len(args) > 0 && args[0] == "reset-2fa" {
-		return runReset2FA(args[1:], stdout, stderr, env)
+	if len(args) > 0 {
+		switch args[0] {
+		case "reset-2fa":
+			return runReset2FA(args[1:], stdout, stderr, env)
+		case "recovery-sign-in":
+			return runRecoverySignIn(args[1:], stdout, stderr, env)
+		case "unlink-oidc":
+			return runUnlinkOIDC(args[1:], stdout, stderr, env)
+		}
 	}
 	if len(args) == 0 || args[0] != "set-password" {
 		say(stderr, setPasswordUsage)
 		say(stderr, reset2FAUsage)
+		say(stderr, recoverySignInUsage)
+		say(stderr, unlinkOIDCUsage)
 		return 2
 	}
 	fs := flag.NewFlagSet("ledger auth set-password", flag.ContinueOnError)
