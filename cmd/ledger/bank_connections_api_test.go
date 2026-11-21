@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -294,6 +295,31 @@ func TestBankConnectionErrorsKeepTheirKind(t *testing.T) {
 	}
 	if code, body, _ := c.do("POST", "/api/v1/bank-connections", `{"application":"fake-app"}`); code != 400 {
 		t.Errorf("missing fields: %d %v", code, body)
+	}
+}
+
+// TestRefreshAfterShutdownIsUnavailable: once shutdown has begun (the service
+// is waited on), a refresh starts nothing and answers 503 dependency_unavailable,
+// while the same refresh worked before (B4g F2).
+func TestRefreshAfterShutdownIsUnavailable(t *testing.T) {
+	f := newAPIFixture(t)
+	c := bankCall{t: t, f: f, hdr: f.signIn(t, "alice")}
+	_, body, _ := c.do("POST", "/api/v1/bank-connections", `{"application":"fake-app","institution_id":"Fake Bank","country":"FI"}`)
+	id := asMap(t, body["connection"])["id"].(string)
+	state := stateOf(t, body["authorization_url"].(string))
+	complete := `{"state":"` + state + `","code":"` + bankingtest.AuthorizationCode(state).Reveal() + `"}`
+	if code, body, _ := c.do("POST", "/api/v1/bank-connections/complete", complete); code != 200 {
+		t.Fatalf("complete: %d %v", code, body)
+	}
+	refresh := "/api/v1/bank-connections/" + id + "/refresh"
+	if code, body, _ := c.do("POST", refresh, ""); code != 200 {
+		t.Fatalf("refresh before shutdown: %d %v", code, body)
+	}
+	if err := f.connections.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if code, body, _ := c.do("POST", refresh, ""); code != 503 || body["code"] != "dependency_unavailable" {
+		t.Errorf("refresh after shutdown began: %d %v, want 503 dependency_unavailable", code, body)
 	}
 }
 

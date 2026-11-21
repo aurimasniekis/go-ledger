@@ -473,10 +473,12 @@ func (s *Service) consentFailed(ctx context.Context, claim banking.ConsentClaim,
 	}
 }
 
-// Wait blocks until every refresh started by Refresh has ended and its audit
-// entry is written, or ctx ends (then it returns ctx's error). Shutdown calls
-// it after the HTTP server has stopped and before the database closes, so a
-// run that was detached from its request is not cut off.
+// Wait closes the service, then blocks until every refresh started by Refresh
+// has ended and its audit entry is written, or ctx ends (then it returns ctx's
+// error). Once Wait has been called, Refresh returns ErrShuttingDown and starts
+// nothing. Shutdown calls Wait after the HTTP server has stopped and before the
+// database closes, so a run that was detached from its request is not cut off;
+// a run still going when Wait gives up is cancelled with CancelRefreshes.
 func (s *Service) Wait(ctx context.Context) error {
 	s.mu.Lock()
 	s.closed = true
@@ -496,6 +498,8 @@ func (s *Service) Wait(ctx context.Context) error {
 // refresh that fails is not an error of this call: the run says how it ended
 // and last good data stays. ErrRefreshInProgress (banking) means a refresh is
 // already running; the caller should show that and try again later.
+// ErrShuttingDown means Wait has been called (shutdown began): no run starts,
+// and the HTTP API answers 503 dependency_unavailable.
 func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.ConnectionID) (View, error) {
 	conn, err := s.Facts.Connection(ctx, id)
 	if err != nil {

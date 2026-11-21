@@ -2749,10 +2749,13 @@ paths:
         says how it ended and its error.kind tells what to do (reconnect_required:
         reconnect; retryable or rate_limited: try again later; permanent:
         retrying will not help). The wait is bounded below the server's write
-        timeout; a refresh that is still going at the bound is not cancelled: the
-        answer is 200 with refresh_running true and the run goes on, so poll the
-        connection until refresh_running is false. A failed refresh never changes stored balances or
-        transactions. 409 connection_not_active for a connection that is pending,
+        timeout; a refresh that is still going at the bound is not cancelled while
+        the server runs: the answer is 200 with refresh_running true and the run
+        goes on, so poll the connection until refresh_running is false. When the
+        server shuts down, a run still going after the shutdown bound is cancelled
+        and recorded as interrupted (outcome interrupted); the committed windows
+        stay and a later refresh resumes them. A failed refresh never changes
+        stored balances or transactions. 409 connection_not_active for a connection that is pending,
         disconnected, failed or needs a new consent. Audited as
         bank_connection.refresh_requested.
       tags: [bank-connections]
@@ -2766,6 +2769,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BankConnection"
+        "503":
+          description: |
+            dependency_unavailable: the server is shutting down and starts no new
+            refresh. Try again once it is back.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /bank-connections/{id}/disconnect:
