@@ -157,9 +157,13 @@ func (e EnableBanking) Slots() []struct {
 	}{{"app", e.App}, {"developer", e.Developer}}
 }
 
+// MinKEKBytes is the shortest key-encryption key configuration accepts. It is
+// a proposed default (ADR-0030), waiting for an operator decision.
+const MinKEKBytes = 32
+
 // KEK configures the key-encryption key that protects stored credentials. It
 // is required: set exactly one of kek.value (environment only) and kek.file.
 type KEK struct {
-	Value string `cfg:"value" secret:"true" desc:"Key-encryption key for stored credentials (TOTP secrets are encrypted with a key derived from it). Use a long random value, for example 32 random bytes in base64. Changing it makes enrolled authenticators unusable: users then sign in with a recovery code, or the host resets their two-factor authentication. Required unless LEDGER_KEK_FILE is set. Secret: environment only, never in the YAML file and never a flag."`
+	Value string `cfg:"value" secret:"true" desc:"Key-encryption key for stored credentials (TOTP secrets are encrypted with a key derived from it). Must be at least 32 bytes long (proposed minimum); use a long random value, for example 32 random bytes in base64. Changing it makes enrolled authenticators unusable: users then sign in with a recovery code, or the host resets their two-factor authentication. Required unless LEDGER_KEK_FILE is set. Secret: environment only, never in the YAML file and never a flag."`
 	File  string `cfg:"file" desc:"Path of a file that contains the key-encryption key. Alternative to LEDGER_KEK_VALUE; trailing newlines are ignored."`
 }

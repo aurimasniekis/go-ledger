@@ -154,9 +154,10 @@ func (s *Store) ReplaceRecoveryCodes(ctx context.Context, userID string, codeHas
 }
 
 // DisableTwoFactor deletes the user's TOTP row and recovery codes.
-func (s *Store) DisableTwoFactor(ctx context.Context, userID string, events ...audit.Event) (bool, error) {
-	var was bool
-	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+// When it was enabled, it also ends the user's sessions except keep (a
+// session id, "" for none), in the same transaction, and returns how many.
+func (s *Store) DisableTwoFactor(ctx context.Context, userID, keep string, events func(int) []audit.Event) (was bool, ended int, err error) {
+	err = s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM user_totp WHERE user_id = ? AND secret IS NOT NULL", userID).Scan(&n); err != nil {
 			return err
@@ -171,7 +172,19 @@ func (s *Store) DisableTwoFactor(ctx context.Context, userID string, events ...a
 		if !was {
 			return nil
 		}
-		return s.writeEvents(ctx, tx, events)
+		res, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ? AND id <> ?", userID, keep)
+		if err != nil {
+			return err
+		}
+		n64, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		ended = int(n64)
+		if events == nil {
+			return nil
+		}
+		return s.writeEvents(ctx, tx, events(ended))
 	})
-	return was, err
+	return was, ended, err
 }

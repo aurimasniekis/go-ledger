@@ -57,13 +57,17 @@ requirement. There is no UI here (A7).
    interactive steps by requirement).
 9. **Host recovery.** `ledger auth reset-2fa <username>` (with `ledger serve` stopped, instance lock) removes the
    user's TOTP and recovery codes, audited as the system (`by: host`). It is the path for a lost authenticator without
-   recovery codes and for a changed KEK. With required 2FA, the user is confined to enrolment at the next sign-in.
+   recovery codes and for a changed KEK. With required 2FA, the user is confined to enrolment at the next sign-in. It
+   also ends all the user's sessions (the authenticator may have been lost or stolen, so sessions opened with it must
+   not outlive it); the user's own `DELETE /auth/two-factor` ends all sessions but the current one.
 10. **Proposed defaults (not decided by the operator):** one step of skew; ten recovery codes; enrolment valid ten
     minutes; challenge valid five minutes and five wrong codes. Rationale: one step either side is RFC 6238's
     recommendation for network delay; ten codes is the common practice; the other values bound memory and guessing
-    without hurting a user who is typing. Only `auth.require_2fa` is configurable; the others are constants.
+    without hurting a user who is typing. The KEK must be at least 32 bytes (`config.MinKEKBytes`), checked at
+    configuration validation with a clear problem; HKDF does not stretch a weak key, so a short one would let a copied
+    database be brute-forced offline. Only `auth.require_2fa` is configurable; the others are constants.
 11. **Audit.** `two_factor.enabled` (method, replaced, sessions_ended), `two_factor.disabled` (method, by self or
-    host), `two_factor.recovery_codes_regenerated` (count), and sign-in events with method `totp` or
+    host, sessions_ended), `two_factor.recovery_codes_regenerated` (count), and sign-in events with method `totp` or
     `recovery_code` (a recovery-code success records how many remain; a failure has reason `invalid_second_factor`).
     Starting an enrolment that is not confirmed changes no second factor and is not audited.
 12. **Schema.** Migration `0013_totp`: `user_totp` (active and pending sealed secrets, `last_step`) and
@@ -89,6 +93,8 @@ requirement. There is no UI here (A7).
 
 - **Changing the KEK breaks enrolled authenticators** until the user signs in with a recovery code and enrols again, or
   the host runs `ledger auth reset-2fa`. There is no KEK rotation yet.
+- A sign-in challenge is claimed by one request at a time: a concurrent second request on it is refused (401) before it
+  can consume a recovery code, so a double submit cannot burn a code without a session.
 - Re-authentication (`POST /auth/reauthenticate`) still checks only the password, also for users with TOTP; whether
   sensitive actions should ask for a second factor is open.
 - There is no administrator route to reset another user's 2FA; the host command covers the single-person deployment.

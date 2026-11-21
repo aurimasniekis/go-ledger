@@ -83,7 +83,7 @@ type TwoFactorStore interface {
 	// DisableTwoFactor deletes the user's TOTP secrets (active and pending)
 	// and recovery codes; the events are written only when TOTP was enabled.
 	// It reports whether it was.
-	DisableTwoFactor(ctx context.Context, userID string, events ...audit.Event) (bool, error)
+	DisableTwoFactor(ctx context.Context, userID, keep string, events func(int) []audit.Event) (was bool, ended int, err error)
 }
 
 // Two-factor errors.
@@ -295,7 +295,9 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, p authz.Principal
 // auth.require_2fa is on ([ErrTwoFactorRequired]); the host can, which is the
 // recovery path for a lost authenticator without recovery codes: the user is
 // then confined to enrolment at the next sign-in. Audited
-// (two_factor.disabled) when TOTP was enabled; [ErrTwoFactorNotEnabled]
+// (two_factor.disabled) when TOTP was enabled, and then ends the user's
+// sessions (all of them for the host, all but the current one for the user:
+// the authenticator may have been lost or stolen); [ErrTwoFactorNotEnabled]
 // otherwise (a pending enrolment is discarded either way).
 func (s *Service) DisableTwoFactor(ctx context.Context, actor authz.Principal, system bool, target, by string) error {
 	if !system && s.cfg.Require2FA {
@@ -306,8 +308,14 @@ func (s *Service) DisableTwoFactor(ctx context.Context, actor authz.Principal, s
 		a = audit.ActorOf(actor)
 	}
 	now := s.now().UTC()
-	was, err := s.store.DisableTwoFactor(ctx, target, audit.Event{Action: audit.TwoFactorDisabled, Actor: a, TargetType: "user",
-		TargetID: target, At: now, Details: map[string]string{"method": MethodTOTP, "by": by}})
+	keep := ""
+	if !system && actor.UserID == target {
+		keep = actor.SessionID
+	}
+	was, _, err := s.store.DisableTwoFactor(ctx, target, keep, func(ended int) []audit.Event {
+		return []audit.Event{{Action: audit.TwoFactorDisabled, Actor: a, TargetType: "user",
+			TargetID: target, At: now, Details: map[string]string{"method": MethodTOTP, "by": by, "sessions_ended": strconv.Itoa(ended)}}}
+	})
 	if err != nil {
 		return err
 	}
@@ -331,6 +339,7 @@ type challenge struct {
 	expires        time.Time
 	failures       int
 	userAgent      string
+	busy           bool // a request is checking a code on it right now
 }
 
 // challenges holds pending second steps in memory: a restart discards them
@@ -368,8 +377,11 @@ func (c *challenges) add(now time.Time, ch *challenge) string {
 	return tok
 }
 
-// get returns a copy of the live challenge of token.
-func (c *challenges) get(now time.Time, token string) (challenge, bool) {
+// claim returns a copy of the live challenge for the one request that will check a code: it marks the
+// challenge busy, and while it is, every other request on the same challenge
+// is refused as if it were used up. Two concurrent requests therefore cannot
+// both consume a recovery code. release lifts the mark.
+func (c *challenges) claim(now time.Time, token string) (challenge, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	k := hashSecret(token)
@@ -381,7 +393,19 @@ func (c *challenges) get(now time.Time, token string) (challenge, bool) {
 		delete(c.m, k)
 		return challenge{}, false
 	}
+	if x.busy {
+		return challenge{}, false
+	}
+	x.busy = true
 	return *x, true
+}
+
+func (c *challenges) release(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if x, ok := c.m[hashSecret(token)]; ok {
+		x.busy = false
+	}
 }
 
 // fail counts a wrong code; the challenge is discarded at the limit.
@@ -430,10 +454,11 @@ func (s *Service) CompleteSignIn(ctx context.Context, in SecondFactorInput) (Iss
 		return Issued{}, ErrInvalidChallenge
 	}
 	now := s.now().UTC()
-	ch, ok := s.challenges.get(now, in.Challenge)
+	ch, ok := s.challenges.claim(now, in.Challenge) // before any code is consumed
 	if !ok {
 		return Issued{}, ErrInvalidChallenge
 	}
+	defer s.challenges.release(in.Challenge)
 	method := MethodTOTP
 	if in.RecoveryCode != "" {
 		method = MethodRecoveryCode

@@ -439,7 +439,7 @@ func TestKEKChangeAndHostReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := buildAPI(db, store.NewAuditLog(db), testAuthConfig(), "a different key-encryption key", auth.NewArgon2id(cheapParams, 4), clk.now)
+	other, err := buildAPI(db, store.NewAuditLog(db), testAuthConfig(), "a different key-encryption key, long enough", auth.NewArgon2id(cheapParams, 4), clk.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +473,7 @@ func TestKEKChangeAndHostReset(t *testing.T) {
 			case "LEDGER_DATABASE_PATH":
 				return path, true
 			case "LEDGER_KEK_VALUE":
-				return "a different key-encryption key", true
+				return "a different key-encryption key, long enough", true
 			}
 			return "", false
 		},
