@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
-import { MonthBoard, OFFLINE_NOTE_ID, STALE_AFTER_MS, type MonthBoardProps } from './month-board'
+import { MonthBoard, OFFLINE_NOTE_ID, STALE_AFTER_MS, statusSummary, type MonthBoardProps } from './month-board'
 import { item, payment, summary } from './fixtures'
 
 const T0 = Date.parse('2026-11-21T12:00:00Z')
@@ -219,6 +219,21 @@ describe('MonthBoard content', () => {
     expect(screen.getByText('Cancelled').closest('[data-status="cancelled"]')).not.toBeNull()
     expect(screen.queryByText('Overdue')).toBeNull()
     expect(screen.queryByRole('button', { name: /Record payment/ })).toBeNull()
+  })
+
+  it('a not-recorded occurrence is muted, never overdue, explained and can still be paid', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'not_recorded', derived_status: 'not_recorded', timing: 'not_recorded' }), due_date: '2026-11-05' })]) })
+    expect(screen.getByText('Not recorded').closest('[data-status="not_recorded"]')?.querySelector('svg')).not.toBeNull()
+    expect(screen.queryByText('Overdue')).toBeNull()
+    expect(screen.getByText(/Due before this commitment was created/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Record payment/ })).toBeTruthy()
+    expect(statusSummary([item('a', { payment: payment({ status: 'not_recorded', timing: 'not_recorded' }) })])).toBe('1 not recorded')
+  })
+
+  it('a paid occurrence within the match tolerance shows its shortfall as a detail', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'paid', derived_status: 'paid', timing: null, outstanding_amount: { amount: '0.00', currency: 'EUR' }, shortfall_amount: { amount: '0.50', currency: 'EUR' } }) })]) })
+    expect(screen.getByText(/Paid within the commitment's tolerance/).textContent).toMatch(/0\.50\sEUR.*short/)
+    expect(document.querySelector('[data-status="paid"]')).not.toBeNull()
   })
 
   it('a partly paid occurrence not yet late shows no overdue text', () => {
