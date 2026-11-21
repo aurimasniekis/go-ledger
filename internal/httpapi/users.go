@@ -264,7 +264,8 @@ func registerUsers(s *Server, st users.Store) {
 // guardAdministratorPatch applies D32 to PATCH /users/{id}: a token that is not
 // the root token of the root account may not make a user an administrator or
 // re-enable a disabled administrator (which also revives their tokens, D25-2).
-// Demoting or disabling stays open to users:write tokens.
+// D34 adds the root account: demoting or disabling it needs the root token too.
+// Demoting or disabling any other user stays open to users:write tokens.
 //
 // The decision is made on a read outside the write transaction, so it is pinned
 // to the version: when the user is no longer at the version the caller expects,
@@ -277,7 +278,9 @@ func guardAdministratorPatch(r *http.Request, st users.Store, id string, expecte
 	}
 	promotes := p.Role != nil && *p.Role == authz.RoleAdministrator
 	enables := p.Disabled != nil && !*p.Disabled
-	if !promotes && !enables {
+	demotes := p.Role != nil && *p.Role != authz.RoleAdministrator
+	disables := p.Disabled != nil && *p.Disabled
+	if !promotes && !enables && !demotes && !disables {
 		return nil
 	}
 	before, err := st.Get(r.Context(), id)
@@ -286,6 +289,16 @@ func guardAdministratorPatch(r *http.Request, st users.Store, id string, expecte
 	}
 	if before.Version != expected {
 		return VersionConflict(before.Version, toUserJSON(before))
+	}
+	if demotes || disables {
+		// D34: the root account is only demoted or disabled by the root token or a session.
+		root, err := st.RootAccountID(r.Context())
+		if err != nil && !errors.Is(err, resource.ErrNotFound) {
+			return err
+		}
+		if root == id && ((demotes && before.Role == authz.RoleAdministrator) || (disables && !before.Disabled)) {
+			return rootTokenRequired("demoting or disabling the root account")
+		}
 	}
 	if promotes && before.Role != authz.RoleAdministrator {
 		return rootTokenRequired("making a user an administrator")
