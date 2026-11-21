@@ -174,7 +174,11 @@ export interface UndoNoticeProps {
   onDone: () => void
 }
 
-/** Confirms a saved payment and offers its undo; the undo is itself confirmed by the server. */
+/**
+ * Confirms a saved payment and offers its undo; the undo is itself confirmed by the server. There is no timeout (D37, an
+ * operator decision): the notice stays until it is dismissed or the next payment replaces it. It goes when the user leaves
+ * the monthly view, because MonthPage holds it.
+ */
 export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
   const qc = useQueryClient()
   const box = useRef<HTMLDivElement>(null)
@@ -191,7 +195,7 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
     <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3">
       {undo.isSuccess ? (
         <p>
-          Payment removed. {name} is back as it was before; the {monthLabel(month)} view has been refreshed.{' '}
+          Payment removed. {name} is back as it was before. The {monthLabel(month)} view is refreshed now if it is on screen, otherwise when you open it.{' '}
           <Button variant="ghost" size="sm" onClick={onDone}>
             Dismiss
           </Button>
