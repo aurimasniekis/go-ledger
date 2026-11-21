@@ -1,6 +1,6 @@
 # ADR-0042: "Not recorded" occurrences and tolerance-confirmed payments count as paid
 
-Status: Proposed (2026-11-21). Implements operator decisions D38 1a and D39 5a on top of ADR-0031 (payment state),
+Status: Accepted (2026-11-21; operator decision D41 confirmed points 1 and 3). Implements operator decisions D38 1a and D39 5a on top of ADR-0031 (payment state),
 ADR-0034 (monthly view) and ADR-0039 (match tolerance). Point 1 chooses between the two cut-offs D38 allows.
 
 ## Context
