@@ -438,7 +438,12 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 		if automated && n.Origin == matches.OriginUser {
 			return matches.ErrActorOrigin
 		}
+		if automated && n.AllowOverpayment {
+			return matches.ErrActorOverpayment
+		}
 		action := matches.ActionSuggested
+		// "|| automated": an automation actor is held to the automatic rules
+		// whatever origin it claims, as in Confirm and Correct.
 		if n.State == matches.StateConfirmed && (n.Origin == matches.OriginAutoRule || automated) {
 			var others int
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_matches WHERE transaction_id = ? AND state IN ('suggested', 'confirmed')", string(t.ID)).Scan(&others); err != nil {
@@ -552,6 +557,9 @@ func (s *Store) Confirm(ctx context.Context, actor audit.Actor, id string, expec
 			return err
 		}
 		if automation(actor) {
+			if allow {
+				return matches.ErrActorOverpayment
+			}
 			var others int
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_matches WHERE transaction_id = ? AND id <> ? AND state IN ('suggested', 'confirmed')",
 				string(m.Transaction.ID), m.ID).Scan(&others); err != nil {

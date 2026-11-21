@@ -87,7 +87,7 @@ so that a confirmed link becomes payment evidence for the derived payment state 
    covers the bank's own text. Without it the match responses carry `transaction.description` and
    `transaction.counterparty` as `null` (redacted, not omitted) and `bank_text_redacted: true`; every other field
    stays visible under `commitments:read`. Built-in roles: `administrator` holds it (all grants); `read-only` does not,
-   because the grant is administrative and counterparty names are sensitive (D13); a token needs it explicitly and is
+   because the grant is administrative and counterparty names are sensitive (D13; operator decision D29 makes `banking:read` administrator-only); a token needs it explicitly and is
    still limited by its owner's role. Create and action responses and 409 version-conflict bodies are redacted the
    same way. Each response now also carries `occurrence_version`.
    The response keeps four things apart: `transaction` (the bank fact, `source: "bank"`), `origin` (who proposed
@@ -104,6 +104,13 @@ so that a confirmed link becomes payment evidence for the derived payment state 
     confirmation, a pending or uncountable confirmation, a duplicate pair, an over-allocation and (without
     `AllowOverpayment`) an overpayment whatever the caller decided. Its audit actor is `audit.System`. A rejected
     match is the record X2 should consult so it does not suggest the same pair again.
+    The store also guards by actor, not only by origin: an actor that is neither a user nor a token (system,
+    anonymous) is held to the D8 automatic rules whatever origin it claims. Creating or confirming is 1:1 only,
+    the whole transaction and its only open match, with the occurrence's amount; it cannot claim origin `user`
+    (`ErrActorOrigin`), cannot correct an allocation (`ErrActorCorrect`) and can never pass `AllowOverpayment`
+    on create or confirm (`ErrActorOverpayment`), because deciding a payment really happened twice is a user's
+    judgement and duplicate payments are an unresolved decision. Reject, unmatch and reverse by automation are
+    unchanged: that is an open operator question.
 
 ## Why
 
