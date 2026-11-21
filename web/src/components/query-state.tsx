@@ -3,7 +3,7 @@ import type { UseQueryResult } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { FormError } from '@/components/form-error'
 import { DisconnectedState, LoadingState, StaleNotice } from '@/components/state-panels'
-import { formatInstant } from '@/lib/format'
+import { formatInstantUtc } from '@/lib/format'
 import { isNetworkError } from '@/lib/connection'
 
 /**
@@ -42,7 +42,7 @@ export function QueryState<T>({
             <span>Refreshing {label}…</span>
           ) : (
             <span>
-              Updated <time dateTime={new Date(query.dataUpdatedAt).toISOString()}>{formatInstant(query.dataUpdatedAt)}</time>
+              Updated <time dateTime={new Date(query.dataUpdatedAt).toISOString()}>{formatInstantUtc(query.dataUpdatedAt)}</time>
             </span>
           )}
         </p>

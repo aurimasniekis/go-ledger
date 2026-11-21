@@ -14,9 +14,12 @@ export function PrimaryNav() {
   const me = useMe()
   if (!session.data || session.data.two_factor.enrollment_required) return null
   return (
-    <nav aria-label="Primary" className="flex flex-wrap gap-x-2">
+    <nav aria-label="Primary" className="order-last flex w-full flex-wrap gap-x-0.5 text-sm sm:order-none sm:w-auto sm:gap-x-2 sm:text-base [&>a]:px-1.5 sm:[&>a]:px-2">
       <Link to="/month" className={link}>
         Monthly view
+      </Link>
+      <Link to="/outlook" className={link}>
+        Outlook
       </Link>
       <Link to="/matches" className={link}>
         Payment matches
@@ -26,9 +29,6 @@ export function PrimaryNav() {
           Bank connections
         </Link>
       )}
-      <Link to="/outlook" className={link}>
-        Outlook
-      </Link>
     </nav>
   )
 }
