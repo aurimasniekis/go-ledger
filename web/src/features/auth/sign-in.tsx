@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Navigate } from '@tanstack/react-router'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { ApiError, apiFetch, splitErrors } from '@/lib/api'
 import { api, useSession, useStartSession } from '@/lib/auth'
 import type { CurrentSession, SecondFactorChallenge } from '@/lib/types'
@@ -9,6 +9,27 @@ import { Input } from '@/components/ui/input'
 import { Field } from '@/components/field'
 import { FormError } from '@/components/form-error'
 import { formatInstant } from '@/lib/format'
+import { FALLBACK_METHODS, methodsQuery, navigation, oidcErrorMessage, recoveryErrorMessage } from '@/lib/oidc'
+
+/**
+ * The second-factor challenge the single-sign-on callback leaves in the address fragment
+ * (/sign-in?step=second_factor#second_factor=<token>). It is removed from the address bar at once so it is not kept in history.
+ */
+function takeFragmentChallenge(): SecondFactorChallenge | null {
+  const m = /^#second_factor=(.+)$/.exec(window.location.hash)
+  if (!m) return null
+  let token: string
+  try {
+    token = decodeURIComponent(m[1] ?? '')
+  } catch {
+    return null
+  }
+  const params = new URLSearchParams(window.location.search)
+  params.delete('step')
+  const rest = params.toString()
+  window.history.replaceState(window.history.state, '', window.location.pathname + (rest ? `?${rest}` : ''))
+  return { second_factor_required: true, challenge: token, methods: ['totp', 'recovery_code'] }
+}
 
 /** Only same-origin paths are followed after sign-in. */
 export function safeRedirect(r: string | undefined): string {
@@ -27,10 +48,12 @@ function formMessage(err: unknown, form: string | undefined): string | undefined
   return form
 }
 
-export function SignInPage({ redirect }: { redirect?: string }) {
+export function SignInPage({ redirect, oidcError, recoveryError }: { redirect?: string; oidcError?: string; recoveryError?: string }) {
   const session = useSession()
   const start = useStartSession()
-  const [challenge, setChallenge] = useState<SecondFactorChallenge | null>(null)
+  const methods = useQuery(methodsQuery)
+  const m = methods.data ?? FALLBACK_METHODS
+  const [challenge, setChallenge] = useState<SecondFactorChallenge | null>(takeFragmentChallenge)
   const [expired, setExpired] = useState(false)
   const target = safeRedirect(redirect)
 
@@ -39,6 +62,8 @@ export function SignInPage({ redirect }: { redirect?: string }) {
   return (
     <section className="mx-auto max-w-sm space-y-4">
       <h1 className="text-2xl font-semibold">Sign in</h1>
+      {!challenge && oidcError && <FormError message={oidcErrorMessage(oidcError)} />}
+      {!challenge && recoveryError && <FormError message={recoveryErrorMessage(recoveryError)} />}
       {challenge ? (
         <SecondFactorStep
           challenge={challenge}
@@ -49,14 +74,35 @@ export function SignInPage({ redirect }: { redirect?: string }) {
           }}
         />
       ) : (
-        <PasswordStep
-          notice={expired ? 'Your sign-in expired before the second step finished. Sign in again.' : undefined}
-          onChallenge={(c) => {
-            setExpired(false)
-            setChallenge(c)
-          }}
-          onDone={start}
-        />
+        <>
+          {m.password.enabled && (
+            <PasswordStep
+              notice={expired ? 'Your sign-in expired before the second step finished. Sign in again.' : undefined}
+              onChallenge={(c) => {
+                setExpired(false)
+                setChallenge(c)
+              }}
+              onDone={start}
+            />
+          )}
+          {!m.password.enabled && expired && <FormError message="Your sign-in expired before the second step finished. Sign in again." />}
+          {m.oidc.enabled && m.oidc.authorize_url && (
+            <div className="space-y-2">
+              {m.password.enabled && <p className="text-center text-sm text-muted-foreground">or</p>}
+              <Button
+                type="button"
+                variant={m.password.enabled ? 'outline' : 'default'}
+                className="w-full"
+                onClick={() => navigation.goTo(`${m.oidc.authorize_url}?return_to=${encodeURIComponent(target)}`)}
+              >
+                Sign in with {m.oidc.name ?? 'single sign-on'}
+              </Button>
+            </div>
+          )}
+          {!m.password.enabled && !m.oidc.enabled && (
+            <FormError message="No sign-in method is available. Ask whoever runs this Ledger." />
+          )}
+        </>
       )}
     </section>
   )
@@ -168,7 +214,7 @@ function SecondFactorStep({
       }}
     >
       <p className="text-sm text-muted-foreground">
-        Your password was accepted. Finish signing in within five minutes (until {formatInstant(challenge.expires_at)}).
+        Your first step was accepted. {challenge.expires_at ? `Finish signing in within five minutes (until ${formatInstant(challenge.expires_at)}).` : 'Finish signing in within five minutes.'}
       </p>
       <FormError message={fieldMsg ? undefined : formMessage(m.error, form)} />
       <Field

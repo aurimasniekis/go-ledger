@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiFetch, splitErrors } from '@/lib/api'
 import { api, useSession } from '@/lib/auth'
-import type { RecoveryCodes, TOTPEnrollment, TwoFactorStatus } from '@/lib/types'
+import type { OIDCLinkStatus, RecoveryCodes, TOTPEnrollment, TwoFactorStatus } from '@/lib/types'
+import { navigation, oidcErrorMessage } from '@/lib/oidc'
 import { formatInstant } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,6 +12,7 @@ import { Field } from '@/components/field'
 import { FormError } from '@/components/form-error'
 import { Mono } from '@/components/mono'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent } from '@/components/ui/dialog'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { QueryState } from '@/components/query-state'
 import { ShowOnceDialog } from '@/components/show-once-dialog'
 import { Notice } from '@/components/notice'
@@ -35,6 +38,7 @@ export function SecurityPage() {
         </Notice>
       )}
       <TwoFactor onCodes={setCodes} />
+      {!confined && <SingleSignOn />}
       {!confined && <PasswordForm />}
       {codes && (
         <ShowOnceDialog
@@ -48,6 +52,85 @@ export function SecurityPage() {
         />
       )}
     </section>
+  )
+}
+
+/**
+ * Single sign-on: link or unlink the identity provider's account. The provider leg is a full-page
+ * round trip; it comes back here with oidc=linked or oidc_error in the address (ADR-0033).
+ */
+function SingleSignOn() {
+  const qc = useQueryClient()
+  const search = useSearch({ strict: false }) as { oidc?: unknown; oidc_error?: unknown }
+  const status = useQuery({ queryKey: ['oidc-link'], queryFn: () => apiFetch<OIDCLinkStatus>(api('/auth/oidc/link')) })
+  const navigate = useNavigate()
+  const [unlinking, setUnlinking] = useState(false)
+  const link = useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch<{ authorization_url: string }>(api('/auth/oidc/link'), { method: 'POST', json: { return_to: '/account/security' } })
+      navigation.goTo(r.authorization_url)
+    },
+  })
+  if (status.data && !status.data.configured) return null
+  const outcome =
+    typeof search.oidc_error === 'string'
+      ? { error: true, text: oidcErrorMessage(search.oidc_error) }
+      : search.oidc === 'linked'
+        ? { error: false, text: 'Your single-sign-on account is linked.' }
+        : null
+  return (
+    <div className="space-y-3" role="group" aria-labelledby="sso-h">
+      <h2 id="sso-h" className="text-lg font-semibold">
+        Single sign-on
+      </h2>
+      {outcome?.error && <FormError message={outcome.text} />}
+      {outcome && !outcome.error && (
+        <p role="status" className="text-sm">
+          {outcome.text}
+        </p>
+      )}
+      <QueryState query={status} label="single sign-on status">
+        {(s) => (
+          <div className="space-y-3">
+            {s.linked ? (
+              <p className="text-sm">
+                <strong>Linked</strong> to {s.provider ?? 'the identity provider'}
+                {s.email ? ` as ${s.email}` : ''} since {formatInstant(s.created_at)}.
+              </p>
+            ) : (
+              <p className="text-sm">
+                <strong>Not linked.</strong> Link your account to sign in with {s.provider ?? 'the identity provider'}.
+              </p>
+            )}
+            <FormError message={link.error?.message} />
+            <div className="flex flex-wrap gap-2">
+              {s.linked ? (
+                <Button variant="outline" onClick={() => setUnlinking(true)}>
+                  Unlink
+                </Button>
+              ) : (
+                <Button onClick={() => link.mutate()} disabled={link.isPending}>
+                  {link.isPending ? 'Starting…' : 'Link single sign-on'}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </QueryState>
+      <ConfirmDialog
+        open={unlinking}
+        onOpenChange={setUnlinking}
+        title="Unlink single sign-on?"
+        description="You will no longer be able to sign in through the identity provider. You need another sign-in method."
+        confirmLabel="Unlink"
+        onConfirm={async () => {
+          await apiFetch(api('/auth/oidc/link'), { method: 'DELETE' })
+          await qc.invalidateQueries({ queryKey: ['oidc-link'] })
+          // The earlier link outcome no longer describes the account.
+          await navigate({ to: '/account/security', search: {}, replace: true })
+        }}
+      />
+    </div>
   )
 }
 
