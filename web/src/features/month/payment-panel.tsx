@@ -1,0 +1,179 @@
+import { useId, useRef, useState, useEffect } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Button } from '@/components/ui/button'
+import { StatusBadge } from '@/components/status-badge'
+import { ApiError } from '@/lib/api'
+import { deletePayment, monthKey, recordPayment } from './api'
+import type { ManualPayment, MonthItem } from './types'
+
+export interface PaymentPanelProps {
+  month: string
+  asOf: string
+  /** Occurrences that can take a payment (not paid). */
+  items: MonthItem[]
+  initialId: string
+  onClose: () => void
+  onSaved: (p: ManualPayment, item: MonthItem) => void
+}
+
+/**
+ * The form of the screen's primary action: record a manual payment (C3). The
+ * payment counts only once the server has answered: while the request is out
+ * the panel says "Not saved yet", and a failure says it was not saved and
+ * keeps what was typed. Nothing is changed optimistically.
+ */
+export function PaymentPanel(p: PaymentPanelProps) {
+  const qc = useQueryClient()
+  const [id, setId] = useState(p.initialId)
+  const item = p.items.find((i) => i.id === id) ?? p.items[0]!
+  // The suggested amount is the outstanding amount as the server computed it.
+  const [amount, setAmount] = useState(item.payment.outstanding_amount.amount)
+  const [paidOn, setPaidOn] = useState(p.asOf)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const uid = useId()
+  useEffect(() => heading.current?.focus(), [])
+
+  const save = useMutation({
+    mutationFn: () => recordPayment(item.id, { amount: amount.trim(), currency: item.amount.currency, paid_on: paidOn }),
+    onSuccess: async (saved) => {
+      await qc.invalidateQueries({ queryKey: monthKey(p.month) })
+      p.onSaved(saved, item)
+    },
+  })
+  const err = save.error instanceof ApiError ? save.error : null
+  const fieldError = (f: string) => (err?.field === f || err?.field === `${f}.amount` ? err.message : undefined)
+
+  return (
+    <form
+      aria-labelledby={`${uid}-h`}
+      className="space-y-3 rounded-md border border-border-control bg-surface p-4"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!save.isPending) save.mutate()
+      }}
+    >
+      <h3 id={`${uid}-h`} ref={heading} tabIndex={-1} className="font-semibold">
+        Record a payment
+      </h3>
+      <p className="text-sm text-muted-foreground">
+        This records a payment you made. It is saved only when the server confirms it, and you can undo it afterwards.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className="grid gap-1 text-sm sm:col-span-3">
+          Occurrence
+          <select
+            className="h-9 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            value={item.id}
+            disabled={save.isPending}
+            onChange={(e) => {
+              setId(e.target.value)
+              const next = p.items.find((i) => i.id === e.target.value)
+              if (next) setAmount(next.payment.outstanding_amount.amount)
+            }}
+          >
+            {p.items.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.commitment_name || i.commitment_id}, due {i.due_date} ({i.amount.amount} {i.amount.currency})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm">
+          Amount paid ({item.amount.currency})
+          <input
+            inputMode="decimal"
+            autoComplete="off"
+            className="h-9 rounded-md border border-border-control bg-surface px-2 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            value={amount}
+            disabled={save.isPending}
+            onChange={(e) => setAmount(e.target.value)}
+            aria-invalid={fieldError('amount') ? true : undefined}
+            aria-describedby={fieldError('amount') ? `${uid}-amount-err` : undefined}
+          />
+          {fieldError('amount') && <span id={`${uid}-amount-err`}>{fieldError('amount')}</span>}
+        </label>
+        <label className="grid gap-1 text-sm">
+          Paid on
+          <input
+            type="date"
+            className="h-9 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            value={paidOn}
+            disabled={save.isPending}
+            onChange={(e) => setPaidOn(e.target.value)}
+            aria-invalid={err?.field === 'paid_on' ? true : undefined}
+          />
+          {err?.field === 'paid_on' && <span>{err.message}</span>}
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="submit" disabled={save.isPending}>
+          {save.isPending ? 'Saving…' : 'Save payment'}
+        </Button>
+        <Button type="button" variant="ghost" onClick={p.onClose} disabled={save.isPending}>
+          Cancel
+        </Button>
+        {save.isPending && (
+          <span role="status">
+            <StatusBadge status="pending" label="Not saved yet" />
+          </span>
+        )}
+      </div>
+      {save.isError && (
+        <div role="alert" className="space-y-1">
+          <StatusBadge status="error" label="Payment not saved" />
+          <p>{save.error.message}</p>
+          <p className="text-sm text-muted-foreground">Nothing was recorded. What you typed is still here; fix it or try again.</p>
+        </div>
+      )}
+    </form>
+  )
+}
+
+export interface UndoNoticeProps {
+  payment: ManualPayment
+  item: MonthItem
+  month: string
+  onDone: () => void
+}
+
+/** Confirms a saved payment and offers its undo; the undo is itself confirmed by the server. */
+export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
+  const qc = useQueryClient()
+  const undo = useMutation({
+    mutationFn: () => deletePayment(payment),
+    onSuccess: () => qc.invalidateQueries({ queryKey: monthKey(month) }),
+  })
+  const name = item.commitment_name || item.commitment_id
+  return (
+    <div role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3">
+      {undo.isSuccess ? (
+        <p>
+          Payment removed. {name} is back as it was before; the view above has been refreshed.{' '}
+          <Button variant="ghost" size="sm" onClick={onDone}>
+            Dismiss
+          </Button>
+        </p>
+      ) : (
+        <>
+          <p>
+            Saved: {payment.amount.amount} {payment.amount.currency} paid on {payment.paid_on} for {name}.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => undo.mutate()} disabled={undo.isPending}>
+              {undo.isPending ? 'Undoing…' : 'Undo this payment'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onDone} disabled={undo.isPending}>
+              Dismiss
+            </Button>
+            {undo.isPending && <StatusBadge status="pending" label="Undo not confirmed yet" />}
+          </div>
+        </>
+      )}
+      {undo.isError && (
+        <p role="alert">
+          <StatusBadge status="error" label="Undo failed" /> The payment is still recorded. {undo.error.message}
+        </p>
+      )}
+    </div>
+  )
+}

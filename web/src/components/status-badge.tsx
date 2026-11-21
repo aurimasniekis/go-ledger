@@ -1,5 +1,15 @@
 import type { ComponentType } from 'react'
-import { CircleCheck, Clock, Hourglass, History, OctagonX, TriangleAlert } from 'lucide-react'
+import {
+  CalendarClock,
+  CircleCheck,
+  CircleDashed,
+  Clock,
+  Hourglass,
+  History,
+  LoaderCircle,
+  OctagonX,
+  TriangleAlert,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 type Entry = { label: string; Icon: ComponentType<{ className?: string }>; tier: Tier; color: string }
@@ -36,17 +46,22 @@ const TINT: Record<string, string> = {
 export const COMMITMENT_STATUSES = {
   paid: { label: 'Paid', Icon: CircleCheck, tier: 'quiet', color: 'paid' },
   upcoming: { label: 'Upcoming', Icon: Clock, tier: 'default', color: 'upcoming' },
+  // Due and partially paid share the upcoming hue (not yet late); icon and label tell them apart.
+  due: { label: 'Due today', Icon: CalendarClock, tier: 'default', color: 'upcoming' },
+  partially_paid: { label: 'Partly paid', Icon: CircleDashed, tier: 'default', color: 'upcoming' },
   overdue: { label: 'Overdue', Icon: TriangleAlert, tier: 'strong', color: 'overdue' },
   deferred: { label: 'Deferred', Icon: Hourglass, tier: 'quiet', color: 'deferred' },
 } satisfies Record<string, Entry>
 
 // Data state: how trustworthy or complete the data behind a row is. A separate
 // axis: a data state never replaces a commitment status, and a row may show both.
-// Reserved for later work (U1, C4, X4, B4), not yet implemented: disconnected,
-// pending-save, save-failed, bank-pending, needs-review. See docs/design-system.md.
+// Pending-save was added with C4. Reserved for later work (U1, X4, B4), not yet implemented: disconnected,
+// save-failed, bank-pending, needs-review. See docs/design-system.md.
 export const DATA_STATES = {
   stale: { label: 'Stale', Icon: History, tier: 'default', color: 'stale' },
   error: { label: 'Error', Icon: OctagonX, tier: 'strong', color: 'error' },
+  // A change sent to the server and not yet confirmed: it is not saved.
+  pending: { label: 'Not saved yet', Icon: LoaderCircle, tier: 'default', color: 'stale' },
 } satisfies Record<string, Entry>
 
 export const STATUSES = { ...COMMITMENT_STATUSES, ...DATA_STATES }

@@ -72,8 +72,9 @@ var permissionMatrix = map[string]string{
 	"PATCH /api/v1/commitments/{id}":  "commitments:write",
 	"DELETE /api/v1/commitments/{id}": "commitments:write",
 
-	"GET /api/v1/occurrences":      "commitments:read",
-	"GET /api/v1/occurrences/{id}": "commitments:read",
+	"GET /api/v1/occurrences":         "commitments:read",
+	"GET /api/v1/occurrences/summary": "commitments:read",
+	"GET /api/v1/occurrences/{id}":    "commitments:read",
 
 	"GET /api/v1/occurrences/{id}/manual-payments":                 "commitments:read",
 	"POST /api/v1/occurrences/{id}/manual-payments":                "commitments:write",
