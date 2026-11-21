@@ -46,5 +46,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0042: "Not recorded" occurrences and tolerance-confirmed payments count as paid](0042-not-recorded-and-tolerance-paid.md)
 - [ADR-0043: Matching and correction UI, and the MCP match tools](0043-matching-ui-and-mcp-match-tools.md)
 - [ADR-0044: The outlook against recorded commitments](0044-outlook.md)
+- [ADR-0046: Frankfurter rate adapter and daily refresh](0046-frankfurter-rate-adapter.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

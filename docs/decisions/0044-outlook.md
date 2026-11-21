@@ -48,7 +48,7 @@ and payment derivation is changing in parallel (PR #79).
    never half) and listed in `excluded` with the status, reason and, for a stale rate, the rate found; `complete` is false
    then. Included currencies list the rate used with provider, source, pair, value, rate date, retrieval time and age. The
    outlook is computed on every read and stores nothing, so the rates it reports are those it used.
-7. **No rate service is wired yet.** Until FX2 provides the Frankfurter adapter, `ledger serve` passes no converter: only
+7. **No rate service is wired yet** (superseded by ADR-0046: `ledger serve` now passes the cached rate service). Until FX2 provides the Frankfurter adapter, `ledger serve` passes no converter: only
    amounts already in the reporting currency convert (identity) and every other currency is excluded with
    `no_provider`. This is visible in the response and the UI rather than hidden. FX2 sets `httpapi.Deps.Rates` to its
    `*fx.Service`.

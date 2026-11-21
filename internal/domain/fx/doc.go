@@ -2,8 +2,8 @@
 // ADR-0022).
 //
 // A [Provider] port fetches exchange rates from one rate source (decision
-// D11 selects Frankfurter; its adapter is FX2 and lives under
-// internal/providers). A [Cache] port keeps every rate Ledger has received,
+// D11 selects Frankfurter; its adapter is
+// internal/providers/frankfurter, ADR-0046). A [Cache] port keeps every rate Ledger has received,
 // with its provider, the source key the provider reports, the currency pair,
 // the exact rate, the date the rate applies to and when Ledger retrieved it;
 // internal/store/fxrates implements it on SQLite.

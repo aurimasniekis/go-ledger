@@ -32,6 +32,7 @@ type Config struct {
 	KEK       KEK       `cfg:"kek"`
 	Events    Events    `cfg:"events"`
 	Banking   Banking   `cfg:"banking"`
+	Rates     Rates     `cfg:"rates"`
 	Auth      Auth      `cfg:"auth"`
 	MCP       MCP       `cfg:"mcp"`
 }
@@ -150,6 +151,18 @@ type Pulse struct {
 	CredsFile string `cfg:"creds_file" desc:"Path of the Pulse .creds file (user JWT and key seed). Required when events.pulse.enabled is true. Only the path is configuration: the file is read by the Pulse client, never copied, and its path and content are never logged."`
 	CAFile    string `cfg:"ca_file" desc:"Optional PEM file with an extra CA to trust for the Pulse server, added to the system roots. Certificate verification is never disabled."`
 	Name      string `cfg:"name" default:"ledger" desc:"Connection name shown on the Pulse server."`
+}
+
+// Rates configures the exchange-rate provider (FX2, ADR-0046). Decision D11
+// selects Frankfurter; rates are used only to add a converted secondary total
+// next to per-currency figures, never to replace them.
+type Rates struct {
+	Enabled         bool          `cfg:"enabled" default:"false" desc:"Fetch exchange rates from Frankfurter (https://frankfurter.dev, free, no key) and cache them locally. Off by default: the outlook then shows only amounts already in the reporting currency and lists the rest as excluded (no_provider), though rates cached while it was on are still used and shown with their age. Turning it on sends currency codes (never amounts or account data) to the Frankfurter service."`
+	BaseURL         string        `cfg:"base_url" default:"https://api.frankfurter.dev" desc:"Frankfurter base URL. https only (plain http only for a loopback test server)."`
+	Source          string        `cfg:"source" default:"ECB" desc:"Frankfurter provider key whose rates are used, for example ECB (European Central Bank reference rates, published on working days; a weekend or holiday uses the previous working day), or blended for Frankfurter's own blend of its providers. Rates of different sources are cached apart and never mixed; changing this stops using the rates of the old source."`
+	RefreshInterval time.Duration `cfg:"refresh_interval" default:"24h" desc:"Time between background refreshes of the rates from every currency in use to the reporting currency (decision D11: daily), and how long a cached rate is used without asking Frankfurter again. 1h to the stale_after value. Needs reporting.currency; without it nothing is refreshed in the background."`
+	StaleAfter      time.Duration `cfg:"stale_after" default:"120h" desc:"How old a cached rate may get before it is treated as stale and left out of converted totals (decision D11: 5 days): measured from when it was last retrieved, and from its date to the date it is used for. 24h or more."`
+	Timeout         time.Duration `cfg:"timeout" default:"15s" desc:"Time limit for one request to Frankfurter (1s to 2m). A request that exceeds it counts as an outage: cached rates stay in use."`
 }
 
 // Banking configures banking-data providers.
