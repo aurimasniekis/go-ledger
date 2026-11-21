@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -516,6 +517,103 @@ func TestColumnChecksRejectMalformedSubjectAndType(t *testing.T) {
 		})
 		if err == nil {
 			t.Errorf("insert %v succeeded, want a CHECK failure", c)
+		}
+	}
+}
+
+// payloadFields are enough string fields to reach MaxPayloadBytes, each up to
+// its own MaxStringBytes.
+func payloadFields() []Field {
+	n := MaxPayloadBytes/MaxStringBytes + 2
+	fields := make([]Field, 0, n)
+	for i := range n {
+		fields = append(fields, Field{Name: fmt.Sprintf("part%04d", i), Kind: KindString})
+	}
+	return fields
+}
+
+// payloadOfSize returns a payload whose encoding, as Enqueue marshals it, is
+// exactly size bytes.
+func payloadOfSize(t *testing.T, fields []Field, size int) map[string]any {
+	t.Helper()
+	p := make(map[string]any, len(fields))
+	for _, f := range fields {
+		p[f.Name] = ""
+	}
+	base, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra := size - len(base)
+	if extra < 0 || extra > len(fields)*MaxStringBytes {
+		t.Fatalf("cannot build a %d byte payload from %d fields", size, len(fields))
+	}
+	for _, f := range fields {
+		n := min(extra, MaxStringBytes)
+		p[f.Name] = strings.Repeat("x", n)
+		extra -= n
+	}
+	if body, err := json.Marshal(p); err != nil || len(body) != size {
+		t.Fatalf("payload encodes to %d bytes (%v), want %d", len(body), err, size)
+	}
+	return p
+}
+
+func TestMaxPayloadBytesIsEnforcedInEveryMode(t *testing.T) {
+	fields := payloadFields()
+	reg := NewRegistry(Definition{
+		Entity: "blob", Action: "stored", Trigger: "test trigger", Key: KeyULID, Fields: fields,
+	})
+	cases := []struct {
+		name string
+		size int
+		ok   bool
+	}{
+		{"one byte under the limit", MaxPayloadBytes - 1, true},
+		{"at the limit", MaxPayloadBytes, true},
+		{"one byte over the limit", MaxPayloadBytes + 1, false},
+	}
+	for _, mode := range []struct {
+		name    string
+		enabled bool
+	}{{"enabled", true}, {"disabled", false}} {
+		for _, c := range cases {
+			t.Run(mode.name+" "+c.name, func(t *testing.T) {
+				db, _ := setup(t)
+				ids := 0
+				o, err := New(Config{
+					Enabled: mode.enabled, Registry: reg, Source: "ledger-test",
+					Now:   func() time.Time { return fixedNow },
+					NewID: func() string { ids++; return fmt.Sprintf("01JD%022d", ids) },
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev := Event{Entity: "blob", Action: "stored", Key: "01jd0000000000000000000abc", Payload: payloadOfSize(t, fields, c.size)}
+				var got Enqueued
+				err = db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+					var err error
+					got, err = o.Enqueue(ctx, tx, ev)
+					return err
+				})
+				if c.ok && err != nil {
+					t.Fatalf("Enqueue refused a %d byte payload: %v", c.size, err)
+				}
+				if !c.ok && (err == nil || !strings.Contains(err.Error(), "byte limit")) {
+					t.Fatalf("Enqueue of a %d byte payload: error %v, want a byte limit refusal", c.size, err)
+				}
+				wantRecorded := c.ok && mode.enabled
+				if got.Recorded != wantRecorded {
+					t.Fatalf("Recorded = %v, want %v", got.Recorded, wantRecorded)
+				}
+				wantRows := 0
+				if wantRecorded {
+					wantRows = 1
+				}
+				if rows := countRows(t, db); rows != wantRows {
+					t.Fatalf("%d rows, want %d", rows, wantRows)
+				}
+			})
 		}
 	}
 }
