@@ -460,8 +460,8 @@ func occurrenceReferenceProblems(t *testing.T, db *store.DB, evidence []string) 
 
 func TestOccurrenceReferencesAreEvidenceOrCascade(t *testing.T) {
 	ctx := context.Background()
-	f := newFixture(t) // has test_payments (RESTRICT)
-	evidence := []string{"EXISTS (SELECT 1 FROM test_payments p WHERE p.occurrence_id = o.id)"}
+	f := newFixture(t) // has test_payments (RESTRICT) beside the real evidence tables
+	evidence := append([]string{"EXISTS (SELECT 1 FROM test_payments p WHERE p.occurrence_id = o.id)"}, occstore.DefaultEvidence...)
 	if p := occurrenceReferenceProblems(t, f.db, evidence); len(p) != 0 {
 		t.Fatalf("test fixture: %v", p)
 	}
@@ -475,7 +475,7 @@ func TestOccurrenceReferencesAreEvidenceOrCascade(t *testing.T) {
 		t.Fatalf("add the evidence expression to DefaultEvidence (or use ON DELETE CASCADE): %v", p)
 	}
 	// The check itself: an uncovered RESTRICT reference is reported.
-	if p := occurrenceReferenceProblems(t, f.db, nil); len(p) != 1 || !strings.HasPrefix(p[0], "test_payments.occurrence_id") {
+	if p := occurrenceReferenceProblems(t, f.db, occstore.DefaultEvidence); len(p) != 1 || !strings.HasPrefix(p[0], "test_payments.occurrence_id") {
 		t.Fatalf("uncovered reference not reported: %v", p)
 	}
 }

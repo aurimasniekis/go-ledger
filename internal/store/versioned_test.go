@@ -142,6 +142,7 @@ var unversionedTables = map[string]string{
 	"user_passwords":                 "credential hashes (ADR-0026), keyed by user and written only by password changes; never read or edited as an API object",
 	"sessions":                       "server-side sign-in sessions (ADR-0026), created by sign-in and deleted when they end; never edited through the API",
 	"commitment_occurrence_horizons": "materialisation bookkeeping written only by the occurrence generator (ADR-0027), never edited through the API",
+	"occurrence_status_overrides":    "append-only override history (ADR-0031); rows only change state, and concurrency is the occurrence's version, which every override change increases",
 }
 
 // versionProblems checks the optimistic-concurrency convention: every table

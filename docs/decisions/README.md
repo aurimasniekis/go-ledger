@@ -30,5 +30,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0026: Passwords, sign-in, sessions, CSRF and recent authentication](0026-passwords-sign-in-and-sessions.md)
 - [ADR-0027: Commitment occurrences](0027-commitment-occurrences.md)
 - [ADR-0028: Background refresh scheduler](0028-background-refresh-scheduler.md)
+- [ADR-0031: Payment state, manual payments and status overrides](0031-payment-state-and-manual-payments.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

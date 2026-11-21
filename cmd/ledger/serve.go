@@ -313,6 +313,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Users:       parts.users,
 		Commitments: parts.commitments,
 		Occurrences: parts.commitments.Occurrences(),
+		Payments:    parts.payments,
 		Audit:       al,
 		Auth:        parts.auth,
 		Zone:        zone,

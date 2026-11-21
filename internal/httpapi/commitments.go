@@ -449,7 +449,7 @@ func registerCommitments(s *Server, st commitments.Store, todayFn today) {
 		WriteJSON(w, http.StatusOK, toCommitmentJSON(c))
 	}))
 	// DELETE removes a definition and its unpaid occurrences and needs
-	// If-Match. A commitment with paid occurrences (payment history, task C3)
+	// If-Match. A commitment with paid occurrences (payment evidence, ADR-0031)
 	// answers 409 conflict instead of losing that history.
 	s.HandleAPI("DELETE "+CommitmentsPath+"/{id}", Requires(grantCommitmentsWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		expected, err := ExpectedVersion(r, nil)

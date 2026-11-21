@@ -36,6 +36,7 @@ const (
 	CodeCSRF               Code = "csrf_failed"               // 403: a cookie-authenticated write without the session's CSRF token, or from another origin
 	CodeReauthRequired     Code = "reauthentication_required" // 403: the action needs a recent password check (POST /auth/reauthenticate)
 	CodePendingTerms       Code = "pending_terms_change"      // 409: a commitment terms edit is refused because an earlier edit takes effect later
+	CodeEvidenceRequired   Code = "payment_evidence_required" // 409: a "paid" status override for an occurrence with no payment evidence
 )
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.
