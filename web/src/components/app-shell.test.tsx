@@ -59,6 +59,19 @@ describe('shell while signed in', () => {
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 
+  it('closes the Account menu when a link to the page already shown is followed, and keeps focus on its button', async () => {
+    // Navigating to another page closes the menu by itself (it is open only on the path it was opened on), so only a
+    // link to the current page exercises the close.
+    installApi({ ...signedIn(), 'GET /api/v1/occurrences/summary': { json: { month: '2026-11', as_of: '2026-11-21', items: [], totals: [], freshness: { computed_at: '2026-11-21T12:00:00Z', occurrences_changed_at: null, bank: { available: false, note: '' } } } } })
+    renderApp('/account/security')
+    const button = await screen.findByRole('button', { name: 'Account' })
+    await userEvent.click(button)
+    expect(button).toHaveAttribute('aria-expanded', 'true')
+    await userEvent.click(within(screen.getByRole('navigation', { name: 'Account' })).getByRole('link', { name: 'Security' }))
+    await waitFor(() => expect(button).toHaveAttribute('aria-expanded', 'false'))
+    expect(button).toHaveFocus()
+  })
+
   it('offers only the pages the grants allow', async () => {
     await userEvent.click(await open(['commitments:read']))
     expect(screen.getByRole('link', { name: 'Security' })).toBeInTheDocument()

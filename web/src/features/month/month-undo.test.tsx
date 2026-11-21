@@ -1,5 +1,5 @@
 import { QueryClient } from '@tanstack/react-query'
-import { screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setCsrfToken } from '@/lib/api'
@@ -35,7 +35,9 @@ describe('the Undo notice across months (proposal in the U1 pull request)', () =
   }
 
   it('names the occurrence and its due date, so it makes sense in any month', async () => {
-    expect(await record()).toHaveTextContent('for Rent a, due 2026-11-25')
+    const saved = await record()
+    expect(saved).toHaveTextContent('for Rent a, due 2026-11-25')
+    expect(saved).toHaveTextContent('in November 2026')
   })
 
   it('stays after moving to another month, and Undo still refreshes the month the payment was in', async () => {
@@ -45,15 +47,33 @@ describe('the Undo notice across months (proposal in the U1 pull request)', () =
     expect(screen.getByText(/^Saved:/)).toBeInTheDocument()
     await waitFor(() => expect(document.querySelector('[data-announcer="polite"]')).toHaveTextContent('Showing December 2026.'))
     const before = calls.filter((c) => c.method === 'GET' && c.query.get('month') === '2026-11').length
+    const fetchesOf = (m: string) => calls.filter((c) => c.method === 'GET' && c.query.get('month') === m).length
+    const decemberBefore = fetchesOf('2026-12')
     await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
-    expect(await screen.findByText(/Payment removed/)).toBeInTheDocument()
+    expect(await screen.findByText(/Payment removed/)).toHaveTextContent('November 2026 view')
     expect(calls.some((c) => c.method === 'DELETE')).toBe(true)
-    // Undo acts on its own month (November), not the one on screen (December).
+    // Undo acts on its own month (November), not the one on screen (December). December is the active query, so
+    // invalidating everything would refetch it at once: its fetch count must not move.
     expect(qc().getQueryState(monthKey('2026-11'))?.isInvalidated).toBe(true)
-    expect(qc().getQueryState(monthKey('2026-12'))?.isInvalidated).toBe(false)
+    expect(fetchesOf('2026-12')).toBe(decemberBefore)
     // November is not on screen, so Undo marks it stale; going back to it fetches it again.
     await userEvent.click(screen.getByRole('button', { name: /Previous month/ }))
     await waitFor(() => expect(calls.filter((c) => c.method === 'GET' && c.query.get('month') === '2026-11').length).toBeGreaterThan(before))
+  })
+
+  it('has no timeout: the notice stays after a long wait until it is dismissed or replaced (D37)', async () => {
+    // Fake timers are installed before the payment, so any timer the notice starts is faked and would fire below.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      await record()
+      act(() => {
+        vi.advanceTimersByTime(60 * 60 * 1000)
+      })
+      expect(screen.getByText(/^Saved:/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('announces the saved payment without moving focus away from the notice', async () => {

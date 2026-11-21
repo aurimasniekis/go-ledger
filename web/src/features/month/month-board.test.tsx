@@ -32,6 +32,12 @@ describe('MonthBoard states', () => {
     expect(screen.queryByText(/Stale/)).toBeNull()
   })
 
+  it('the month controls are a labelled group, not a navigation landmark', () => {
+    board({ data: summary([]) })
+    expect(screen.getByRole('group', { name: 'Month' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Month' })).toBeNull()
+  })
+
   it('stale: data older than the threshold is labelled with text, an icon and its age', () => {
     board({ data: summary([item('a')]), now: T0 + STALE_AFTER_MS + 120_000 })
     const badge = screen.getByText(/Stale, fetched 7 minutes ago/)
