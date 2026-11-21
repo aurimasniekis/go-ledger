@@ -136,7 +136,7 @@ describe('MonthBoard design follow-ups', () => {
 
   it('keeps the month heading a fixed width so the month buttons do not shift', () => {
     board({ month: '2025-06' })
-    expect(screen.getByRole('heading', { level: 2, name: 'June 2025' }).className).toContain('w-48')
+    expect(screen.getByRole('heading', { level: 1, name: 'June 2025' }).className).toContain('w-48')
   })
 })
 

@@ -4,15 +4,13 @@ import {
   createRouter,
   redirect,
   Link,
-  Outlet,
 } from '@tanstack/react-router'
 import type { QueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
-import { ThemeSelect } from '@/components/theme-select'
+import { AppShell } from '@/components/app-shell'
 import { DesignPage } from '@/routes-design'
 import { MonthPage } from '@/features/month/month-page'
 import { isMonth, monthOf } from '@/features/month/month'
-import { AccountNav } from '@/features/auth/account-nav'
 import { RequireSession } from '@/features/auth/require-session'
 import { SignInPage } from '@/features/auth/sign-in'
 import { SecurityPage } from '@/features/account/security'
@@ -24,34 +22,6 @@ import { RolesPage } from '@/features/admin/roles'
 
 export interface RouterContext {
   queryClient: QueryClient
-}
-
-// Minimal shell. U1 owns the real app shell: it should take over this header, the skip link, the
-// responsive navigation (AccountNav's links and sign-out belong in it) and the RequireSession layout.
-function Shell() {
-  return (
-    <div className="min-h-screen">
-      <a
-        href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:m-2 focus:rounded-md focus:bg-surface focus:px-3 focus:py-2"
-      >
-        Skip to content
-      </a>
-      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-surface px-4 py-3">
-        <span className="font-semibold">Ledger</span>
-        <nav aria-label="Main" className="flex flex-wrap items-center gap-2">
-          <Link to="/month" className="rounded-md px-2 py-1 hover:bg-muted [&.active]:font-semibold">
-            Month
-          </Link>
-          <AccountNav />
-          <ThemeSelect />
-        </nav>
-      </header>
-      <main id="main" tabIndex={-1} className="mx-auto max-w-5xl p-4">
-        <Outlet />
-      </main>
-    </div>
-  )
 }
 
 function NotFound() {
@@ -67,7 +37,7 @@ function NotFound() {
 }
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
-  component: Shell,
+  component: AppShell,
   notFoundComponent: NotFound,
 })
 

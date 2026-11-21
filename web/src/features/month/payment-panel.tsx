@@ -1,5 +1,6 @@
 import { useId, useRef, useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useOptimisticSave } from '@/lib/optimistic-save'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { ApiError } from '@/lib/api'
@@ -27,7 +28,6 @@ export interface PaymentPanelProps {
  * keeps what was typed. Nothing is changed optimistically.
  */
 export function PaymentPanel(p: PaymentPanelProps) {
-  const qc = useQueryClient()
   const [id, setId] = useState(p.initialId)
   const current = p.items.find((i) => i.id === id)
   // Remember the occurrence the form started on: if a refetch drops it (it was
@@ -42,15 +42,19 @@ export function PaymentPanel(p: PaymentPanelProps) {
   const [paidOn, setPaidOn] = useState(p.asOf)
   const heading = useRef<HTMLHeadingElement>(null)
   const uid = useId()
+  // Under the page title when opened from the header (h2); inside the occurrences section when opened from a row (h3).
+  const Heading = p.chooser ? 'h2' : 'h3'
   useEffect(() => heading.current?.focus(), [])
 
-  const save = useMutation({
-    mutationFn: () => (gone ? Promise.reject(new Error('This occurrence is no longer unpaid.')) : recordPayment(item.id, { amount: amount.trim(), currency: item.amount.currency, paid_on: paidOn })),
-    onSuccess: async (saved) => {
-      await qc.invalidateQueries({ queryKey: monthKey(p.month) })
-      p.onSaved(saved, item)
-    },
+  // Not optimistic: no `apply`, so nothing is shown as recorded until the server has confirmed it (phase "pending" = "Not saved yet").
+  const save = useOptimisticSave<{ amount: string; paid_on: string }, ManualPayment>({
+    queryKey: monthKey(p.month),
+    mutationFn: (v) =>
+      gone ? Promise.reject(new Error('This occurrence is no longer unpaid.')) : recordPayment(item.id, { amount: v.amount, currency: item.amount.currency, paid_on: v.paid_on }),
+    onSaved: (saved) => p.onSaved(saved, item),
+    messages: { saved: (s) => `Payment recorded: ${s.amount.amount} ${s.amount.currency}. Undo is available above the list.`, failed: (e) => `Payment not saved: ${e.message}` },
   })
+  const pending = save.phase === 'pending'
   const err = save.error instanceof ApiError ? save.error : null
   const fieldError = (f: string) => (err?.field === f || err?.field === `${f}.amount` ? err.message : undefined)
 
@@ -60,12 +64,12 @@ export function PaymentPanel(p: PaymentPanelProps) {
       className="space-y-3 rounded-md border border-border-control bg-surface p-4"
       onSubmit={(e) => {
         e.preventDefault()
-        if (!save.isPending) save.mutate()
+        save.save({ amount: amount.trim(), paid_on: paidOn })
       }}
     >
-      <h3 id={`${uid}-h`} ref={heading} tabIndex={-1} className="font-semibold">
+      <Heading id={`${uid}-h`} ref={heading} tabIndex={-1} className="font-semibold">
         Record a payment
-      </h3>
+      </Heading>
       <p className="text-sm text-muted-foreground">
         This records a payment you made. It is saved only when the server confirms it, and you can undo it afterwards.
       </p>
@@ -82,7 +86,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
           <select
             className="h-9 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             value={item.id}
-            disabled={save.isPending}
+            disabled={pending}
             onChange={(e) => {
               setId(e.target.value)
               const next = p.items.find((i) => i.id === e.target.value)
@@ -108,7 +112,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
             autoComplete="off"
             className="h-9 rounded-md border border-border-control bg-surface px-2 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             value={amount}
-            disabled={save.isPending}
+            disabled={pending}
             onChange={(e) => setAmount(e.target.value)}
             aria-invalid={fieldError('amount') ? true : undefined}
             aria-describedby={fieldError('amount') ? `${uid}-amount-err` : undefined}
@@ -121,7 +125,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
             type="date"
             className="h-9 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             value={paidOn}
-            disabled={save.isPending}
+            disabled={pending}
             onChange={(e) => setPaidOn(e.target.value)}
             aria-invalid={err?.field === 'paid_on' ? true : undefined}
             aria-describedby={err?.field === 'paid_on' ? `${uid}-paid-on-err` : undefined}
@@ -130,13 +134,13 @@ export function PaymentPanel(p: PaymentPanelProps) {
         </label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" disabled={save.isPending || gone}>
-          {save.isPending ? 'Saving…' : 'Save payment'}
+        <Button type="submit" disabled={pending || gone}>
+          {pending ? 'Saving…' : 'Save payment'}
         </Button>
-        <Button type="button" variant="ghost" onClick={p.onClose} disabled={save.isPending}>
+        <Button type="button" variant="ghost" onClick={p.onClose} disabled={pending}>
           Cancel
         </Button>
-        {save.isPending && (
+        {pending && (
           <span role="status">
             <StatusBadge status="pending" label="Not saved yet" />
           </span>
@@ -151,10 +155,10 @@ export function PaymentPanel(p: PaymentPanelProps) {
           </p>
         </div>
       )}
-      {save.isError && (
+      {save.phase === 'failed' && (
         <div role="alert" className="space-y-1">
           <StatusBadge status="error" label="Payment not saved" />
-          <p>{save.error.message}</p>
+          <p>{save.error?.message}</p>
           <p className="text-sm text-muted-foreground">Nothing was recorded. What you typed is still here; fix it or try again.</p>
         </div>
       )}
@@ -193,7 +197,7 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
       ) : (
         <>
           <p>
-            Saved: {payment.amount.amount} {payment.amount.currency} paid on {payment.paid_on} for {name}.
+            Saved: {payment.amount.amount} {payment.amount.currency} paid on {payment.paid_on} for {name}, due {item.due_date}.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => undo.mutate()} disabled={undo.isPending}>

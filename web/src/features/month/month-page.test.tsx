@@ -35,7 +35,7 @@ describe('Month page', () => {
     open()
     expect(await screen.findByText('Rent a')).toBeInTheDocument()
     expect(calls.find((c) => c.path === MONTH)!.query.get('month')).toBe('2026-11')
-    expect(screen.getByRole('heading', { level: 2, name: 'November 2026' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'November 2026' })).toBeInTheDocument()
   })
 
   it('shows the failed state when the server errors, and recovers on retry', async () => {
@@ -186,7 +186,7 @@ describe('Month page', () => {
     await screen.findByText(/^Saved:/)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Record a payment' })).toBeDisabled())
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Monthly view' })).toHaveFocus())
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'November 2026' })).toHaveFocus())
   })
 
   it('does not switch occurrence when the selected one disappears: says so and cannot save', async () => {
