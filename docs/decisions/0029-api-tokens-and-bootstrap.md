@@ -216,7 +216,8 @@ Only a root token of the root account (the D25 and D32 meaning of "the root toke
 token, including one holding `users:write` or `tokens:write` and another administrator's root token,
 gets 403 `root_token_required` before anything is written:
 
-- `PATCH /users/{root-id}` that demotes the root account or disables it (a no-op such as `disabled: false` on an enabled
-  administrator, or a profile edit, stays open). Like D32 the check is pinned to the version (409 `version_conflict` when the
+- `PATCH /users/{root-id}` that demotes the root account, disables it, or renames it (a username change; decision D35, which
+  extends this amendment; a no-op such as `disabled: false` on an enabled administrator, the same username, or a profile edit,
+  stays open). Like D32 the check is pinned to the version (409 `version_conflict` when the
   caller's version is stale).
 - `DELETE /tokens/{root-token-id}` for a root token of the root account, which also ends its children. Revoking any other token is unchanged.
