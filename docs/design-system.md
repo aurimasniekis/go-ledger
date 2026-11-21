@@ -45,6 +45,11 @@ Two separate axes, separate types (`CommitmentStatus`, `DataState`), so a data s
 | Data state | Not saved yet (pending save) | spinner | default |
 | Data state | Disconnected | unplug | default |
 | Data state | Not saved (save failed) | save off | strong |
+| Data state | Reconnect needed (bank consent ended; retrying cannot help) | link off | strong |
+| Data state | Temporary problem (bank unreachable; retry can help) | cloud off | default |
+| Data state | Waiting for the bank (consent started, not completed) | key | default |
+| Data state | Not fetched yet (connected, never refreshed) | question circle | quiet |
+| Data state | Up to date (refreshed within 24 h) | badge check | quiet, no hue |
 
 **Emphasis tiers** order badges by visual mass so the order survives greyscale: *strong* is a solid fill with `status-strong-foreground` text (things the user must act on or a failure), *default* is a tint with a coloured border, *quiet* is coloured text and icon on a neutral border with no tint (settled or parked). Overdue (amber/orange, triangle) and Error (red/magenta, octagon) differ in hue and shape.
 
@@ -54,7 +59,7 @@ Two separate axes, separate types (`CommitmentStatus`, `DataState`), so a data s
 
 **Provenance markers** (C4, `features/month/provenance.tsx`) are a third axis next to commitment status and data state: where a settled row came from. *Manual payment* (a payment recorded by hand), *Set by hand* (an override with a reason) and *Bank match* (a confirmed match of a bank transaction), or *Bank match and manual payment* when a row has both. The kind comes from the payload's `manual_evidence_count` and `bank_evidence_count`; evidence of no known kind shows no marker, and a bank match is never labelled manual. They are neutral chips (text plus icon, `border-control`), so a bank fact, a user correction and a manual payment never read as a status.
 
-**Reserved, not yet built** (to add with X4, B4 before those screens): bank-pending transaction, needs-review (ambiguous match). Disconnected and save-failed exist (U1); they reuse the stale and error hues, so icon and words, not a new colour, tell them apart.
+**Reserved, not yet built** (to add with X4 before that screen): bank-pending transaction, needs-review (ambiguous match). Disconnected and save-failed exist (U1) and the bank connection states with B4; they reuse the stale and error hues, so icon and words, not a new colour, tell them apart. **Reconnect and retry are never the same badge or the same button**: Reconnect needed is a solid strong badge with a "Reconnect bank" action and no retry; Temporary problem is a tinted default badge with "Try again" and no reconnect.
 
 ## Shell and shared state components (U1, [ADR-0037](decisions/0037-app-shell-and-state-primitives.md))
 

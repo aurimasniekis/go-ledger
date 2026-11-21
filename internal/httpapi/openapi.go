@@ -15,6 +15,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
+	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
@@ -67,6 +68,9 @@ type Deps struct {
 	// Matches stores payment matches between bank transactions and
 	// occurrences (ADR-0035).
 	Matches matches.Store
+	// Banking is the bank connection service (ADR-0039); nil in tests that
+	// never call the routes.
+	Banking *bankconnect.Service
 	// Audit reads the audit log.
 	Audit audit.Reader
 	// Auth is sign-in, sessions and passwords.
@@ -116,6 +120,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerOccurrences(s, d.Occurrences, d.Payments, d.Commitments, todayFn, d.Grace, d.Now)
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
+	registerBankConnections(s, d.Banking)
 	registerMCP(s, d.MCP)
 }
 

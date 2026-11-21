@@ -131,6 +131,7 @@ A grant is `resource:action`. `write` implies `read` on the same resource. There
 | `commitments:read`, `commitments:write` | Recurring commitment definitions | read |
 | `audit:read` | The audit log | no (administrator only) |
 | `banking:read` | Bank-sourced text: raw transaction descriptions and counterparty names (decision D28 5b; administrator only, decision D29, ADR-0035 point 9) | no (administrator only) |
+| `connections:read`, `connections:write` | Bank connections: connect, reconnect, refresh, disconnect, and read accounts, balances and freshness (task B4, ADR-0039) | no (administrator only) |
 | `tokens:read`, `tokens:write` | Everyone's tokens: list and revoke. Never a token value. | no (administrator only) |
 | `users:read`, `users:write` | User accounts, roles, disabling and passwords | no (administrator only) |
 

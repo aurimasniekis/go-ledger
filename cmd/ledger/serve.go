@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
+	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/health"
@@ -220,6 +221,21 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	} else {
 		log.Info("MCP endpoint disabled")
 	}
+	// Bank connections (B4, ADR-0039) and the background refresh (B6, ADR-0028)
+	// share one engine, so one connection is never refreshed twice at once.
+	facts := bankfacts.New(db, nil)
+	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app})
+	var sched *bankimport.Scheduler
+	if cfg.Banking.Refresh.Enabled {
+		sched = bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
+			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff,
+		})
+	}
+	connSvc := &bankconnect.Service{Facts: facts, Providers: providerMap(bankProviders), Engine: engine, Audit: auditLog, RedirectURL: cfg.Banking.RedirectURL}
+	if sched != nil {
+		connSvc.Schedule = sched.Status
+	}
+	parts.banking = connSvc
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
@@ -274,12 +290,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// connection is never refreshed twice at once. It stops with rctx and is
 	// waited for before the database closes.
 	var refreshDone chan struct{}
-	facts := bankfacts.New(db, nil)
-	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app})
-	if cfg.Banking.Refresh.Enabled {
-		sched := bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
-			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff,
-		})
+	if sched != nil {
 		refreshDone = make(chan struct{})
 		go func() { defer close(refreshDone); sched.Run(rctx) }()
 		log.Info("background bank refresh is enabled", "interval", cfg.Banking.Refresh.Interval.String(), "applications", len(bankProviders))
@@ -340,6 +351,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Occurrences: parts.commitments.Occurrences(),
 		Payments:    parts.payments,
 		Matches:     parts.matches,
+		Banking:     parts.banking,
 		Audit:       al,
 		Auth:        parts.auth,
 		Tokens:      parts.tokens,

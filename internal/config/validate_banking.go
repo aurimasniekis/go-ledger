@@ -56,6 +56,29 @@ func (e EnableBanking) validate(bad func(key, msg string)) {
 	}
 }
 
+// BankRedirectPath is the path of the page that finishes a bank consent; the
+// path of banking.redirect_url must be exactly this.
+const BankRedirectPath = "/connections/callback"
+
+// validateRedirect checks banking.redirect_url when it is set: an absolute
+// https URL (http only on loopback) with no query or fragment, ending in
+// [BankRedirectPath].
+func (b Banking) validateRedirect(bad func(key, msg string)) {
+	if b.RedirectURL == "" {
+		return
+	}
+	u, err := url.Parse(b.RedirectURL)
+	secure := err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http" && isLoopbackHost(u.Hostname()))
+	switch {
+	case !secure:
+		bad("banking.redirect_url", "must be an absolute https URL (plain http only on loopback)")
+	case u.RawQuery != "" || u.Fragment != "" || u.User != nil:
+		bad("banking.redirect_url", "must have no query, fragment or user information")
+	case u.Path != BankRedirectPath:
+		bad("banking.redirect_url", "must end in "+BankRedirectPath)
+	}
+}
+
 func isLoopbackHost(h string) bool {
 	return h == "localhost" || strings.HasPrefix(h, "127.") || h == "::1"
 }

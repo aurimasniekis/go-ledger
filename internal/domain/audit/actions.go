@@ -49,6 +49,16 @@ const (
 	PaymentMatchUnmatched Action = "payment_match.unmatched"
 	PaymentMatchCorrected Action = "payment_match.corrected"
 	PaymentMatchReversed  Action = "payment_match.reversed"
+
+	// Bank connections (B4, ADR-0039). The target is the connection. Details:
+	// provider and application (names only: never a session, code, account or
+	// institution), reconnect (true when the consent renewed an existing
+	// connection) and, for a refresh on request, the run's outcome.
+	BankConnectionStarted          Action = "bank_connection.started"
+	BankConnectionReconnectStarted Action = "bank_connection.reconnect_started"
+	BankConnectionConnected        Action = "bank_connection.connected"
+	BankConnectionDisconnected     Action = "bank_connection.disconnected"
+	BankRefreshRequested           Action = "bank_connection.refresh_requested"
 )
 
 // Fixed value sets for detail fields that are not identifiers.
@@ -71,6 +81,7 @@ var (
 	correctionKinds   = []string{"match", "unmatch", "payment_status", "categorisation", "other"}
 	overrideStatuses  = []string{"paid", "unpaid"}
 	overrideOrNone    = []string{"none", "paid", "unpaid"}
+	refreshOutcomes   = []string{"running", "succeeded", "partial", "failed", "interrupted"}
 	matchOrigins      = []string{"auto_rule", "model_suggestion", "user"}
 	matchFromStates   = []string{"none", "suggested", "confirmed", "rejected", "reversed"}
 )
@@ -150,6 +161,12 @@ var Definitions = map[Action][]Field{
 	PaymentMatchUnmatched: matchFields(),
 	PaymentMatchCorrected: matchFields(),
 	PaymentMatchReversed:  matchFields(),
+
+	BankConnectionStarted:          {f("provider"), f("application")},
+	BankConnectionReconnectStarted: {f("provider"), f("application")},
+	BankConnectionConnected:        {f("provider"), f("application"), f("reconnect", "true", "false")},
+	BankConnectionDisconnected:     {f("provider"), f("application")},
+	BankRefreshRequested:           {f("provider"), f("application"), f("outcome", refreshOutcomes...)},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

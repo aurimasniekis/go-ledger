@@ -11,12 +11,18 @@ const link = 'block rounded-md px-2 py-1.5 hover:bg-muted [&.active]:font-semibo
 /** The finance pages: always in the header while signed in, never while signed out or confined to enrolment. */
 export function PrimaryNav() {
   const session = useSession()
+  const me = useMe()
   if (!session.data || session.data.two_factor.enrollment_required) return null
   return (
-    <nav aria-label="Primary">
+    <nav aria-label="Primary" className="flex flex-wrap gap-x-2">
       <Link to="/month" className={link}>
         Monthly view
       </Link>
+      {holds(me.data?.grants, 'connections:read') && (
+        <Link to="/connections" className={link}>
+          Bank connections
+        </Link>
+      )}
     </nav>
   )
 }

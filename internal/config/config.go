@@ -153,6 +153,8 @@ type Pulse struct {
 
 // Banking configures banking-data providers.
 type Banking struct {
+	// RedirectURL is where a bank sends the user back after consent.
+	RedirectURL   string        `cfg:"redirect_url" desc:"Where a bank sends you back after you approve access: Ledger's external address followed by /connections/callback, for example https://ledger.example.com/connections/callback. The same URL must be registered with the banking provider. https only (plain http only on loopback). Empty means connecting a bank (and reconnecting) is switched off; refreshing and disconnecting existing connections still work."`
 	EnableBanking EnableBanking `cfg:"enable_banking"`
 	Refresh       BankRefresh   `cfg:"refresh"`
 }

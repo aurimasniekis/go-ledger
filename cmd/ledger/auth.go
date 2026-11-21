@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -64,6 +65,8 @@ type apiParts struct {
 	oidc *httpapi.OIDCDeps
 	// mcp serves the MCP endpoint, set by ledger serve when mcp.enabled.
 	mcp http.Handler
+	// banking is the bank connection service, set by ledger serve.
+	banking *bankconnect.Service
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their

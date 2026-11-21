@@ -34,6 +34,22 @@ func TestBankRefreshDefaultsAndValidation(t *testing.T) {
 	wantProblem(t, got, "banking.refresh.max_backoff")
 }
 
+func TestBankRedirectURL(t *testing.T) {
+	res, err := load(t, okEnv(nil), nil, nil, "")
+	if err != nil || res.Config.Banking.RedirectURL != "" {
+		t.Fatalf("unset by default: %v %q", err, res.Config.Banking.RedirectURL)
+	}
+	for _, ok := range []string{"https://ledger.example.com/connections/callback", "http://127.0.0.1:8080/connections/callback"} {
+		if _, err := load(t, okEnv(env{"LEDGER_BANKING_REDIRECT_URL": ok}), nil, nil, ""); err != nil {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"http://ledger.example.com/connections/callback", "https://ledger.example.com/", "https://ledger.example.com/connections/callback?x=1", "/connections/callback", "https://u:p@ledger.example.com/connections/callback"} {
+		_, err := load(t, okEnv(env{"LEDGER_BANKING_REDIRECT_URL": bad}), nil, nil, "")
+		wantProblem(t, problems(t, err), "banking.redirect_url")
+	}
+}
+
 func TestEnableBankingEnabledRequiresIDAndKey(t *testing.T) {
 	_, err := load(t, okEnv(env{"LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_ENABLED": "true"}), nil, nil, "")
 	got := problems(t, err)
