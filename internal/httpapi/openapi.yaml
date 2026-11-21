@@ -506,8 +506,10 @@ paths:
         A JSON Merge Patch (RFC 7396, ADR-0015, ADR-0017) of the writable
         members. amount and schedule merge member by member, so
         {"schedule":{"day":20}} changes only the day; to switch a schedule
-        between monthly and annual, send the whole schedule with the members
-        that no longer apply set to null, or all members of the new form.
+        between monthly and annual, send the whole schedule: every member of
+        the new form, plus an explicit null for each member of the old form that
+        does not apply (interval for monthly, month for annual). A member left
+        out of the patch keeps its old value, so the nulls are required.
         end_date, priority and notes are optional (null clears them); name,
         kind, amount, schedule and start_date cannot be null. The merged
         result is validated as a whole and every invalid field is reported.
