@@ -85,6 +85,7 @@ const EXCLUDED_REASON: Record<string, string> = {
   not_published: 'the rate provider publishes no rate for it',
   no_provider: 'no exchange-rate provider is configured',
   conversion_failed: 'the conversion failed',
+  conversion_timed_out: 'the rate was not obtained in time',
 }
 
 /** The /outlook screen: bank balances compared with recorded commitments still due, per currency first. */

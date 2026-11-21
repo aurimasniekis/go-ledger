@@ -3621,7 +3621,7 @@ components:
                 enum: [stale, missing]
               reason:
                 type: string
-                description: not_retrieved_recently, rate_date_too_old, unconfirmed, not_cached, not_published, no_provider or conversion_failed.
+                description: not_retrieved_recently, rate_date_too_old, unconfirmed, not_cached, not_published, no_provider, conversion_failed or conversion_timed_out.
               rate:
                 description: The rate found too old, for a stale conversion; null otherwise.
                 oneOf:

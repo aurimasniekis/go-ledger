@@ -343,6 +343,44 @@ func TestConvertedAggregateIsSecondaryAndFlagsStaleAndMissingRates(t *testing.T)
 	}
 }
 
+// A provider that never answers must not hold the request: the conversion
+// phase is bounded, and the currencies not converted in time are excluded
+// while the rest of the outlook is still returned.
+func TestSlowRateProviderIsBoundedAndExcludesTheCurrencies(t *testing.T) {
+	e := newEnv(t)
+	prov := fxtest.NewProvider("frankfurter", "ECB")
+	prov.Hold() // never released: every call blocks until its context ends
+	svc, err := fx.NewService(e.cache, prov, fx.Options{Now: func() time.Time { return t0 }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := e.service(t, false)
+	s.Rates, s.ConvertTimeout = svc, 100*time.Millisecond
+	start := time.Now()
+	o, err := s.Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("USD")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("the build took %v, want it bounded by the conversion timeout", took)
+	}
+	c := o.Converted
+	if c == nil || len(c.Excluded) != 2 || c.StillDue.String() != "20.00 USD" {
+		t.Fatalf("converted %+v", c)
+	}
+	for _, x := range c.Excluded {
+		if x.Reason != outlook.ReasonConversionTimedOut || x.Status != fx.StatusMissing {
+			t.Errorf("excluded %+v", x)
+		}
+	}
+	if len(o.Currencies) != 3 {
+		t.Errorf("the per-currency lines must still be reported: %d", len(o.Currencies))
+	}
+	if len(prov.Calls()) != 1 {
+		t.Errorf("provider calls = %d: after the deadline no more should be started", len(prov.Calls()))
+	}
+}
+
 func TestWithoutARateServiceOnlyTheReportingCurrencyIsCounted(t *testing.T) {
 	e := newEnv(t)
 	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("EUR")})

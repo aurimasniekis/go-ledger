@@ -80,6 +80,9 @@ type apiParts struct {
 	// open a read-only one. bankStaleAfter is banking.stale_after.
 	facts          *bankfacts.Store
 	bankStaleAfter time.Duration
+	// convertTimeout bounds the outlook's rate conversion on a request,
+	// below http.write_timeout (see refreshTimeout); zero is unbounded.
+	convertTimeout time.Duration
 	// reportingCurrency is reporting.currency: the default currency of the
 	// outlook's converted aggregate (ADR-0044); zero for none.
 	reportingCurrency moneypkg.Currency

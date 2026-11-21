@@ -17,6 +17,18 @@ func TestRatesDefaultsAreDecisionD11(t *testing.T) {
 	}
 }
 
+func TestRatesSourceKeyCaseIsNormalised(t *testing.T) {
+	for in, want := range map[string]string{"ecb": "ECB", "Ecb": "ECB", "ECB": "ECB", "blended": "blended", "Blended": "blended", "BLENDED": "blended"} {
+		res, err := load(t, okEnv(env{"LEDGER_RATES_ENABLED": "true", "LEDGER_RATES_SOURCE": in}), nil, nil, "")
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if got := res.Config.Rates.Source; got != want {
+			t.Errorf("source %q became %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestRatesValidation(t *testing.T) {
 	for name, tt := range map[string]struct {
 		env  env

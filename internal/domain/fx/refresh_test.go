@@ -112,11 +112,26 @@ func TestPermanentFailureSkipsOnlyThatCurrency(t *testing.T) {
 	e := newJobEnv(t, "XXX", "USD")
 	e.prov.FailNext(&fx.ProviderError{Kind: fx.KindPermanent, Provider: "p", Op: "latest", Code: "http_422"})
 	out := e.job.Cycle(t.Context(), 0)
+	// A permanent failure is not an outage: the job waits the full interval
+	// and does not count a consecutive failure.
+	if out.Backoff || out.Wait != e.job.Interval {
+		t.Errorf("permanent failure backs off: %+v", out)
+	}
 	if out.Refreshed != 1 || !errors.Is(out.Err, fx.ErrPermanent) || len(e.prov.Calls()) != 2 {
 		t.Fatalf("outcome %+v, %d calls", out, len(e.prov.Calls()))
 	}
 	if _, ok, _ := e.cache.Find(t.Context(), "p", "ECB", fxtest.Pair("USD", "EUR"), calendar.Date{}); !ok {
 		t.Error("the currency after the permanent failure was not refreshed")
+	}
+}
+
+func TestTransientFailureAfterAPermanentOneStillBacksOff(t *testing.T) {
+	e := newJobEnv(t, "XXX", "USD")
+	e.prov.FailNext(&fx.ProviderError{Kind: fx.KindPermanent, Provider: "p", Op: "latest", Code: "http_422"})
+	e.prov.FailNext(&fx.ProviderError{Kind: fx.KindUnavailable, Provider: "p", Op: "latest"})
+	out := e.job.Cycle(t.Context(), 0)
+	if !out.Backoff || out.Wait != fx.FirstBackoff {
+		t.Errorf("outcome %+v", out)
 	}
 }
 

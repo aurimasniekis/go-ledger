@@ -81,6 +81,7 @@ func New(o Options) (*Client, error) {
 	if o.Source == "" {
 		o.Source = DefaultSource
 	}
+	o.Source = fx.NormalizeSource(o.Source)
 	if !sourcePattern.MatchString(o.Source) {
 		return nil, errors.New("frankfurter: source must be a provider key such as ECB, or \"blended\" (letters, digits, '_', '.', '-', at most 32)")
 	}

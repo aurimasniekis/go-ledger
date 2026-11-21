@@ -139,7 +139,7 @@ func (p *Provider) ReleaseAll() {
 	p.each = false
 }
 
-func (p *Provider) answer(c Call) ([]fx.Quote, error) {
+func (p *Provider) answer(ctx context.Context, c Call) ([]fx.Quote, error) {
 	p.mu.Lock()
 	p.calls = append(p.calls, c)
 	gate := p.gate
@@ -149,7 +149,12 @@ func (p *Provider) answer(c Call) ([]fx.Quote, error) {
 	}
 	p.mu.Unlock()
 	if gate != nil {
-		<-gate
+		// A held call ends with its context, like a real provider's request.
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -184,7 +189,7 @@ func (p *Provider) Latest(ctx context.Context, base money.Currency, quotes []mon
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return p.answer(Call{Op: "latest", Base: base, Quotes: append([]money.Currency(nil), quotes...)})
+	return p.answer(ctx, Call{Op: "latest", Base: base, Quotes: append([]money.Currency(nil), quotes...)})
 }
 
 // OnDate implements [fx.Provider].
@@ -192,7 +197,7 @@ func (p *Provider) OnDate(ctx context.Context, base money.Currency, quotes []mon
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return p.answer(Call{Op: "on_date", Base: base, Quotes: append([]money.Currency(nil), quotes...), Date: date})
+	return p.answer(ctx, Call{Op: "on_date", Base: base, Quotes: append([]money.Currency(nil), quotes...), Date: date})
 }
 
 func mustDate(s string) calendar.Date {
