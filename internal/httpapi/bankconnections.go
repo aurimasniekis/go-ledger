@@ -276,6 +276,8 @@ func bankError(w http.ResponseWriter, err error) error {
 		return conflict(CodeConnectionNotActive, "the connection was disconnected; reconnect it to fetch data again")
 	case errors.Is(err, bankconnect.ErrNotActive):
 		return conflict(CodeConnectionNotActive, "the connection cannot be refreshed until its consent is renewed: reconnect it")
+	case errors.Is(err, bankconnect.ErrShuttingDown):
+		return &Error{Status: http.StatusServiceUnavailable, Code: CodeUnavailable, Message: "Ledger is shutting down; try again shortly", Cause: err}
 	case errors.Is(err, banking.ErrRefreshInProgress):
 		retryAfter(30 * time.Second)
 		return conflict(CodeRefreshInProgress, "a refresh of this connection is already running; try again shortly")

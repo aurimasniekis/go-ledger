@@ -428,3 +428,55 @@ func TestReadsSurviveAFailingExpirySweep(t *testing.T) {
 		t.Errorf("View failed because the sweep failed: %v", err)
 	}
 }
+
+// B4g F1: a run still going when Wait's bound passes is cancelled; the engine
+// ends it as interrupted and its audit entry is written.
+func TestCancelRefreshesInterruptsARunPastTheShutdownBound(t *testing.T) {
+	s := newSetup(t, banking.ConnectionActive, banking.NewSensitive("sess"))
+	s.svc.Facts = &viewStore{memStore: s.mem}
+	s.svc.RefreshTimeout = 20 * time.Millisecond
+	s.svc.Engine = &cancelAwareEngine{}
+	if v, err := s.svc.Refresh(context.Background(), alice, "conn-1"); err != nil || !v.RefreshRunning {
+		t.Fatalf("Refresh = %+v, %v; want RefreshRunning", v, err)
+	}
+	wctx, wcancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer wcancel()
+	if err := s.svc.Wait(wctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait = %v, want the deadline error", err)
+	}
+	if n := len(s.log.outcomes(audit.BankRefreshRequested)); n != 0 {
+		t.Fatalf("%d audit entries before cancelling", n)
+	}
+	s.svc.CancelRefreshes()
+	cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer ccancel()
+	if err := s.svc.Wait(cctx); err != nil {
+		t.Fatalf("second Wait = %v, want the run ended", err)
+	}
+	evs := s.log.outcomes(audit.BankRefreshRequested)
+	if len(evs) != 1 || evs[0].Details["outcome"] != string(banking.RefreshInterrupted) {
+		t.Fatalf("audit = %+v, want one entry with outcome interrupted", evs)
+	}
+}
+
+// B4g F2: once Wait began, Refresh starts nothing.
+func TestRefreshAfterWaitIsRejected(t *testing.T) {
+	s := newSetup(t, banking.ConnectionActive, banking.NewSensitive("sess"))
+	s.svc.Facts = &viewStore{memStore: s.mem}
+	s.svc.Engine = &cancelAwareEngine{}
+	if err := s.svc.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.svc.Refresh(context.Background(), alice, "conn-1"); !errors.Is(err, bankconnect.ErrShuttingDown) {
+		t.Fatalf("Refresh after Wait = %v, want ErrShuttingDown", err)
+	}
+}
+
+// cancelAwareEngine runs until its context is cancelled, then reports the
+// run as interrupted, as the real engine does.
+type cancelAwareEngine struct{}
+
+func (cancelAwareEngine) Refresh(ctx context.Context, _ banking.ConnectionID, _ banking.Provider) (bankimport.Result, error) {
+	<-ctx.Done()
+	return bankimport.Result{Run: banking.RefreshRun{ID: "run-1", Outcome: banking.RefreshInterrupted}}, ctx.Err()
+}

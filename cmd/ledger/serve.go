@@ -344,7 +344,15 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// database.
 	wctx, wcancel := context.WithTimeout(context.Background(), refreshShutdownWait)
 	if err := connSvc.Wait(wctx); err != nil {
-		log.Error("a bank refresh was still running at shutdown", "error", err.Error())
+		// Past the bound: cancel the runs so the engine records them as
+		// interrupted (and audits them) while the database is still open.
+		log.Error("a bank refresh was still running at shutdown; cancelling it", "error", err.Error())
+		connSvc.CancelRefreshes()
+		cctx, ccancel := context.WithTimeout(context.Background(), refreshCancelWait)
+		if err := connSvc.Wait(cctx); err != nil {
+			log.Error("a cancelled bank refresh did not end in time; its run stays open until its lease expires", "error", err.Error())
+		}
+		ccancel()
 	}
 	wcancel()
 	if refreshDone != nil {
@@ -359,6 +367,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 // refreshShutdownWait bounds how long shutdown waits for a bank refresh that
 // outlived its request before the database closes.
 const refreshShutdownWait = 30 * time.Second
+
+// refreshCancelWait bounds the second wait, for cancelled runs to record
+// their interruption.
+const refreshCancelWait = 5 * time.Second
 
 // refreshTimeout bounds a refresh on request below the HTTP write timeout
 // (Go does not cancel a request when its response deadline passes, so an

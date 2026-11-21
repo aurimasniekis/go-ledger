@@ -156,6 +156,9 @@ type apiFixture struct {
 	bank *bankingtest.Provider
 	// devBank is the developer-mode application beside it.
 	devBank *bankingtest.Provider
+	// connections is the bank connection service behind those routes (tests
+	// close it to simulate shutdown).
+	connections *bankconnect.Service
 }
 
 // addAdmin creates one more administrator with the fixture password, for the
@@ -228,6 +231,7 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	parts.banking = &bankconnect.Service{Facts: facts, Providers: map[string]banking.Provider{f.bank.Capabilities().Application: f.bank, f.devBank.Capabilities().Application: f.devBank},
 		Engine: bankimport.New(facts, bankimport.Options{Now: clock, Sleep: func(context.Context, time.Duration) error { return nil }}), Audit: al, RedirectURL: "https://ledger.example/connections/callback", Now: clock}
 	f.db = db
+	f.connections = parts.banking
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {
