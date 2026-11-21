@@ -47,6 +47,10 @@ type Store struct {
 	zone calendar.Zone
 }
 
+// Zone returns the reporting zone the store derives payment facts in (the zero
+// zone means UTC).
+func (s *Store) Zone() calendar.Zone { return s.zone }
+
 // WithZone returns a copy of the store that derives payment facts in the
 // reporting zone z (the zero zone means UTC).
 func (s *Store) WithZone(z calendar.Zone) *Store {

@@ -54,3 +54,22 @@ The status is still derived on read (D7), never stored.
   origin means whichever merges second renumbers its file (migrations must have no gaps).
 - Open: whether the shortfall should be added to the totals row; it is not (the tolerance is the user's own, per
   commitment).
+
+### Edge cases
+
+These follow from point 3 as written. They are stated here so that they are not mistaken for bugs.
+
+a. **A manual payment after a tolerance-paid bank match reverts it to `partially_paid`.** The tolerance applies only to
+   bank matches alone, so once a manual payment is counted the occurrence is judged on the mixed evidence. Example: a 50.00
+   EUR occurrence, a bank match of 49.70 EUR with 0.50 EUR recorded, then a manual payment of 0.10 EUR gives
+   `partially_paid` with 0.20 EUR outstanding. Adding money can make the occurrence look less paid. This is deliberate:
+   the outstanding amount stays visible rather than being covered by the tolerance.
+b. **A match confirmed alongside manual evidence records no tolerance.** Point 3 records the tolerance only when the
+   counted evidence is bank matches alone at confirmation. If the manual payment is removed later, the occurrence stays
+   `partially_paid`: the tolerance is not re-derived. Re-recording it needs a Correct of the confirmed match (the amount is
+   checked again at that point, and the tolerance is recorded if the bank-only rule now holds).
+c. **Matches confirmed before migration 0021 stay `partially_paid`, with no backfill.** Their `tolerance_amount` is NULL,
+   including automatic confirmations that were short within the tolerance before this change. They are neither rewritten
+   to paid nor to unpaid. Consequence: an older short auto-confirmed match shows its small outstanding amount, while a new
+   one shows paid. A backfill from the automatic-confirmation reason text is possible but not recommended; it would need a
+   separate operator decision.

@@ -73,6 +73,9 @@ type Engine struct {
 	mu  sync.Mutex
 }
 
+// Store returns the store the engine acts through.
+func (e *Engine) Store() Store { return e.st }
+
 // New returns an engine writing through st.
 func New(st Store, o Options) *Engine {
 	if o.Today == nil {
