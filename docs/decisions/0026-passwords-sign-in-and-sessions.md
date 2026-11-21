@@ -1,6 +1,8 @@
 # ADR-0026: Passwords, sign-in, sessions, CSRF and recent authentication
 
 Status: Accepted (2026-11-21); the default values in point 9 are **proposed** and wait for an operator decision.
+Amended (2026-11-21) by decision D23-1b: known browsers are exempt from the per-username lockout (see the amendment at
+the end).
 
 ## Context
 
@@ -139,3 +141,64 @@ outbound timeouts only).
 - The UI screens (sign-in, sessions list, re-authentication prompt, password change) are A7.
 - Migration number: `0010`, after the commitment definitions (`0009_commitments`, ADR-0024); the fixture
   `0009_commitments` covers the previous version.
+
+## Amendment: device cookies exempt known browsers from the per-username lockout (Accepted, decision D23-1b, A2c)
+
+Decision D23-1b: a browser that has signed in successfully before is exempt from the per-username lockout; the
+per-address limits stay. This answers the open decision in the second point of Why above and narrows its accepted
+risk to browsers that have not signed in before. Implemented with OWASP's "device cookie" pattern (Blocking Brute Force Attacks, Slow down
+online guessing attacks with device cookies).
+
+1. **Issuing.** Every complete *password* sign-in (the password alone, or the password and then the second factor)
+   sets `__Host-ledger_device`: a 256-bit random token with the session cookie's attributes (`Secure`, `HttpOnly`,
+   `SameSite=Strict`, `Path=/`, no `Domain`), expiring after `auth.sign_in.device_cookie_ttl` (proposed default
+   90 days, `2160h`; not an operator decision). The table `device_cookies` (migration `0016_device_cookies`)
+   keeps its SHA-256 hash, the user it is bound to, and its creation and expiry times; never the token. The 202
+   password step of a two-step sign-in sets nothing. OIDC and recovery sign-ins issue no device cookie: they do not
+   use the password limits.
+2. **Using.** Sign-in looks the presented cookie up (whenever one is sent, before it is known whether the username
+   exists, so the lookup does not reveal that). It is *valid* only when it exists, belongs to the account the
+   submitted username names, and has not expired. With a valid cookie, the attempt is reserved and counted in the
+   account limiter under the key `device:<cookie id>` instead of `user:<username>`, with the same limit
+   (`auth.sign_in.account_max_failures` per `auth.sign_in.window`). The per-address limit applies exactly as before.
+   A forged, expired, replaced, revoked or other user's cookie is ignored: the attempt counts against the username as
+   if no cookie were sent. The second step of a two-step sign-in counts against the same key as its password step.
+   Re-authentication (`POST /auth/reauthenticate`) applies the same rule, so a locked username cannot stop the owner
+   from confirming their password in a known browser.
+3. **Never a bypass.** The cookie only chooses which failure counter applies. The password is always verified, the
+   second factor is always required when enabled, and the uniform-failure rules of point 3 are unchanged.
+4. **Rotation.** A complete sign-in replaces the presented cookie: the old row is deleted and a new token is set, in
+   one transaction. If issuing fails, the sign-in still succeeds without a new cookie and the old cookie stays valid
+   (the rotation either happens whole or not at all). Signing out keeps the cookie: the browser stays known.
+5. **Expiry and bounds.** A cookie expires at its `expires_at`; expired rows of a user are deleted when the user
+   next gets a cookie. A user keeps at most 20 device cookies; issuing one more deletes the oldest.
+6. **Revocation.** Setting a user's password (by themselves, an administrator or `ledger auth set-password`)
+   deletes every device cookie of that user in the same transaction; `PUT /auth/password` also clears the calling
+   browser's cookie. There is no separate list or revoke endpoint for device cookies.
+7. **Audit.** `auth.signin_succeeded`, `auth.signin_failed` and `auth.reauthentication_failed` carry
+   `device: known` when the attempt came from a browser with a valid device cookie (and so counted against it).
+
+### Why
+
+- OWASP's device cookie keeps the per-username lock against guessing from unknown browsers while letting the owner
+  in from browsers that have proven themselves; it is the pattern the operator chose.
+- Failures from a known browser count against that cookie (OWASP's "lockout of the device cookie"), so a stolen
+  device cookie gives at most the same number of guesses per window as the username limit, and does not consume the
+  username's budget.
+- A stored, hashed token (rather than a stateless signed one) needs no new server key, makes rotation real (the old
+  token stops working) and makes revocation on a password change a single delete.
+- Re-authentication is included because it shares the username limiter: otherwise a locked username would block
+  the owner's credential changes in their own session.
+
+### Consequences and limitations
+
+- The per-username lockout still applies in full to browsers that have never signed in (or whose cookie expired,
+  was revoked by a password change, or was cleared). Someone who knows the username can still keep such a browser
+  locked out; restarting `ledger serve` remains the only other recovery for them.
+- The failure counts stay in memory (point 4): a restart clears device-cookie counts as well. The cookies
+  themselves are in the database and survive restarts.
+- A copied device cookie gives its holder the known browser's own failure budget, never a session: the password
+  (and second factor) are still needed.
+- The device-cookie lifetime and the per-user cap of 20 are proposed values.
+- Migration number: `0016` on this branch (after `0015_oidc`); the payment-matches change also uses `0016`, so
+  one of them is renumbered at merge. The fixture `0015_oidc` covers the previous version.

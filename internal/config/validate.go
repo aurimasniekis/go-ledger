@@ -145,6 +145,9 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	if c.Auth.SignIn.AddressMaxFailures < 1 {
 		bad("auth.sign_in.address_max_failures", "must be at least 1")
 	}
+	if c.Auth.SignIn.DeviceCookieTTL <= 0 {
+		bad("auth.sign_in.device_cookie_ttl", "must be a positive duration")
+	}
 	if strings.TrimSpace(c.Database.Path) == "" {
 		bad("database.path", "must not be empty")
 	}

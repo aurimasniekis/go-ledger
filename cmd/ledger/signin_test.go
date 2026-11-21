@@ -139,10 +139,12 @@ func newSignInEnvWith(t *testing.T, mod func(*config.Auth), setup func(e *signIn
 	return e
 }
 
-// browser is a client holding one session cookie and its CSRF token.
+// browser is a client holding one session cookie and its CSRF token, and
+// possibly a device cookie.
 type browser struct {
 	cookie, csrf string
 	addr         string
+	device       string
 }
 
 func (e *signInEnv) req(method, path, body string, b *browser, hdr map[string]string) *httptest.ResponseRecorder {
@@ -163,6 +165,9 @@ func (e *signInEnv) req(method, path, body string, b *browser, hdr map[string]st
 		}
 		if b.csrf != "" && method != "GET" {
 			r.Header.Set(httpapi.CSRFHeader, b.csrf)
+		}
+		if b.device != "" {
+			r.AddCookie(&http.Cookie{Name: httpapi.DeviceCookie, Value: b.device})
 		}
 	}
 	for k, v := range hdr {
