@@ -146,6 +146,30 @@ describe('Month page', () => {
     expect(opener).toHaveFocus()
   })
 
+  it('returns focus to the header button when the form opened from it is cancelled', async () => {
+    responder = () => json(200, summary([item('a')]))
+    open()
+    const header = await screen.findByRole('button', { name: 'Record a payment' })
+    await userEvent.click(header)
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(header).toHaveFocus())
+  })
+
+  it('falls back to the heading, not the body, when paying the last unpaid occurrence leaves nothing to focus', async () => {
+    let paid = false
+    responder = (c) =>
+      c.method === 'POST'
+        ? ((paid = true), json(201, { id: 'p1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21', version: 1 }))
+        : json(200, paid ? summary([item('a', { payment: payment({ status: 'paid' }) })]) : summary([item('a')]))
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: 'Record a payment' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Save payment' }))
+    await screen.findByText(/^Saved:/)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Record a payment' })).toBeDisabled())
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Monthly view' })).toHaveFocus())
+  })
+
   it('does not switch occurrence when the selected one disappears: says so and cannot save', async () => {
     let gone = false
     responder = () => json(200, summary(gone ? [item('b')] : [item('a'), item('b')]))
