@@ -348,9 +348,9 @@ paths:
                 kind:
                   $ref: "#/components/schemas/CommitmentKind"
                 amount:
-                  $ref: "#/components/schemas/MoneyPatch"
+                  $ref: "#/components/schemas/PositiveMoney"
                 schedule:
-                  $ref: "#/components/schemas/SchedulePatch"
+                  $ref: "#/components/schemas/Schedule"
                 start_date:
                   $ref: "#/components/schemas/Date"
                 end_date:
@@ -445,9 +445,9 @@ paths:
                 kind:
                   $ref: "#/components/schemas/CommitmentKind"
                 amount:
-                  $ref: "#/components/schemas/PositiveMoney"
+                  $ref: "#/components/schemas/MoneyPatch"
                 schedule:
-                  $ref: "#/components/schemas/Schedule"
+                  $ref: "#/components/schemas/SchedulePatch"
                 start_date:
                   $ref: "#/components/schemas/Date"
                 end_date:
