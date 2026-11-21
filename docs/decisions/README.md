@@ -42,6 +42,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0038: MCP server core](0038-mcp-server-core.md)
 - [ADR-0039: Automatic payment matching engine](0039-automatic-payment-matching.md)
 - [ADR-0041: Enable Banking setup documentation](0041-enable-banking-setup-docs.md)
+- [ADR-0042: "Not recorded" occurrences and tolerance-confirmed payments count as paid](0042-not-recorded-and-tolerance-paid.md)
 - [ADR-0043: Matching and correction UI, and the MCP match tools](0043-matching-ui-and-mcp-match-tools.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

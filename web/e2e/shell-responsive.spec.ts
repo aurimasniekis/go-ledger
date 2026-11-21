@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test'
 const now = '2026-11-21T10:00:00Z'
 const eur = (amount: string) => ({ amount, currency: 'EUR' })
 const payment = (status: string, timing: string, outstanding: string) => ({
-  status, derived_status: status, timing, paid_amount: eur('0.00'), outstanding_amount: eur(outstanding), overpaid_amount: eur('0.00'),
+  status, derived_status: status, timing, paid_amount: eur('0.00'), outstanding_amount: eur(outstanding), overpaid_amount: eur('0.00'), shortfall_amount: eur('0.00'),
   unconverted_currencies: [], evidence_count: 0, manual_evidence_count: 0, bank_evidence_count: 0, grace_until: null, within_grace: false, override: null,
 })
 const occ = (id: string, name: string, due: string, status: string, timing: string) => ({

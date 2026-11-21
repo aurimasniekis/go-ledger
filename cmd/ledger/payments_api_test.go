@@ -73,7 +73,7 @@ func TestPaymentStateAPI(t *testing.T) {
 		}
 		return out
 	}
-	id := f.createCommitment(t, monthEndBody) // 10.00 EUR on month ends
+	id := f.createCommitmentAt(t, earlier, monthEndBody) // 10.00 EUR on month ends
 	p := f.occurrences(t, "month=2026-10&commitment_id="+id, "alice")
 	occID := p.Items[0].ID
 	base := "/api/v1/occurrences/" + occID

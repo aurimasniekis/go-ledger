@@ -179,3 +179,36 @@ func TestMonthRefusesBeyondHorizonAndCurrentResolvesToday(t *testing.T) {
 		t.Fatalf("%v %v", s.AsOf, err)
 	}
 }
+
+// TestMonthTotalsLeaveOutNotRecordedAndCountToleranceAsPaid pins D38 1a and
+// D39 5a in the totals: an occurrence due before its commitment was created
+// is in Due but neither outstanding nor overdue; one paid within the tolerance
+// has nothing outstanding.
+func TestMonthTotalsLeaveOutNotRecordedAndCountToleranceAsPaid(t *testing.T) {
+	month, _ := calendar.ParseYearMonth("2026-11")
+	mk := func(id, due, amt string) occurrences.Occurrence {
+		return occurrences.Occurrence{ID: id, CommitmentID: "c", Month: month, DueDate: date(t, due), Amount: mustMoney(t, amt, "EUR"), Version: 1}
+	}
+	occ := []occurrences.Occurrence{
+		mk("o1", "2026-11-03", "100.00"), // created after: not recorded
+		mk("o2", "2026-11-12", "20.00"),  // created on the day: overdue
+		mk("o3", "2026-11-14", "30.00"),  // paid 29.50 by bank within tolerance 0.50
+	}
+	tolerance := mustMoney(t, "0.50", "EUR")
+	f := facts{by: map[string]payments.Facts{
+		"o1": {CommitmentCreatedOn: date(t, "2026-11-10")},
+		"o2": {CommitmentCreatedOn: date(t, "2026-11-12")},
+		"o3": {Evidence: []payments.Evidence{{Kind: payments.EvidenceBankTransaction, ID: "b", OccurrenceID: "o3", Amount: mustMoney(t, "29.50", "EUR"), Date: date(t, "2026-11-14"), ConfirmedWithin: &tolerance}}},
+	}}
+	s, err := monthview.Service{Occurrences: fakeOcc{items: occ}, Payments: f}.Month(context.Background(), month, date(t, "2026-11-20"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Rows) != 3 || s.Rows[0].State.Status != payments.StatusNotRecorded || s.Rows[1].State.Status != payments.StatusOverdue || s.Rows[2].State.Status != payments.StatusPaid {
+		t.Fatalf("rows: %+v", s.Rows)
+	}
+	got := s.Totals[0]
+	if got.Due.String() != "150.00 EUR" || got.Outstanding.String() != "20.00 EUR" || got.Overdue.String() != "20.00 EUR" || got.OverdueCount != 1 || got.Occurrences != 3 || got.Paid.String() != "29.50 EUR" {
+		t.Fatalf("totals: %+v", got)
+	}
+}

@@ -105,7 +105,7 @@ func open(t *testing.T, path string, c *clock) *fixture {
 	t.Cleanup(func() { _ = db.Close() })
 	rec := &recorder{}
 	f := &fixture{t: t, ctx: ctx, path: path, db: db, clock: c, rec: rec, facts: bankfacts.New(db, nil),
-		cs: commitmentstore.New(db, rec, c.Now, nil), ps: paymentstore.New(db, rec, c.Now, nil), ms: matchstore.New(db, rec, c.Now, nil)}
+		cs: commitmentstore.New(db, rec, func() time.Time { return t0.AddDate(0, -3, 0) }, nil), ps: paymentstore.New(db, rec, c.Now, nil), ms: matchstore.New(db, rec, c.Now, nil)}
 	f.engine = bankimport.New(f.facts, bankimport.Options{Now: c.Now, Sleep: func(context.Context, time.Duration) error { return nil },
 		Jitter: func(d time.Duration) time.Duration { return d }})
 	return f

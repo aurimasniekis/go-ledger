@@ -254,6 +254,7 @@ export function statusSummary(items: MonthItem[]): string {
     ['partially_paid', 'partly paid'],
     ['upcoming', 'upcoming'],
     ['paid', 'paid'],
+    ['not_recorded', 'not recorded'],
   ]
   return order
     .map(([s, label]) => {
@@ -328,6 +329,12 @@ function OccurrenceRow({ item: i, onRecord, offline, form }: { item: MonthItem |
             <>Overdue; documented grace ended <DateText value={p.grace_until} />.</>
           )}
         </p>
+      )}
+      {p.timing === 'not_recorded' && (
+        <p className="text-sm text-muted-foreground">Due before this commitment was created: not counted in the overdue or outstanding totals. You can still record a payment.</p>
+      )}
+      {p.status === 'paid' && !isZeroAmount(p.shortfall_amount.amount) && (
+        <p className="text-sm">Paid within the commitment's tolerance; {money(p.shortfall_amount)} short.</p>
       )}
       {p.status === 'partially_paid' && (
         <p className="text-sm">

@@ -150,7 +150,7 @@ func TestPaymentMatchAPI(t *testing.T) {
 	rentTx := bank.tx(t, "RENT 2026-10")
 	holdTx := bank.tx(t, "HOTEL HOLD")
 
-	rentID := f.createCommitment(t, `{"name":"Rent","kind":"service","amount":{"amount":"800.00","currency":"EUR"},"schedule":{"version":1,"frequency":"monthly","interval":1,"day":2},"start_date":"2026-01-01"}`)
+	rentID := f.createCommitmentAt(t, earlier, `{"name":"Rent","kind":"service","amount":{"amount":"800.00","currency":"EUR"},"schedule":{"version":1,"frequency":"monthly","interval":1,"day":2},"start_date":"2026-01-01"}`)
 	oct := f.occurrences(t, "month=2026-10&commitment_id="+rentID, "alice").Items[0].ID
 	sep := f.occurrences(t, "month=2026-09&commitment_id="+rentID, "alice").Items[0].ID
 	if o := f.getOccurrence(t, oct); o.Payment.Status != "overdue" {
