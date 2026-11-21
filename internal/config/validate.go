@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
+	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 )
 
 // resolveSecretFiles reads a secret named by a *_file key into its value field.
@@ -154,6 +155,11 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	if tz := c.Reporting.Timezone; tz != "" {
 		if _, err := calendar.LoadZone(tz); err != nil { // same rules as the zone the app builds: "Local" is refused
 			bad("reporting.timezone", err.Error())
+		}
+	}
+	if cur := c.Reporting.Currency; cur != "" {
+		if _, err := money.ParseCurrency(cur); err != nil {
+			bad("reporting.currency", "must be an ISO 4217 code of three upper-case letters, such as EUR")
 		}
 	}
 	for _, d := range []struct {

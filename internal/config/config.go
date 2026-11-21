@@ -134,6 +134,7 @@ type Reporting struct {
 	// TODO(audit-log task): the desc below promises an audit entry for a zone change;
 	// until the audit log exists the change is only logged with a warning.
 	Timezone string `cfg:"timezone" desc:"IANA time zone used for due dates and monthly views, for example Europe/Vilnius. Empty means the zone stored in the database; on first start against a new database the host's IANA zone is captured once and stored, and startup is refused if the host has no IANA name. A value that differs from the stored zone is applied with a warning, because it reclassifies dates; its audit entry is recorded once the audit log exists. 'Local' is not accepted."`
+	Currency string `cfg:"currency" desc:"ISO 4217 code of the reporting currency, for example EUR: the outlook adds a secondary total converted into it, next to the per-currency figures, counting only amounts with an acceptable exchange rate and listing the rest as excluded (decision D5). Empty means no converted total unless a request asks for one."`
 }
 
 // Events configures event publishing.

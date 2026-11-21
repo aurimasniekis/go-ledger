@@ -250,6 +250,7 @@ func TestEnvAndFlagErrorsNameTheSource(t *testing.T) {
 		{"non-positive duration", env{"LEDGER_HTTP_READ_TIMEOUT": "0s"}, nil, []string{"LEDGER_HTTP_READ_TIMEOUT", "positive"}},
 		{"bad timezone", env{"LEDGER_REPORTING_TIMEZONE": "Mars/Base"}, nil, []string{"reporting.timezone", "unknown IANA"}},
 		{"local timezone", env{"LEDGER_REPORTING_TIMEZONE": "Local"}, nil, []string{"reporting.timezone", "named IANA zone is required"}},
+		{"bad reporting currency", env{"LEDGER_REPORTING_CURRENCY": "euro"}, nil, []string{"reporting.currency", "ISO 4217"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

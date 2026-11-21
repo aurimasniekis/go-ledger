@@ -18,7 +18,10 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
+	"github.com/aurimasniekis/go-ledger/internal/domain/money"
+	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -79,6 +82,16 @@ type Deps struct {
 	OIDC *OIDCDeps
 	// MCP serves POST /mcp (internal/mcpserver); nil means MCP is turned off.
 	MCP http.Handler
+	// Banks reads stored bank facts for the outlook (ADR-0044); nil means no
+	// balance is available. Rates converts for the outlook's secondary
+	// aggregate; nil means only the reporting currency itself converts.
+	// ReportingCurrency is that aggregate's default currency (zero: none
+	// unless a request asks). BankStaleAfter is the bank-data staleness
+	// threshold (zero: banking.DefaultStaleAfter).
+	Banks             outlook.Banks
+	Rates             outlook.Converter
+	ReportingCurrency money.Currency
+	BankStaleAfter    time.Duration
 	// Zone is the reporting time zone (D5): it decides "today" for default
 	// effective dates and the materialisation horizon. Now defaults to
 	// time.Now.
@@ -119,6 +132,10 @@ func RegisterAPI(s *Server, d Deps) {
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
 	registerMatching(s, d.Matching)
+	registerOutlook(s, outlook.Service{
+		Months:      monthview.Service{Occurrences: d.Occurrences, Payments: d.Payments, Grace: d.Grace},
+		Commitments: d.Commitments, Banks: d.Banks, Rates: d.Rates, Today: todayFn, Now: d.Now, BankStaleAfter: d.BankStaleAfter,
+	}, d.ReportingCurrency, d.Now)
 	registerMCP(s, d.MCP)
 }
 

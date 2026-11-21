@@ -43,6 +43,11 @@ const (
 	// sensitive). Other APIs that show it are redacted without this grant
 	// (ADR-0035 point 9).
 	ResourceBanking Resource = "banking"
+	// ResourceConnections is bank connections (task B4): connecting a bank,
+	// reconnecting, refreshing on request, disconnecting, and reading each
+	// connection's accounts, balances and freshness. Not the bank's
+	// transaction text (that is banking:read).
+	ResourceConnections Resource = "connections"
 	// ResourceCommitments is recurring commitment definitions (task C1).
 	ResourceCommitments Resource = "commitments"
 	// ResourceTokens is every user's API tokens: listing and revoking them
@@ -68,6 +73,7 @@ var vocabulary = []ResourceInfo{
 	{Name: ResourceAudit, Description: "The audit log of security-relevant and finance-correcting changes.", Actions: []Action{ActionRead}, AdminOnly: true},
 	{Name: ResourceBanking, Description: "Bank-sourced transaction text: raw descriptions and counterparty names.", Actions: []Action{ActionRead}, AdminOnly: true},
 	{Name: ResourceCommitments, Description: "Recurring commitment definitions: kind, amount, schedule, dates, priority and notes.", Actions: []Action{ActionRead, ActionWrite}},
+	{Name: ResourceConnections, Description: "Bank connections: connect, reconnect, refresh, disconnect, and read accounts, balances and freshness.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceTokens, Description: "Every user's API tokens: list them and revoke them. Never the tokens themselves.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceUsers, Description: "User accounts, their roles and whether they are disabled.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 }

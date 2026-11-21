@@ -86,6 +86,7 @@ var permissionMatrix = map[string]string{
 
 	"GET /api/v1/occurrences":         "commitments:read",
 	"GET /api/v1/occurrences/summary": "commitments:read",
+	"GET /api/v1/outlook":             "commitments:read",
 	"GET /api/v1/occurrences/{id}":    "commitments:read",
 
 	"GET /api/v1/occurrences/{id}/manual-payments":                 "commitments:read",

@@ -17,6 +17,9 @@ export function PrimaryNav() {
       <Link to="/month" className={link}>
         Monthly view
       </Link>
+      <Link to="/outlook" className={link}>
+        Outlook
+      </Link>
     </nav>
   )
 }

@@ -1,0 +1,462 @@
+package outlook_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
+	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/fx"
+	"github.com/aurimasniekis/go-ledger/internal/domain/fx/fxtest"
+	"github.com/aurimasniekis/go-ledger/internal/domain/money"
+	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
+	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
+	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
+)
+
+// t0 is "now": Monday 2026-11-16 09:00 UTC; today is 2026-11-16.
+var t0 = fxtest.T0
+
+func m(t *testing.T, amount, cur string) money.Money {
+	t.Helper()
+	v, err := money.Parse(amount, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func d(t *testing.T, s string) calendar.Date {
+	t.Helper()
+	v, err := calendar.ParseDate(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func ym(t *testing.T, s string) calendar.YearMonth {
+	t.Helper()
+	v, err := calendar.ParseYearMonth(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+type occReader struct {
+	occurrences.Reader
+	items []occurrences.Occurrence
+}
+
+func (f occReader) List(_ context.Context, fl occurrences.ListFilter) ([]occurrences.Occurrence, error) {
+	var out []occurrences.Occurrence
+	for _, o := range f.items {
+		if o.Month == fl.Month && (fl.After == "" || o.ID > fl.After) {
+			out = append(out, o)
+		}
+	}
+	if len(out) > fl.Limit+1 {
+		out = out[:fl.Limit+1]
+	}
+	return out, nil
+}
+
+type factStore struct {
+	payments.Store
+	by map[string]payments.Facts
+}
+
+func (f factStore) Facts(_ context.Context, _ []string) (map[string]payments.Facts, error) {
+	return f.by, nil
+}
+
+type commitmentList []commitments.Commitment
+
+func (c commitmentList) List(_ context.Context, f commitments.ListFilter) ([]commitments.Commitment, error) {
+	var out []commitments.Commitment
+	for _, x := range c {
+		if f.After == "" || x.ID > f.After {
+			out = append(out, x)
+		}
+	}
+	if len(out) > f.Limit+1 {
+		out = out[:f.Limit+1]
+	}
+	return out, nil
+}
+
+type banks struct {
+	conns    []banking.Connection
+	accounts map[banking.ConnectionID][]banking.StoredAccount
+	balances map[banking.AccountID][]banking.StoredBalance
+	sync     map[banking.AccountID]banking.AccountSync
+}
+
+func (b *banks) Connections(context.Context) ([]banking.Connection, error) { return b.conns, nil }
+func (b *banks) Accounts(_ context.Context, id banking.ConnectionID) ([]banking.StoredAccount, error) {
+	return b.accounts[id], nil
+}
+func (b *banks) Balances(_ context.Context, id banking.AccountID) ([]banking.StoredBalance, error) {
+	return b.balances[id], nil
+}
+func (b *banks) AccountSync(_ context.Context, id banking.AccountID) (banking.AccountSync, error) {
+	return b.sync[id], nil
+}
+
+func bal(t *testing.T, id string, typ banking.BalanceType, amount, cur string, at time.Time) banking.StoredBalance {
+	return banking.StoredBalance{ID: id, Balance: banking.Balance{Type: typ, ProviderType: "X", Amount: m(t, amount, cur)}, ObtainedAt: at}
+}
+
+type env struct {
+	occ   []occurrences.Occurrence
+	facts map[string]payments.Facts
+	cs    commitmentList
+	banks *banks
+	cache *fxtest.Cache
+}
+
+// newEnv is the reference data set.
+//
+//	EUR: 100.00 due 09-05 unpaid (overdue), 100.00 due 10-05 with 40.00 paid
+//	     (60.00 overdue), 100.00 due 11-05 paid, 100.00 due 11-25 (upcoming),
+//	     50.00 due 12-03 (outside the default window);
+//	USD: 20.00 due 11-20 (upcoming); GBP: 7.50 due 11-10 (overdue).
+//
+// Balances: EUR account 1200.50 booked (newest fetch; an older fetch and an
+// available figure are ignored), USD account 10.00 expected but stale, an EUR
+// account no longer reported, an account without balances, and a GBP
+// account with only an "other" balance on a connection that needs
+// reconnecting.
+func newEnv(t *testing.T) *env {
+	occ := func(id, cid, due, amount, cur string) occurrences.Occurrence {
+		dd := d(t, due)
+		return occurrences.Occurrence{ID: id, CommitmentID: cid, Month: dd.YearMonth(), DueDate: dd, Amount: m(t, amount, cur), Version: 1, UpdatedAt: t0.Add(-time.Hour)}
+	}
+	manual := func(id, occID, amount, cur string) payments.Evidence {
+		return payments.Evidence{Kind: payments.EvidenceManual, ID: id, OccurrenceID: occID, Amount: m(t, amount, cur), Date: d(t, "2026-11-01")}
+	}
+	e := &env{
+		occ: []occurrences.Occurrence{
+			occ("o1", "ceur", "2026-09-05", "100.00", "EUR"),
+			occ("o2", "ceur", "2026-10-05", "100.00", "EUR"),
+			occ("o3", "ceur", "2026-11-05", "100.00", "EUR"),
+			occ("o4", "ceur", "2026-11-25", "100.00", "EUR"),
+			occ("o5", "cusd", "2026-11-20", "20.00", "USD"),
+			occ("o6", "cgbp", "2026-11-10", "7.50", "GBP"),
+			occ("o7", "ceur", "2026-12-03", "50.00", "EUR"),
+		},
+		facts: map[string]payments.Facts{
+			"o2": {Evidence: []payments.Evidence{manual("p2", "o2", "40.00", "EUR")}},
+			"o3": {Evidence: []payments.Evidence{manual("p3", "o3", "100.00", "EUR")}},
+		},
+		cs: commitmentList{
+			{ID: "ceur", Fields: commitments.Fields{StartDate: d(t, "2026-09-01")}},
+			{ID: "cgbp", Fields: commitments.Fields{StartDate: d(t, "2026-11-01")}},
+			{ID: "cusd", Fields: commitments.Fields{StartDate: d(t, "2026-10-01")}},
+		},
+		cache: fxtest.NewCache(),
+	}
+	ok := banking.AccountSync{LastSuccessAt: t0.Add(-time.Hour), LastAttemptAt: t0.Add(-time.Hour)}
+	e.banks = &banks{
+		conns: []banking.Connection{
+			{ID: "c1", Status: banking.ConnectionActive, Institution: banking.Institution{Name: "Bank One"}},
+			{ID: "c2", Status: banking.ConnectionReconnectRequired, Institution: banking.Institution{Name: "Bank Two"}},
+		},
+		accounts: map[banking.ConnectionID][]banking.StoredAccount{
+			"c1": {
+				{ID: "a1", Account: banking.Account{Name: "Main", Currency: money.MustParseCurrency("EUR")}},
+				{ID: "a2", Account: banking.Account{Name: "Dollars", Currency: money.MustParseCurrency("USD")}},
+				{ID: "a3", Account: banking.Account{Name: "Closed", Currency: money.MustParseCurrency("EUR")}, NoLongerReportedAt: t0.Add(-24 * time.Hour)},
+				{ID: "a4", Account: banking.Account{Name: "Empty", Currency: money.MustParseCurrency("EUR")}},
+			},
+			"c2": {{ID: "a5", Account: banking.Account{Name: "Pounds", Currency: money.MustParseCurrency("GBP")}}},
+		},
+		balances: map[banking.AccountID][]banking.StoredBalance{
+			"a1": {
+				bal(t, "b1", banking.BalanceBooked, "1000.00", "EUR", t0.Add(-48*time.Hour)),
+				bal(t, "b2", banking.BalanceAvailable, "1500.00", "EUR", t0.Add(-time.Hour)),
+				bal(t, "b3", banking.BalanceBooked, "1200.50", "EUR", t0.Add(-time.Hour)),
+			},
+			"a2": {bal(t, "b4", banking.BalanceExpected, "10.00", "USD", t0.Add(-72*time.Hour))},
+			"a3": {bal(t, "b5", banking.BalanceBooked, "999.00", "EUR", t0.Add(-48*time.Hour))},
+			"a5": {bal(t, "b6", banking.BalanceOther, "5.00", "GBP", t0.Add(-time.Hour))},
+		},
+		sync: map[banking.AccountID]banking.AccountSync{
+			"a1": ok,
+			"a2": {LastSuccessAt: t0.Add(-72 * time.Hour), LastAttemptAt: t0.Add(-72 * time.Hour)},
+			"a3": ok, "a4": ok, "a5": ok,
+		},
+	}
+	return e
+}
+
+// seedRate caches a latest rate retrieved at "at".
+func (e *env) seedRate(t *testing.T, pair, value, date string, at time.Time) {
+	t.Helper()
+	r := fx.NewRate(fx.Rate{Provider: "frankfurter", Source: "ECB", Pair: fxtest.Pair(pair[:3], pair[4:]), Value: money.MustParseDecimal(value), Date: d(t, date), RetrievedAt: at,
+		ConfirmedThrough: d(t, at.UTC().Format("2006-01-02"))})
+	if _, err := e.cache.Save(context.Background(), []fx.Rate{r}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (e *env) service(t *testing.T, withRates bool) outlook.Service {
+	t.Helper()
+	view := monthview.Service{Occurrences: occReader{items: e.occ}, Payments: factStore{by: e.facts}}
+	s := outlook.Service{Months: view, Commitments: e.cs, Banks: e.banks, Now: func() time.Time { return t0 },
+		Today: func() (calendar.Date, error) { return d(t, "2026-11-16"), nil }}
+	if withRates {
+		svc, err := fx.NewService(e.cache, nil, fx.Options{Now: func() time.Time { return t0 }, ProviderName: "frankfurter", Source: "ECB"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Rates = svc
+	}
+	return s
+}
+
+func lineOf(t *testing.T, o outlook.Outlook, cur string) outlook.CurrencyLine {
+	t.Helper()
+	for _, l := range o.Currencies {
+		if l.Currency.Code() == cur {
+			return l
+		}
+	}
+	t.Fatalf("no %s line in %+v", cur, o.Currencies)
+	return outlook.CurrencyLine{}
+}
+
+func str(p *money.Money) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return p.String()
+}
+
+func TestPerCurrencyLinesAreExactAndNeverMixed(t *testing.T) {
+	e := newEnv(t)
+	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.From != ym(t, "2026-09") || o.Through != ym(t, "2026-11") || o.Truncated || o.AsOf != d(t, "2026-11-16") {
+		t.Fatalf("window %s..%s truncated %v as of %s", o.From, o.Through, o.Truncated, o.AsOf)
+	}
+	if len(o.Currencies) != 3 {
+		t.Fatalf("currencies %+v", o.Currencies)
+	}
+	if got := []string{o.Currencies[0].Currency.Code(), o.Currencies[1].Currency.Code(), o.Currencies[2].Currency.Code()}; got[0] != "EUR" || got[1] != "GBP" || got[2] != "USD" {
+		t.Fatalf("order %v", got)
+	}
+	eur := lineOf(t, o, "EUR")
+	if eur.StillDue.String() != "260.00 EUR" || eur.Overdue.String() != "160.00 EUR" || eur.Upcoming.String() != "100.00 EUR" || eur.OverdueCount != 2 {
+		t.Errorf("EUR commitments: still due %s overdue %s upcoming %s (%d overdue)", eur.StillDue, eur.Overdue, eur.Upcoming, eur.OverdueCount)
+	}
+	if str(eur.Balance) != "1200.50 EUR" || str(eur.BalanceLessStillDue) != "940.50 EUR" || eur.Accounts != 1 || eur.StaleAccounts != 0 {
+		t.Errorf("EUR balance %s less %s accounts %d stale %d", str(eur.Balance), str(eur.BalanceLessStillDue), eur.Accounts, eur.StaleAccounts)
+	}
+	usd := lineOf(t, o, "USD")
+	if usd.StillDue.String() != "20.00 USD" || usd.Overdue.String() != "0.00 USD" || str(usd.Balance) != "10.00 USD" || str(usd.BalanceLessStillDue) != "-10.00 USD" || usd.StaleAccounts != 1 {
+		t.Errorf("USD line %+v", usd)
+	}
+	gbp := lineOf(t, o, "GBP")
+	if gbp.StillDue.String() != "7.50 GBP" || gbp.Overdue.String() != "7.50 GBP" || gbp.Balance != nil || gbp.BalanceLessStillDue != nil {
+		t.Errorf("GBP: an account whose only balance is of an unknown type must not count: %+v", gbp)
+	}
+	if o.Converted != nil {
+		t.Error("a converted aggregate was built without a reporting currency")
+	}
+}
+
+func TestAccountsShowWhyTheyAreNotCountedAndHowFreshTheyAre(t *testing.T) {
+	e := newEnv(t)
+	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.BalancesShown || len(o.Accounts) != 5 {
+		t.Fatalf("accounts %+v", o.Accounts)
+	}
+	want := map[banking.AccountID]struct {
+		nc    outlook.NotCounted
+		state banking.FreshnessState
+		bal   string
+	}{
+		"a1": {"", banking.FreshnessFresh, "1200.50 EUR"},
+		"a2": {"", banking.FreshnessStale, "10.00 USD"},
+		"a3": {outlook.NotCountedNoLongerReported, banking.FreshnessFresh, "999.00 EUR"},
+		"a4": {outlook.NotCountedNoBalance, banking.FreshnessFresh, ""},
+		"a5": {outlook.NotCountedOtherType, banking.FreshnessReconnectRequired, ""},
+	}
+	for _, a := range o.Accounts {
+		w := want[a.ID]
+		got := ""
+		if len(a.Balances) > 0 {
+			got = a.Balances[0].Amount.String()
+		}
+		if a.NotCounted != w.nc || a.Freshness.State != w.state || got != w.bal {
+			t.Errorf("%s: not counted %q state %s balance %q, want %q %s %q", a.ID, a.NotCounted, a.Freshness.State, got, w.nc, w.state, w.bal)
+		}
+	}
+	if o.Accounts[0].Balances[0].Type != banking.BalanceBooked || !o.Accounts[0].Balances[0].ObtainedAt.Equal(t0.Add(-time.Hour)) {
+		t.Errorf("a1 counted %+v; want the booked figure of the newest fetch", o.Accounts[0].Balances[0])
+	}
+}
+
+func TestConvertedAggregateIsSecondaryAndFlagsStaleAndMissingRates(t *testing.T) {
+	e := newEnv(t)
+	e.seedRate(t, "USD/EUR", "0.9200", "2026-11-13", t0.Add(-2*time.Hour))
+	e.seedRate(t, "GBP/EUR", "1.1500", "2026-11-09", t0.Add(-6*24*time.Hour))
+	o, err := e.service(t, true).Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("EUR")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := o.Converted
+	if c == nil {
+		t.Fatal("no converted aggregate")
+	}
+	if c.StillDue.String() != "278.40 EUR" || c.Overdue.String() != "160.00 EUR" || str(c.Balance) != "1209.70 EUR" || str(c.BalanceLessStillDue) != "931.30 EUR" {
+		t.Errorf("converted still due %s overdue %s balance %s less %s", c.StillDue, c.Overdue, str(c.Balance), str(c.BalanceLessStillDue))
+	}
+	if c.Complete() || len(c.Excluded) != 1 || c.Excluded[0].Currency.Code() != "GBP" || c.Excluded[0].Status != fx.StatusStale ||
+		c.Excluded[0].Reason != string(fx.ReasonNotRetrievedRecently) || c.Excluded[0].Rate == nil {
+		t.Errorf("excluded %+v", c.Excluded)
+	}
+	if len(c.Included) != 2 || c.Included[0].Currency.Code() != "EUR" || c.Included[0].Rate != nil || c.Included[1].Currency.Code() != "USD" ||
+		c.Included[1].Rate == nil || c.Included[1].Rate.Value.String() != "0.9200" || c.Included[1].Rate.Date != d(t, "2026-11-13") || c.Included[1].Age != 2*time.Hour {
+		t.Errorf("included %+v", c.Included)
+	}
+	// The per-currency lines are untouched by the conversion.
+	if lineOf(t, o, "USD").StillDue.String() != "20.00 USD" {
+		t.Error("conversion changed a per-currency line")
+	}
+}
+
+func TestWithoutARateServiceOnlyTheReportingCurrencyIsCounted(t *testing.T) {
+	e := newEnv(t)
+	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("EUR")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := o.Converted
+	if c.StillDue.String() != "260.00 EUR" || str(c.Balance) != "1200.50 EUR" || len(c.Included) != 1 || len(c.Excluded) != 2 {
+		t.Fatalf("converted %+v", c)
+	}
+	for _, x := range c.Excluded {
+		if x.Status != fx.StatusMissing || x.Reason != string(fx.ReasonNoProvider) || x.Rate != nil {
+			t.Errorf("excluded %+v", x)
+		}
+	}
+}
+
+func TestMissingRateInACachedServiceExcludesTheCurrency(t *testing.T) {
+	e := newEnv(t)
+	o, err := e.service(t, true).Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("USD")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := o.Converted
+	// Only USD itself converts: EUR and GBP have no cached rate to USD.
+	if c.StillDue.String() != "20.00 USD" || str(c.Balance) != "10.00 USD" || len(c.Excluded) != 2 {
+		t.Fatalf("converted %+v", c)
+	}
+	for _, x := range c.Excluded {
+		if x.Status != fx.StatusMissing {
+			t.Errorf("excluded %+v", x)
+		}
+	}
+}
+
+func TestBalancesHiddenFromCallersWithoutTheGrant(t *testing.T) {
+	e := newEnv(t)
+	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Currency: money.MustParseCurrency("EUR")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.BalancesShown || len(o.Accounts) != 0 || len(o.Currencies) != 3 {
+		t.Fatalf("balances shown %v accounts %d currencies %d", o.BalancesShown, len(o.Accounts), len(o.Currencies))
+	}
+	for _, l := range o.Currencies {
+		if l.Balance != nil || l.BalanceLessStillDue != nil || l.Accounts != 0 {
+			t.Errorf("%s has balance data: %+v", l.Currency, l)
+		}
+	}
+	if o.Converted.Balance != nil || o.Converted.BalanceLessStillDue != nil {
+		t.Error("converted balance shown without the grant")
+	}
+}
+
+func TestThroughExtendsTheWindowWithinTheHorizon(t *testing.T) {
+	e := newEnv(t)
+	s := e.service(t, false)
+	o, err := s.Build(context.Background(), outlook.Request{Through: ym(t, "2026-12")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eur := lineOf(t, o, "EUR"); eur.StillDue.String() != "310.00 EUR" || eur.Upcoming.String() != "150.00 EUR" {
+		t.Errorf("EUR through December: %+v", eur)
+	}
+	if _, err := s.Build(context.Background(), outlook.Request{Through: ym(t, "2031-12")}); !errors.Is(err, outlook.ErrBeyondHorizon) {
+		t.Errorf("beyond the horizon: %v", err)
+	}
+}
+
+func TestReimportedSnapshotsAreCountedOnce(t *testing.T) {
+	e := newEnv(t)
+	s := e.service(t, false)
+	before, err := s.Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second refresh reports the same figures again: balances are
+	// append-only snapshots, so a1 now has two identical newest fetches.
+	e.banks.balances["a1"] = append(e.banks.balances["a1"],
+		bal(t, "b7", banking.BalanceBooked, "1200.50", "EUR", t0),
+		bal(t, "b8", banking.BalanceAvailable, "1500.00", "EUR", t0))
+	after, err := s.Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if str(lineOf(t, before, "EUR").Balance) != str(lineOf(t, after, "EUR").Balance) || str(lineOf(t, after, "EUR").Balance) != "1200.50 EUR" {
+		t.Errorf("EUR balance %s then %s", str(lineOf(t, before, "EUR").Balance), str(lineOf(t, after, "EUR").Balance))
+	}
+}
+
+func TestEmptyAndTruncatedWindows(t *testing.T) {
+	today := func() (calendar.Date, error) { return d(t, "2026-11-16"), nil }
+	view := monthview.Service{Occurrences: occReader{}, Payments: factStore{}}
+	o, err := outlook.Service{Months: view, Commitments: commitmentList{}, Today: today}.Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("EUR")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.From.IsZero() || len(o.Currencies) != 0 || o.BalancesShown || o.Converted == nil || o.Converted.StillDue.String() != "0.00 EUR" || !o.Converted.Complete() {
+		t.Fatalf("empty outlook %+v", o)
+	}
+	old := commitmentList{{ID: "c", Fields: commitments.Fields{StartDate: d(t, "1990-01-01")}}}
+	o, err = outlook.Service{Months: view, Commitments: old, Today: today}.Build(context.Background(), outlook.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Truncated || o.From != ym(t, "2006-12") || o.Through != ym(t, "2026-11") {
+		t.Errorf("truncated window %s..%s %v", o.From, o.Through, o.Truncated)
+	}
+}
+
+func TestLatestPrefersTheNewestFetchThenBooked(t *testing.T) {
+	at := t0
+	got := outlook.Latest([]banking.StoredBalance{
+		bal(t, "1", banking.BalanceBooked, "1.00", "EUR", at.Add(-time.Hour)),
+		bal(t, "2", banking.BalanceAvailable, "2.00", "EUR", at),
+		bal(t, "3", banking.BalanceExpected, "3.00", "EUR", at),
+		bal(t, "4", banking.BalanceOther, "4.00", "USD", at),
+		bal(t, "5", banking.BalanceAvailable, "5.00", "CHF", at),
+	})
+	if len(got) != 2 || got[0].Amount.String() != "5.00 CHF" || got[1].Amount.String() != "3.00 EUR" {
+		t.Fatalf("latest %+v", got)
+	}
+}

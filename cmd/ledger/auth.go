@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/automatch"
+	moneypkg "github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -69,6 +70,9 @@ type apiParts struct {
 	oidc *httpapi.OIDCDeps
 	// mcp serves the MCP endpoint, set by ledger serve when mcp.enabled.
 	mcp http.Handler
+	// reportingCurrency is reporting.currency: the default currency of the
+	// outlook's converted aggregate (ADR-0044); zero for none.
+	reportingCurrency moneypkg.Currency
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their
