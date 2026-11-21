@@ -23,7 +23,7 @@ export function MyTokensPage() {
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold">API tokens</h1>
-        <Button onClick={() => setCreating(true)}>Create token</Button>
+        <Button id="create-token-button" onClick={() => setCreating(true)}>Create token</Button>
       </div>
       <p className="text-sm text-muted-foreground">
         Tokens let a script or tool use the API as you, within the grants you give them and never beyond your own role.
@@ -58,6 +58,7 @@ export function MyTokensPage() {
           description="Copy the token now and keep it somewhere safe."
           lines={[created.secret]}
           listLabel="API token"
+          returnFocusId="create-token-button"
           warning={created.warning}
           filename={`ledger-token-${created.token.id}.txt`}
           onDone={() => setCreated(null)}

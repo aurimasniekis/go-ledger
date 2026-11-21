@@ -130,12 +130,7 @@ function Inner({
         {(p) => <Input {...p} maxLength={100} autoFocus autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} />}
       </Field>
 
-      <fieldset
-        className="space-y-2"
-        disabled={root}
-        aria-describedby={err.grants ? `${uid}-grants-error` : undefined}
-        aria-invalid={err.grants ? true : undefined}
-      >
+      <fieldset className="space-y-2" disabled={root} aria-describedby={err.grants ? `${uid}-grants-error` : undefined}>
         <legend className="text-sm font-medium">Grants</legend>
         <p className="text-xs text-muted-foreground">Only grants your own role holds are offered. A write grant also allows reading.</p>
         {offered.map((r) => (
@@ -151,6 +146,8 @@ function Inner({
                       type="checkbox"
                       className="size-4 accent-primary"
                       checked={picked.has(g)}
+                      aria-invalid={err.grants ? true : undefined}
+                      aria-describedby={err.grants ? `${uid}-grants-error` : undefined}
                       onChange={(e) => {
                         const n = new Set(picked)
                         if (e.target.checked) n.add(g)
@@ -182,7 +179,8 @@ function Inner({
               className="size-4 accent-primary"
               checked={root}
               onChange={(e) => setRoot(e.target.checked)}
-              aria-describedby={`${uid}-root`}
+              aria-describedby={[`${uid}-root`, err.root ? `${uid}-root-error` : ''].filter(Boolean).join(' ')}
+              aria-invalid={err.root ? true : undefined}
             />
             Root token
           </label>
@@ -194,7 +192,7 @@ function Inner({
             <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
             <span>{ROOT_WARNING}</span>
           </p>
-          {err.root && <p className="text-xs font-medium text-status-error">{err.root}</p>}
+          {err.root && <p id={`${uid}-root-error`} className="text-xs font-medium text-status-error">{err.root}</p>}
         </div>
       )}
 

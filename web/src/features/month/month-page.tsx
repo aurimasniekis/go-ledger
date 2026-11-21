@@ -19,21 +19,28 @@ export function MonthPage({ month }: { month: string }) {
   const [saved, setSaved] = useState<{ payment: ManualPayment; item: MonthItem } | null>(null)
   const opener = useRef<HTMLElement | null>(null)
   const headerButton = useRef<HTMLButtonElement>(null)
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const openPanel = (id: string | null) => {
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setPanel(id)
   }
   // Give focus back to what opened the form, or to the primary button when that is gone.
-  const restoreFocus = () => {
-    const el = opener.current?.isConnected ? opener.current : headerButton.current
+  // It runs after the re-render, so a button that was disabled while the form was open is usable again;
+  // when nothing focusable is left (every occurrence paid) it falls back to the heading, never to BODY.
+  const [restore, setRestore] = useState(0)
+  const restoreFocus = () => setRestore((n) => n + 1)
+  useEffect(() => {
+    if (restore === 0) return
+    const usable = (el: HTMLElement | null) => (el?.isConnected && !(el as HTMLButtonElement).disabled ? el : null)
+    const el = usable(opener.current) ?? usable(headerButton.current) ?? headingRef.current
     el?.focus()
-  }
+  }, [restore])
   const unpaid = (q.data?.items ?? []).filter((i) => i.payment.status !== 'paid')
 
   return (
     <section className="space-y-4" aria-labelledby="month-title">
       <header className="flex flex-wrap items-center justify-between gap-2">
-        <h1 id="month-title" className="text-2xl font-semibold">
+        <h1 id="month-title" ref={headingRef} tabIndex={-1} className="text-2xl font-semibold focus:outline-none">
           Monthly view
         </h1>
         <Button ref={headerButton} onClick={() => openPanel(unpaid[0]?.id ?? null)} disabled={unpaid.length === 0 || panel !== null}>
