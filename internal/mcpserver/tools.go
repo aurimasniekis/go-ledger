@@ -57,6 +57,9 @@ type Tool struct {
 	// required integer argument and is not part of the body.
 	IfMatchArg string
 	Kind       Kind
+	// OpenWorld marks a tool whose call reaches an external provider (a bank),
+	// reported as the openWorldHint annotation.
+	OpenWorld bool
 	// Schema is the JSON Schema of the arguments (an object).
 	Schema map[string]any
 }
@@ -291,7 +294,7 @@ func bankTools() []Tool {
 		},
 		{
 			Name: "list_bank_institutions", Title: "List banks an application offers", Method: "GET", Path: "/bank-applications/{application}/institutions",
-			Grant: grantConnectionsRead, Kind: KindRead,
+			Grant: grantConnectionsRead, Kind: KindRead, OpenWorld: true,
 			Description: "Ask the provider which banks the named application offers in a country. A read; the provider may be slow or unavailable (the error says whether to retry later).",
 			Schema: object(map[string]any{
 				"application": str("The application name, as returned by list_bank_applications."),
@@ -312,7 +315,7 @@ func bankTools() []Tool {
 		},
 		{
 			Name: "refresh_bank_connection", Title: "Refresh a bank connection now", Method: "POST", Path: "/bank-connections/{id}/refresh",
-			Grant: grantConnectionsWrite, Kind: KindWrite,
+			Grant: grantConnectionsWrite, Kind: KindWrite, OpenWorld: true,
 			Description: "Fetch the connection's accounts, balances and transactions from the bank now, only on the person's request: it calls the bank, which limits how often it may be asked. A refresh that failed still answers successfully: read last_refresh_run.error.kind and the accounts' freshness. reconnect_required means only a new consent helps (the person must reconnect with the CLI or web UI; retrying cannot work); retryable and rate_limited mean try later; stored data is never changed by a failure. If refresh_running is true the refresh outlived the wait and continues in the background: read the connection again with get_bank_connection instead of calling this again.",
 			Schema:      object(map[string]any{"id": idArg("bank connection")}, "id"),
 		},

@@ -267,3 +267,45 @@ func TestRemoteCallerReportsATooLargeWriteAnswerAsDone(t *testing.T) {
 		t.Errorf("the tool result must be a success naming the resource: %+v", res)
 	}
 }
+
+func TestOpenWorldHintMarksProviderTools(t *testing.T) {
+	want := map[string]bool{"list_bank_institutions": true, "refresh_bank_connection": true}
+	for _, tl := range registry() {
+		if tl.OpenWorld != want[tl.Name] {
+			t.Errorf("%s: OpenWorld = %v, want %v", tl.Name, tl.OpenWorld, want[tl.Name])
+		}
+	}
+	srv, err := NewServer(Options{Caller: Remote(&ledgerclient.Client{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, st := mcp.NewInMemoryTransports()
+	ctx := context.Background()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ss.Close() }()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cs.Close() }()
+	lt, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tl := range lt.Tools {
+		got := tl.Annotations != nil && tl.Annotations.OpenWorldHint != nil && *tl.Annotations.OpenWorldHint
+		if got != want[tl.Name] {
+			t.Errorf("%s: openWorldHint = %v, want %v", tl.Name, got, want[tl.Name])
+		}
+		if want[tl.Name] {
+			seen++
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("found %d provider tools, want %d", seen, len(want))
+	}
+}
