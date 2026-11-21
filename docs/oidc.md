@@ -1,7 +1,7 @@
 # Single sign-on (OpenID Connect)
 
 Ledger can let people sign in with one OpenID Connect identity provider (ADR-0033). It is off by default. Passwords
-keep working unless you turn them off.
+keep working unless you turn them off. For the wider picture (break-glass for every method, API tokens, grants), see [auth.md](auth.md).
 
 ## Set it up
 
