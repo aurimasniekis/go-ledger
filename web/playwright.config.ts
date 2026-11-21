@@ -31,7 +31,7 @@ export default defineConfig({
     // needs a file path (not :memory:), so each run gets its own temporary database.
     env: {
       LEDGER_HTTP_LISTEN: `127.0.0.1:${port}`,
-      LEDGER_KEK_VALUE: 'e2e-only-not-a-secret',
+      LEDGER_KEK_VALUE: 'e2e-only-not-a-secret-0123456789abcdef',
       LEDGER_DATABASE_PATH: join(mkdtempSync(join(tmpdir(), 'ledger-e2e-')), 'ledger.db'),
     },
     url: `http://127.0.0.1:${port}/`,
