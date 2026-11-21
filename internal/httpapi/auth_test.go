@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -169,6 +170,43 @@ func TestClientAddress(t *testing.T) {
 		if got := s.ClientAddress(r); got != c.want {
 			t.Errorf("%s / %q: %s, want %s", c.remote, c.xff, got, c.want)
 		}
+	}
+}
+
+func TestForwardingFromUntrustedProxyIsWarnedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	s := New(config.HTTP{TrustedProxies: []string{"10.0.0.0/8"}, MaxBodyBytes: 1024}, slog.New(slog.NewTextHandler(&buf, nil)))
+	send := func(remote, xff string) {
+		r := httptest.NewRequest("GET", "/healthz-none", nil)
+		r.RemoteAddr = remote
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		s.Handler().ServeHTTP(httptest.NewRecorder(), r)
+	}
+	warnings := func() int { return strings.Count(buf.String(), "not in http.trusted_proxies") }
+	send("203.0.113.7:1", "198.51.100.1") // public peer: a client sending the header itself
+	send("10.1.2.3:1", "198.51.100.1")    // trusted proxy
+	send("127.0.0.1:1", "")               // loopback without the header
+	if n := warnings(); n != 0 {
+		t.Fatalf("%d warnings before an untrusted local proxy forwarded: %s", n, buf.String())
+	}
+	send("127.0.0.1:1", "198.51.100.1") // a reverse proxy on the same host, not trusted
+	if n := warnings(); n != 1 || !strings.Contains(buf.String(), "peer=127.0.0.1") {
+		t.Fatalf("%d warnings: %s", n, buf.String())
+	}
+	send("192.168.1.2:1", "198.51.100.1")
+	send("[::1]:1", "198.51.100.1")
+	if n := warnings(); n != 1 {
+		t.Errorf("warned %d times, want once per process", n)
+	}
+	other := New(config.HTTP{MaxBodyBytes: 1024}, slog.New(slog.NewTextHandler(&buf, nil)))
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "[fd00::5]:1"
+	r.Header.Set("X-Forwarded-For", "198.51.100.1")
+	other.Handler().ServeHTTP(httptest.NewRecorder(), r)
+	if n := warnings(); n != 2 {
+		t.Errorf("a private IPv6 peer was not warned about: %d", n)
 	}
 }
 

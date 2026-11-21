@@ -17,8 +17,11 @@ import (
 // Session cookie and CSRF header (ADR-0026).
 const (
 	// SessionCookie holds the session token: Secure, HttpOnly,
-	// SameSite=Strict, Path=/, expiring with the session's absolute timeout.
-	SessionCookie = "ledger_session"
+	// SameSite=Strict, Path=/, no Domain, expiring with the session's absolute
+	// timeout. The __Host- prefix makes browsers refuse the cookie unless it
+	// has exactly those Secure, Path and Domain attributes, so a sibling
+	// subdomain or a plain-HTTP page cannot set or overwrite it.
+	SessionCookie = "__Host-ledger_session"
 	// CSRFHeader carries the session's CSRF token on every state-changing
 	// request made with the session cookie.
 	CSRFHeader = "X-CSRF-Token"
@@ -91,6 +94,32 @@ func (s *Server) isTrusted(a netip.Addr) bool {
 		}
 	}
 	return false
+}
+
+// forwardingWarning logs a warning, once per process, for the first request
+// that carries X-Forwarded-For from a loopback or private peer that is not in
+// http.trusted_proxies. That is almost always a reverse proxy the operator
+// forgot to trust: every client then has the proxy's address, so the
+// per-address sign-in limit becomes one lockout shared by everyone (ADR-0026).
+// The header is still ignored; only the configuration can trust it.
+func (s *Server) forwardingWarning(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.warnedForwarding.Load() && r.Header.Get("X-Forwarded-For") != "" {
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				host = r.RemoteAddr
+			}
+			if peer, err := netip.ParseAddr(host); err == nil {
+				peer = peer.Unmap()
+				if (peer.IsLoopback() || peer.IsPrivate()) && !s.isTrusted(peer) && s.warnedForwarding.CompareAndSwap(false, true) {
+					s.log.Warn("X-Forwarded-For received from a proxy that is not in http.trusted_proxies; "+
+						"the header is ignored, so every client shares the proxy's address and one sign-in limit. "+
+						"Add the proxy to http.trusted_proxies", "peer", peer.String())
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ClientAddress is the address of the client: the connection's peer, or,

@@ -100,37 +100,97 @@ func TestArgon2idBoundsConcurrency(t *testing.T) {
 	wg.Wait()
 }
 
+// fail reserves and confirms one failed attempt for key.
+func fail(t *testing.T, l *Limiter, key string) {
+	t.Helper()
+	if b, _, _ := l.Begin(key); b {
+		t.Fatalf("%s blocked", key)
+	}
+	l.Confirm(key)
+}
+
 func TestLimiter(t *testing.T) {
 	now := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
 	l := NewLimiter(Limit{Max: 3, Window: 10 * time.Minute}, 100, func() time.Time { return now })
-	for i := range 3 {
-		if b, _, _ := l.Blocked("k"); b {
-			t.Fatalf("blocked after %d failures", i)
-		}
-		l.Fail("k")
+	for range 3 {
+		fail(t, l, "k")
 		now = now.Add(time.Minute)
 	}
-	b, retry, first := l.Blocked("k")
+	b, retry, first := l.Begin("k")
 	if !b || !first || retry != 7*time.Minute {
 		t.Fatalf("blocked=%v retry=%s first=%v", b, retry, first)
 	}
-	if b, _, first := l.Blocked("k"); !b || first {
+	if b, _, first := l.Begin("k"); !b || first {
 		t.Error("the second refusal is reported as first")
 	}
-	if b, _, _ := l.Blocked("other"); b {
+	if b, _, _ := l.Begin("other"); b {
 		t.Error("other key blocked")
 	}
+	l.Release("other")
 	now = now.Add(7 * time.Minute) // the oldest failure leaves the window
-	if b, _, _ := l.Blocked("k"); b {
-		t.Error("still blocked after the window slid")
-	}
-	l.Fail("k")
-	if b, _, first := l.Blocked("k"); !b || !first {
+	fail(t, l, "k")
+	if b, _, first := l.Begin("k"); !b || !first {
 		t.Error("a new block is reported again")
 	}
 	l.Reset("k")
-	if b, _, _ := l.Blocked("k"); b {
+	if b, _, _ := l.Begin("k"); b {
 		t.Error("blocked after reset")
+	}
+	l.Release("k")
+	if len(l.keys) != 0 {
+		t.Errorf("released keys kept: %v", l.keys)
+	}
+}
+
+func TestLimiterCountsAttemptsInFlight(t *testing.T) {
+	now := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
+	l := NewLimiter(Limit{Max: 3, Window: 10 * time.Minute}, 100, func() time.Time { return now })
+	for i := range 3 {
+		if b, _, _ := l.Begin("k"); b {
+			t.Fatalf("reservation %d blocked", i)
+		}
+	}
+	// Three attempts in flight use up the limit before any has failed.
+	b, retry, first := l.Begin("k")
+	if !b || first || retry != time.Second {
+		t.Fatalf("with 3 in flight: blocked=%v retry=%s first=%v", b, retry, first)
+	}
+	l.Release("k") // one succeeded
+	if b, _, _ := l.Begin("k"); b {
+		t.Fatal("a released reservation still counts")
+	}
+	// A success elsewhere resets the failures but not the attempts in flight.
+	l.Confirm("k") // 1 failure, 2 in flight
+	l.Reset("k")   // 0 failures, still 2 in flight
+	if b, _, _ := l.Begin("k"); b {
+		t.Fatal("blocked with 2 in flight after a reset")
+	}
+	if b, _, _ := l.Begin("k"); !b {
+		t.Fatal("reset dropped the attempts in flight")
+	}
+	l.Confirm("k")
+	l.Confirm("k")
+	l.Confirm("k")
+	if b, _, first := l.Begin("k"); !b || !first {
+		t.Fatalf("three confirmed failures: blocked=%v first=%v", b, first)
+	}
+	// Concurrent reservations never exceed the limit.
+	c := NewLimiter(Limit{Max: 5, Window: time.Minute}, 100, nil)
+	var granted sync.WaitGroup
+	var mu sync.Mutex
+	n := 0
+	for range 50 {
+		granted.Go(func() {
+			if b, _, _ := c.Begin("k"); !b {
+				mu.Lock()
+				n++
+				mu.Unlock()
+			}
+		})
+	}
+	granted.Wait()
+	if n != 5 {
+		t.Errorf("%d concurrent reservations granted, want 5", n)
 	}
 }
 
@@ -138,7 +198,7 @@ func TestLimiterMemoryIsBounded(t *testing.T) {
 	now := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
 	l := NewLimiter(Limit{Max: 2, Window: time.Hour}, 10, func() time.Time { return now })
 	for i := range 1000 {
-		l.Fail(fmt.Sprintf("k%d", i))
+		fail(t, l, fmt.Sprintf("k%d", i))
 		now = now.Add(time.Second)
 	}
 	if len(l.keys) > 10 {
@@ -146,6 +206,40 @@ func TestLimiterMemoryIsBounded(t *testing.T) {
 	}
 	if _, ok := l.keys["k999"]; !ok {
 		t.Error("the newest key was evicted")
+	}
+}
+
+func TestLimiterEvictsBlockedKeysLast(t *testing.T) {
+	now := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
+	l := NewLimiter(Limit{Max: 2, Window: time.Hour}, 10, func() time.Time { return now })
+	// The victim is blocked first, so it holds the stalest failures.
+	fail(t, l, "victim")
+	fail(t, l, "victim")
+	if b, _, _ := l.Begin("inflight"); b { // an attempt in flight, nothing counted yet
+		t.Fatal("inflight blocked")
+	}
+	for i := range 1000 {
+		now = now.Add(time.Second)
+		fail(t, l, fmt.Sprintf("k%d", i))
+	}
+	if len(l.keys) > 10 {
+		t.Fatalf("%d keys kept", len(l.keys))
+	}
+	if b, _, _ := l.Begin("victim"); !b {
+		t.Error("a blocked key was evicted while unblocked keys could go")
+	}
+	if a, ok := l.keys["inflight"]; !ok || a.pending != 1 {
+		t.Error("a key with an attempt in flight was evicted")
+	}
+	// When only blocked keys remain, the stalest blocked key goes.
+	m := NewLimiter(Limit{Max: 1, Window: time.Hour}, 2, func() time.Time { return now })
+	fail(t, m, "a")
+	now = now.Add(time.Second)
+	fail(t, m, "b")
+	now = now.Add(time.Second)
+	fail(t, m, "c")
+	if _, ok := m.keys["a"]; ok || len(m.keys) != 2 {
+		t.Errorf("keys %v", m.keys)
 	}
 }
 

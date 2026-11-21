@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -182,21 +181,12 @@ func (a *Argon2id) Verify(ctx context.Context, encoded, pw string) (bool, bool, 
 	return ok, ok && p != a.params, nil
 }
 
-// dummyHash is verified when no real hash exists (unknown account, no
-// password set, disabled account checked first), so every failed sign-in
-// costs one Argon2id computation with the current parameters.
-type dummyHash struct {
-	once sync.Once
-	hash string
-	err  error
-}
-
-func (d *dummyHash) get(ctx context.Context, h Hasher) (string, error) {
-	d.once.Do(func() {
-		// The password is random and thrown away; nothing can match it.
-		buf := make([]byte, 32)
-		_, _ = rand.Read(buf)
-		d.hash, d.err = h.Hash(context.WithoutCancel(ctx), b64.EncodeToString(buf))
-	})
-	return d.hash, d.err
+// newDummyHash makes the hash verified when no real hash exists (unknown
+// account, no password set), so every failed sign-in costs one Argon2id
+// computation with the current parameters. Its password is random and thrown
+// away; nothing can match it.
+func newDummyHash(h Hasher) (string, error) {
+	buf := make([]byte, 32)
+	_, _ = rand.Read(buf)
+	return h.Hash(context.Background(), b64.EncodeToString(buf))
 }

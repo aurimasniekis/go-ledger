@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
@@ -35,6 +36,9 @@ type Server struct {
 	recentAuth func(authz.Principal) bool
 	// trusted are the reverse proxies whose X-Forwarded-For is believed.
 	trusted []netip.Prefix
+	// warnedForwarding is set once the untrusted-proxy warning was logged
+	// ([Server.forwardingWarning]).
+	warnedForwarding atomic.Bool
 	// auditTokenWrites records a token's state-changing request ([WithAuditRecorder]).
 	auditTokenWrites func(r *http.Request, p authz.Principal, pattern string) error
 }
@@ -109,9 +113,11 @@ func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
 }
 
 // chain wraps h in the middleware, outermost first: request ID, access log,
-// metrics (when enabled), panic recovery, body limit.
+// metrics (when enabled), panic recovery, the untrusted-proxy warning, body
+// limit.
 func (s *Server) chain(h http.Handler) http.Handler {
 	h = bodyLimitMiddleware(s.cfg.MaxBodyBytes)(h)
+	h = s.forwardingWarning(h)
 	h = recoverMiddleware(h)
 	if s.m != nil {
 		h = metricsMiddleware(s.m)(h)

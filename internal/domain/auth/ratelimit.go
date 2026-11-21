@@ -14,9 +14,18 @@ type Limit struct {
 }
 
 // Limiter counts failed attempts per key in a sliding window. It is kept in
-// memory: a restart clears it (ADR-0026). It holds at most maxKeys keys; when
-// full, expired keys are dropped first, then the key whose newest failure is
-// oldest, so memory stays bounded whatever the attacker sends.
+// memory: a restart clears it (ADR-0026).
+//
+// An attempt is reserved before the password is checked ([Limiter.Begin])
+// and counts against the limit while it is in flight; it then becomes a
+// failure ([Limiter.Confirm]) or is dropped ([Limiter.Release]). So requests
+// sent at the same time cannot all pass the check before any of them has
+// failed: at most Max attempts per key are ever checked within a window.
+//
+// It holds at most maxKeys keys; when full, keys with nothing counted are
+// dropped first, then the key whose newest failure is oldest among the keys
+// that are not blocked, and only then a blocked one. Keys with attempts in
+// flight are never dropped. Memory stays bounded whatever the attacker sends.
 type Limiter struct {
 	mu      sync.Mutex
 	limit   Limit
@@ -27,6 +36,7 @@ type Limiter struct {
 
 type attempts struct {
 	failures []time.Time // oldest first, at most limit.Max
+	pending  int         // attempts reserved and not yet confirmed or released
 	reported bool        // the block of this window was already reported
 }
 
@@ -59,33 +69,17 @@ func (l *Limiter) prune(a *attempts, now time.Time) {
 	}
 }
 
-// Blocked reports whether key has used up its failures. retryAfter is when
-// the oldest counted failure leaves the window. first is true only for the
-// first refusal since the key became blocked, so a block is audited once per
-// window rather than once per attempt.
-func (l *Limiter) Blocked(key string) (blocked bool, retryAfter time.Duration, first bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	a, ok := l.keys[key]
-	if !ok {
-		return false, 0, false
-	}
-	now := l.now()
-	l.prune(a, now)
-	if len(a.failures) < l.limit.Max {
-		return false, 0, false
-	}
-	retryAfter = l.limit.Window - now.Sub(a.failures[0])
-	if retryAfter < time.Second {
-		retryAfter = time.Second
-	}
-	first = !a.reported
-	a.reported = true
-	return true, retryAfter, first
-}
-
-// Fail records a failed attempt for key.
-func (l *Limiter) Fail(key string) {
+// Begin reserves an attempt for key, unless the failures in the window and
+// the attempts in flight already reach the limit. Then it reserves nothing
+// and reports blocked: retryAfter is when the oldest counted failure leaves
+// the window (a second when only attempts in flight block it), and first is
+// true only for the first refusal since the key's failures reached the limit,
+// so a block is audited once per window rather than once per attempt. A
+// refusal caused only by attempts in flight is never first.
+//
+// Every reservation must end with exactly one [Limiter.Confirm] or
+// [Limiter.Release].
+func (l *Limiter) Begin(key string) (blocked bool, retryAfter time.Duration, first bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -96,17 +90,70 @@ func (l *Limiter) Fail(key string) {
 		l.keys[key] = a
 	}
 	l.prune(a, now)
+	if len(a.failures)+a.pending < l.limit.Max {
+		a.pending++
+		return false, 0, false
+	}
+	if len(a.failures) < l.limit.Max {
+		return true, time.Second, false
+	}
+	retryAfter = max(l.limit.Window-now.Sub(a.failures[0]), time.Second)
+	first = !a.reported
+	a.reported = true
+	return true, retryAfter, first
+}
+
+// Confirm turns a reservation of key into a failed attempt.
+func (l *Limiter) Confirm(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	a, ok := l.keys[key]
+	if !ok { // dropped by Reset meanwhile: still count the failure
+		l.makeRoom(now)
+		a = &attempts{}
+		l.keys[key] = a
+	} else if a.pending > 0 {
+		a.pending--
+	}
+	l.prune(a, now)
 	a.failures = append(a.failures, now)
 	if len(a.failures) > l.limit.Max {
 		a.failures = append(a.failures[:0], a.failures[len(a.failures)-l.limit.Max:]...)
 	}
 }
 
-// Reset forgets key (after a successful sign-in to that account).
+// Release drops a reservation of key without counting it (the attempt
+// succeeded or was never checked).
+func (l *Limiter) Release(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	a, ok := l.keys[key]
+	if !ok {
+		return
+	}
+	if a.pending > 0 {
+		a.pending--
+	}
+	if a.pending == 0 && len(a.failures) == 0 {
+		delete(l.keys, key)
+	}
+}
+
+// Reset forgets the failures of key (after a successful sign-in to that
+// account). Attempts still in flight stay reserved.
 func (l *Limiter) Reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.keys, key)
+	a, ok := l.keys[key]
+	if !ok {
+		return
+	}
+	if a.pending == 0 {
+		delete(l.keys, key)
+		return
+	}
+	a.failures, a.reported = nil, false
 }
 
 func (l *Limiter) makeRoom(now time.Time) {
@@ -115,20 +162,30 @@ func (l *Limiter) makeRoom(now time.Time) {
 	}
 	for k, a := range l.keys {
 		l.prune(a, now)
-		if len(a.failures) == 0 {
+		if len(a.failures) == 0 && a.pending == 0 {
 			delete(l.keys, k)
 		}
 	}
 	for len(l.keys) >= l.maxKeys {
-		var oldest string
+		// The stalest key that is not blocked, else the stalest blocked one.
+		// Keys with attempts in flight stay.
+		var victim string
+		var victimBlocked bool
 		var at time.Time
 		for k, a := range l.keys {
+			if a.pending > 0 || len(a.failures) == 0 {
+				continue
+			}
+			blocked := len(a.failures) >= l.limit.Max
 			last := a.failures[len(a.failures)-1]
-			if oldest == "" || last.Before(at) {
-				oldest, at = k, last
+			if victim == "" || (victimBlocked && !blocked) || (blocked == victimBlocked && last.Before(at)) {
+				victim, victimBlocked, at = k, blocked, last
 			}
 		}
-		delete(l.keys, oldest)
+		if victim == "" {
+			return // every key has an attempt in flight: allow more keys for now
+		}
+		delete(l.keys, victim)
 	}
 }
 

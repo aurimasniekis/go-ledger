@@ -180,7 +180,10 @@ type Service struct {
 	newID      func() string
 	accounts   *Limiter
 	addresses  *Limiter
-	dummy      dummyHash
+	// dummy is verified when there is no real hash to check, so every
+	// failed sign-in costs one hash computation. It is made in NewService,
+	// so no request pays for it.
+	dummy string
 }
 
 // Options are the optional parts of a Service.
@@ -204,8 +207,13 @@ func NewService(cfg Config, st Store, principals Principals, hasher Hasher, rec 
 	if o.NewID == nil {
 		o.NewID = resource.NewID
 	}
+	dummy, err := newDummyHash(hasher)
+	if err != nil {
+		return nil, err
+	}
 	return &Service{cfg: cfg, store: st, principals: principals, hasher: hasher, rec: rec, now: o.Now, newID: o.NewID,
-		accounts: NewLimiter(cfg.AccountLimit, DefaultLimiterKeys, o.Now), addresses: NewLimiter(cfg.AddressLimit, DefaultLimiterKeys, o.Now)}, nil
+		accounts: NewLimiter(cfg.AccountLimit, DefaultLimiterKeys, o.Now), addresses: NewLimiter(cfg.AddressLimit, DefaultLimiterKeys, o.Now),
+		dummy: dummy}, nil
 }
 
 // Config returns the policy.
@@ -229,36 +237,73 @@ type Issued struct {
 }
 
 // normalizeUsername lower-cases a submitted username (usernames are lower
-// case) and bounds it, so it is a safe lookup and rate-limit key.
-func normalizeUsername(u string) string {
+// case). A name longer than any username can be is not valid: it matches no
+// account, and its rate-limit key is its first MaxUsername bytes, so the key
+// stays bounded.
+func normalizeUsername(u string) (name string, valid bool) {
 	u = strings.ToLower(strings.TrimSpace(u))
 	if len(u) > users.MaxUsername {
-		u = u[:users.MaxUsername]
+		return u[:users.MaxUsername], false
 	}
-	return u
+	return u, true
 }
 
 func accountKey(username string) string { return "user:" + username }
 
-// checkLimits returns a *RateLimitedError when the account or the address is
-// blocked; the first refusal of a block is audited (reason locked_out).
-func (s *Service) checkLimits(ctx context.Context, accKey, addrKey string, audited func() error) error {
-	b1, r1, f1 := s.accounts.Blocked(accKey)
-	b2, r2, f2 := s.addresses.Blocked(addrKey)
+// attempt is a password check reserved in both limiters. It must end with
+// failed or succeeded; done releases it otherwise (an error before the
+// outcome was known), and does nothing after either.
+type attempt struct {
+	s               *Service
+	accKey, addrKey string
+	ended           bool
+}
+
+// begin reserves an attempt for the account and the address before any
+// hashing, so concurrent requests count against the limits while in flight
+// (ADR-0026). It returns a *RateLimitedError when either is blocked; the
+// first refusal of a block is audited (reason locked_out).
+func (s *Service) begin(accKey, addrKey string, audited func() error) (*attempt, error) {
+	b1, r1, f1 := s.accounts.Begin(accKey)
+	b2, r2, f2 := s.addresses.Begin(addrKey)
 	if !b1 && !b2 {
-		return nil
+		return &attempt{s: s, accKey: accKey, addrKey: addrKey}, nil
+	}
+	if !b1 {
+		s.accounts.Release(accKey)
+	}
+	if !b2 {
+		s.addresses.Release(addrKey)
 	}
 	if f1 || f2 {
 		if err := audited(); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return &RateLimitedError{RetryAfter: max(r1, r2)}
+	return nil, &RateLimitedError{RetryAfter: max(r1, r2)}
 }
 
-func (s *Service) fail(accKey, addrKey string) {
-	s.accounts.Fail(accKey)
-	s.addresses.Fail(addrKey)
+// failed counts the attempt as a failure for the account and the address.
+func (a *attempt) failed() {
+	a.ended = true
+	a.s.accounts.Confirm(a.accKey)
+	a.s.addresses.Confirm(a.addrKey)
+}
+
+// succeeded clears the account's failures; the address keeps its count.
+func (a *attempt) succeeded() {
+	a.ended = true
+	a.s.accounts.Release(a.accKey)
+	a.s.accounts.Reset(a.accKey)
+	a.s.addresses.Release(a.addrKey)
+}
+
+func (a *attempt) done() {
+	if !a.ended {
+		a.ended = true
+		a.s.accounts.Release(a.accKey)
+		a.s.addresses.Release(a.addrKey)
+	}
 }
 
 func actorFor(c Credential, known bool) audit.Actor {
@@ -268,56 +313,66 @@ func actorFor(c Credential, known bool) audit.Actor {
 	return audit.Actor{Kind: audit.ActorUser, UserID: c.UserID}
 }
 
-// verify checks pw against c's hash, or against a dummy hash when there is
-// none, so every attempt costs one hash computation whatever the account.
-func (s *Service) verify(ctx context.Context, c Credential, known bool, pw string) (bool, error) {
+// verify checks pw against c's hash, or against the dummy hash when there
+// is none, so every attempt costs one hash computation whatever the account.
+// rehash reports that c's hash should be replaced ([Service.rehash]); the
+// caller does that only for an account that may sign in, so a disabled
+// account costs no extra work (no timing difference).
+func (s *Service) verify(ctx context.Context, c Credential, known bool, pw string) (ok, rehash bool, err error) {
 	hash := c.Hash
 	if !known || hash == "" {
-		d, err := s.dummy.get(ctx, s.hasher)
-		if err != nil {
-			return false, err
-		}
-		hash = d
+		hash = s.dummy
 	}
-	ok, rehash, err := s.hasher.Verify(ctx, hash, pw)
+	ok, rehash, err = s.hasher.Verify(ctx, hash, pw)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	ok = ok && known && c.Hash != "" && len(pw) <= MaxPasswordBytes
-	if ok && rehash {
-		// Best effort: a failed rehash leaves the old, still valid hash.
-		if h, err := s.hasher.Hash(ctx, pw); err == nil {
-			_ = s.store.ReplaceHash(ctx, c.UserID, c.Hash, h)
-		}
+	return ok, ok && rehash, nil
+}
+
+// rehash replaces c's hash, made with other parameters, after a successful
+// password check. Best effort: a failed rehash leaves the old, still valid
+// hash.
+func (s *Service) rehash(ctx context.Context, c Credential, pw string) {
+	if h, err := s.hasher.Hash(ctx, pw); err == nil {
+		_ = s.store.ReplaceHash(ctx, c.UserID, c.Hash, h)
 	}
-	return ok, nil
 }
 
 // SignIn checks a username and password and starts a session. Every failure
 // returns [ErrInvalidCredentials], whatever went wrong, after the same work
 // (one lookup, one hash); a blocked account or address returns a
-// *RateLimitedError before any hashing. Successes and failures are audited
-// (a failure never records the submitted username).
+// *RateLimitedError before any hashing. The attempt is reserved in both
+// limits before hashing, so concurrent attempts cannot exceed them.
+// Successes and failures are audited (a failure never records the submitted
+// username).
 func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
-	username := normalizeUsername(in.Username)
+	username, valid := normalizeUsername(in.Username)
 	accKey, addrKey := accountKey(username), AddressKey(in.Address)
-	cred, err := s.store.CredentialByUsername(ctx, username)
+	var cred Credential
+	err := resource.ErrNotFound
+	if valid {
+		cred, err = s.store.CredentialByUsername(ctx, username)
+	}
 	known := err == nil
 	if err != nil && !errors.Is(err, resource.ErrNotFound) {
 		return Issued{}, err
 	}
 	now := s.now().UTC()
-	if err := s.checkLimits(ctx, accKey, addrKey, func() error {
+	at, err := s.begin(accKey, addrKey, func() error {
 		return s.rec.Record(ctx, audit.SignIn(actorFor(cred, known), false, "password", "locked_out", now))
-	}); err != nil {
+	})
+	if err != nil {
 		return Issued{}, err
 	}
-	ok, err := s.verify(ctx, cred, known, in.Password)
+	defer at.done()
+	ok, rehash, err := s.verify(ctx, cred, known, in.Password)
 	if err != nil {
 		return Issued{}, err
 	}
 	if !ok || cred.Disabled {
-		s.fail(accKey, addrKey)
+		at.failed()
 		reason := "invalid_credentials"
 		if ok && cred.Disabled {
 			reason = "account_disabled"
@@ -327,7 +382,10 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 		}
 		return Issued{}, ErrInvalidCredentials
 	}
-	s.accounts.Reset(accKey)
+	at.succeeded()
+	if rehash {
+		s.rehash(ctx, cred, in.Password)
+	}
 	// Expired sessions of anyone are removed here, so the table stays small
 	// without a background job.
 	if _, err := s.store.DeleteExpired(ctx, now, now.Add(-s.cfg.IdleTimeout)); err != nil {
@@ -442,23 +500,28 @@ func (s *Service) Reauthenticate(ctx context.Context, p authz.Principal, passwor
 	}
 	now := s.now().UTC()
 	accKey, addrKey := accountKey(cred.Username), AddressKey(address)
-	if err := s.checkLimits(ctx, accKey, addrKey, func() error {
+	at, err := s.begin(accKey, addrKey, func() error {
 		return s.rec.Record(ctx, ev(audit.ReauthenticationFailed, map[string]string{"method": "password", "reason": "locked_out"}, now))
-	}); err != nil {
+	})
+	if err != nil {
 		return time.Time{}, err
 	}
-	ok, err := s.verify(ctx, cred, true, password)
+	defer at.done()
+	ok, rehash, err := s.verify(ctx, cred, true, password)
 	if err != nil {
 		return time.Time{}, err
 	}
 	if !ok || cred.Disabled {
-		s.fail(accKey, addrKey)
+		at.failed()
 		if err := s.rec.Record(ctx, ev(audit.ReauthenticationFailed, map[string]string{"method": "password", "reason": "invalid_credentials"}, now)); err != nil {
 			return time.Time{}, err
 		}
 		return time.Time{}, ErrInvalidCredentials
 	}
-	s.accounts.Reset(accKey)
+	at.succeeded()
+	if rehash {
+		s.rehash(ctx, cred, password)
+	}
 	err = s.store.MarkAuthenticated(ctx, p.SessionID, now, ev(audit.Reauthenticated, map[string]string{"method": "password"}, now))
 	if errors.Is(err, resource.ErrNotFound) {
 		return time.Time{}, ErrInvalidSession

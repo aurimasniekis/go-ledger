@@ -68,14 +68,26 @@ func (r recorder) Record(ctx context.Context, e audit.Event) error {
 	return r.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error { return r.w.WriteAudit(ctx, tx, e) })
 }
 
+// setPasswordUsage is the help text of "ledger auth set-password".
+const setPasswordUsage = `usage: ledger auth set-password [flags] <username>
+  Reads the new password from the first line of standard input. Flags go
+  before the username; stop ledger serve first.
+  Standard input is read as it is: on a terminal the password is echoed as
+  you type it. Pipe it in instead (for example from a password manager), or
+  make sure nobody can see the screen and clear the terminal afterwards.`
+
 // runAuth implements "ledger auth set-password".
 func runAuth(args []string, stdout, stderr io.Writer, env opsEnv) int {
 	if len(args) == 0 || args[0] != "set-password" {
-		say(stderr, "usage: ledger auth set-password [flags] <username>   (reads the new password from the first line of standard input)")
+		say(stderr, setPasswordUsage)
 		return 2
 	}
 	fs := flag.NewFlagSet("ledger auth set-password", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		say(stderr, setPasswordUsage)
+		fs.PrintDefaults()
+	}
 	fl := config.RegisterFlags(fs)
 	create := fs.String("create", "", "create the user with this role (administrator or read-only) when it does not exist")
 	cfg, code := loadDBConfig(fs, fl, args[1:], stderr, env)
@@ -83,7 +95,7 @@ func runAuth(args []string, stdout, stderr io.Writer, env opsEnv) int {
 		return code
 	}
 	if fs.NArg() != 1 {
-		say(stderr, "usage: ledger auth set-password [flags] <username>   (flags go before the username; stop ledger serve first)")
+		say(stderr, setPasswordUsage)
 		return 2
 	}
 	username := fs.Arg(0)

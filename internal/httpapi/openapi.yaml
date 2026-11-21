@@ -50,7 +50,7 @@ info:
       cookie, acting on their own session or password whatever their role;
       API tokens get 403 there. API tokens are not available yet (task A4).
     - **Sessions and CSRF** (ADR-0026). `POST /auth/sign-in` sets the
-      `ledger_session` cookie (Secure, HttpOnly, SameSite=Strict) and returns
+      `__Host-ledger_session` cookie (Secure, HttpOnly, SameSite=Strict) and returns
       a `csrf_token` (also from `GET /auth/session`). Every state-changing
       request made with the cookie must send it in `X-CSRF-Token` and come
       from Ledger's own origin, or it is 403 `csrf_failed`. Requests with
@@ -644,7 +644,7 @@ paths:
       x-ledger-access: public
       summary: Sign in with a username and password
       description: |
-        Starts a session: sets the `ledger_session` cookie (Secure, HttpOnly,
+        Starts a session: sets the `__Host-ledger_session` cookie (Secure, HttpOnly,
         SameSite=Strict, Path=/) and returns the session with its CSRF token.
         Every failure (unknown user, wrong password, no password set,
         disabled account) is the same 401 `invalid_credentials` after the

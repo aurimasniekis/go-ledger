@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
 )
 
 // clock is a settable test clock.
@@ -39,15 +41,26 @@ func (c *clock) advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-// countingHasher counts Verify calls, to show every failed sign-in does the
-// same work whatever the reason.
+// countingHasher counts Hash and Verify calls, to show every failed sign-in
+// does the same work whatever the reason. delay (nanoseconds) slows every
+// Verify down, standing in for a real Argon2id cost in concurrency tests.
 type countingHasher struct {
 	auth.Hasher
+	hashes   atomic.Int64
 	verifies atomic.Int64
+	delay    atomic.Int64
+}
+
+func (h *countingHasher) Hash(ctx context.Context, pw string) (string, error) {
+	h.hashes.Add(1)
+	return h.Hasher.Hash(ctx, pw)
 }
 
 func (h *countingHasher) Verify(ctx context.Context, encoded, pw string) (bool, bool, error) {
 	h.verifies.Add(1)
+	if d := time.Duration(h.delay.Load()); d > 0 {
+		time.Sleep(d)
+	}
 	return h.Hasher.Verify(ctx, encoded, pw)
 }
 
@@ -207,6 +220,11 @@ func TestSignInSetsASecureSessionCookie(t *testing.T) {
 			t.Errorf("Set-Cookie %q lacks %q", set, want)
 		}
 	}
+	// The __Host- prefix: browsers keep it only when Secure, Path=/ and
+	// no Domain, so a sibling subdomain cannot set it.
+	if !strings.HasPrefix(set, "__Host-ledger_session=") || strings.Contains(strings.ToLower(set), "domain=") {
+		t.Errorf("Set-Cookie %q: want a __Host- cookie without Domain", set)
+	}
 	if w.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("Cache-Control %q", w.Header().Get("Cache-Control"))
 	}
@@ -265,10 +283,15 @@ func TestSignInFailuresAreUniform(t *testing.T) {
 		{"invalid username", "NOT A USER!", testPassword},
 		{"over-long password", "alice", strings.Repeat("x", auth.MaxPasswordBytes+1)},
 	} {
-		before := e.hasher.verifies.Load()
+		before, hashesBefore := e.hasher.verifies.Load(), e.hasher.hashes.Load()
 		w := e.req("POST", "/api/v1/auth/sign-in", signInBody(c.user, c.pw), nil, nil)
 		if n := e.hasher.verifies.Load() - before; n != 1 {
 			t.Errorf("%s: %d hash verifications, want 1", c.name, n)
+		}
+		// No hash is made either: not the dummy hash (made at start, so the
+		// first unknown username after a start costs no more), not a rehash.
+		if n := e.hasher.hashes.Load() - hashesBefore; n != 0 {
+			t.Errorf("%s: %d hashes made, want 0", c.name, n)
 		}
 		if w.Code != 401 {
 			t.Errorf("%s: %d", c.name, w.Code)
@@ -378,6 +401,161 @@ func TestSignInRateLimits(t *testing.T) {
 			t.Fatalf("other address: %d %s", w.Code, w.Body.String())
 		}
 	})
+}
+
+// TestSignInLimitsHoldUnderConcurrency sends many wrong passwords at once
+// while every verification is slow: the limits count attempts in flight, so
+// no more than the limit are ever hashed (or audited), and the rest get 429.
+func TestSignInLimitsHoldUnderConcurrency(t *testing.T) {
+	burst := func(t *testing.T, e *signInEnv, n int, body func(i int) string, addr func(i int) string) (codes map[int]int) {
+		t.Helper()
+		e.hasher.delay.Store(int64(50 * time.Millisecond))
+		var mu sync.Mutex
+		codes = map[int]int{}
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range n {
+			wg.Go(func() {
+				<-start
+				w := e.req("POST", "/api/v1/auth/sign-in", body(i), &browser{addr: addr(i)}, nil)
+				mu.Lock()
+				codes[w.Code]++
+				mu.Unlock()
+			})
+		}
+		close(start)
+		wg.Wait()
+		e.hasher.delay.Store(0)
+		return codes
+	}
+	failures := func(e *signInEnv) (failed, locked int) {
+		for _, f := range e.auditActions(audit.SignInFailed) {
+			if f.Details["reason"] == "locked_out" {
+				locked++
+			} else {
+				failed++
+			}
+		}
+		return failed, locked
+	}
+	t.Run("per account", func(t *testing.T) {
+		e := newSignInEnv(t, nil) // 10 failures per account
+		before := e.hasher.verifies.Load()
+		codes := burst(t, e, 60, func(int) string { return signInBody("alice", "wrong password!") },
+			func(i int) string { return fmt.Sprintf("198.51.100.%d:1", i+1) })
+		if n := e.hasher.verifies.Load() - before; n != 10 {
+			t.Errorf("%d hash verifications for 60 concurrent attempts, want 10", n)
+		}
+		if codes[401] != 10 || codes[429] != 50 {
+			t.Errorf("status codes %v, want 10 x 401 and 50 x 429", codes)
+		}
+		if failed, locked := failures(e); failed != 10 || locked > 1 {
+			t.Errorf("%d failure and %d locked_out audit entries, want 10 and at most 1", failed, locked)
+		}
+		// The burst counted: the account is now blocked, even with the right password.
+		if w := e.req("POST", "/api/v1/auth/sign-in", signInBody("alice", testPassword), &browser{addr: "203.0.113.9:1"}, nil); w.Code != 429 {
+			t.Errorf("after the burst: %d", w.Code)
+		}
+	})
+	t.Run("per address", func(t *testing.T) {
+		e := newSignInEnv(t, func(c *config.Auth) { c.SignIn.AddressMaxFailures = 30 })
+		before := e.hasher.verifies.Load()
+		codes := burst(t, e, 100, func(i int) string { return signInBody(fmt.Sprintf("user%d", i), "wrong password!") },
+			func(int) string { return "203.0.113.50:1" })
+		if n := e.hasher.verifies.Load() - before; n != 30 {
+			t.Errorf("%d hash verifications for 100 concurrent attempts from one address, want 30", n)
+		}
+		if codes[401] != 30 || codes[429] != 70 {
+			t.Errorf("status codes %v", codes)
+		}
+	})
+	t.Run("a success releases its reservation", func(t *testing.T) {
+		e := newSignInEnv(t, func(c *config.Auth) { c.SignIn.AccountMaxFailures = 2 })
+		codes := burst(t, e, 2, func(int) string { return signInBody("alice", testPassword) },
+			func(i int) string { return fmt.Sprintf("198.51.100.%d:1", i+1) })
+		if codes[200] != 2 {
+			t.Fatalf("two concurrent right passwords within the limit: %v", codes)
+		}
+		// Neither success left a pending attempt behind.
+		for i := range 2 {
+			if w := e.req("POST", "/api/v1/auth/sign-in", signInBody("alice", testPassword), nil, nil); w.Code != 200 {
+				t.Fatalf("sign-in %d after the burst: %d", i, w.Code)
+			}
+		}
+	})
+}
+
+// TestRehashOnlyForAccountsThatMaySignIn: a hash with old parameters is
+// replaced after a successful sign-in, but a disabled account with the right
+// password costs no extra hash (which would reveal through timing that the
+// password was right).
+func TestRehashOnlyForAccountsThatMaySignIn(t *testing.T) {
+	e := newSignInEnv(t, nil)
+	ctx := context.Background()
+	old := auth.NewArgon2id(auth.Params{MemoryKiB: 128, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}, 1)
+	st := authstore.New(e.db, e.al)
+	for _, u := range []string{"alice", "dave"} {
+		c, err := st.CredentialByUser(ctx, e.ids[u])
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, err := old.Hash(ctx, testPassword)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.ReplaceHash(ctx, e.ids[u], c.Hash, h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hashes, verifies := e.hasher.hashes.Load(), e.hasher.verifies.Load()
+	if w := e.req("POST", "/api/v1/auth/sign-in", signInBody("dave", testPassword), nil, nil); w.Code != 401 {
+		t.Fatalf("disabled account: %d", w.Code)
+	}
+	if h, v := e.hasher.hashes.Load()-hashes, e.hasher.verifies.Load()-verifies; h != 0 || v != 1 {
+		t.Errorf("disabled account with the right password: %d hashes and %d verifications, want 0 and 1", h, v)
+	}
+	if c, _ := st.CredentialByUser(ctx, e.ids["dave"]); !strings.Contains(c.Hash, "$m=128,") {
+		t.Errorf("the disabled account's hash was replaced: %s", c.Hash)
+	}
+	hashes = e.hasher.hashes.Load()
+	if w := e.req("POST", "/api/v1/auth/sign-in", signInBody("alice", testPassword), nil, nil); w.Code != 200 {
+		t.Fatalf("alice: %d", w.Code)
+	}
+	if h := e.hasher.hashes.Load() - hashes; h != 1 {
+		t.Errorf("%d hashes after a successful sign-in with old parameters, want 1 (the rehash)", h)
+	}
+	if c, _ := st.CredentialByUser(ctx, e.ids["alice"]); !strings.Contains(c.Hash, "$m=64,") {
+		t.Errorf("not rehashed with the current parameters: %s", c.Hash)
+	}
+}
+
+// TestOverLongUsernameMatchesNoAccount: a submitted name longer than any
+// username is refused like an unknown one, not truncated to an account's name.
+func TestOverLongUsernameMatchesNoAccount(t *testing.T) {
+	e := newSignInEnv(t, nil)
+	ctx := context.Background()
+	long := strings.Repeat("a", users.MaxUsername)
+	u, err := e.parts.users.Create(ctx, audit.System, users.New{Username: long, Role: authz.RoleReadOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.parts.auth.SetPassword(ctx, authz.Principal{}, true, u.ID, testPassword, auth.ByHost); err != nil {
+		t.Fatal(err)
+	}
+	verifies := e.hasher.verifies.Load()
+	if w := e.req("POST", "/api/v1/auth/sign-in", signInBody(long+"x", testPassword), nil, nil); w.Code != 401 {
+		t.Fatalf("name plus one character: %d %s", w.Code, w.Body.String())
+	}
+	if v := e.hasher.verifies.Load() - verifies; v != 1 {
+		t.Errorf("%d verifications, want 1 (the dummy hash)", v)
+	}
+	failed := e.auditActions(audit.SignInFailed)
+	if len(failed) != 1 || failed[0].Actor.Kind != audit.ActorAnonymous {
+		t.Errorf("failure entries %+v, want one anonymous", failed)
+	}
+	if w := e.req("POST", "/api/v1/auth/sign-in", signInBody(long, testPassword), nil, nil); w.Code != 200 {
+		t.Errorf("the exact name: %d", w.Code)
+	}
 }
 
 func TestSessionTerminationTakesEffectOnTheNextRequest(t *testing.T) {
@@ -646,6 +824,11 @@ func TestAuthSetPasswordCommand(t *testing.T) {
 		env.Stdin = strings.NewReader(stdin)
 		code := runAuth(args, &out, &errb, env)
 		return code, out.String(), errb.String()
+	}
+	for _, args := range [][]string{nil, {"set-password"}, {"set-password", "-h"}} {
+		if _, _, stderr := run("", args...); !strings.Contains(stderr, "echoed") {
+			t.Errorf("%q: the help text does not warn that a terminal echoes the password: %s", args, stderr)
+		}
 	}
 	if code, _, stderr := run(testPassword+"\n", "set-password", "root"); code != 1 || !strings.Contains(stderr, "--create") {
 		t.Fatalf("missing user: %d %s", code, stderr)
