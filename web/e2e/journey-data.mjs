@@ -9,6 +9,8 @@ export const JOURNEY_USER = 'journey'
 export const JOURNEY_PASSWORD = 'journey-only-not-a-secret'
 
 const pad = (n) => String(n).padStart(2, '0')
+// The month name as the UI prints it (month.ts uses the 'en' locale in UTC).
+const monthName = (d) => new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UTC' }).format(d)
 
 export function journeyDates(now = new Date()) {
   const y = now.getUTCFullYear()
@@ -16,5 +18,5 @@ export function journeyDates(now = new Date()) {
   const prev = new Date(Date.UTC(y, m - 1, 1))
   const month = (d) => d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1)
   const prevMonth = month(prev)
-  return { prevMonth, currentMonth: month(new Date(Date.UTC(y, m, 1))), nextMonth: month(new Date(Date.UTC(y, m + 1, 1))), day: (d) => prevMonth + '-' + pad(d) }
+  return { prevMonth, prevMonthName: monthName(prev), currentMonth: month(new Date(Date.UTC(y, m, 1))), nextMonth: month(new Date(Date.UTC(y, m + 1, 1))), day: (d) => prevMonth + '-' + pad(d) }
 }

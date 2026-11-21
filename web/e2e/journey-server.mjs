@@ -20,6 +20,8 @@ const dir = mkdtempSync(join(tmpdir(), 'ledger-journey-'))
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const keyPem = privateKey.export({ type: 'pkcs8', format: 'pem' })
 const d = journeyDates()
+// The application id the binary is configured with, and the kid the double must report for it (the adapter checks both).
+const APP_ID = '0f6c3c1e-1b2a-4c3d-9e8f-123456789abc'
 
 // ---- the simulated bank: synthetic data, shaped as the Enable Banking documentation describes ----
 
@@ -66,13 +68,19 @@ const bank = createServer((req, res) => {
   let raw = ''
   req.on('data', (c) => (raw += c))
   req.on('end', () => {
-    const body = raw ? JSON.parse(raw) : {}
+    let body
+    try {
+      body = raw ? JSON.parse(raw) : {}
+    } catch {
+      return fail(res, 400, 'MALFORMED_JSON')
+    }
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) return fail(res, 400, 'BODY_NOT_AN_OBJECT')
     const account = (uid) => ({
       account_id: { iban: 'XX00JOURNEY0000000001' }, name: 'Journey Holder', details: 'Everyday account', product: 'Current account', currency: 'EUR',
       cash_account_type: 'CACC', uid, identification_hash: 'journey-hash-eur', identification_hashes: ['journey-hash-eur'],
     })
     if (req.method === 'GET' && path === '/application') {
-      return json(res, 200, { name: 'Journey application', kid: 'journey', environment: 'SANDBOX', redirect_urls: [], active: true, countries: ['FI'], services: ['AIS'] })
+      return json(res, 200, { name: 'Journey application', kid: APP_ID, environment: 'SANDBOX', redirect_urls: [], active: true, countries: ['FI'], services: ['AIS'] })
     }
     if (req.method === 'GET' && path === '/aspsps') {
       return json(res, 200, { aspsps: [{ name: 'Example Bank', country: 'FI', psu_types: ['personal'], auth_methods: [{ name: 'redirect', approach: 'REDIRECT', hidden_method: false, psu_type: 'personal' }], maximum_consent_validity: 15552000, beta: false }] })
@@ -127,11 +135,13 @@ const env = {
   LEDGER_BANKING_REFRESH_ENABLED: 'false',
   LEDGER_BANKING_ENABLE_BANKING_BASE_URL: 'http://127.0.0.1:' + BANK_PORT,
   LEDGER_BANKING_ENABLE_BANKING_APP_ENABLED: 'true',
-  LEDGER_BANKING_ENABLE_BANKING_APP_APP_ID: '0f6c3c1e-1b2a-4c3d-9e8f-123456789abc',
+  LEDGER_BANKING_ENABLE_BANKING_APP_APP_ID: APP_ID,
   LEDGER_BANKING_ENABLE_BANKING_APP_ENVIRONMENT: 'sandbox',
   LEDGER_BANKING_ENABLE_BANKING_APP_PRIVATE_KEY: keyPem,
   LEDGER_LOG_LEVEL: 'warn',
   LEDGER_RATES_ENABLED: 'false',
+  // Due dates and monthly views are classified in UTC, the zone journey-data.mjs computes the months in.
+  LEDGER_REPORTING_TIMEZONE: 'UTC',
 }
 const made = spawnSync(bin, ['auth', 'set-password', '--create', 'administrator', JOURNEY_USER], { env, input: JOURNEY_PASSWORD + '\n', encoding: 'utf8' })
 if (made.status !== 0) {

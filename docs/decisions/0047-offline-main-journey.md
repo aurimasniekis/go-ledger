@@ -16,11 +16,15 @@ a (simulated) bank, record commitments, read the month, match, correct, reload, 
 2. **A simulated Enable Banking API, not the in-process fake.** The fake provider in `bankingtest` is not wired into
    the binary, and wiring a test provider into production code was not worth it. Instead `journey-server.mjs` serves the
    Enable Banking endpoints the adapter calls (shaped like `internal/providers/enablebanking/testdata`) on loopback,
-   and the binary's own adapter is pointed at it with `banking.enable_banking.base_url`. So the real adapter, JWT
-   signing (a key generated on every start), consent redirect, session, balances and paging are all exercised.
+   and the binary's own adapter is pointed at it with `banking.enable_banking.base_url`. So the real adapter's consent
+   redirect, session, account details, balances and transactions requests run against the double, and it signs its JWTs with a key
+   generated on every start. The double checks only that a `Bearer` header is present, not the JWT's signature or claims,
+   and it never pages: each transactions request gets one page with no continuation key.
    The simulation also has a control surface (`POST /__control/outage|revoked`) for the degraded states.
 3. **Dates relative to today.** Bank data and commitments are placed in the previous month and the next one
-   (`journey-data.mjs`), so the journey gives the same figures on any day. Background refresh and rates are switched off.
+   (`journey-data.mjs`), so the journey gives the same figures on any day. The dates are computed in UTC, the browser runs
+   in UTC and the binary's reporting zone is pinned to UTC (`LEDGER_REPORTING_TIMEZONE`). Background refresh and rates are
+   switched off.
 4. **What the journey asserts.** Connection and import; exact payment confirmed by the engine; two identical payments
    left as competing suggestions; confirm one, reject the other; correct a confirmed amount (800.00 to 500.00:
    partly paid, outstanding 300.00); statuses and totals unchanged after a reload; outlook balance with its date, the
@@ -41,4 +45,7 @@ a (simulated) bank, record commitments, read the month, match, correct, reload, 
   bank" until a refresh succeeds, and it has no "Refresh now" in that state. The journey refreshes through the API.
 - **Finding, not fixed: the month view says "No bank data connected yet"** even when a bank is connected and imported
   (the API reports `freshness.bank.available` false by design for now, see `internal/httpapi/occurrences.go`).
+- **No paging.** The double answers every transactions request with one page and no continuation key, so the adapter's
+  paging is not exercised by this journey; it is covered by the in-package fake in `internal/providers/enablebanking/fake_test.go`.
+- **No JWT verification.** The double does not verify the adapter's JWT signature, so a wrong key would not fail here.
 - A failing bank is retried with a backoff by the adapter, so the failed-refresh step takes several seconds.

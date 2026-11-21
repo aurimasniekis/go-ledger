@@ -8,7 +8,8 @@ import { BANK_PORT, JOURNEY_PASSWORD, JOURNEY_USER, LEDGER_PORT, journeyDates } 
 // import accounts, balances and transactions; record commitments; read the monthly view; confirm a suggested match
 // and correct a payment; reload and find the same statuses and totals; read the outlook with its balance date; then
 // see the failed-refresh, offline and withdrawn-consent states. docs/decisions/0047 lists what it cannot cover.
-test.use({ baseURL: `http://127.0.0.1:${LEDGER_PORT}` })
+// The browser and the binary both run in UTC, so the dates the journey computes are the dates the screens show.
+test.use({ baseURL: `http://127.0.0.1:${LEDGER_PORT}`, timezoneId: 'UTC' })
 
 const d = journeyDates()
 const bank = (name: string, on: boolean) => fetch(`http://127.0.0.1:${BANK_PORT}/__control/${name}?on=${on}`, { method: 'POST' })
@@ -99,7 +100,7 @@ test('import, commitments, monthly view, match, correction, reload, outlook and 
     await expect(cards).toHaveCount(2)
     await expect(cards.first().getByTestId('competing')).toContainText('2 suggestions compete for this occurrence')
     await cards.first().getByRole('button', { name: 'Confirm match' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'Match confirmed' })).toContainText('Server hosting, October')
+    await expect(page.getByRole('status').filter({ hasText: 'Match confirmed' })).toContainText('Server hosting, ' + d.prevMonthName)
     await expect(cards).toHaveCount(1)
     await cards.first().getByRole('button', { name: 'Reject suggestion' }).click()
     await cards.first().getByRole('button', { name: 'Reject now' }).click()
