@@ -223,6 +223,23 @@ func today(now time.Time) calendar.Date {
 	return calendar.MustDate(y, m, d)
 }
 
+// publicationGrace is how long after a UTC day ends its publication is still
+// assumed possible: a provider whose day runs behind UTC (or that publishes
+// late) may not have published that day's rate yet.
+const publicationGrace = 6 * time.Hour
+
+// lastOver is the last UTC day whose publication is certainly over at t: the
+// day before the one t - publicationGrace falls in. A retrieval confirms
+// nothing later, because the provider may publish that day's rate after the
+// retrieval.
+func lastOver(t time.Time) calendar.Date {
+	d, err := today(t.Add(-publicationGrace)).AddDays(-1)
+	if err != nil {
+		return today(t)
+	}
+	return d
+}
+
 func (s *Service) start(from money.Money, to money.Currency) (Conversion, Pair, error) {
 	if !from.IsValid() {
 		return Conversion{}, Pair{}, money.ErrNoCurrency
@@ -249,9 +266,10 @@ func (s *Service) Convert(ctx context.Context, from money.Money, to money.Curren
 	if err != nil {
 		return Conversion{}, err
 	}
-	// Fresh: retrieved recently, and by a retrieval of the latest rate (it
-	// confirmed the rate through its own day), not a dated one for the past.
-	if ok && now.Sub(cached.RetrievedAt) < s.fresh.RefreshAfter && !cached.Confirmed().Before(today(cached.RetrievedAt)) {
+	// Fresh: retrieved recently, and by a retrieval that confirmed the rate
+	// through the last day whose publication was over then (a latest one), not
+	// a dated one for an older day.
+	if ok && now.Sub(cached.RetrievedAt) < s.fresh.RefreshAfter && !cached.Confirmed().Before(lastOver(cached.RetrievedAt)) {
 		return s.result(c, cached, today(now), now, true, nil), nil
 	}
 	fetched, perr, err := s.fetch(ctx, pair, calendar.Date{})
@@ -345,7 +363,7 @@ func (s *Service) Refresh(ctx context.Context, base money.Currency, quotes []mon
 	if err != nil {
 		return nil, err
 	}
-	if err := s.mismatch(rates); err != nil {
+	if err := s.mismatch(rates, base, quotes); err != nil {
 		return nil, err
 	}
 	return rates, nil
@@ -417,7 +435,7 @@ func (s *Service) fetchOnce(ctx context.Context, pair Pair, date calendar.Date) 
 	}
 	rates, err := s.store(ctx, quotes, pair.Base, date)
 	if err == nil {
-		err = s.mismatch(rates)
+		err = s.mismatch(rates, pair.Base, []money.Currency{pair.Quote})
 	}
 	if err != nil {
 		var pe *ProviderError
@@ -434,20 +452,34 @@ func (s *Service) fetchOnce(ctx context.Context, pair Pair, date calendar.Date) 
 	return nil, nil, nil
 }
 
-// mismatch reports an answer that holds rates but none under the configured
-// source: an adapter misconfiguration, which must not look like "the provider
-// publishes no such pair". The rates stay cached under their own source.
-func (s *Service) mismatch(rates []Rate) error {
-	if len(rates) == 0 {
-		return nil
-	}
-	for _, r := range rates {
-		if r.Source == s.source {
-			return nil
+// mismatch reports an answer that holds a rate for an asked pair but none
+// under the configured source: an adapter misconfiguration, which must not
+// look like "the provider publishes no such pair". Each asked pair is checked
+// on its own, so one pair answered correctly cannot hide another that was not.
+// The rates stay cached under their own source.
+func (s *Service) mismatch(rates []Rate, base money.Currency, asked []money.Currency) error {
+	for _, q := range asked {
+		pair := Pair{Base: base, Quote: q}
+		other := ""
+		found := false
+		for _, r := range rates {
+			if r.Pair != pair {
+				continue
+			}
+			if r.Source == s.source {
+				found = false
+				break
+			}
+			if !found {
+				other, found = r.Source, true
+			}
+		}
+		if found {
+			return &ProviderError{Kind: KindPermanent, Provider: s.name, Op: "validate", Code: "source_mismatch",
+				Err: fmt.Errorf("%w: configured source %q, answer for %s holds %q", ErrInvalidRate, s.source, pair, other)}
 		}
 	}
-	return &ProviderError{Kind: KindPermanent, Provider: s.name, Op: "validate", Code: "source_mismatch",
-		Err: fmt.Errorf("%w: configured source %q, answer holds %q", ErrInvalidRate, s.source, rates[0].Source)}
+	return nil
 }
 
 // store validates and caches what the provider returned and returns the
@@ -458,17 +490,23 @@ func (s *Service) mismatch(rates []Rate) error {
 func (s *Service) store(ctx context.Context, quotes []Quote, base money.Currency, date calendar.Date) ([]Rate, error) {
 	now := s.now().UTC()
 	limit := date
-	// What a retrieval confirms: a dated one, the date asked; a latest one,
-	// today (UTC) as of the retrieval.
-	confirmed := date
+	// What a retrieval confirms: the date asked (today, for a latest one) but
+	// never past the last day whose publication is certainly over: the
+	// provider may publish today's rate after this retrieval. A rate's own
+	// date is always confirmed (see below).
+	asked := date
 	if limit.IsZero() {
+		asked = today(now)
 		// The provider's calendar may run ahead of UTC (a rate dated in its
 		// own zone): allow one day, never more.
 		var err error
 		if limit, err = today(now).AddDays(1); err != nil {
 			return nil, err
 		}
-		confirmed = today(now)
+	}
+	confirmed := asked
+	if over := lastOver(now); confirmed.After(over) {
+		confirmed = over
 	}
 	type key struct {
 		source string
@@ -555,8 +593,12 @@ func (s *Service) failed(ctx context.Context, op string, err error) error {
 	}
 	if pause > 0 {
 		s.mu.Lock()
-		s.pauseUntil = s.now().Add(pause)
-		s.pauseErr = pe
+		// Keep the later deadline: a short pause must not cut a longer one
+		// short when failures of different pairs overlap.
+		if until := s.now().Add(pause); until.After(s.pauseUntil) {
+			s.pauseUntil = until
+			s.pauseErr = pe
+		}
 		s.mu.Unlock()
 	}
 	return pe

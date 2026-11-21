@@ -350,3 +350,4 @@ CREATE TABLE users (
     CHECK ((disabled = 1) = (disabled_at IS NOT NULL))
 ) STRICT;
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (6, 'users', 'e80355d8b6692e71df243b1ed470a462259ad17f253f5850194cec4084404b91', '2026-01-07T03:04:05.000000000Z');
+INSERT INTO users (id, username, display_name, role, created_at, updated_at) VALUES ('01JZ0000000000000000000030', 'alice', 'Alice Example', 'administrator', '2026-01-07T03:04:05.000000000Z', '2026-01-07T03:04:05.000000000Z');

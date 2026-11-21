@@ -394,6 +394,66 @@ func ServiceSuite(t *testing.T, newCache func(t *testing.T) fx.Cache) {
 		})
 	})
 
+	t.Run("a retrieval confirms only days whose publication is over", func(t *testing.T) {
+		t.Run("a latest retrieval does not cover the unpublished part of its day", func(t *testing.T) {
+			// 09:00 on 11-16: the provider has 1.05 (11-13) and publishes
+			// 1.09 for 11-16 only in the afternoon.
+			r := newRig(t, newCache(t), true)
+			r.p.Publish("EUR", "USD", "1.05", "2026-11-13", "ECB")
+			expect(t, r.convert("100", "EUR", "USD"), fx.StatusOK, fx.ReasonNone)
+			r.calls(1)
+			// A fresh latest retrieval still counts as current.
+			r.clock.Advance(time.Hour)
+			if c := r.convert("100", "EUR", "USD"); !c.FromCache || c.Status != fx.StatusOK {
+				t.Errorf("fresh latest retrieval not used: %+v", c)
+			}
+			r.calls(1)
+			r.p.Publish("EUR", "USD", "1.09", "2026-11-16", "ECB")
+			r.clock.Advance(24 * time.Hour)
+			c := r.convertOn("100", "EUR", "USD", "2026-11-16")
+			expect(t, c, fx.StatusOK, fx.ReasonNone)
+			expectValue(t, c, "109.00 USD", "109.00 USD")
+			if c.FromCache {
+				t.Errorf("served the 11-13 rate for 11-16 without asking: %+v", c.Rate)
+			}
+			r.calls(2)
+		})
+		t.Run("a dated retrieval early on the next day does not confirm the day", func(t *testing.T) {
+			r := newRig(t, newCache(t), true)
+			r.p.Publish("EUR", "USD", "1.05", "2026-11-13", "ECB")
+			r.clock.Advance(16 * time.Hour) // 01:00 on 11-17
+			c := r.convertOn("100", "EUR", "USD", "2026-11-16")
+			expectValue(t, c, "105.00 USD", "105.00 USD")
+			r.calls(1)
+			r.p.Publish("EUR", "USD", "1.09", "2026-11-16", "ECB")
+			r.clock.Advance(24 * time.Hour)
+			c = r.convertOn("100", "EUR", "USD", "2026-11-16")
+			expectValue(t, c, "109.00 USD", "109.00 USD")
+			r.calls(2)
+		})
+		t.Run("a dated retrieval long after the day does confirm it", func(t *testing.T) {
+			r := newRig(t, newCache(t), true)
+			r.p.Publish("EUR", "USD", "1.05", "2026-11-13", "ECB")
+			r.convertOn("100", "EUR", "USD", "2026-11-14")
+			r.clock.Advance(48 * time.Hour)
+			r.convertOn("100", "EUR", "USD", "2026-11-14")
+			r.calls(1)
+		})
+	})
+
+	t.Run("a source mismatch is judged per asked pair", func(t *testing.T) {
+		r := newRig(t, newCache(t), true)
+		r.p.SetRaw([]fx.Quote{
+			{Source: "ECB", Pair: Pair("EUR", "USD"), Value: money.MustParseDecimal("1.08"), Date: mustDate("2026-11-13")},
+			{Source: "blended", Pair: Pair("EUR", "GBP"), Value: money.MustParseDecimal("0.85"), Date: mustDate("2026-11-13")},
+		})
+		_, err := r.svc.Refresh(r.ctx, money.MustParseCurrency("EUR"), []money.Currency{money.MustParseCurrency("USD"), money.MustParseCurrency("GBP")})
+		var pe *fx.ProviderError
+		if !errors.As(err, &pe) || pe.Code != "source_mismatch" {
+			t.Errorf("Refresh err = %v, want source_mismatch for the GBP pair", err)
+		}
+	})
+
 	t.Run("a revised rate is kept, logged and given truthful provenance", func(t *testing.T) {
 		r := newRig(t, newCache(t), true)
 		r.seed("EUR/USD", "1.08", "2026-11-13", T0.Add(-30*time.Hour))
