@@ -78,7 +78,7 @@ so that a confirmed link becomes payment evidence for the derived payment state 
    corrections and its decisions survive every refresh: tests re-import through the real engine and the fake
    provider with a rewritten description, a transaction that disappears and returns, and a database reload. A
    connection whose bank facts have matches cannot be purged (`banking.ErrPurgeBlocked`).
-9. **API and grants** (bank text: accepted, operator 2026-11-21, D28 5b). `GET`/`POST /payment-matches` (filters `transaction_id`, `occurrence_id`, `state`,
+9. **API and grants** (bank text: accepted, operator 2026-11-21, D28 5b; the bank-text grant `banking:read` is administrator only, D29). `GET`/`POST /payment-matches` (filters `transaction_id`, `occurrence_id`, `state`,
    `origin`), `GET /payment-matches/{id}`, and `POST /payment-matches/{id}/confirm|reject|unmatch|correct|reverse`.
    Each action needs the match's version in `If-Match` or the body's `version` (ADR-0011/0015); a stale one is 409
    `version_conflict` with the current match. Every change also increases the occurrence's version (ADR-0031

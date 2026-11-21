@@ -25,6 +25,7 @@ make build    # build bin/ledger
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): workflow and Conventional Commits.
 - [docs/decisions/](docs/decisions/README.md): architecture decision records.
+- [docs/auth.md](docs/auth.md): sign-in, OIDC linking, break-glass recovery, API tokens, grants and root tokens.
 
 ## Metrics and health
 
