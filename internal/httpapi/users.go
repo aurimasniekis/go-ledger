@@ -235,7 +235,7 @@ func registerUsers(s *Server, st users.Store) {
 			return
 		}
 		id := r.PathValue("id")
-		if err := guardAdministratorPatch(r, st, id, p); err != nil {
+		if err := guardAdministratorPatch(r, st, id, expected, p); err != nil {
 			WriteError(w, r, err)
 			return
 		}
@@ -265,7 +265,12 @@ func registerUsers(s *Server, st users.Store) {
 // the root token of the root account may not make a user an administrator or
 // re-enable a disabled administrator (which also revives their tokens, D25-2).
 // Demoting or disabling stays open to users:write tokens.
-func guardAdministratorPatch(r *http.Request, st users.Store, id string, p users.Patch) error {
+//
+// The decision is made on a read outside the write transaction, so it is pinned
+// to the version: when the user is no longer at the version the caller expects,
+// the guard answers version_conflict. The store's in-transaction check of the
+// same expected version then guarantees the write applies to the state judged.
+func guardAdministratorPatch(r *http.Request, st users.Store, id string, expected int64, p users.Patch) error {
 	pr := principal(r)
 	if pr.Kind != authz.PrincipalToken || pr.CanCreateTokens {
 		return nil
@@ -279,10 +284,13 @@ func guardAdministratorPatch(r *http.Request, st users.Store, id string, p users
 	if err != nil {
 		return err
 	}
+	if before.Version != expected {
+		return VersionConflict(before.Version, toUserJSON(before))
+	}
 	if promotes && before.Role != authz.RoleAdministrator {
 		return rootTokenRequired("making a user an administrator")
 	}
-	if enables && before.Disabled && (before.Role == authz.RoleAdministrator || promotes) {
+	if enables && before.Disabled && before.Role == authz.RoleAdministrator {
 		return rootTokenRequired("re-enabling an administrator")
 	}
 	return nil

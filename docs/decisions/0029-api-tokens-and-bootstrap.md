@@ -203,6 +203,8 @@ the root account, `authz.Principal.CanCreateTokens`, computed on every request f
    link/unlink act only on the caller's own account and are session-only, so no token can reach them; there is no
    administrator reset of another user's second factor. Token creation is D25-1; revoking a token cannot escalate.
    OIDC provisioning and the bootstrap/host commands run as the host, not as a token.
-5. Limit: the PATCH check reads the target's role and state just before the write, outside the write transaction. A
-   concurrent change between the two could let a non-root token re-enable an administrator that was demoted and
-   promoted again in that instant; the root-token rule on promotion still holds because the promotion itself is checked.
+5. Concurrency: the PATCH check reads the target just before the write, outside the write transaction, so it is pinned
+   by the version. When the target is no longer at the version the caller sent, the check answers `version_conflict`
+   (409) instead of judging; the store's in-transaction check of the same version then guarantees the write applies to
+   the state the check judged. A concurrent demotion, disabling or promotion therefore cannot be raced into a
+   re-promotion or re-enable by a non-root token.

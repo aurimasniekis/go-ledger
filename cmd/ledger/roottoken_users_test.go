@@ -103,8 +103,21 @@ func TestOnlyTheRootTokenCreatesAdministratorsOrSetsPasswords(t *testing.T) {
 	if w := e.req("PATCH", "/api/v1/users/"+e.ids["erin"], fmt.Sprintf(`{"disabled":true,"version":%d}`, version("erin")), nil, bearer(narrow.Secret)); w.Code != 200 {
 		t.Errorf("disable an administrator: %d %s", w.Code, w.Body.String())
 	}
-	if w := e.req("PATCH", "/api/v1/users/"+e.ids["erin"], fmt.Sprintf(`{"disabled":false,"version":%d}`, version("erin")), nil, bearer(narrow.Secret)); w.Code != 403 {
+	if w := e.req("PATCH", "/api/v1/users/"+e.ids["erin"], fmt.Sprintf(`{"disabled":false,"version":%d}`, version("erin")), nil, bearer(narrow.Secret)); w.Code != 403 || !strings.Contains(w.Body.String(), "root_token_required") {
 		t.Errorf("re-enable the administrator it disabled: %d %s", w.Code, w.Body.String())
+	}
+	// Idempotent and non-escalating changes stay open: re-enabling a disabled
+	// read-only user, and a no-op role on an administrator.
+	for _, step := range []string{`{"disabled":true,"version":%d}`, `{"disabled":false,"version":%d}`} {
+		if w := e.req("PATCH", "/api/v1/users/"+e.ids["bob"], fmt.Sprintf(step, version("bob")), nil, bearer(narrow.Secret)); w.Code != 200 {
+			t.Errorf("bob %s: %d %s", step, w.Code, w.Body.String())
+		}
+	}
+	if disabled("bob") || role("bob") != authz.RoleReadOnly {
+		t.Errorf("bob after re-enable: role=%s disabled=%v", role("bob"), disabled("bob"))
+	}
+	if w := e.req("PATCH", "/api/v1/users/"+e.ids["alice"], fmt.Sprintf(`{"role":"administrator","version":%d}`, version("alice")), nil, bearer(narrow.Secret)); w.Code != 200 {
+		t.Errorf("no-op role administrator on an administrator: %d %s", w.Code, w.Body.String())
 	}
 
 	// The root token of the root account succeeds on each path.
