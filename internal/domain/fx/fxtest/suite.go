@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -94,6 +95,33 @@ func (r *rig) calls(want int) {
 	if got := len(r.p.Calls()); got != want {
 		r.t.Errorf("provider calls = %d, want %d: %+v", got, want, r.p.Calls())
 	}
+}
+
+// waitFor polls cond until it holds, failing the test after a generous
+// deadline (a pass never waits for it).
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); !cond(); {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// flightWaiters counts goroutines parked in the single-flight wait of
+// fx.Service.fetch (blocked in its select on the leader's completion), the
+// one place a joining caller can be observed from outside the package.
+func flightWaiters() int {
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	n := 0
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, "[select") && strings.Contains(g, "fx.(*Service).fetch(") {
+			n++
+		}
+	}
+	return n
 }
 
 func expect(t *testing.T, c fx.Conversion, status fx.Status, reason fx.Reason) {
@@ -540,6 +568,40 @@ func ServiceSuite(t *testing.T, newCache func(t *testing.T) fx.Cache) {
 			r.convert("1", "EUR", "USD")
 			r.calls(2)
 		})
+		t.Run("overlapping failures keep the later pause", func(t *testing.T) {
+			r := newRig(t, newCache(t), true)
+			release := r.p.HoldEach()
+			done := map[string]chan struct{}{}
+			for _, to := range []string{"USD", "GBP"} {
+				ch := make(chan struct{})
+				done[to] = ch
+				go func() {
+					defer close(ch)
+					if _, err := r.svc.Convert(r.ctx, money.MustParse("1", "EUR"), money.MustParseCurrency(to)); err != nil {
+						t.Error(err)
+					}
+				}()
+			}
+			waitFor(t, "two calls in flight", func() bool { return len(r.p.Calls()) == 2 })
+			// Finish one call at a time and wait for its conversion to end:
+			// the first fails with a long pause, the second then fails with a
+			// shorter one that must not replace it.
+			calls := r.p.Calls()
+			for i, retry := range []time.Duration{2 * time.Hour, time.Minute} {
+				r.p.FailNext(&fx.ProviderError{Kind: fx.KindRateLimited, Provider: "frankfurter", Op: "latest", RetryAfter: retry})
+				release(i)
+				select {
+				case <-done[calls[i].Quotes[0].String()]:
+				case <-time.After(5 * time.Second):
+					t.Fatalf("conversion %d did not end", i)
+				}
+			}
+			r.p.ReleaseAll() // a call the pause should have prevented must fail the count, not hang
+			r.clock.Advance(10 * time.Minute)
+			r.convert("1", "EUR", "USD")
+			r.convert("1", "EUR", "GBP")
+			r.calls(2)
+		})
 		t.Run("a huge RetryAfter is capped", func(t *testing.T) {
 			r := newRig(t, newCache(t), true)
 			r.seed("EUR/USD", "1.0834", "2026-11-13", T0.Add(-30*time.Hour))
@@ -572,10 +634,12 @@ func ServiceSuite(t *testing.T, newCache func(t *testing.T) fx.Cache) {
 					results[i] = c
 				}()
 			}
-			for deadline := time.Now().Add(5 * time.Second); len(r.p.Calls()) == 0 && time.Now().Before(deadline); {
-				time.Sleep(time.Millisecond)
-			}
-			time.Sleep(50 * time.Millisecond)
+			// Release only once the leader is inside the provider and every
+			// other caller is parked on its flight: a caller that were still
+			// before the flight would start a second call after release.
+			waitFor(t, "one provider call and seven waiting callers", func() bool {
+				return len(r.p.Calls()) == 1 && flightWaiters() == len(results)-1
+			})
 			release()
 			wg.Wait()
 			r.calls(1)

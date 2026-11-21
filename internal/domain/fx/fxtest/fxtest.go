@@ -35,6 +35,8 @@ type Provider struct {
 	down   error
 	calls  []Call
 	gate   chan struct{}
+	each   bool
+	gates  []chan struct{}
 	raw    []fx.Quote
 }
 
@@ -108,10 +110,43 @@ func (p *Provider) Hold() (release func()) {
 	return func() { once.Do(func() { close(gate) }) }
 }
 
+// HoldEach makes every call block after it is recorded until release(i)
+// is called for its position i in [Provider.Calls], so a test can finish
+// concurrent calls one at a time, in an order it chooses. release(i) before
+// call i is recorded is the test's mistake and panics.
+func (p *Provider) HoldEach() (release func(i int)) {
+	p.mu.Lock()
+	p.each = true
+	p.mu.Unlock()
+	return func(i int) {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if i >= len(p.gates) {
+			panic("fxtest: release of a call that was not made")
+		}
+		select {
+		case <-p.gates[i]:
+		default:
+			close(p.gates[i])
+		}
+	}
+}
+
+// ReleaseAll stops [Provider.HoldEach] from holding calls made from now on.
+func (p *Provider) ReleaseAll() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.each = false
+}
+
 func (p *Provider) answer(c Call) ([]fx.Quote, error) {
 	p.mu.Lock()
 	p.calls = append(p.calls, c)
 	gate := p.gate
+	if p.each {
+		gate = make(chan struct{})
+		p.gates = append(p.gates, gate)
+	}
 	p.mu.Unlock()
 	if gate != nil {
 		<-gate
