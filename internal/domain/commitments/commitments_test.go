@@ -150,7 +150,7 @@ func TestChangedFieldsAndEvents(t *testing.T) {
 	actor := audit.Actor{Kind: audit.ActorUser, UserID: "01JD3Y4C8V9M2Q7W5R6T0XZBNA"}
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	c := Commitment{ID: "01JD3Y4C8V9M2Q7W5R6T0XZBNB", Fields: b}
-	for _, e := range []audit.Event{CreatedEvent(actor, c, at), UpdatedEvent(actor, c.ID, ChangedFields(a, b), at), DeletedEvent(actor, c, 0, at)} {
+	for _, e := range []audit.Event{CreatedEvent(actor, c, at), UpdatedEvent(actor, c.ID, ChangedFields(a, b), at), DeletedEvent(actor, c, 0, 0, false, at)} {
 		if e.TargetType != "commitment" || e.TargetID != c.ID || e.Actor != actor || !e.At.Equal(at) {
 			t.Errorf("event %+v", e)
 		}

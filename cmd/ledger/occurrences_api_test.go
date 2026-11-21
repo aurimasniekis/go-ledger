@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -236,5 +237,82 @@ func TestStartDateLowerBoundAPI(t *testing.T) {
 	rec := f.do("POST", "/api/v1/commitments", strings.Replace(monthEndBody, "2026-01-01", "1899-12-31", 1), map[string]string{"X-Test-User": f.ids["alice"]})
 	if rec.Code != 400 || errFields(t, rec.Body.Bytes()) != "start_date" {
 		t.Fatalf("1899: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDateCorrectionKeepsOverriddenAPI: a start_date correction keeps the
+// out-of-range occurrences that carry a status override, an unpaid override
+// and a paid override whose manual payment was deleted, and removes the rest.
+func TestDateCorrectionKeepsOverriddenAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)
+	admin := map[string]string{"X-Test-User": f.ids["alice"]}
+	with := func(k, v string) map[string]string { return map[string]string{"X-Test-User": f.ids["alice"], k: v} }
+	id := f.createCommitment(t, strings.Replace(monthEndBody, `"day":31`, `"day":10`, 1))
+	f.occurrences(t, "month=2026-05", "alice")
+	occ := func(m string) (string, int64) {
+		items := f.occurrences(t, "month="+m, "alice").Items
+		if len(items) != 1 {
+			t.Fatalf("month %s: %d items", m, len(items))
+		}
+		return items[0].ID, items[0].Version
+	}
+	jan, _ := occ("2026-01")
+	rec := f.do("POST", "/api/v1/occurrences/"+jan+"/manual-payments", `{"amount":{"amount":"10.00","currency":"EUR"},"paid_on":"2026-01-10"}`, admin)
+	if rec.Code != 201 {
+		t.Fatalf("pay: %d %s", rec.Code, rec.Body.String())
+	}
+	var pay struct{ ID string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &pay)
+	_, v := occ("2026-01")
+	if rec := f.do("PUT", "/api/v1/occurrences/"+jan+"/status-override", `{"status":"paid","reason":"settled"}`, with("If-Match", fmt.Sprintf(`"%d"`, v))); rec.Code != 200 {
+		t.Fatalf("paid override: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do("DELETE", "/api/v1/occurrences/"+jan+"/manual-payments/"+pay.ID, "", with("If-Match", `"1"`)); rec.Code != 204 {
+		t.Fatalf("delete payment: %d %s", rec.Code, rec.Body.String())
+	}
+	feb, v := occ("2026-02")
+	if rec := f.do("PUT", "/api/v1/occurrences/"+feb+"/status-override", `{"status":"unpaid","reason":"disputed"}`, with("If-Match", fmt.Sprintf(`"%d"`, v))); rec.Code != 200 {
+		t.Fatalf("unpaid override: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do("PATCH", "/api/v1/commitments/"+id, `{"start_date":"2026-04-01","version":1}`, admin); rec.Code != 200 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	count := func(m string) int { return len(f.occurrences(t, "month="+m, "alice").Items) }
+	if count("2026-01") != 1 || count("2026-02") != 1 || count("2026-03") != 0 || count("2026-04") != 1 {
+		t.Fatal("overridden occurrences should stay, the plain one should go")
+	}
+	if o := f.getOccurrence(t, feb); o.Payment.Override == nil || o.Payment.Override.Status != "unpaid" {
+		t.Fatalf("unpaid override lost: %+v", o.Payment)
+	}
+	if o := f.getOccurrence(t, jan); o.Payment.Override == nil || o.Payment.Override.Status != "paid" {
+		t.Fatalf("paid override lost: %+v", o.Payment)
+	}
+}
+
+// TestDateCorrectionRemovesUnpaidAPI checks decision D23 2b over HTTP: moving
+// start_date later or end_date earlier removes the unpaid occurrences outside
+// the new range, though they are history by the effective date.
+func TestDateCorrectionRemovesUnpaidAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)
+	admin := map[string]string{"X-Test-User": f.ids["alice"]}
+	id := f.createCommitment(t, strings.Replace(monthEndBody, `"day":31`, `"day":10`, 1))
+	f.occurrences(t, "month=2026-05", "alice")
+	count := func(m string) int { return len(f.occurrences(t, "month="+m, "alice").Items) }
+	if count("2026-01") != 1 || count("2026-02") != 1 {
+		t.Fatal("January and February should exist before the correction")
+	}
+	if rec := f.do("PATCH", "/api/v1/commitments/"+id, `{"start_date":"2026-03-01","version":1}`, admin); rec.Code != 200 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	if count("2026-01") != 0 || count("2026-02") != 0 || count("2026-03") != 1 {
+		t.Fatal("earlier unpaid occurrences should be removed")
+	}
+	if rec := f.do("PATCH", "/api/v1/commitments/"+id, `{"end_date":"2026-03-31","effective_from":"2026-06-01","version":2}`, admin); rec.Code != 200 {
+		t.Fatalf("end: %d %s", rec.Code, rec.Body.String())
+	}
+	if count("2026-03") != 1 || count("2026-04") != 0 || count("2026-05") != 0 {
+		t.Fatal("later unpaid occurrences should be removed")
 	}
 }

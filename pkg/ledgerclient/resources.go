@@ -170,6 +170,8 @@ type OccurrenceFilter struct {
 	ListOptions
 	Month         string
 	CommitmentIDs []string
+	// IncludeCancelled also lists cancelled occurrences, which are left out by default.
+	IncludeCancelled bool
 }
 
 func (f OccurrenceFilter) query() url.Values {
@@ -177,6 +179,9 @@ func (f OccurrenceFilter) query() url.Values {
 	f.apply(q)
 	setIf(q, "month", f.Month)
 	addAll(q, "commitment_id", f.CommitmentIDs)
+	if f.IncludeCancelled {
+		q.Set("include_cancelled", "true")
+	}
 	return q
 }
 
@@ -442,6 +447,20 @@ func (c *Client) AllTokens(ctx context.Context, f TokenFilter) iter.Seq2[APIToke
 func (c *Client) GetToken(ctx context.Context, id string) (*APIToken, error) {
 	var t APIToken
 	if err := c.do(ctx, request{op: opGetToken, pathID: id}, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// CreateMyToken creates an API token owned by the caller and returns it with
+// its secret, shown only in this response. Only a root token of the root
+// account (the first user, normally made by the bootstrap command) may call
+// it; any other token gets 403 forbidden (decision D25). The new token is
+// bounded by the root account's current role; give Grants, or Root for a root
+// token (then Warning explains its power).
+func (c *Client) CreateMyToken(ctx context.Context, in NewAPIToken) (*CreatedAPIToken, error) {
+	var t CreatedAPIToken
+	if err := c.do(ctx, request{op: opCreateMyToken, body: in}, &t); err != nil {
 		return nil, err
 	}
 	return &t, nil

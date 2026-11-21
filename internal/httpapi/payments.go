@@ -81,6 +81,8 @@ func paymentError(err error) error {
 		return fieldErrors(ve.Errors)
 	case errors.Is(err, payments.ErrNoEvidence):
 		return &Error{Status: http.StatusConflict, Code: CodeEvidenceRequired, Field: "status", Message: payments.ErrNoEvidence.Error(), Cause: err}
+	case errors.Is(err, occurrences.ErrCancelled):
+		return &Error{Status: http.StatusConflict, Code: CodeOccurrenceCancelled, Message: occurrences.ErrCancelled.Error(), Cause: err}
 	case errors.Is(err, payments.ErrNoOverride):
 		return NotFound(payments.ErrNoOverride.Error())
 	}

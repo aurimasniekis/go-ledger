@@ -34,7 +34,7 @@ for both and builds neither.
    `internal/store/occurrences.DefaultEvidence` the matching "is paid" expression that C2's regeneration and the
    commitment delete use. X1 adds one entry to each; `TestEvidenceSourcesMatchDefaultEvidence` fails when they drift.
    Any evidence makes an occurrence immutable (partially paid ones included, as ADR-0027 point 8 requires) and blocks
-   deleting its commitment (`commitments.ErrInUse`, 409), because the evidence tables refer to occurrences with
+   deleting its commitment (`commitments.ErrInUse`, 409; a deleted payment is not evidence), because the evidence tables refer to occurrences with
    `ON DELETE RESTRICT`.
 3. **Proposed: manual payment records** (`manual_payments`, migration 0014) hold an exact positive amount with its
    currency, the date paid and an optional note. They are user data, separate from bank facts and from match links.
@@ -42,11 +42,15 @@ for both and builds neither.
    not be after today in the reporting zone (a planned payment is not a payment; DF1 deferrals cover plans).
    Records are not edited: a mistake is deleted (with the record's `If-Match`) and recorded again, so the history
    in the audit log stays simple. Recording needs no version, like every create (ADR-0011). **Accepted (D26-3a):**
-   deleting is a soft delete: migration 0018 adds `deleted_at` and `deleted_by` to `manual_payments`, the row is kept,
+   deleting is a soft delete: migration 0019 adds `deleted_at` and `deleted_by` to `manual_payments`, the row is kept,
    it leaves the evidence, the lists and the totals (queries filter on `deleted_at IS NULL`), a second delete or a read
-   of it is 404, and the delete still needs the payment's `If-Match`. The occurrence keeps its protection
-   (`DefaultEvidence` still matches the row, and a trigger refuses a hard delete), so C2's removal and regeneration
-   paths treat it as paid history.
+   of it is 404, and the delete still needs the payment's `If-Match`. A deleted payment no longer makes the occurrence
+   paid (`DefaultEvidence` filters `deleted_at IS NULL`, so terms edits apply again), but the row still refers to it
+   (`DefaultReferences`; a trigger refuses a hard delete), so the occurrence cannot be deleted. **Accepted (D31):** where
+   a removal is intended (a D23 date correction, the plan's Remove, a commitment delete) such an occurrence is
+   **cancelled** instead (ADR-0027 point 13): it keeps the deleted payment and its audit history, but leaves the totals,
+   the monthly view, the overdue counts and the outlook, and takes no new payment, match or status override
+   (409 `occurrence_cancelled`).
 4. **Timing.** Overdue counts from the original due date: an occurrence is overdue from the day after `due_date`,
    whatever grace exists. **Proposed:** upcoming means due after today and **due means due today** (in the reporting
    zone). A wider "due soon" window would need a length nobody has decided. A partially paid occurrence also carries
@@ -97,6 +101,8 @@ for both and builds neither.
 - **4a:** a "paid" override is allowed when any evidence exists, whatever its currency (point 6). The code does this:
   `SetOverride` checks only that evidence is not empty, and `TestPaidOverrideNeedsAnyEvidenceWhateverItsCurrency` and the
   derive test "paid override with other-currency evidence" cover it.
+- **D31 (2026-11-21):** occurrences whose only payments were deleted are cancelled, not kept as obligations and not
+  blocking a commitment delete (point 3; ADR-0027 point 13).
 - **5a:** an overpayment shows `overpaid_amount` and triggers no action (informational; it does not change the status).
 
 ## Why

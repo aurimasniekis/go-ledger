@@ -273,7 +273,7 @@ func TestSchemaKeepsDefinitionsApart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(cols, ","); got != "id,name,kind,amount,currency,schedule,start_date,end_date,priority,notes,created_at,updated_at,version" {
+	if got := strings.Join(cols, ","); got != "id,name,kind,amount,currency,schedule,start_date,end_date,priority,notes,created_at,updated_at,version,deleted_at" {
 		t.Fatalf("columns %s", got)
 	}
 	insert := func(amount, schedule, start, end, kind, priority string) error {

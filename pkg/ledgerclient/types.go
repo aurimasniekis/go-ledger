@@ -150,6 +150,12 @@ type Occurrence struct {
 	Version      int64  `json:"version"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+	// CancelledAt and CancelledReason are set when the occurrence was cancelled
+	// instead of removed because deleted payments still refer to it. A
+	// cancelled occurrence is not part of totals, overdue counts or the
+	// outlook.
+	CancelledAt     *string `json:"cancelled_at"`
+	CancelledReason *string `json:"cancelled_reason"`
 	// Payment is derived when read from payment evidence, dates and the
 	// manual override. Only evidence in the occurrence's currency is counted.
 	Payment PaymentState `json:"payment"`
@@ -317,6 +323,24 @@ type APIToken struct {
 	ExpiresAt  *string  `json:"expires_at"`
 	LastUsedAt *string  `json:"last_used_at"`
 	RevokedAt  *string  `json:"revoked_at"`
+}
+
+// NewAPIToken is the body of CreateMyToken: a name and either grants or Root.
+type NewAPIToken struct {
+	Name   string   `json:"name"`
+	Grants []string `json:"grants,omitempty"`
+	Root   bool     `json:"root,omitempty"`
+	// ExpiresAt is an RFC 3339 time in the future; nil means never.
+	ExpiresAt *string `json:"expires_at,omitempty"`
+}
+
+// CreatedAPIToken answers CreateMyToken. Secret is the token itself and is
+// never shown again: store it at once.
+type CreatedAPIToken struct {
+	Secret string   `json:"secret"`
+	Token  APIToken `json:"token"`
+	// Warning explains a root token's power; nil for other tokens.
+	Warning *string `json:"warning"`
 }
 
 // AuditEntry is one entry of the append-only audit log.

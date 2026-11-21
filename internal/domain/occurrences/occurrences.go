@@ -140,7 +140,19 @@ type Occurrence struct {
 	Version      int64
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// CancelledAt and CancelledReason are set when the occurrence was
+	// cancelled instead of removed because deleted payments still refer to it
+	// (D31). A cancelled occurrence is not counted anywhere; it stays readable.
+	CancelledAt     *time.Time
+	CancelledReason string
 }
+
+// Cancel reasons: what made the occurrence unwanted (D31).
+const (
+	CancelOutOfRange       = "out_of_range"       // a start or end date correction
+	CancelTermsChange      = "terms_change"       // an edit no longer schedules the month
+	CancelCommitmentDelete = "commitment_deleted" // the commitment was deleted
+)
 
 // Existing is a stored occurrence as edit planning sees it: Paid means payment
 // evidence refers to it (a manual payment record or a confirmed match, task
@@ -165,6 +177,18 @@ type Plan struct {
 	// unchanged; KeptHistory counts unpaid ones before it.
 	KeptPaid    int
 	KeptHistory int
+	// OutOfRange counts the unpaid occurrences removed because a start or end
+	// date change left them outside [start, end] (D23 2b), whatever the
+	// effective date. The store fills it in; PlanEdit does not.
+	OutOfRange int
+	// KeptOverride counts the unpaid occurrences outside the dates that stay
+	// because they carry a status override (any state). The store fills it in.
+	KeptOverride int
+	// CancelledReferenced counts the occurrences cancelled instead of removed
+	// (D31), by a date correction or by Remove, because deleted payments still
+	// refer to them. Remove then holds only the occurrences actually deleted.
+	// The store fills it in.
+	CancelledReferenced int
 }
 
 // Empty reports whether the plan changes nothing.
@@ -243,12 +267,15 @@ const TargetType = commitments.TargetType
 func RegeneratedEvent(actor audit.Actor, commitmentID string, effective calendar.Date, p Plan, at time.Time) audit.Event {
 	return audit.Event{Action: audit.OccurrencesRegenerated, Actor: actor, TargetType: TargetType, TargetID: commitmentID, At: at,
 		Details: map[string]string{
-			"effective_from": effective.String(),
-			"created":        strconv.Itoa(len(p.Create)),
-			"updated":        strconv.Itoa(len(p.Update)),
-			"removed":        strconv.Itoa(len(p.Remove)),
-			"kept_paid":      strconv.Itoa(p.KeptPaid),
-			"kept_history":   strconv.Itoa(p.KeptHistory),
+			"effective_from":       effective.String(),
+			"created":              strconv.Itoa(len(p.Create)),
+			"updated":              strconv.Itoa(len(p.Update)),
+			"removed":              strconv.Itoa(len(p.Remove)),
+			"kept_paid":            strconv.Itoa(p.KeptPaid),
+			"kept_history":         strconv.Itoa(p.KeptHistory),
+			"removed_out_of_range": strconv.Itoa(p.OutOfRange),
+			"kept_override":        strconv.Itoa(p.KeptOverride),
+			"cancelled_referenced": strconv.Itoa(p.CancelledReferenced),
 		}}
 }
 
@@ -266,6 +293,10 @@ func (e *PendingTermsError) Error() string {
 		e.Effective.String() + " would overwrite the earlier terms in between"
 }
 
+// ErrCancelled means an occurrence is cancelled (D31) and takes no new payment,
+// match or status override.
+var ErrCancelled = errors.New("occurrences: the occurrence is cancelled; it takes no new payment")
+
 // ErrCursorGone means the occurrence a page cursor points after no longer
 // exists (an edit removed it); the client starts again from the first page.
 var ErrCursorGone = errors.New("occurrences: the cursor's occurrence no longer exists")
@@ -278,6 +309,9 @@ type ListFilter struct {
 	CommitmentIDs []string
 	After         string
 	Limit         int
+	// IncludeCancelled also returns cancelled occurrences (D31); by default
+	// they are left out.
+	IncludeCancelled bool
 }
 
 // Reader is the read side of stored occurrences; internal/store/occurrences

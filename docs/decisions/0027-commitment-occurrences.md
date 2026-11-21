@@ -82,12 +82,34 @@ ADR-0024 left C2 three jobs: reading schedules through `commitments.Schedule`, d
    rewrite a paid occurrence in place. C3 must treat a *partially paid* occurrence (D7) as evidence, so it is immutable too.
 9. **Proposed: deleting a commitment removes its unpaid occurrences.** They are derived data. Paid occurrences
    (evidence) keep the foreign key, so the delete becomes 409 `conflict` (`commitments.ErrInUse`) and payment history
-   is never lost. Setting `end_date` remains the way to stop a commitment.
+   is never lost. Setting `end_date` remains the way to stop a commitment. **Refined by D31 (point 13):** only live
+   payment evidence blocks the delete; an occurrence that only deleted payments refer to is cancelled and the commitment
+   is archived.
 10. **Proposed: API and grants.** `GET /api/v1/occurrences` (`month` is required and given once; `commitment_id`
     can be repeated; ordered by due date, then id; the cursor names the last id) and
     `GET /api/v1/occurrences/{id}` (with an ETag). Both need `commitments:read`: occurrences are derived from
     commitments, so no new grant was added to the ADR-0021 vocabulary. Occurrences have no write endpoint. Payment
     actions are C3.
+
+13. **Accepted (D31, 2026-11-21): occurrences that cannot be removed are cancelled.** Wherever an occurrence would be
+    removed (the D23 out-of-range removal, the edit plan's Remove, a commitment delete) but a soft-deleted manual
+    payment still refers to it (`ON DELETE RESTRICT`; ADR-0031 point 3) and it has no live payment state, it is marked
+    cancelled (migration 0019: `cancelled_at` and `cancelled_reason` = `out_of_range`, `terms_change` or
+    `commitment_deleted`) instead of deleted. The removal paths share one rule: live evidence (`DefaultEvidence`) is
+    never touched, a referenced occurrence (`DefaultReferences`) is cancelled and its open suggestions and rejections
+    dropped, anything else is deleted. A cancelled occurrence leaves the monthly view, the totals, the overdue counts
+    and the outlook (the list and the summary leave it out), and takes no new manual payment, match or override
+    (triggers and 409 `occurrence_cancelled`). It stays readable: `GET /occurrences/{id}` returns it with its
+    cancellation, and `include_cancelled=true` lists it with its month. Edit planning ignores it, but an edit that
+    schedules its month again revives it (both columns cleared, version increased) rather than leaving the month empty.
+    A **commitment delete** refuses with 409 only when live payment evidence exists; otherwise it deletes what nothing
+    refers to, cancels the rest and, when any occurrence remains, **keeps the commitment row soft-deleted**
+    (`commitments.deleted_at`, migration 0019): reads, lists, edits, deletes and generation treat it as gone (404),
+    and the row stays only because the cancelled history refers to it; with nothing left it is deleted outright.
+    Audit counts are exact and never overlap: `occurrences.regenerated` carries `removed` (actually deleted),
+    `removed_out_of_range` (actually deleted by D23) and `cancelled_referenced` (cancelled by either path);
+    `commitment.deleted` carries `unpaid_occurrences_removed`, `cancelled_referenced` and `archived`.
+    An earlier build skipped such a removal silently yet counted it as removed, and a date correction failed with 500.
 
 11. **Proposed: a future-dated terms edit is protected.** A definition holds only the latest terms, so a terms edit with
     `effective_from` after today leaves the older terms of the months in between only in the stored rows. The edit
@@ -119,11 +141,16 @@ reads only; it takes the write lock only when some commitment is behind.
 
 ## Consequences
 
-- **For the operator (proposed, not decided):** the every-N-months anchor and the late-start first occurrence
-  (point 2: start Jan 20, day 15, interval 3 gives Apr 15), the pending future-dated edit guard (point 11), the
-  1900-01-01 lower bound on `start_date` (point 12), the slot rule (point 5), today as the default effective date
-  (point 6), materialising on read with a 60-month horizon (point 7), deleting unpaid occurrences with the commitment
-  (point 9), and reading occurrences under `commitments:read` (point 10).
+- **D23 (accepted, 2026-11-21):** a start or end date change removes the unpaid occurrences outside the new
+  [start, end], whatever the effective date (so an unpaid occurrence before the effective date can go). Occurrences
+  with payment evidence, or with a status override of any state, are never removed (an override would cascade away
+  with its row). The counts are audited as `removed_out_of_range` and `kept_override` on
+  `occurrences.regenerated`. Accepted with it: the every-N anchor, late start (point 2), today as the default
+  effective date (point 6), generation on read up to 60 months (point 7), the 1900 floor (point 12), deleting unpaid
+  occurrences with the commitment (point 9, audited count; paid ones block the delete), and the `commitments:read`
+  grant (point 10).
+- **For the operator (still proposed, not decided):** the slot rule (point 5) and the pending future-dated edit guard
+  (point 11).
 - C3 must add its evidence conditions to `DefaultEvidence`, with `RESTRICT` foreign keys. Any other table that
   refers to occurrences (for example match suggestions) must either count as evidence or use `ON DELETE CASCADE`.
   Otherwise an edit that removes an unpaid occurrence fails on the foreign key.

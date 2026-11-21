@@ -270,7 +270,11 @@ func TestRecoveryCodesWorkOnceAndCanBeReplaced(t *testing.T) {
 	if w := e.req("POST", "/api/v1/auth/reauthenticate", `{"password":"`+testPassword+`"}`, r.b, nil); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	w := e.req("POST", "/api/v1/auth/two-factor/recovery-codes", "", r.b, nil)
+	// With TOTP enabled it also needs a current code (decision D26-1a).
+	if w := e.req("POST", "/api/v1/auth/two-factor/recovery-codes", "", r.b, nil); w.Code != 400 || errCode(w.Body.String()) != "validation_failed" {
+		t.Fatalf("without a current code: %d %s", w.Code, w.Body.String())
+	}
+	w := e.req("POST", "/api/v1/auth/two-factor/recovery-codes", `{"current_recovery_code":"`+en.codes[5]+`"}`, r.b, nil)
 	var rc struct {
 		Codes []string `json:"recovery_codes"`
 	}
@@ -284,7 +288,7 @@ func TestRecoveryCodesWorkOnceAndCanBeReplaced(t *testing.T) {
 	if r := e.secondStep(e.passwordStep("alice"), "recovery_code", rc.Codes[0]); r.code != 200 {
 		t.Errorf("new code: %d %s", r.code, r.body)
 	}
-	if got := e.auditActions(audit.RecoveryCodesReset); len(got) != 1 || got[0].Details["count"] != "10" {
+	if got := e.auditActions(audit.RecoveryCodesReset); len(got) != 1 || got[0].Details["count"] != "10" || got[0].Details["verified_with"] != "recovery_code" {
 		t.Errorf("audit %+v", got)
 	}
 }
@@ -385,8 +389,11 @@ func TestRequired2FAConfinesSessionsToEnrolment(t *testing.T) {
 func TestDisableTwoFactor(t *testing.T) {
 	e := newSignInEnv(t, nil)
 	b, _ := e.signIn("alice")
-	e.enrol(b)
-	if w := e.req("DELETE", "/api/v1/auth/two-factor", "", b, nil); w.Code != 204 {
+	en := e.enrol(b)
+	// The confirmation's code is used; the next step's code proves the
+	// authenticator (decision D26-1a).
+	e.clock.advance(auth.TOTPPeriod)
+	if w := e.req("DELETE", "/api/v1/auth/two-factor", fmt.Sprintf(`{"current_code":%q}`, auth.TOTPCode(en.secret, e.clock.now())), b, nil); w.Code != 204 {
 		t.Fatalf("disable: %d %s", w.Code, w.Body.String())
 	}
 	if w := e.req("DELETE", "/api/v1/auth/two-factor", "", b, nil); w.Code != 409 {
@@ -394,7 +401,7 @@ func TestDisableTwoFactor(t *testing.T) {
 	}
 	e.signIn("alice") // password only again
 	got := e.auditActions(audit.TwoFactorDisabled)
-	if len(got) != 1 || got[0].Actor.UserID != e.ids["alice"] || got[0].Details["by"] != "self" {
+	if len(got) != 1 || got[0].Actor.UserID != e.ids["alice"] || got[0].Details["by"] != "self" || got[0].Details["verified_with"] != "totp" {
 		t.Errorf("audit %+v", got)
 	}
 }
@@ -429,7 +436,7 @@ func TestKEKChangeAndHostReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	secret, _ := auth.DecodeTOTPSecret(en.Secret)
-	codes, _, err := parts.auth.ConfirmTOTP(ctx, p, auth.TOTPCode(secret, clk.now()))
+	codes, _, err := parts.auth.ConfirmTOTP(ctx, p, auth.TOTPCode(secret, clk.now()), auth.CurrentFactor{})
 	if err != nil {
 		t.Fatal(err)
 	}

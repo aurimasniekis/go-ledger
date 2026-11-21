@@ -266,7 +266,7 @@ func runReset2FA(args []string, stdout, stderr io.Writer, env opsEnv) int {
 		say(stderr, "ledger auth: "+err.Error())
 		return 1
 	}
-	err = parts.auth.DisableTwoFactor(ctx, authz.Principal{}, true, cred.UserID, auth.ByHost)
+	err = parts.auth.DisableTwoFactor(ctx, authz.Principal{}, true, cred.UserID, auth.ByHost, auth.CurrentFactor{})
 	if errors.Is(err, auth.ErrTwoFactorNotEnabled) {
 		say(stdout, fmt.Sprintf("%s has no two-factor authentication; nothing to reset", username))
 		return 0

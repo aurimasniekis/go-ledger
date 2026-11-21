@@ -88,9 +88,18 @@ func (m *memStore) Touch(_ context.Context, id string, at time.Time) error {
 }
 
 // memUsers maps user IDs to roles; a user missing from roles is unknown.
+// root is the root account ("" for none).
 type memUsers struct {
 	roles    map[string]authz.Role
 	disabled map[string]bool
+	root     string
+}
+
+func (u *memUsers) RootAccountID(context.Context) (string, error) {
+	if u.root == "" {
+		return "", resource.ErrNotFound
+	}
+	return u.root, nil
 }
 
 func (u *memUsers) Principal(_ context.Context, id string) (authz.Principal, error) {
@@ -105,8 +114,9 @@ func (u *memUsers) Principal(_ context.Context, id string) (authz.Principal, err
 }
 
 const (
-	adminID  = "01JD3Y4C8V9M2Q7W5R6T0XZBNA"
-	readerID = "01JD3Y4C8V9M2Q7W5R6T0XZBNB"
+	adminID      = "01JD3Y4C8V9M2Q7W5R6T0XZBNA"
+	readerID     = "01JD3Y4C8V9M2Q7W5R6T0XZBNB"
+	otherAdminID = "01JD3Y4C8V9M2Q7W5R6T0XZBNC"
 )
 
 type env struct {
@@ -118,7 +128,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{store: newMemStore(), users: &memUsers{roles: map[string]authz.Role{adminID: authz.RoleAdministrator, readerID: authz.RoleReadOnly}, disabled: map[string]bool{}},
+	e := &env{store: newMemStore(), users: &memUsers{roles: map[string]authz.Role{adminID: authz.RoleAdministrator, readerID: authz.RoleReadOnly}, disabled: map[string]bool{}, root: adminID},
 		now: time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)}
 	n := 0
 	e.svc = NewService(e.store, e.users, Options{Now: func() time.Time { return e.now }, NewID: func() string {
@@ -200,7 +210,7 @@ func TestCreateRefusesEscalation(t *testing.T) {
 		}
 	}
 	token := authz.TokenPrincipal("01JD3Y4C8V9M2Q7W5R6T0XZBNT", adminID, authz.RoleAdministrator, authz.AllGrants())
-	if _, err := e.svc.Create(ctx, audit.ActorOf(token), token, New{Name: "x", Grants: authz.Grants{commitmentsRead}}); !errors.Is(err, ErrNotUser) {
+	if _, err := e.svc.Create(ctx, audit.ActorOf(token), token, New{Name: "x", Grants: authz.Grants{commitmentsRead}}); !errors.Is(err, ErrTokenCannotCreate) {
 		t.Errorf("a token created a token: %v", err)
 	}
 	if len(e.store.tokens) != 0 || len(e.store.events) != 0 {
@@ -471,5 +481,77 @@ func TestLastUseIsSingleFlight(t *testing.T) {
 	wg.Wait()
 	if n := st.calls.Load(); n != 1 {
 		t.Fatalf("%d last-use writes for concurrent requests, want 1", n)
+	}
+}
+
+// TestOnlyRootTokensOfTheRootAccountCreate is decision D25 at the service:
+// Authenticate marks only a root token of the root account as a token
+// creator, and Create checks it again from the stored token and the current
+// root account, so a forged flag does not help.
+func TestOnlyRootTokensOfTheRootAccountCreate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.users.roles[otherAdminID] = authz.RoleAdministrator
+	rootTok := e.create(t, adminID, New{Name: "terraform", Root: true})
+	narrow := e.create(t, adminID, New{Name: "ci", Grants: authz.AllGrants()})
+	otherRoot := e.create(t, otherAdminID, New{Name: "other", Root: true})
+	auth := func(iss Issued) authz.Principal {
+		t.Helper()
+		p, err := e.svc.Authenticate(ctx, iss.Secret)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p := auth(rootTok)
+	if !p.CanCreateTokens {
+		t.Fatal("the root account's root token is not marked as a token creator")
+	}
+	for name, iss := range map[string]Issued{"non-root token": narrow, "another administrator's root token": otherRoot} {
+		if auth(iss).CanCreateTokens {
+			t.Errorf("%s is marked as a token creator", name)
+		}
+	}
+	events := len(e.store.events)
+	child, err := e.svc.Create(ctx, audit.ActorOf(p), p, New{Name: "child", Grants: authz.Grants{commitmentsRead}})
+	if err != nil {
+		t.Fatalf("root token creates: %v", err)
+	}
+	if child.Token.OwnerID != adminID || len(e.store.events) != events+1 {
+		t.Fatalf("child %+v, %d new events", child.Token, len(e.store.events)-events)
+	}
+	ev := e.store.events[len(e.store.events)-1]
+	if ev.Actor.Kind != audit.ActorToken || ev.Actor.TokenID != rootTok.Token.ID || ev.Details["parent_token_id"] != rootTok.Token.ID || audit.Validate(ev) != nil {
+		t.Fatalf("token.created by a token: %+v (%v)", ev, audit.Validate(ev))
+	}
+	if _, err := e.svc.Create(ctx, audit.ActorOf(p), p, New{Name: "root2", Root: true}); err != nil {
+		t.Fatalf("root token creates a root token: %v", err)
+	}
+
+	// A forged flag on any other token is refused from current data.
+	for name, iss := range map[string]Issued{"non-root token": narrow, "another administrator's root token": otherRoot, "child": child} {
+		q := auth(iss)
+		q.CanCreateTokens = true
+		if _, err := e.svc.Create(ctx, audit.ActorOf(q), q, New{Name: "x", Grants: authz.Grants{commitmentsRead}}); !errors.Is(err, ErrTokenCannotCreate) {
+			t.Errorf("forged %s: %v", name, err)
+		}
+	}
+	unknown := authz.TokenPrincipal("01JD3Y4C8V9M2Q7W5R6T0XZBNT", adminID, authz.RoleAdministrator, authz.AllGrants())
+	unknown.CanCreateTokens = true
+	if _, err := e.svc.Create(ctx, audit.ActorOf(unknown), unknown, New{Name: "x", Grants: authz.Grants{commitmentsRead}}); !errors.Is(err, ErrTokenCannotCreate) {
+		t.Errorf("unknown token: %v", err)
+	}
+	// A principal that authenticated before the token was revoked is refused.
+	if err := e.svc.Revoke(ctx, audit.System, rootTok.Token.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Create(ctx, audit.ActorOf(p), p, New{Name: "x", Grants: authz.Grants{commitmentsRead}}); !errors.Is(err, ErrTokenCannotCreate) {
+		t.Errorf("revoked root token: %v", err)
+	}
+	// With no root account at all, no token creates.
+	e.users.root = ""
+	r2 := e.create(t, adminID, New{Name: "r", Root: true})
+	if q := auth(r2); q.CanCreateTokens {
+		t.Error("a root token is a creator without a root account")
 	}
 }

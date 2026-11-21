@@ -28,7 +28,7 @@ var (
 	opGetCommit    = operation{ID: "getCommitment", Method: http.MethodGet, Path: "/commitments/{id}"}
 	opUpdateCommit = operation{ID: "updateCommitment", Method: http.MethodPatch, Path: "/commitments/{id}"}
 	opDeleteCommit = operation{ID: "deleteCommitment", Method: http.MethodDelete, Path: "/commitments/{id}"}
-	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "month", "commitment_id"}}
+	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "month", "commitment_id", "include_cancelled"}}
 	opGetOccur     = operation{ID: "getOccurrence", Method: http.MethodGet, Path: "/occurrences/{id}"}
 
 	opListManualPayments  = operation{ID: "listManualPayments", Method: http.MethodGet, Path: "/occurrences/{id}/manual-payments", Query: []string{"limit", "cursor"}}
@@ -50,6 +50,8 @@ var (
 	opListTokens  = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
 	opGetToken    = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
 	opRevokeToken = operation{ID: "revokeToken", Method: http.MethodDelete, Path: "/tokens/{id}"}
+	// opCreateMyToken needs a root token of the root account (decision D25).
+	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
 
 // operations is every implemented operation. Resources of tasks still in
@@ -63,5 +65,5 @@ var operations = []operation{
 	opListManualPayments, opRecordManualPayment, opGetManualPayment, opDeleteManualPayment,
 	opSetOverride, opUndoOverride,
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch,
-	opListTokens, opGetToken, opRevokeToken,
+	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
 }

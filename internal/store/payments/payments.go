@@ -269,6 +269,9 @@ func (s *Store) RecordManual(ctx context.Context, actor audit.Actor, occurrenceI
 		if err != nil {
 			return err
 		}
+		if o.CancelledAt != nil {
+			return occurrences.ErrCancelled
+		}
 		if err := commitments.Validation(in.Validate(o, today)); err != nil {
 			return err
 		}
@@ -365,6 +368,9 @@ func (s *Store) SetOverride(ctx context.Context, actor audit.Actor, occurrenceID
 		o, err := occurrenceAt(ctx, tx, occurrenceID, expected)
 		if err != nil {
 			return err
+		}
+		if o.CancelledAt != nil {
+			return occurrences.ErrCancelled
 		}
 		facts, err := factsTx(ctx, tx, []string{o.ID})
 		if err != nil {

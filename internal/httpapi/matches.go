@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
+	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
@@ -159,6 +160,8 @@ func matchError(err error) error {
 		return fieldErrors(ve.Errors)
 	case errors.Is(err, matches.ErrTransactionNotFound):
 		return Validation("transaction_id", err.Error())
+	case errors.Is(err, occurrences.ErrCancelled):
+		return conflict(CodeOccurrenceCancelled, "occurrence_id")
 	case errors.Is(err, matches.ErrOccurrenceNotFound):
 		return Validation("occurrence_id", err.Error())
 	case errors.Is(err, matches.ErrCurrency):

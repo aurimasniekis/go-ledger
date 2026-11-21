@@ -130,7 +130,23 @@ func upgradeFixture(t *testing.T, fx fixture, known []Migration) *DB {
 
 // fixtureChecks holds data assertions for fixtures of the real schema, by
 // fixture file name. Add one whenever a migration moves or reshapes data.
-var fixtureChecks = map[string]func(t *testing.T, db *DB){}
+var fixtureChecks = map[string]func(t *testing.T, db *DB){
+	// Migration 0018 adds the token parent: existing tokens have none.
+	"0017_payment_matches.sql": func(t *testing.T, db *DB) {
+		err := db.ReadTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+			if n := queryInt(t, tx, "SELECT count(*) FROM api_tokens"); n == 0 {
+				t.Error("the fixture has no API tokens to check")
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM api_tokens WHERE parent_token_id IS NOT NULL"); n != 0 {
+				t.Errorf("%d tokens have a parent after the migration, want none", n)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	},
+}
 
 func TestMigrationHarness(t *testing.T) {
 	known, err := EmbeddedMigrations()

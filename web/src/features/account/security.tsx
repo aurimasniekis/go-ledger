@@ -9,13 +9,15 @@ import { Input } from '@/components/ui/input'
 import { Field } from '@/components/field'
 import { FormError } from '@/components/form-error'
 import { Mono } from '@/components/mono'
-import { ConfirmDialog } from '@/components/confirm-dialog'
+import { AlertDialog, AlertDialogCancel, AlertDialogContent } from '@/components/ui/dialog'
 import { QueryState } from '@/components/query-state'
 import { ShowOnceDialog } from '@/components/show-once-dialog'
 
 /**
  * Account security: two-factor enrolment, recovery codes, disabling, password change. Under required
  * 2FA with no authenticator the session is confined to enrolment, and this page shows only that.
+ * While two-factor is on, replacing the authenticator, turning it off and replacing the recovery
+ * codes also ask for a current code from the authenticator or a recovery code (decision D26-1a).
  */
 export function SecurityPage() {
   const session = useSession()
@@ -98,6 +100,7 @@ function TwoFactor({ onCodes }: { onCodes: (codes: string[]) => void }) {
             )}
             {enrolling && (
               <Enrollment
+                replacing={s.enabled}
                 onCancel={() => setEnrolling(false)}
                 onEnabled={async (c) => {
                   setEnrolling(false)
@@ -109,25 +112,25 @@ function TwoFactor({ onCodes }: { onCodes: (codes: string[]) => void }) {
           </div>
         )}
       </QueryState>
-      <ConfirmDialog
+      <SecondFactorDialog
         open={disabling}
         onOpenChange={setDisabling}
         title="Turn off two-factor authentication?"
         description="Signing in will need only your password, and your recovery codes stop working. You can set it up again at any time."
         confirmLabel="Turn off"
-        onConfirm={async () => {
-          await apiFetch(api('/auth/two-factor'), { method: 'DELETE' })
+        onConfirm={async (factor) => {
+          await apiFetch(api('/auth/two-factor'), { method: 'DELETE', json: factorBody(factor) })
           await refresh()
         }}
       />
-      <ConfirmDialog
+      <SecondFactorDialog
         open={regenerating}
         onOpenChange={setRegenerating}
         title="Replace your recovery codes?"
         description="You get ten new codes, shown once. Every earlier code stops working at once."
         confirmLabel="Replace codes"
-        onConfirm={async () => {
-          const r = await apiFetch<RecoveryCodes>(api('/auth/two-factor/recovery-codes'), { method: 'POST' })
+        onConfirm={async (factor) => {
+          const r = await apiFetch<RecoveryCodes>(api('/auth/two-factor/recovery-codes'), { method: 'POST', json: factorBody(factor) })
           onCodes(r.recovery_codes)
           await refresh()
         }}
@@ -136,10 +139,20 @@ function TwoFactor({ onCodes }: { onCodes: (codes: string[]) => void }) {
   )
 }
 
-function Enrollment({ onCancel, onEnabled }: { onCancel: () => void; onEnabled: (codes: string[]) => void | Promise<void> }) {
+function Enrollment({
+  replacing,
+  onCancel,
+  onEnabled,
+}: {
+  replacing: boolean
+  onCancel: () => void
+  onEnabled: (codes: string[]) => void | Promise<void>
+}) {
   const [enrol, setEnrol] = useState<TOTPEnrollment | null>(null)
   const [code, setCode] = useState('')
+  const [factor, setFactor] = useState<CurrentFactor>(emptyFactor)
   const [local, setLocal] = useState<string>()
+  const [factorLocal, setFactorLocal] = useState<string>()
   const start = useMutation({
     gcTime: 0,
     mutationFn: () => apiFetch<TOTPEnrollment>(api('/auth/two-factor/totp'), { method: 'POST' }),
@@ -147,16 +160,21 @@ function Enrollment({ onCancel, onEnabled }: { onCancel: () => void; onEnabled: 
   })
   const confirm = useMutation({
     gcTime: 0,
-    mutationFn: () => apiFetch<RecoveryCodes>(api('/auth/two-factor/totp/confirm'), { method: 'POST', json: { code } }),
+    mutationFn: () =>
+      apiFetch<RecoveryCodes>(api('/auth/two-factor/totp/confirm'), {
+        method: 'POST',
+        json: replacing ? { code, ...factorBody(factor) } : { code },
+      }),
     onSuccess: (r) => {
       setEnrol(null)
       start.reset()
       void onEnabled(r.recovery_codes)
     },
   })
-  const { fields, form } = splitErrors(confirm.error, ['code'])
-  const wrongCode = confirm.error instanceof ApiError && confirm.error.code === 'invalid_second_factor'
+  const { fields, form } = splitErrors(confirm.error, ['code', ...FACTOR_FIELDS])
+  const wrongCode = confirm.error instanceof ApiError && confirm.error.code === 'invalid_second_factor' && !confirm.error.field?.startsWith('current_')
   const codeError = local ?? fields.code ?? (wrongCode ? confirm.error?.message : undefined)
+  const factorError = factorLocal ?? fields.current_code ?? fields.current_recovery_code
 
   if (!enrol) {
     return (
@@ -183,8 +201,11 @@ function Enrollment({ onCancel, onEnabled }: { onCancel: () => void; onEnabled: 
       noValidate
       onSubmit={(e) => {
         e.preventDefault()
-        if (!code.trim()) return setLocal('Enter the 6-digit code from your authenticator.')
-        setLocal(undefined)
+        const missingCode = !code.trim()
+        const missingFactor = replacing && !factor.value.trim()
+        setLocal(missingCode ? 'Enter the 6-digit code from your authenticator.' : undefined)
+        setFactorLocal(missingFactor ? factorMissing(factor) : undefined)
+        if (missingCode || missingFactor) return
         confirm.mutate()
       }}
     >
@@ -211,12 +232,13 @@ function Enrollment({ onCancel, onEnabled }: { onCancel: () => void; onEnabled: 
         </div>
       </dl>
       <p className="text-xs text-muted-foreground">Confirm before {formatInstant(enrol.expires_at)}.</p>
-      <FormError message={codeError ? undefined : form} />
-      <Field label="Code from your authenticator" name="code" error={codeError}>
+      <FormError message={codeError || factorError ? undefined : form} />
+      <Field label={replacing ? 'Code from your new authenticator' : 'Code from your authenticator'} name="code" error={codeError}>
         {(p) => (
           <Input {...p} inputMode="numeric" autoComplete="one-time-code" autoFocus value={code} onChange={(e) => setCode(e.target.value)} />
         )}
       </Field>
+      {replacing && <CurrentFactorField value={factor} onChange={setFactor} error={factorError} />}
       <div className="flex gap-2">
         <Button type="submit" disabled={confirm.isPending}>
           {confirm.isPending ? 'Confirming…' : 'Confirm and turn on'}
@@ -226,6 +248,130 @@ function Enrollment({ onCancel, onEnabled }: { onCancel: () => void; onEnabled: 
         </Button>
       </div>
     </form>
+  )
+}
+
+/** The current second factor a change to two-factor needs while it is on (decision D26-1a). */
+type CurrentFactor = { kind: 'totp' | 'recovery'; value: string }
+const emptyFactor: CurrentFactor = { kind: 'totp', value: '' }
+const FACTOR_FIELDS = ['current_code', 'current_recovery_code'] as const
+
+function factorBody(f: CurrentFactor) {
+  return f.kind === 'totp' ? { current_code: f.value.trim() } : { current_recovery_code: f.value.trim() }
+}
+
+function factorMissing(f: CurrentFactor) {
+  return f.kind === 'totp' ? 'Enter the current 6-digit code from your authenticator.' : 'Enter one of your recovery codes.'
+}
+
+/**
+ * Asks for a code from the authenticator in use now, or, for someone without it at hand, one of
+ * their recovery codes. Switching clears what was typed, so a code never goes to the wrong field.
+ */
+function CurrentFactorField({ value, onChange, error }: { value: CurrentFactor; onChange: (f: CurrentFactor) => void; error?: string }) {
+  const totp = value.kind === 'totp'
+  return (
+    <div className="space-y-1">
+      <Field
+        label={totp ? 'Current code from your authenticator' : 'One of your recovery codes'}
+        name={totp ? 'current_code' : 'current_recovery_code'}
+        hint={
+          totp
+            ? 'Two-factor is on, so this change also needs a code from the authenticator you use now.'
+            : 'Two-factor is on, so this change needs a recovery code if your authenticator is not at hand. The code is used up.'
+        }
+        error={error}
+      >
+        {(p) => (
+          <Input
+            {...p}
+            inputMode={totp ? 'numeric' : 'text'}
+            autoComplete={totp ? 'one-time-code' : 'off'}
+            value={value.value}
+            onChange={(e) => onChange({ ...value, value: e.target.value })}
+          />
+        )}
+      </Field>
+      <Button type="button" variant="ghost" size="sm" onClick={() => onChange({ kind: totp ? 'recovery' : 'totp', value: '' })}>
+        {totp ? 'Use a recovery code instead' : 'Use your authenticator instead'}
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * Confirms a change to two-factor that needs the current second factor: the dialog asks for it,
+ * stays open with the error on the field when the server refuses it, and closes only after the
+ * server has accepted the change.
+ */
+function SecondFactorDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel,
+  onConfirm,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  title: string
+  description: string
+  confirmLabel: string
+  onConfirm: (factor: CurrentFactor) => Promise<unknown>
+}) {
+  const [factor, setFactor] = useState<CurrentFactor>(emptyFactor)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  const [local, setLocal] = useState<string>()
+  const close = (o: boolean) => {
+    if (pending) return
+    if (!o) {
+      setError(null)
+      setLocal(undefined)
+      setFactor(emptyFactor)
+    }
+    onOpenChange(o)
+  }
+  const { fields, form } = splitErrors(error, FACTOR_FIELDS)
+  const fieldError = local ?? fields.current_code ?? fields.current_recovery_code
+  return (
+    <AlertDialog open={open} onOpenChange={close}>
+      <AlertDialogContent title={title} description={description}>
+        <form
+          className="space-y-4"
+          noValidate
+          onSubmit={async (e) => {
+            e.preventDefault()
+            if (!factor.value.trim()) return setLocal(factorMissing(factor))
+            setLocal(undefined)
+            setPending(true)
+            setError(null)
+            try {
+              await onConfirm(factor)
+              setFactor(emptyFactor)
+              onOpenChange(false)
+            } catch (err) {
+              setError(err)
+            } finally {
+              setPending(false)
+            }
+          }}
+        >
+          <FormError message={fieldError ? undefined : form} />
+          <CurrentFactorField value={factor} onChange={setFactor} error={fieldError} />
+          <div className="flex flex-wrap justify-end gap-2">
+            <AlertDialogCancel asChild>
+              <Button type="button" variant="outline" disabled={pending}>
+                Cancel
+              </Button>
+            </AlertDialogCancel>
+            <Button type="submit" disabled={pending}>
+              {pending ? 'Working…' : confirmLabel}
+            </Button>
+          </div>
+        </form>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

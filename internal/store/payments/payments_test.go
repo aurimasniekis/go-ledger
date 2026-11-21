@@ -487,7 +487,8 @@ func TestDeleteManualKeepsTheRow(t *testing.T) {
 	if _, err := f.ps.UndoOverride(ctx, alice, o.ID, set.Occurrence.Version); err != nil {
 		t.Fatalf("undo after a delete: %v", err)
 	}
-	// Even with every payment deleted, the occurrence is still protected.
+	// With every payment deleted, nothing is live evidence: a commitment delete
+	// cancels the occurrence (D31) and keeps its history instead of failing.
 	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, p1.ID, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -496,11 +497,18 @@ func TestDeleteManualKeepsTheRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.cs.Delete(ctx, alice, c.ID, got.Version); !errors.Is(err, commitments.ErrInUse) {
-		t.Errorf("commitment delete after deleting every payment: %v (occurrence v%d)", err, cur.Version)
-	}
 	if st := f.state(t, cur); st.EvidenceCount != 0 || st.OverrideApplied {
 		t.Errorf("deleted payments still evidence: %+v", st)
+	}
+	if err := f.cs.Delete(ctx, alice, c.ID, got.Version); err != nil {
+		t.Fatalf("commitment delete after deleting every payment: %v (occurrence v%d)", err, cur.Version)
+	}
+	kept, err := f.cs.Occurrences().Get(ctx, o.ID)
+	if err != nil || kept.CancelledAt == nil || kept.CancelledReason != occurrences.CancelCommitmentDelete {
+		t.Errorf("occurrence after the commitment delete: %+v, %v", kept, err)
+	}
+	if _, err := f.cs.Get(ctx, c.ID); !errors.Is(err, resource.ErrNotFound) {
+		t.Errorf("deleted commitment: %v", err)
 	}
 }
 
