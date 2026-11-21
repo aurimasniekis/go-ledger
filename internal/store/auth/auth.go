@@ -76,8 +76,8 @@ func (s *Store) ReplaceHash(ctx context.Context, userID, old, hash string) error
 }
 
 // SetPassword stores the hash, ends the user's other sessions and deletes
-// the user's device cookies.
-func (s *Store) SetPassword(ctx context.Context, userID, hash, keep string, at time.Time, events func(int) []audit.Event) (int, error) {
+// the user's device cookies. events receives both counts.
+func (s *Store) SetPassword(ctx context.Context, userID, hash, keep string, at time.Time, events func(ended, revokedCookies int) []audit.Event) (int, error) {
 	var ended int
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var n int
@@ -92,7 +92,12 @@ func (s *Store) SetPassword(ctx context.Context, userID, hash, keep string, at t
 			return err
 		}
 		// A new password revokes every known browser (decision D23-1b).
-		if _, err := tx.ExecContext(ctx, "DELETE FROM device_cookies WHERE user_id = ?", userID); err != nil {
+		cookies, err := tx.ExecContext(ctx, "DELETE FROM device_cookies WHERE user_id = ?", userID)
+		if err != nil {
+			return err
+		}
+		revoked, err := cookies.RowsAffected()
+		if err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ? AND id <> ?", userID, keep)
@@ -107,7 +112,7 @@ func (s *Store) SetPassword(ctx context.Context, userID, hash, keep string, at t
 		if events == nil {
 			return nil
 		}
-		return s.writeEvents(ctx, tx, events(ended))
+		return s.writeEvents(ctx, tx, events(ended, int(revoked)))
 	})
 	return ended, err
 }

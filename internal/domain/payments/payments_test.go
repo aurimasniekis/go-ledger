@@ -225,7 +225,7 @@ func TestEventsAreValidAudit(t *testing.T) {
 			t.Errorf("%s: target %s/%s", e.Action, e.TargetType, e.TargetID)
 		}
 		for k, v := range e.Details {
-			if strings.Contains(v, "12.5") {
+			if strings.Contains(v, "12.5") && e.Action != audit.ManualPaymentDeleted { // a delete records its amount (D26-3a)
 				t.Errorf("%s: detail %s carries the amount", e.Action, k)
 			}
 		}

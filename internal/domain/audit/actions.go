@@ -12,7 +12,7 @@ const (
 	// Sessions and credentials (A2, ADR-0026). The target of a session event
 	// is the session; of a password or re-authentication event, the user.
 	SessionEnded           Action = "auth.session_ended"           // Details: reason (signed_out, terminated)
-	PasswordChanged        Action = "auth.password_changed"        // Details: by (self, administrator, host), sessions_ended
+	PasswordChanged        Action = "auth.password_changed"        // Details: by (self, administrator, host), sessions_ended, device_cookies_revoked
 	Reauthenticated        Action = "auth.reauthenticated"         // Details: method
 	ReauthenticationFailed Action = "auth.reauthentication_failed" // Details: method, reason, device (known)
 	// A one-time recovery sign-in issued from the host (break-glass, A6,
@@ -101,7 +101,7 @@ var Definitions = map[Action][]Field{
 	SignInFailed:    {f("method", signInMethods...), f("reason", signInReasons...), f("device", "known")},
 
 	SessionEnded:           {f("reason", sessionEndReasons...)},
-	PasswordChanged:        {f("by", passwordChangedBy...), f("sessions_ended")},
+	PasswordChanged:        {f("by", passwordChangedBy...), f("sessions_ended"), f("device_cookies_revoked")},
 	Reauthenticated:        {f("method", signInMethods...)},
 	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...), f("device", "known")},
 	RecoverySignInIssued:   {f("by", "host"), f("expires_at")},
@@ -133,12 +133,12 @@ var Definitions = map[Action][]Field{
 
 	CommitmentCreated: {f("kind"), f("currency")},
 	CommitmentUpdated: {f("fields")},
-	CommitmentDeleted: {f("kind"), f("unpaid_occurrences_removed")},
+	CommitmentDeleted: {f("kind"), f("unpaid_occurrences_removed"), f("cancelled_referenced"), f("archived")},
 
-	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history"), f("removed_out_of_range"), f("kept_override")},
+	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history"), f("removed_out_of_range"), f("kept_override"), f("cancelled_referenced")},
 
 	ManualPaymentRecorded:          {f("payment_id"), f("currency")},
-	ManualPaymentDeleted:           {f("payment_id"), f("currency")},
+	ManualPaymentDeleted:           {f("payment_id"), f("amount"), f("currency")},
 	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
 	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
 

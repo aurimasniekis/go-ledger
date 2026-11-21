@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
@@ -29,12 +30,20 @@ type occurrenceJSON struct {
 	Version      int64              `json:"version"`
 	CreatedAt    time.Time          `json:"created_at"`
 	UpdatedAt    time.Time          `json:"updated_at"`
-	Payment      paymentStateJSON   `json:"payment"`
+	// CancelledAt and CancelledReason are null unless the occurrence was
+	// cancelled (D31).
+	CancelledAt     *time.Time       `json:"cancelled_at"`
+	CancelledReason *string          `json:"cancelled_reason"`
+	Payment         paymentStateJSON `json:"payment"`
 }
 
 func toOccurrenceJSON(o occurrences.Occurrence, st payments.State) occurrenceJSON {
-	return occurrenceJSON{ID: o.ID, CommitmentID: o.CommitmentID, Month: o.Month, DueDate: o.DueDate, Amount: o.Amount,
-		Version: o.Version, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt, Payment: toPaymentStateJSON(st)}
+	out := occurrenceJSON{ID: o.ID, CommitmentID: o.CommitmentID, Month: o.Month, DueDate: o.DueDate, Amount: o.Amount,
+		Version: o.Version, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt, CancelledAt: o.CancelledAt, Payment: toPaymentStateJSON(st)}
+	if o.CancelledAt != nil {
+		out.CancelledReason = &o.CancelledReason
+	}
+	return out
 }
 
 var occurrencesListSpec = ListSpec{Filters: map[string]FilterSpec{
@@ -47,6 +56,12 @@ var occurrencesListSpec = ListSpec{Filters: map[string]FilterSpec{
 	"commitment_id": {Ops: []FilterOp{OpEq}, Check: func(v string) error {
 		if !resource.ValidID(v) {
 			return errors.New("commitment_id must be a commitment identifier")
+		}
+		return nil
+	}},
+	"include_cancelled": {Ops: []FilterOp{OpEq}, Check: func(v string) error {
+		if v != "true" && v != "false" {
+			return errors.New("include_cancelled must be true or false")
 		}
 		return nil
 	}},
@@ -144,7 +159,8 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 			WriteError(w, r, Validation("month", fmt.Sprintf("month must be within %d months after the current month", occurrences.MaxMonthsAhead)))
 			return
 		}
-		items, err := st.List(r.Context(), occurrences.ListFilter{Month: month, CommitmentIDs: q.Filter("commitment_id", OpEq), After: q.After, Limit: q.Limit})
+		items, err := st.List(r.Context(), occurrences.ListFilter{Month: month, CommitmentIDs: q.Filter("commitment_id", OpEq), After: q.After, Limit: q.Limit,
+			IncludeCancelled: slices.Contains(q.Filter("include_cancelled", OpEq), "true")})
 		if err != nil {
 			if errors.Is(err, occurrences.ErrCursorGone) {
 				err = Validation("cursor", "cursor is not valid; start again from the first page")

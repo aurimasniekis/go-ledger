@@ -6,7 +6,7 @@ export function payment(over: Partial<PaymentState> = {}): PaymentState {
   return {
     status: 'upcoming', derived_status: 'upcoming', timing: 'upcoming',
     paid_amount: eur('0.00'), outstanding_amount: eur('10.00'), overpaid_amount: eur('0.00'),
-    unconverted_currencies: [], evidence_count: 0, grace_until: null, within_grace: false, override: null,
+    unconverted_currencies: [], evidence_count: 0, manual_evidence_count: 0, bank_evidence_count: 0, grace_until: null, within_grace: false, override: null,
     ...over,
   }
 }

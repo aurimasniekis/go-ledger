@@ -25,6 +25,7 @@ describe('my API tokens', () => {
     expect(within(table).getAllByText('ldgr_AbCd…wXyZ')).toHaveLength(2)
     expect(within(table).getAllByText('commitments:read').length).toBeGreaterThan(0)
     expect(within(table).getByText('Revoked')).toBeInTheDocument()
+    expect(table.innerHTML).not.toContain('status-overdue')
     // Only an active token can be revoked.
     expect(within(table).getAllByRole('button', { name: /^Revoke/ })).toHaveLength(1)
   })

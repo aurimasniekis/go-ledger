@@ -106,7 +106,7 @@ func newSignInEnvWith(t *testing.T, mod func(*config.Auth), setup func(e *signIn
 	if mod != nil {
 		mod(&cfg)
 	}
-	e.parts, err = buildAPI(db, e.al, cfg, testKEK, e.hasher, e.clock.now)
+	e.parts, err = buildAPI(db, e.al, cfg, testKEK, e.hasher, e.clock.now, log)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -58,7 +58,7 @@ describe('MonthBoard states', () => {
   it('failed refresh keeps the last data, marks it stale and says it may be out of date', () => {
     board({ status: 'error', data: summary([item('a')]), error: new ApiError(503, { message: 'unavailable' }) })
     expect(screen.getByText('Refresh failed')).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent(/last data received, from 2026-11-21 12:00 UTC; it may be out of date/)
+    expect(screen.getByRole('alert')).toHaveTextContent(/last data received, fetched just now; it may be out of date/)
     expect(screen.getByText('Rent a')).toBeInTheDocument()
   })
 
@@ -70,7 +70,73 @@ describe('MonthBoard states', () => {
 
   it('says bank data age is not available instead of implying it is fresh', () => {
     board({ data: summary([item('a')]) })
-    expect(screen.getByText(/Bank data age: not shown/)).toBeInTheDocument()
+    expect(screen.getByText(/Bank data age: not available, so none is shown/)).toBeInTheDocument()
+    expect(screen.queryByText(/endpoint/)).toBeNull()
+  })
+})
+
+describe('MonthBoard design follow-ups', () => {
+  const rows = () => [
+    item('a', { payment: payment({ status: 'overdue', timing: 'overdue' }) }),
+    item('b', { payment: payment({ status: 'overdue', timing: 'overdue' }) }),
+    item('c', { payment: payment({ status: 'due', timing: 'due' }) }),
+    item('d'),
+    item('e', { payment: payment({ status: 'paid', evidence_count: 1, manual_evidence_count: 1 }) }),
+    item('g', { payment: payment({ status: 'paid', evidence_count: 1, bank_evidence_count: 1 }) }),
+    item('h', { payment: payment({ status: 'paid', evidence_count: 2, bank_evidence_count: 1, manual_evidence_count: 1 }) }),
+    item('f', { payment: payment({ status: 'paid', evidence_count: 0, override: { status: 'paid', reason: 'cash', set_at: '2026-11-02T00:00:00Z', applied: true } }) }),
+  ]
+
+  it('summarises the rows by status so the list scans by status first', () => {
+    board({ data: summary(rows()) })
+    expect(screen.getByTestId('status-summary')).toHaveTextContent('2 overdue · 1 due today · 1 upcoming · 4 paid')
+  })
+
+  it('counts a partly paid row with an overdue remainder the way the server counts overdue occurrences', () => {
+    const late = item('a', { payment: payment({ status: 'partially_paid', timing: 'overdue' }) })
+    board({ data: summary([late, item('b', { payment: payment({ status: 'partially_paid', timing: 'upcoming' }) })]) })
+    expect(screen.getByTestId('status-summary')).toHaveTextContent('2 partly paid (1 with an overdue remainder)')
+  })
+
+  it('marks where a settled row came from: manual payment or hand-set status (an override replaces the payment marker); no marker on an unpaid row without a hand-set status', () => {
+    board({ data: summary(rows()) })
+    const row = (name: string) => screen.getByText(name).closest('li')!
+    expect(within(row('Rent e')).getByText('Manual payment')).toBeInTheDocument()
+    expect(within(row('Rent g')).getByText('Bank match')).toBeInTheDocument()
+    expect(within(row('Rent g')).queryByText('Manual payment')).toBeNull()
+    expect(within(row('Rent h')).getByText('Bank match and manual payment')).toBeInTheDocument()
+    expect(within(row('Rent f')).getByText('Set by hand')).toBeInTheDocument()
+    expect(within(row('Rent f')).getAllByText(/Set by hand/)).toHaveLength(1)
+    expect(within(row('Rent f')).queryByText('Manual payment')).toBeNull()
+    expect(within(row('Rent d')).queryByText(/Manual payment|Set by hand|Bank match/)).toBeNull()
+  })
+
+  it('makes the row action quieter than the status badge', () => {
+    board({ data: summary([item('a')]) })
+    const btn = screen.getByRole('button', { name: /^Record payment for Rent a/ })
+    expect(btn.className).not.toContain('border-border-control') // not the outline variant
+    expect(btn.className).toContain('hover:bg-muted') // ghost
+    expect(screen.getByText('Upcoming').closest('[data-status]')).toHaveAttribute('data-tier', 'default')
+  })
+
+  it('labels the overdue count in words and emphasises a non-zero overdue amount', () => {
+    board({ data: summary([item('a'), item('b')]) })
+    expect(screen.getByText('1 overdue occurrence')).toBeInTheDocument()
+    expect(screen.queryByText('(1)')).toBeNull()
+    const amount = screen.getByText('10.00', { selector: 'dd' })
+    expect(amount.className).toContain('font-semibold')
+    expect(screen.getByText('Overdue (past original due date)').className).toContain('font-semibold')
+  })
+
+  it('shows the form in place under the row that opened it', () => {
+    board({ data: summary([item('a'), item('b')]), formFor: 'b', form: <form aria-label="Record a payment" /> })
+    const form = screen.getByRole('form', { name: 'Record a payment' })
+    expect(form.closest('li')).toBe(screen.getByText('Rent b').closest('li'))
+  })
+
+  it('keeps the month heading a fixed width so the month buttons do not shift', () => {
+    board({ month: '2025-06' })
+    expect(screen.getByRole('heading', { level: 2, name: 'June 2025' }).className).toContain('w-48')
   })
 })
 

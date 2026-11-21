@@ -587,12 +587,17 @@ paths:
         the rule above. Occurrences with
         payment evidence (a payment or a confirmed match) or a status override
         of any state are never removed; the audit counts the latter as
-        kept_override. Without
+        kept_override. An occurrence that is only referenced by deleted
+        manual payments cannot be deleted, so any removal (the D23 one or the
+        plan's) cancels it instead (decision D31): it leaves the totals, the
+        monthly view and the outlook, stays readable, and is audited as
+        cancelled_referenced (never also as removed). A later edit that
+        schedules its month again revives it. Without
         effective_from the change applies from today in the reporting time
         zone, so overdue unpaid occurrences keep their terms. Audited as
         occurrences.regenerated with the effective date and the counts
-        created, updated, removed, kept_paid, kept_history, kept_override and
-        removed_out_of_range (the D23 removals).
+        created, updated, removed, kept_paid, kept_history, kept_override,
+        removed_out_of_range (the D23 removals) and cancelled_referenced.
 
         An effective_from after today is allowed and recorded as pending.
         Until that date passes, a later change to these terms whose effective
@@ -675,10 +680,18 @@ paths:
       summary: Delete a commitment definition
       description: |
         Deletes the definition and its unpaid occurrences (derived data).
+        An occurrence that only deleted manual payments still refer to cannot
+        be deleted; it is cancelled instead (decision D31, ADR-0027) and keeps
+        its history, and the commitment row is then kept (archived): it no
+        longer appears in any commitment read, list, edit or delete (404) and
+        gets no new occurrences. The cancelled occurrences are still readable
+        by id and with include_cancelled on the occurrence list.
         Requires If-Match; a stale version is a 409 version_conflict.
-        Audited (commitment.deleted). A commitment with an occurrence that
-        has payment evidence (a manual payment, ADR-0031) cannot be deleted
-        (409 conflict); set end_date to stop it instead.
+        Audited (commitment.deleted, with unpaid_occurrences_removed,
+        cancelled_referenced and archived). A commitment with an occurrence
+        that has live payment evidence (a manual payment or a confirmed match,
+        ADR-0031) cannot be deleted (409 conflict); set end_date to stop it
+        instead.
       tags: [commitments]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
@@ -1471,6 +1484,14 @@ paths:
           description: Only occurrences of these commitments (repeat for any of several).
           schema:
             $ref: "#/components/schemas/ID"
+        - name: include_cancelled
+          in: query
+          description: |
+            When true, also returns cancelled occurrences (decision D31),
+            which are left out by default. They carry cancelled_at and
+            cancelled_reason and are never part of the monthly totals.
+          schema:
+            type: boolean
       responses:
         "200":
           description: One page of occurrences ordered by due date, then ID.
@@ -1839,11 +1860,12 @@ paths:
       x-ledger-access: commitments:write
       summary: Delete a manual payment
       description: |
-        Removes the payment record; the occurrence's status is derived
+        Soft-deletes the payment record (the row is kept, marked deleted, and
+        no longer counts or lists); the occurrence's status is derived
         again from the evidence that remains and its version increases. A
         "paid" override stays recorded but has no effect without evidence
         (override.applied is false). Requires the payment's version in
-        If-Match. Audited as manual_payment.deleted.
+        If-Match. Audited as manual_payment.deleted, with its amount.
       tags: [occurrences]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
@@ -2569,6 +2591,20 @@ components:
         updated_at:
           type: string
           format: date-time
+        cancelled_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            Set when the occurrence was cancelled instead of removed because
+            deleted payments still refer to it (decision D31). A cancelled
+            occurrence is not counted in the monthly totals, the overdue
+            counts or the outlook; its payment state shows its history and is
+            not an obligation. It takes no new payment, match or override
+            (409 occurrence_cancelled).
+        cancelled_reason:
+          type: [string, "null"]
+          enum: [out_of_range, terms_change, commitment_deleted, null]
+          description: Why it was cancelled; null unless cancelled_at is set.
         payment:
           $ref: "#/components/schemas/PaymentState"
     MonthSummary:
@@ -2667,7 +2703,7 @@ components:
         override (ADR-0031). Only evidence in the occurrence's currency is
         counted; other currencies are listed in unconverted_currencies and
         never converted or summed.
-      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, unconverted_currencies, evidence_count, grace_until, within_grace, override]
+      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, unconverted_currencies, evidence_count, manual_evidence_count, bank_evidence_count, grace_until, within_grace, override]
       properties:
         status:
           $ref: "#/components/schemas/PaymentStatus"
@@ -2698,6 +2734,14 @@ components:
             type: string
             pattern: "^[A-Z]{3}$"
         evidence_count:
+          type: integer
+          minimum: 0
+        manual_evidence_count:
+          description: Pieces of evidence that are manual payment records; with bank_evidence_count it adds up to evidence_count.
+          type: integer
+          minimum: 0
+        bank_evidence_count:
+          description: Pieces of evidence that are confirmed matches of bank transactions.
           type: integer
           minimum: 0
         grace_until:
@@ -3445,6 +3489,7 @@ components:
             - two_factor_enrollment_required
             - invalid_second_factor
             - payment_evidence_required
+            - occurrence_cancelled
             - transaction_not_countable
             - transaction_not_debit
             - transaction_over_allocated

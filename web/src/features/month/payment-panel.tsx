@@ -12,6 +12,10 @@ export interface PaymentPanelProps {
   /** Occurrences that can take a payment (not paid). */
   items: MonthItem[]
   initialId: string
+  /** The occurrence as it was when the form opened, for when a refetch drops it from items. */
+  initialItem: MonthItem
+  /** Show the occurrence select (the header entry point); a form opened from a row stays on that row. */
+  chooser: boolean
   onClose: () => void
   onSaved: (p: ManualPayment, item: MonthItem) => void
 }
@@ -29,7 +33,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
   // Remember the occurrence the form started on: if a refetch drops it (it was
   // paid elsewhere) the form says so and refuses to save, instead of silently
   // switching to another commitment.
-  const [known, setKnown] = useState(current ?? p.items.find((i) => i.id === p.initialId))
+  const [known, setKnown] = useState(current ?? p.items.find((i) => i.id === p.initialId) ?? p.initialItem)
   if (current && current !== known) setKnown(current)
   const item = (current ?? known)!
   const gone = !current
@@ -65,8 +69,15 @@ export function PaymentPanel(p: PaymentPanelProps) {
       <p className="text-sm text-muted-foreground">
         This records a payment you made. It is saved only when the server confirms it, and you can undo it afterwards.
       </p>
+      <p data-testid="panel-occurrence" className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium break-words">{item.commitment_name || item.commitment_id}</span>
+        <span>
+          due <time dateTime={item.due_date}>{item.due_date}</time>, {item.amount.amount} {item.amount.currency}
+        </span>
+        <StatusBadge status={item.payment.status} />
+      </p>
       <div className="grid gap-3 sm:grid-cols-3">
-        <label className="grid gap-1 text-sm sm:col-span-3">
+        {p.chooser && <label className="grid gap-1 text-sm sm:col-span-3">
           Occurrence
           <select
             className="h-9 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -89,7 +100,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
               </option>
             ))}
           </select>
-        </label>
+        </label>}
         <label className="grid gap-1 text-sm">
           Amount paid ({item.amount.currency})
           <input
@@ -136,7 +147,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
           <StatusBadge status="error" label="Occurrence changed" />
           <p>
             {item.commitment_name || item.commitment_id}, due {item.due_date}, is no longer unpaid (it may have been paid elsewhere), so
-            nothing can be saved for it. Pick another occurrence or cancel.
+            nothing can be saved for it. {p.chooser ? 'Pick another occurrence or cancel.' : 'Cancel, then record the payment from another row.'}
           </p>
         </div>
       )}

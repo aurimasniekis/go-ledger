@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -201,11 +203,24 @@ func TestDeviceCookieGivesNoExemptionWhenInvalid(t *testing.T) {
 	try("valid cookie", valid.device, 200)
 
 	// Setting the password revokes every device cookie of the user.
+	cookiesBefore := e.countDeviceCookies(e.ids["alice"])
 	if _, err := e.parts.auth.SetPassword(ctx, authz.Principal{}, true, e.ids["alice"], testPassword, auth.ByHost); err != nil {
 		t.Fatal(err)
 	}
 	if n := e.countDeviceCookies(e.ids["alice"]); n != 0 {
 		t.Errorf("%d device cookies after the password change", n)
+	}
+	if cookiesBefore != 2 {
+		t.Fatalf("%d device cookies before the password change, want 2", cookiesBefore)
+	}
+	matching := 0
+	for _, r := range e.auditActions(audit.PasswordChanged) {
+		if r.Details["device_cookies_revoked"] == strconv.Itoa(cookiesBefore) {
+			matching++
+		}
+	}
+	if matching != 1 {
+		t.Errorf("auth.password_changed records with device_cookies_revoked=%d: %d, want 1", cookiesBefore, matching)
 	}
 	try("cookie from before the password change", revoked.device, 429)
 	if n := e.countDeviceCookies(e.ids["bob"]); n != 1 {
@@ -269,6 +284,13 @@ func TestDeviceCookieNeverSkipsTheSecondFactor(t *testing.T) {
 	if d := cookieValue(w, httpapi.DeviceCookie); d == "" || d == known.device {
 		t.Errorf("complete two-step sign-in did not rotate the device cookie: %q", d)
 	}
+	if n := e.countDeviceCookies(e.ids["alice"]); n != 1 {
+		t.Errorf("%d device cookies after the two-step sign-in, want 1 (the presented one replaced)", n)
+	}
+	// The cookie presented at the password step is gone, so it no longer exempts.
+	if w := e.req("POST", "/api/v1/auth/sign-in", signInBody("alice", testPassword), &browser{addr: "203.0.113.31:1", device: known.device}, nil); w.Code != 429 {
+		t.Errorf("cookie replaced by a two-step sign-in: %d %s, want 429", w.Code, w.Body.String())
+	}
 	// The unknown browser is still locked out.
 	if w := e.req("POST", "/api/v1/auth/sign-in", signInBody("alice", testPassword), &browser{addr: "203.0.113.30:1"}, nil); w.Code != 429 {
 		t.Errorf("unknown browser: %d", w.Code)
@@ -308,5 +330,83 @@ func TestOwnPasswordChangeClearsTheDeviceCookie(t *testing.T) {
 	}
 	if n := e.countDeviceCookies(e.ids["alice"]); n != 0 {
 		t.Errorf("%d device cookies left", n)
+	}
+}
+
+// An OIDC sign-in that completes a second factor issues no device cookie:
+// only a password sign-in makes a browser known (decision D23-1b).
+func TestOIDCSecondFactorIssuesNoDeviceCookie(t *testing.T) {
+	e := newOIDCEnv(t, func(c *config.Auth) { c.OIDC.Require2FA = true })
+	known := e.knownBrowser("alice", "203.0.113.5:1")
+	en := e.enrol(known)
+	if w := e.link(known); w.Code != 303 {
+		t.Fatalf("link: %d %s", w.Code, w.Body.String())
+	}
+	before := e.countDeviceCookies(e.ids["alice"])
+
+	e.clock.advance(time.Minute)
+	w, _ := e.callback(e.authorize(""))
+	prefix := secondFactorPrefix
+	if w.Code != 303 || !strings.HasPrefix(location(w), prefix) {
+		t.Fatalf("OIDC sign-in with TOTP: %d %q, want a second-factor challenge", w.Code, location(w))
+	}
+	challenge, err := url.QueryUnescape(strings.TrimPrefix(location(w), prefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"challenge": challenge, "code": auth.TOTPCode(en.secret, e.clock.now())})
+	w = e.req("POST", "/api/v1/auth/sign-in/second-factor", string(body), &browser{addr: "203.0.113.5:1"}, nil)
+	if w.Code != 200 || cookieValue(w, httpapi.SessionCookie) == "" {
+		t.Fatalf("second factor: %d %s", w.Code, w.Body.String())
+	}
+	for _, v := range w.Header().Values("Set-Cookie") {
+		if strings.HasPrefix(v, httpapi.DeviceCookie+"=") {
+			t.Errorf("OIDC sign-in with TOTP set a device cookie: %s", v)
+		}
+	}
+	if n := e.countDeviceCookies(e.ids["alice"]); n != before {
+		t.Errorf("%d device cookies after the OIDC sign-in, want %d", n, before)
+	}
+}
+
+// A device cookie that cannot be stored does not fail the sign-in, but leaves
+// a warning for the operator. The warning never carries the token.
+func TestFailedDeviceCookieIssueIsLoggedWithoutTheToken(t *testing.T) {
+	e := newSignInEnv(t, nil)
+	logs := e.log // the logger newSignInEnv passes into buildAPI, as ledger serve does
+	if err := e.db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "CREATE TRIGGER refuse_device_cookies BEFORE INSERT ON device_cookies BEGIN SELECT RAISE(ABORT, 'device cookies refused for this test'); END")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := e.req("POST", "/api/v1/auth/sign-in", signInBody("alice", testPassword), &browser{addr: "203.0.113.5:1"}, nil)
+	session := cookieValue(w, httpapi.SessionCookie)
+	if w.Code != 200 || session == "" {
+		t.Fatalf("sign-in must still succeed: %d %s", w.Code, w.Body.String())
+	}
+	if cookieValue(w, httpapi.DeviceCookie) != "" {
+		t.Error("a device cookie was sent although none was stored")
+	}
+	var warning map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var rec map[string]any
+		if json.Unmarshal([]byte(line), &rec) == nil && strings.Contains(fmt.Sprint(rec["msg"]), "device cookie") {
+			warning = rec
+		}
+	}
+	if warning == nil {
+		t.Fatalf("no warning for the failed device cookie issue in %q", logs.String())
+	}
+	if warning["level"] != "WARN" || !strings.Contains(fmt.Sprint(warning["error"]), "refused") {
+		t.Errorf("warning %v, want level WARN with the store error", warning)
+	}
+	for k := range warning {
+		if strings.Contains(strings.ToLower(k), "token") {
+			t.Errorf("warning has a %q field", k)
+		}
+	}
+	if strings.Contains(logs.String(), session) {
+		t.Error("the session token is in the log")
 	}
 }

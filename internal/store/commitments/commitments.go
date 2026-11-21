@@ -108,7 +108,7 @@ func scan(row interface{ Scan(...any) error }) (commitments.Commitment, error) {
 }
 
 func get(ctx context.Context, q querier, id string) (commitments.Commitment, error) {
-	c, err := scan(q.QueryRowContext(ctx, "SELECT "+columns+" FROM "+table+" WHERE id = ?", id))
+	c, err := scan(q.QueryRowContext(ctx, "SELECT "+columns+" FROM "+table+" WHERE id = ? AND deleted_at IS NULL", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return commitments.Commitment{}, resource.ErrNotFound
 	}
@@ -176,7 +176,7 @@ func in(column string, n int) string {
 
 // List returns up to f.Limit+1 commitments after f.After in ID order.
 func (s *Store) List(ctx context.Context, f commitments.ListFilter) ([]commitments.Commitment, error) {
-	where := []string{"id > ?"}
+	where := []string{"id > ?", "deleted_at IS NULL"}
 	vals := []any{f.After}
 	if len(f.Kinds) > 0 {
 		where = append(where, in("kind", len(f.Kinds)))
@@ -271,8 +271,10 @@ func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expect
 
 // Delete removes the commitment when it still has version expected and
 // records commitment.deleted. Its unpaid occurrences are derived data and go
-// with it; paid occurrences (payment history) block the delete through their
-// foreign keys: that is ErrInUse.
+// with it; one that only deleted payments refer to is cancelled instead (D31)
+// and the commitment row is then kept, marked deleted_at (archived), because
+// that history refers to it. An occurrence with live payment evidence blocks
+// the delete: that is ErrInUse.
 func (s *Store) Delete(ctx context.Context, actor audit.Actor, id string, expected int64) error {
 	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		before, err := get(ctx, tx, id)
@@ -282,17 +284,27 @@ func (s *Store) Delete(ctx context.Context, actor audit.Actor, id string, expect
 		if before.Version != expected {
 			return &resource.VersionConflictError{Expected: expected, Current: before.Version}
 		}
-		removed, err := s.occ.RemoveUnpaidTx(ctx, tx, id)
+		if paid, err := s.occ.PaidTx(ctx, tx, id); err != nil {
+			return err
+		} else if paid {
+			return commitments.ErrInUse
+		}
+		removed, cancelled, kept, err := s.occ.RemoveUnpaidTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		if err := store.DeleteVersioned(ctx, tx, table, id, expected); err != nil {
+		now := s.now().UTC()
+		if kept {
+			if _, err := store.UpdateVersioned(ctx, tx, table, "deleted_at = ?, updated_at = ?", id, expected, store.Timestamp{Time: now}, store.Timestamp{Time: now}); err != nil {
+				return err
+			}
+		} else if err := store.DeleteVersioned(ctx, tx, table, id, expected); err != nil {
 			if isForeignKey(err) {
 				return commitments.ErrInUse
 			}
 			return err
 		}
-		return s.audit.WriteAudit(ctx, tx, commitments.DeletedEvent(actor, before, removed, s.now().UTC()))
+		return s.audit.WriteAudit(ctx, tx, commitments.DeletedEvent(actor, before, removed, cancelled, kept, now))
 	})
 }
 

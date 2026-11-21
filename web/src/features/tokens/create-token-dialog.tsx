@@ -1,6 +1,5 @@
 import { useId, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { TriangleAlert } from 'lucide-react'
 import { apiFetch, splitErrors } from '@/lib/api'
 import { api, holds, useMe } from '@/lib/auth'
 import type { CreatedApiToken, GrantVocabulary } from '@/lib/types'
@@ -10,6 +9,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Field } from '@/components/field'
 import { FormError } from '@/components/form-error'
 import { Mono } from '@/components/mono'
+import { Notice } from '@/components/notice'
 
 export const ROOT_WARNING =
   'A root token holds every grant your role holds, now and in later versions of Ledger, and never expires unless you set an expiry. Anyone with it can act as you through the API. Store it like a password.'
@@ -184,14 +184,9 @@ function Inner({
             />
             Root token
           </label>
-          <p
-            id={`${uid}-root`}
-            role={root ? 'alert' : undefined}
-            className="flex items-start gap-2 rounded-md border border-status-overdue bg-status-overdue-bg p-3 text-xs text-status-overdue"
-          >
-            <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-            <span>{ROOT_WARNING}</span>
-          </p>
+          <Notice id={`${uid}-root`} role={root ? 'alert' : 'note'} className="text-xs">
+            {ROOT_WARNING}
+          </Notice>
           {err.root && <p id={`${uid}-root-error`} className="text-xs font-medium text-status-error">{err.root}</p>}
         </div>
       )}

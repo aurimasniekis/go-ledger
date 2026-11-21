@@ -74,12 +74,23 @@ func TestCredentialsAndPasswords(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	n, err := s.SetPassword(ctx, alice, hash1, "01JD3Y4C8V9M2Q7W5R6T0XZBN2", now, func(ended int) []audit.Event {
+	for i, id := range []string{"01JD3Y4C8V9M2Q7W5R6T0XZBP1", "01JD3Y4C8V9M2Q7W5R6T0XZBP2"} {
+		d := auth.DeviceCookie{ID: id, UserID: alice, TokenHash: hexOf("de"[i]), CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		if err := s.IssueDeviceCookie(ctx, d, "", 20); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var gotRevoked int
+	n, err := s.SetPassword(ctx, alice, hash1, "01JD3Y4C8V9M2Q7W5R6T0XZBN2", now, func(ended, revoked int) []audit.Event {
+		gotRevoked = revoked
 		return []audit.Event{{Action: audit.PasswordChanged, Actor: audit.System, TargetType: "user", TargetID: alice, At: now,
 			Details: map[string]string{"by": "host", "sessions_ended": "2"}}}
 	})
 	if err != nil || n != 2 {
 		t.Fatalf("ended %d: %v", n, err)
+	}
+	if gotRevoked != 2 {
+		t.Fatalf("revoked %d device cookies, want 2", gotRevoked)
 	}
 	list, _ := s.ListSessions(ctx, alice)
 	if len(list) != 1 || list[0].ID != "01JD3Y4C8V9M2Q7W5R6T0XZBN2" {
@@ -93,7 +104,7 @@ func TestCredentialsAndPasswords(t *testing.T) {
 		t.Fatalf("audit %+v", got)
 	}
 	// An event the audit log refuses rolls the password change back.
-	_, err = s.SetPassword(ctx, alice, hash1+"x", "", now, func(int) []audit.Event {
+	_, err = s.SetPassword(ctx, alice, hash1+"x", "", now, func(int, int) []audit.Event {
 		return []audit.Event{{Action: "nope.unknown", Actor: audit.System, At: now}}
 	})
 	if err == nil {

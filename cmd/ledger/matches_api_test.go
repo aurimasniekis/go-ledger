@@ -221,7 +221,7 @@ func TestPaymentMatchAPI(t *testing.T) {
 	if m = decodeMatch(t, rec.Body.Bytes()); len(m.History) != 2 || m.History[0].Amount.Amount != "500.00" || m.History[1].Action != "corrected" {
 		t.Fatalf("history: %+v", m.History)
 	}
-	if o := f.getOccurrence(t, oct); o.Payment.Status != "paid" || o.Payment.EvidenceCount != 1 {
+	if o := f.getOccurrence(t, oct); o.Payment.Status != "paid" || o.Payment.EvidenceCount != 1 || o.Payment.BankEvidenceCount != 1 || o.Payment.ManualEvidenceCount != 0 {
 		t.Fatalf("after correction: %+v", o.Payment)
 	}
 

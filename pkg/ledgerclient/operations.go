@@ -28,7 +28,7 @@ var (
 	opGetCommit    = operation{ID: "getCommitment", Method: http.MethodGet, Path: "/commitments/{id}"}
 	opUpdateCommit = operation{ID: "updateCommitment", Method: http.MethodPatch, Path: "/commitments/{id}"}
 	opDeleteCommit = operation{ID: "deleteCommitment", Method: http.MethodDelete, Path: "/commitments/{id}"}
-	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "month", "commitment_id"}}
+	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "month", "commitment_id", "include_cancelled"}}
 	opGetOccur     = operation{ID: "getOccurrence", Method: http.MethodGet, Path: "/occurrences/{id}"}
 
 	opListManualPayments  = operation{ID: "listManualPayments", Method: http.MethodGet, Path: "/occurrences/{id}/manual-payments", Query: []string{"limit", "cursor"}}

@@ -150,6 +150,12 @@ type Occurrence struct {
 	Version      int64  `json:"version"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+	// CancelledAt and CancelledReason are set when the occurrence was cancelled
+	// instead of removed because deleted payments still refer to it. A
+	// cancelled occurrence is not part of totals, overdue counts or the
+	// outlook.
+	CancelledAt     *string `json:"cancelled_at"`
+	CancelledReason *string `json:"cancelled_reason"`
 	// Payment is derived when read from payment evidence, dates and the
 	// manual override. Only evidence in the occurrence's currency is counted.
 	Payment PaymentState `json:"payment"`
@@ -167,6 +173,8 @@ type PaymentState struct {
 	OverpaidAmount        Money            `json:"overpaid_amount"`
 	UnconvertedCurrencies []string         `json:"unconverted_currencies"`
 	EvidenceCount         int              `json:"evidence_count"`
+	ManualEvidenceCount   int              `json:"manual_evidence_count"`
+	BankEvidenceCount     int              `json:"bank_evidence_count"`
 	GraceUntil            *string          `json:"grace_until"`
 	WithinGrace           bool             `json:"within_grace"`
 	Override              *PaymentOverride `json:"override"`

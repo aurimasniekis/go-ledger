@@ -864,7 +864,7 @@ func TestRecoverySignInAndUnlinkCommands(t *testing.T) {
 	}
 	al := store.NewAuditLog(db)
 	cfg := testAuthConfig()
-	parts, err := buildAPI(db, al, cfg, testKEK, auth.NewArgon2id(cheapParams, 4), clk.now)
+	parts, err := buildAPI(db, al, cfg, testKEK, auth.NewArgon2id(cheapParams, 4), clk.now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

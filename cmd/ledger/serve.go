@@ -185,7 +185,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// Per D17, readiness gates only on the database; optional integrations belong on a
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
-	parts, err := buildAPI(db, auditLog, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, hashConcurrency), nil)
+	parts, err := buildAPI(db, auditLog, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, hashConcurrency), nil, log)
 	if err == nil {
 		parts.oidc, err = oidcDeps(cfg.Auth.OIDC, nil)
 	}

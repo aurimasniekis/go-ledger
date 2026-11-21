@@ -163,6 +163,10 @@ type State struct {
 	// occurrence's currency: it is not counted and never converted.
 	Unconverted   []money.Currency
 	EvidenceCount int
+	// ManualEvidenceCount and BankEvidenceCount split EvidenceCount by kind:
+	// manual payment records and confirmed bank-transaction matches.
+	ManualEvidenceCount int
+	BankEvidenceCount   int
 	// GraceUntil is the end of a documented grace period of an overdue
 	// occurrence; WithinGrace is true while today is not after it. The
 	// occurrence is overdue either way.
@@ -193,6 +197,14 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 	timing := TimingOf(o.DueDate, today)
 	zero, _ := money.Zero(cur, o.Amount.Amount().Scale())
 	st := State{Paid: paid, Overpaid: zero, Unconverted: other, EvidenceCount: len(f.Evidence), Override: f.Override}
+	for _, e := range f.Evidence {
+		switch e.Kind {
+		case EvidenceManual:
+			st.ManualEvidenceCount++
+		case EvidenceBankTransaction:
+			st.BankEvidenceCount++
+		}
+	}
 	c, _ := paid.Cmp(o.Amount)
 	if c > 0 {
 		st.Overpaid, _ = paid.Sub(o.Amount)
@@ -335,10 +347,12 @@ func RecordedEvent(actor audit.Actor, p ManualPayment, at time.Time) audit.Event
 		Details: map[string]string{"payment_id": p.ID, "currency": p.Amount.Currency().Code()}}
 }
 
-// DeletedEvent is the audit event for deleting a manual payment.
+// DeletedEvent is the audit event for deleting a manual payment. Unlike the
+// recording it carries the amount (decision D26-3a), because the row is kept
+// but no longer listed.
 func DeletedEvent(actor audit.Actor, p ManualPayment, at time.Time) audit.Event {
 	return audit.Event{Action: audit.ManualPaymentDeleted, Actor: actor, TargetType: TargetType, TargetID: p.OccurrenceID, At: at,
-		Details: map[string]string{"payment_id": p.ID, "currency": p.Amount.Currency().Code()}}
+		Details: map[string]string{"payment_id": p.ID, "amount": p.Amount.Amount().String(), "currency": p.Amount.Currency().Code()}}
 }
 
 // OverriddenEvent is the audit event for setting a manual status override:

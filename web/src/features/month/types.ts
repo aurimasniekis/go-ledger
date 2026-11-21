@@ -18,6 +18,9 @@ export interface PaymentState {
   overpaid_amount: Money
   unconverted_currencies: string[]
   evidence_count: number
+  /** Manual payment records and confirmed bank matches; they add up to evidence_count. */
+  manual_evidence_count: number
+  bank_evidence_count: number
   grace_until: string | null
   within_grace: boolean
   override: {

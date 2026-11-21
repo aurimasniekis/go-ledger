@@ -22,11 +22,13 @@ type occurrenceWithPayment struct {
 		Outstanding struct {
 			Amount string `json:"amount"`
 		} `json:"outstanding_amount"`
-		Unconverted   []string `json:"unconverted_currencies"`
-		EvidenceCount int      `json:"evidence_count"`
-		GraceUntil    *string  `json:"grace_until"`
-		WithinGrace   bool     `json:"within_grace"`
-		Override      *struct {
+		Unconverted         []string `json:"unconverted_currencies"`
+		EvidenceCount       int      `json:"evidence_count"`
+		ManualEvidenceCount int      `json:"manual_evidence_count"`
+		BankEvidenceCount   int      `json:"bank_evidence_count"`
+		GraceUntil          *string  `json:"grace_until"`
+		WithinGrace         bool     `json:"within_grace"`
+		Override            *struct {
 			Status         string  `json:"status"`
 			Reason         string  `json:"reason"`
 			Applied        bool    `json:"applied"`
@@ -213,6 +215,13 @@ func TestPaymentStateAPI(t *testing.T) {
 	if o := f.getOccurrence(t, occID); o.Payment.Status != "partially_paid" || o.Payment.Paid.Amount != "6.00" || o.Version != 6 {
 		t.Fatalf("after delete: %+v", o)
 	}
+	// A deleted payment is gone for the API: neither read nor deleted again.
+	if rec := f.do("GET", base+"/manual-payments/"+pay.ID, "", admin); rec.Code != 404 {
+		t.Fatalf("get a deleted payment: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do("DELETE", base+"/manual-payments/"+pay.ID, "", with(admin, "If-Match", `"1"`)); rec.Code != 404 {
+		t.Fatalf("second delete: %d %s", rec.Code, rec.Body.String())
+	}
 
 	// The audit trail names the occurrence, never amounts, notes or reasons.
 	var got []string
@@ -243,10 +252,48 @@ func TestPaymentStateAPI(t *testing.T) {
 		}
 	}
 	for _, l := range auditLines(t, f.log.String()) {
+		if l["action"] == "manual_payment.deleted" {
+			// A delete records the deleted payment's amount (D26-3a).
+			if l["detail_amount"] != "4.00" {
+				t.Errorf("delete audit line amount = %v: %v", l["detail_amount"], l)
+			}
+			continue
+		}
 		for k, v := range l {
 			if s := fmt.Sprint(v); strings.Contains(s, "4.00") || strings.Contains(s, "6.00") {
 				t.Errorf("audit line carries an amount in %s: %v", k, l)
 			}
 		}
+	}
+}
+
+// TestDeletedPaymentDoesNotFreezeOccurrence: an occurrence whose only payment
+// was deleted is unpaid again, so a later terms edit still rewrites it.
+func TestDeletedPaymentDoesNotFreezeOccurrence(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	admin := map[string]string{"X-Test-User": f.ids["alice"]}
+	id := f.createCommitment(t, monthEndBody) // 10.00 EUR on month ends
+	occID := f.occurrences(t, "month=2026-12&commitment_id="+id, "alice").Items[0].ID
+	base := "/api/v1/occurrences/" + occID
+
+	rec := f.do("POST", base+"/manual-payments", `{"amount":{"amount":"4.00","currency":"EUR"},"paid_on":"2026-11-01"}`, admin)
+	if rec.Code != 201 {
+		t.Fatalf("record: %d %s", rec.Code, rec.Body.String())
+	}
+	var pay struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &pay)
+	if rec := f.do("DELETE", base+"/manual-payments/"+pay.ID, "", map[string]string{"X-Test-User": f.ids["alice"], "If-Match": `"1"`}); rec.Code != 204 {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.do("PATCH", "/api/v1/commitments/"+id, `{"amount":{"amount":"20.00"},"schedule":{"day":15},"effective_from":"2026-11-22","version":1}`, admin)
+	if rec.Code != 200 {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.do("GET", base, "", admin)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"due_date":"2026-12-15"`) || !strings.Contains(rec.Body.String(), `"amount":"20.00"`) {
+		t.Fatalf("the edit did not apply to the unpaid occurrence: %d %s", rec.Code, rec.Body.String())
 	}
 }
