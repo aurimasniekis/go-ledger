@@ -152,7 +152,7 @@ func registerUsers(s *Server, st users.Store) {
 		}
 		WriteJSON(w, http.StatusOK, NewPage(out, q, func(u userJSON) string { return u.ID }))
 	}))
-	s.HandleAPI("POST "+UsersPath, Requires(grantUsersWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.HandleAPI("POST "+UsersPath, Requires(grantUsersWrite).WithRecentAuth(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Username    *string     `json:"username"`
 			DisplayName *string     `json:"display_name"`
@@ -191,7 +191,7 @@ func registerUsers(s *Server, st users.Store) {
 	// PATCH is a JSON Merge Patch (ADR-0015, ADR-0017). display_name is the
 	// only optional member (null clears it). Role changes and disabling are
 	// audited; the last active administrator cannot be demoted or disabled.
-	s.HandleAPI("PATCH "+UsersPath+"/{id}", Requires(grantUsersWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.HandleAPI("PATCH "+UsersPath+"/{id}", Requires(grantUsersWrite).WithRecentAuth(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		patch, err := DecodeMergePatch(r, "username", "display_name", "role", "disabled", "version")
 		if err != nil {
 			WriteError(w, r, err)

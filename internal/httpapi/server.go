@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
@@ -30,6 +32,13 @@ type Server struct {
 	apiMW     []func(http.Handler) http.Handler
 	apiRoutes []Route
 	authn     []Authenticator
+	// recentAuth checks recent authentication ([WithRecentAuth]).
+	recentAuth func(authz.Principal) bool
+	// trusted are the reverse proxies whose X-Forwarded-For is believed.
+	trusted []netip.Prefix
+	// warnedForwarding is set once the untrusted-proxy warning was logged
+	// ([Server.forwardingWarning]).
+	warnedForwarding atomic.Bool
 	// auditTokenWrites records a token's state-changing request ([WithAuditRecorder]).
 	auditTokenWrites func(r *http.Request, p authz.Principal, pattern string) error
 }
@@ -70,7 +79,7 @@ func WithAPIMiddleware(mw ...func(http.Handler) http.Handler) Option {
 // New builds a server from the HTTP section of the configuration. Register
 // routes with Handle before calling Run.
 func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
-	s := &Server{cfg: cfg, log: log, mux: http.NewServeMux(), api: http.NewServeMux()}
+	s := &Server{cfg: cfg, log: log, mux: http.NewServeMux(), api: http.NewServeMux(), trusted: parseTrusted(cfg.TrustedProxies)}
 	for _, o := range opts {
 		o(s)
 	}
@@ -104,9 +113,11 @@ func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
 }
 
 // chain wraps h in the middleware, outermost first: request ID, access log,
-// metrics (when enabled), panic recovery, body limit.
+// metrics (when enabled), panic recovery, the untrusted-proxy warning, body
+// limit.
 func (s *Server) chain(h http.Handler) http.Handler {
 	h = bodyLimitMiddleware(s.cfg.MaxBodyBytes)(h)
+	h = s.forwardingWarning(h)
 	h = recoverMiddleware(h)
 	if s.m != nil {
 		h = metricsMiddleware(s.m)(h)

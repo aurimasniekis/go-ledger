@@ -44,9 +44,18 @@ func startOps(t *testing.T, args ...string) (main, mgmt net.Addr, errOut *syncBu
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not start")
 	}
+	// The management listener opens after the API is built, which includes
+	// one Argon2id hash with the production parameters (the dummy hash, slow
+	// under -race): wait for it unless the arguments turn it off.
+	wait := 5 * time.Second
+	for _, a := range args {
+		if a == "--http.management_listen=" {
+			wait = 200 * time.Millisecond
+		}
+	}
 	select {
 	case mgmt = <-mgmtc:
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(wait):
 	}
 	return main, mgmt, errOut
 }

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Action is what a grant allows on a resource.
@@ -260,6 +261,12 @@ type Principal struct {
 	Role Role
 	// Grants are the effective grants.
 	Grants Grants
+	// SessionID is set for a user signed in with a session cookie (A2): its
+	// state-changing requests must carry the session's CSRF token.
+	SessionID string
+	// AuthTime is when the session last checked the user's password (sign-in
+	// or re-authentication), for actions that need recent authentication.
+	AuthTime time.Time
 }
 
 // UserPrincipal is a signed-in user acting with their role's grants.

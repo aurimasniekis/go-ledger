@@ -32,6 +32,35 @@ type Config struct {
 	KEK       KEK       `cfg:"kek"`
 	Events    Events    `cfg:"events"`
 	Banking   Banking   `cfg:"banking"`
+	Auth      Auth      `cfg:"auth"`
+}
+
+// Auth configures password sign-in and sessions (ADR-0026). The defaults are
+// proposals, not operator decisions yet.
+type Auth struct {
+	Password AuthPassword `cfg:"password"`
+	Session  AuthSession  `cfg:"session"`
+	SignIn   AuthSignIn   `cfg:"sign_in"`
+}
+
+// AuthPassword configures the password policy.
+type AuthPassword struct {
+	MinLength int `cfg:"min_length" default:"12" desc:"Minimum password length in bytes (1 to 1024). Length is the only rule: there are no composition rules."`
+}
+
+// AuthSession configures sign-in sessions.
+type AuthSession struct {
+	IdleTimeout     time.Duration `cfg:"idle_timeout" default:"30m" desc:"A session not used for this long ends. Must not exceed the absolute timeout."`
+	AbsoluteTimeout time.Duration `cfg:"absolute_timeout" default:"12h" desc:"A session ends this long after sign-in, however much it is used."`
+	ReauthWindow    time.Duration `cfg:"reauth_window" default:"10m" desc:"How long a password check counts as recent for sensitive actions (credential changes, token creation, user management). After it, the user confirms their password again."`
+}
+
+// AuthSignIn configures sign-in rate limits. They are kept in memory and
+// reset when the server restarts.
+type AuthSignIn struct {
+	AccountMaxFailures int           `cfg:"account_max_failures" default:"10" desc:"Failed sign-ins (and re-authentications) allowed per username within auth.sign_in.window before further attempts for it are refused with 429."`
+	AddressMaxFailures int           `cfg:"address_max_failures" default:"30" desc:"Failed sign-ins allowed per client address (an IPv6 address counts as its /64) within auth.sign_in.window before further attempts from it are refused with 429."`
+	Window             time.Duration `cfg:"window" default:"15m" desc:"Sliding window over which failed sign-ins are counted."`
 }
 
 // HTTP configures the HTTP server that serves the API and the embedded UI.
@@ -44,7 +73,7 @@ type HTTP struct {
 	ShutdownTimeout   time.Duration `cfg:"shutdown_timeout" default:"15s" desc:"How long graceful shutdown waits for in-flight requests before closing connections."`
 	MaxBodyBytes      int64         `cfg:"max_body_bytes" default:"1048576" desc:"Maximum size of a request body in bytes."`
 	ManagementListen  string        `cfg:"management_listen" default:"127.0.0.1:9090" desc:"Address of the management listener that serves /metrics, /healthz and /readyz, as host:port. Unauthenticated by design: keep it on loopback or a private network, never a public interface. Empty (set in the YAML file or with --http.management_listen=; a blank environment variable counts as unset) serves them on the main listener instead."`
-	TrustedProxies    []string      `cfg:"trusted_proxies" desc:"IP addresses or CIDR ranges of reverse proxies whose forwarding headers are trusted (a list in YAML, comma separated in the variable). Empty trusts none."`
+	TrustedProxies    []string      `cfg:"trusted_proxies" desc:"IP addresses or CIDR ranges of reverse proxies whose forwarding headers are trusted (a list in YAML, comma separated in the variable). Empty trusts none. Behind a reverse proxy, list it here: otherwise every client has the proxy's address, and the per-address sign-in limit becomes one lockout shared by everyone, the owner included (ADR-0026). Ledger logs a warning when X-Forwarded-For arrives from an untrusted loopback or private address."`
 }
 
 // Database configures the SQLite database.

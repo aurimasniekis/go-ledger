@@ -18,7 +18,6 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/store"
-	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
 
 type auditPage struct {
@@ -72,8 +71,9 @@ func TestAuditAPIIsAdministratorOnly(t *testing.T) {
 
 func TestAuditAPIListsChangesWithFiltersAndPages(t *testing.T) {
 	f := newAPIFixture(t)
-	all := f.auditList(t, "?limit=200", "alice", 200)
-	// The fixture created four users and disabled one: five entries, oldest first.
+	all := f.auditList(t, "?action[prefix]=user.&limit=200", "alice", 200)
+	// The fixture created four users and disabled one: five user entries,
+	// oldest first (it also set passwords and signed dave in: auth.* entries).
 	var actions []string
 	for _, e := range all.Items {
 		actions = append(actions, e.Action)
@@ -106,8 +106,9 @@ func TestAuditAPIListsChangesWithFiltersAndPages(t *testing.T) {
 	if n := len(f.auditList(t, "?at[gte]="+time.Now().Add(time.Hour).Format(time.RFC3339), "alice", 200).Items); n != 0 {
 		t.Errorf("future range: %d", n)
 	}
-	if n := len(f.auditList(t, "?at[lt]="+time.Now().Add(time.Hour).Format(time.RFC3339), "alice", 200).Items); n != 6 {
-		t.Errorf("past range: %d, want 6", n)
+	if n := len(f.auditList(t, "?at[lt]="+time.Now().Add(time.Hour).Format(time.RFC3339), "alice", 200).Items); n != 11 {
+		// 5 user entries, 4 passwords set and dave's sign-in by the fixture, 1 role change.
+		t.Errorf("past range: %d, want 11", n)
 	}
 
 	// Pagination walks every entry once.
@@ -122,15 +123,15 @@ func TestAuditAPIListsChangesWithFiltersAndPages(t *testing.T) {
 			seen[e.ID] = true
 		}
 		if p.NextCursor == nil {
-			if pages != 2 {
-				t.Errorf("%d pages, want 3", pages+1)
+			if pages != 5 {
+				t.Errorf("%d pages, want 6", pages+1)
 			}
 			break
 		}
 		q = "?limit=2&cursor=" + *p.NextCursor
 	}
-	if len(seen) != 6 {
-		t.Errorf("walked %d entries, want 6", len(seen))
+	if len(seen) != 11 {
+		t.Errorf("walked %d entries, want 11", len(seen))
 	}
 
 	id, id2 := "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAW"
@@ -153,7 +154,8 @@ func TestAuditedTokenWritesRecordTokenIdentity(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	al := store.NewAuditLog(db)
-	us := userstore.New(db, al, nil, nil)
+	parts := mustParts(t, db, al)
+	us := parts.users
 	admin, err := us.Create(ctx, audit.System, users.New{Username: "alice", Role: authz.RoleAdministrator})
 	if err != nil {
 		t.Fatal(err)
@@ -171,8 +173,8 @@ func TestAuditedTokenWritesRecordTokenIdentity(t *testing.T) {
 	var failing recorderFunc
 	rec := &failing
 	srv := httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, slog.New(slog.DiscardHandler),
-		httpapi.WithAuthenticators(authn), httpapi.WithAuditRecorder(rec, nil))
-	registerAPI(srv, db, al)
+		httpapi.WithAuthenticators(testAuthn{authn}), httpapi.WithAuditRecorder(rec, nil), httpapi.WithRecentAuth(testRecent(parts.auth)))
+	registerAPI(srv, al, parts)
 	*rec = al.Record
 	do := func(method, path, body, who string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))

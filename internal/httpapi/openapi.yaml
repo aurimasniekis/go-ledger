@@ -46,8 +46,25 @@ info:
       grant; `read-only` holds read on every resource that is not
       administrative and never a write. API tokens carry their own grants,
       limited by their owner's current role. `GET /grants` lists the
-      vocabulary. Sign-in sessions and API tokens are not available yet, so
-      every operation that is not `public` currently answers 401.
+      vocabulary. `session` means a user signed in with the session
+      cookie, acting on their own session or password whatever their role;
+      API tokens get 403 there. API tokens are not available yet (task A4).
+    - **Sessions and CSRF** (ADR-0026). `POST /auth/sign-in` sets the
+      `__Host-ledger_session` cookie (Secure, HttpOnly, SameSite=Strict) and returns
+      a `csrf_token` (also from `GET /auth/session`). Every state-changing
+      request made with the cookie must send it in `X-CSRF-Token` and come
+      from Ledger's own origin, or it is 403 `csrf_failed`. Requests with
+      an API token (`Authorization: Bearer`) need no CSRF token. Sessions
+      end after an idle and an absolute timeout, on sign-out, when ended from
+      another session, and (other sessions) when the password changes; the
+      next request with an ended session is 401.
+    - **Recent authentication.** Operations marked
+      `x-ledger-recent-auth: true` (credential changes, user management;
+      token creation when it arrives) need a password check within the
+      re-authentication window when called with a session: otherwise 403
+      `reauthentication_required`; confirm with
+      `POST /auth/reauthenticate`. API tokens are exempt by design (their
+      writes are audited as `token.write_used`).
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -258,6 +275,7 @@ paths:
     post:
       operationId: createUser
       x-ledger-access: users:write
+      x-ledger-recent-auth: true
       summary: Create a user
       description: |
         Creates an enabled user with a role. Audited (user.created). A taken
@@ -324,6 +342,7 @@ paths:
     patch:
       operationId: updateUser
       x-ledger-access: users:write
+      x-ledger-recent-auth: true
       summary: Change, disable or re-enable a user, or change their role
       description: |
         A JSON Merge Patch (RFC 7396, ADR-0015, ADR-0017). display_name is
@@ -585,6 +604,215 @@ paths:
           description: Deleted.
         default:
           $ref: "#/components/responses/Error"
+  /users/{id}/password:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    put:
+      operationId: setUserPassword
+      x-ledger-access: users:write
+      x-ledger-recent-auth: true
+      summary: Set a user's password
+      description: |
+        Sets the user's password (minimum length in bytes, no composition
+        rules) and ends every session of that user, except the caller's own
+        current session when they set their own password. Audited
+        (auth.password_changed with by and sessions_ended); the password is
+        never recorded.
+      tags: [users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordBody"
+      responses:
+        "200":
+          description: The password was set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordSet"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/sign-in:
+    post:
+      operationId: signIn
+      x-ledger-access: public
+      summary: Sign in with a username and password
+      description: |
+        Starts a session: sets the `__Host-ledger_session` cookie (Secure, HttpOnly,
+        SameSite=Strict, Path=/) and returns the session with its CSRF token.
+        Every failure (unknown user, wrong password, no password set,
+        disabled account) is the same 401 `invalid_credentials` after the
+        same work. Too many failures for the username or from the client
+        address within the window are 429 `rate_limited` with Retry-After.
+        A browser request from another origin is 403 `csrf_failed`. Success
+        and failure are audited; a failure never records the username.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  maxLength: 256
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              description: The session cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentSession"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/sign-out:
+    post:
+      operationId: signOut
+      x-ledger-access: session
+      summary: End the current session
+      description: Ends the session the request was made with and clears the cookie. Audited (auth.session_ended, reason signed_out).
+      tags: [auth]
+      responses:
+        "204":
+          description: Signed out.
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/session:
+    get:
+      operationId: getCurrentSession
+      x-ledger-access: session
+      summary: The current session and its CSRF token
+      tags: [auth]
+      responses:
+        "200":
+          description: The current session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentSession"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/sessions:
+    get:
+      operationId: listMySessions
+      x-ledger-access: session
+      summary: List your active sessions
+      description: The signed-in user's sessions that have not ended, newest first. Never includes session tokens.
+      tags: [auth]
+      responses:
+        "200":
+          description: The sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Session"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    delete:
+      operationId: endMySession
+      x-ledger-access: session
+      summary: End one of your sessions
+      description: |
+        Ends the session; its next request is 401. Ending the current session
+        signs out and clears the cookie. Another user's session is 404.
+        Audited (auth.session_ended, reason terminated or signed_out).
+      tags: [auth]
+      responses:
+        "204":
+          description: Ended.
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/reauthenticate:
+    post:
+      operationId: reauthenticate
+      x-ledger-access: session
+      summary: Confirm your password for sensitive actions
+      description: |
+        Checks the signed-in user's password again; when it matches, the
+        session counts as recently authenticated until recent_auth_until. A
+        wrong password is 403 `invalid_credentials` (the session stays
+        valid) and counts towards the sign-in limits (429 with Retry-After).
+        Audited (auth.reauthenticated, auth.reauthentication_failed).
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordBody"
+      responses:
+        "200":
+          description: Confirmed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authenticated_at, recent_auth_until]
+                properties:
+                  authenticated_at:
+                    type: string
+                    format: date-time
+                  recent_auth_until:
+                    type: string
+                    format: date-time
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/password:
+    put:
+      operationId: changeMyPassword
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Change your password
+      description: |
+        Sets the signed-in user's password (minimum length in bytes, no
+        composition rules) and ends every other session of the user; the
+        current session stays. Audited (auth.password_changed, by self).
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordBody"
+      responses:
+        "200":
+          description: The password was changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordSet"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: meta
     description: The API description itself.
@@ -596,6 +824,8 @@ tags:
     description: The append-only audit log (administrative, read-only).
   - name: commitments
     description: Recurring commitment definitions.
+  - name: auth
+    description: Sign-in, sessions, re-authentication and your own password.
 components:
   parameters:
     Limit:
@@ -931,6 +1161,74 @@ components:
                 type: array
                 items:
                   $ref: "#/components/schemas/Grant"
+    PasswordBody:
+      type: object
+      additionalProperties: false
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+          description: At least the configured minimum length in bytes (auth.password.min_length), at most 1024 bytes; no composition rules.
+    PasswordSet:
+      type: object
+      required: [sessions_ended]
+      properties:
+        sessions_ended:
+          type: integer
+          minimum: 0
+          description: How many sessions the change ended.
+    Session:
+      type: object
+      description: A sign-in session. Never includes its token.
+      required: [id, current, created_at, last_seen_at, authenticated_at, idle_expires_at, expires_at, user_agent, address]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        current:
+          type: boolean
+          description: The session this request was made with.
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+          description: Updated at most once a minute (a quarter of the idle timeout when that is shorter).
+        authenticated_at:
+          type: string
+          format: date-time
+          description: The last password check (sign-in or re-authentication).
+        idle_expires_at:
+          type: string
+          format: date-time
+          description: When the session ends unless it is used again.
+        expires_at:
+          type: string
+          format: date-time
+          description: When the session ends however much it is used (absolute timeout).
+        user_agent:
+          type: string
+          maxLength: 256
+        address:
+          type: string
+          maxLength: 64
+          description: The client address at sign-in.
+    CurrentSession:
+      type: object
+      required: [user_id, session, csrf_token, recent_auth_until]
+      properties:
+        user_id:
+          $ref: "#/components/schemas/ID"
+        session:
+          $ref: "#/components/schemas/Session"
+        csrf_token:
+          type: string
+          description: Send it in X-CSRF-Token with every state-changing request made with the session cookie.
+        recent_auth_until:
+          type: [string, "null"]
+          format: date-time
+          description: When the last password check stops counting as recent; null when it already has.
     ID:
       type: string
       description: A ULID.
@@ -962,6 +1260,9 @@ components:
             - rate_limited
             - internal_error
             - dependency_unavailable
+            - invalid_credentials
+            - csrf_failed
+            - reauthentication_required
         message:
           type: string
         field:

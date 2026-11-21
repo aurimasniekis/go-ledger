@@ -139,6 +139,8 @@ var unversionedTables = map[string]string{
 	"bank_refresh_runs":      "refresh history written only by the import engine (ADR-0020); finished runs are immutable, never edited through the API",
 	"audit_log":              "append-only audit log (ADR-0025); triggers refuse any update or delete, so entries are never edited through the API",
 	"bank_account_sync":      "per-account refresh bookkeeping written only by the import engine (ADR-0020), never edited through the API",
+	"user_passwords":         "credential hashes (ADR-0026), keyed by user and written only by password changes; never read or edited as an API object",
+	"sessions":               "server-side sign-in sessions (ADR-0026), created by sign-in and deleted when they end; never edited through the API",
 }
 
 // versionProblems checks the optimistic-concurrency convention: every table

@@ -13,6 +13,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
 	"github.com/aurimasniekis/go-ledger/internal/health"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
@@ -24,8 +25,6 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
-	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
-	"github.com/aurimasniekis/go-ledger/internal/store/users"
 	"github.com/aurimasniekis/go-ledger/internal/web"
 )
 
@@ -186,11 +185,17 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// Per D17, readiness gates only on the database; optional integrations belong on a
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
-	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil))
-	registerAPI(srv, db, auditLog)
-	// Sign-in sessions and API tokens arrive with their own tasks; until an
-	// authenticator is installed, every non-public API route answers 401.
-	log.Warn("no API authentication method is available yet; API routes other than the API description answer 401")
+	parts, err := buildAPI(db, auditLog, cfg.Auth, auth.NewArgon2id(auth.DefaultParams, hashConcurrency), nil)
+	if err != nil {
+		log.Error("invalid sign-in settings", "error", err.Error())
+		_ = ln.Close()
+		return 1
+	}
+	// Session cookies are the only authentication method until API tokens
+	// (task A4) add theirs.
+	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil),
+		httpapi.WithAuthenticators(httpapi.NewSessionAuth(parts.auth)), httpapi.WithRecentAuth(parts.auth.Recent))
+	registerAPI(srv, auditLog, parts)
 
 	// Metrics and health are unauthenticated. They go on a separate
 	// management listener (loopback by default), or on the main one when
@@ -299,13 +304,14 @@ type auditLog interface {
 	audit.Reader
 }
 
-// registerAPI registers the Management API with its dependencies. Changes
-// record their audit entries in the same transaction through al (ADR-0025).
-func registerAPI(srv *httpapi.Server, db *store.DB, al auditLog) {
+// registerAPI registers the Management API with its dependencies (see
+// buildAPI).
+func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts) {
 	httpapi.RegisterAPI(srv, httpapi.Deps{
-		Users:       users.New(db, al, nil, nil),
-		Commitments: commitmentstore.New(db, al, nil, nil),
+		Users:       parts.users,
+		Commitments: parts.commitments,
 		Audit:       al,
+		Auth:        parts.auth,
 	})
 }
 
