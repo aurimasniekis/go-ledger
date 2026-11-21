@@ -483,3 +483,107 @@ func (c *Client) CreateMyToken(ctx context.Context, in NewAPIToken) (*CreatedAPI
 func (c *Client) RevokeToken(ctx context.Context, id string) error {
 	return c.do(ctx, request{op: opRevokeToken, pathID: id}, nil)
 }
+
+// ListBankApplications returns the configured provider applications (needs
+// connections:read, an administrator grant).
+func (c *Client) ListBankApplications(ctx context.Context) ([]BankApplication, error) {
+	var out struct {
+		Items []BankApplication `json:"items"`
+	}
+	if err := c.do(ctx, request{op: opListBankApps}, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// ListBankInstitutions asks the provider which banks the named application
+// offers in a country (an ISO 3166-1 alpha-2 code in capitals).
+func (c *Client) ListBankInstitutions(ctx context.Context, application, country string) ([]BankInstitution, error) {
+	var out struct {
+		Items []BankInstitution `json:"items"`
+	}
+	if err := c.do(ctx, request{op: opListBankInstitutions, pathID: application, query: url.Values{"country": {country}}}, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// ListBankConnections returns one page of bank connections with their
+// accounts, balances and freshness, oldest first.
+func (c *Client) ListBankConnections(ctx context.Context, o ListOptions) (Page[BankConnection], error) {
+	var p Page[BankConnection]
+	q := url.Values{}
+	o.apply(q)
+	err := c.do(ctx, request{op: opListBankConns, query: q}, &p)
+	return p, err
+}
+
+// AllBankConnections walks every bank connection (o.Cursor is ignored).
+func (c *Client) AllBankConnections(ctx context.Context, o ListOptions) iter.Seq2[BankConnection, error] {
+	return Walk(ctx, func(ctx context.Context, cur string) (Page[BankConnection], error) {
+		o.Cursor = cur
+		return c.ListBankConnections(ctx, o)
+	})
+}
+
+// GetBankConnection returns one connection with its accounts and freshness.
+func (c *Client) GetBankConnection(ctx context.Context, id string) (*BankConnection, error) {
+	var b BankConnection
+	if err := c.do(ctx, request{op: opGetBankConn, pathID: id}, &b); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// StartBankConnection records a pending connection and returns the bank's
+// consent page in AuthorizationURL. The person opens it in a browser; Ledger
+// never receives bank credentials, and the connection becomes active only when
+// the bank redirects to Ledger's callback page (this client does not complete
+// consents). Needs connections:write. Not idempotent: calling it twice starts
+// two connections.
+func (c *Client) StartBankConnection(ctx context.Context, in NewBankConnection) (*BankConsentStart, error) {
+	var s BankConsentStart
+	if err := c.do(ctx, request{op: opStartBankConn, body: in}, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// ReconnectBankConnection starts a new consent for an existing connection (one
+// that needs it, or to renew early) and returns the consent page. The
+// connection stays as it was until the person approves. validForDays 0 asks for
+// the bank's own validity.
+func (c *Client) ReconnectBankConnection(ctx context.Context, id string, validForDays int) (*BankConsentStart, error) {
+	var s BankConsentStart
+	body := struct {
+		ValidForDays int `json:"valid_for_days,omitempty"`
+	}{validForDays}
+	if err := c.do(ctx, request{op: opReconnectBankConn, pathID: id, body: body}, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// RefreshBankConnection fetches the connection's data now. A refresh that
+// failed is still a successful call: read LastRefreshRun.Error and the
+// accounts' freshness (stored data is never changed by a failure). When
+// RefreshRunning is true the refresh outlived the wait and continues in the
+// background: read the connection again later. Needs connections:write.
+func (c *Client) RefreshBankConnection(ctx context.Context, id string) (*BankConnection, error) {
+	var b BankConnection
+	if err := c.do(ctx, request{op: opRefreshBankConn, pathID: id, body: struct{}{}}, &b); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// DisconnectBankConnection ends the provider session of the connection whose
+// current version is version. Stored accounts, balances and transactions stay
+// as history. Nothing changes if the provider cannot be reached.
+func (c *Client) DisconnectBankConnection(ctx context.Context, id string, version int64) (*BankConnection, error) {
+	var b BankConnection
+	if err := c.do(ctx, request{op: opDisconnectBankConn, pathID: id, version: version, body: struct{}{}}, &b); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}

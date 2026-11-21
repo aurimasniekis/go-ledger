@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -332,5 +333,68 @@ func TestRawReportsATooLargeAnswerAsTruncatedNotAsAFailure(t *testing.T) {
 	}
 	if r.Status != http.StatusCreated || !r.Truncated || len(r.Body) != 0 || r.Location != "/api/v1/commitments/01JD3Y4C8V9M2Q7W5R6T0XZBNT" {
 		t.Errorf("got status %d truncated=%v body=%d location=%q", r.Status, r.Truncated, len(r.Body), r.Location)
+	}
+}
+
+// TestBankConnectionRequestShape checks the paths, query, bodies and If-Match
+// of the bank connection methods; the real handlers are exercised by the CLI
+// and MCP tests in cmd/ledger.
+func TestBankConnectionRequestShape(t *testing.T) {
+	const id = "01JD3Y4C8V9M2Q7W5R6T0XZBNA"
+	conn := BankConnection{ID: id, Status: "active", Version: 4, Accounts: []BankAccount{}}
+	var seen []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		seen = append(seen, r.Method+" "+r.URL.RequestURI()+" "+r.Header.Get("If-Match")+" "+strings.TrimSpace(string(body)))
+		switch {
+		case r.URL.Path == "/api/v1/bank-applications":
+			writeJSON(w, 200, map[string]any{"items": []BankApplication{{Name: "app", Mode: "app"}}})
+		case strings.HasSuffix(r.URL.Path, "/institutions"):
+			writeJSON(w, 200, map[string]any{"items": []BankInstitution{{ID: "b", Country: "FI"}}})
+		case r.URL.Path == "/api/v1/bank-connections" && r.Method == "GET":
+			writeJSON(w, 200, Page[BankConnection]{Items: []BankConnection{conn}})
+		case strings.HasSuffix(r.URL.Path, "/reconnect"), r.Method == "POST" && r.URL.Path == "/api/v1/bank-connections":
+			writeJSON(w, 200, BankConsentStart{Connection: conn, AuthorizationURL: "https://bank.example/consent"})
+		default:
+			writeJSON(w, 200, conn)
+		}
+	})
+	ctx := context.Background()
+	if apps, err := c.ListBankApplications(ctx); err != nil || len(apps) != 1 {
+		t.Fatalf("applications: %v %v", apps, err)
+	}
+	if in, err := c.ListBankInstitutions(ctx, "my app", "FI"); err != nil || len(in) != 1 {
+		t.Fatalf("institutions: %v %v", in, err)
+	}
+	if p, err := c.ListBankConnections(ctx, ListOptions{Limit: 5}); err != nil || len(p.Items) != 1 {
+		t.Fatalf("list: %v %v", p, err)
+	}
+	if s, err := c.StartBankConnection(ctx, NewBankConnection{Application: "app", InstitutionID: "b", Country: "FI"}); err != nil || s.AuthorizationURL == "" {
+		t.Fatalf("start: %v %v", s, err)
+	}
+	if _, err := c.GetBankConnection(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ReconnectBankConnection(ctx, id, 30); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RefreshBankConnection(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.DisconnectBankConnection(ctx, id, 4); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"GET /api/v1/bank-applications  ",
+		"GET /api/v1/bank-applications/my%20app/institutions?country=FI  ",
+		"GET /api/v1/bank-connections?limit=5  ",
+		"POST /api/v1/bank-connections  " + `{"application":"app","institution_id":"b","country":"FI"}`,
+		"GET /api/v1/bank-connections/" + id + "  ",
+		"POST /api/v1/bank-connections/" + id + "/reconnect  " + `{"valid_for_days":30}`,
+		"POST /api/v1/bank-connections/" + id + "/refresh  {}",
+		"POST /api/v1/bank-connections/" + id + "/disconnect \"4\" {}",
+	}
+	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
+		t.Errorf("requests:\n%s\nwant:\n%s", strings.Join(seen, "\n"), strings.Join(want, "\n"))
 	}
 }

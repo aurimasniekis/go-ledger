@@ -48,9 +48,18 @@ var (
 	opReverseMatch = operation{ID: "reversePaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/reverse"}
 	opRunMatching  = operation{ID: "runPaymentMatching", Method: http.MethodPost, Path: "/payment-matching/runs"}
 
-	opListTokens  = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
-	opGetToken    = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
-	opRevokeToken = operation{ID: "revokeToken", Method: http.MethodDelete, Path: "/tokens/{id}"}
+	opListTokens           = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
+	opGetToken             = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
+	opRevokeToken          = operation{ID: "revokeToken", Method: http.MethodDelete, Path: "/tokens/{id}"}
+	opListBankApps         = operation{ID: "listBankApplications", Method: http.MethodGet, Path: "/bank-applications"}
+	opListBankInstitutions = operation{ID: "listBankInstitutions", Method: http.MethodGet, Path: "/bank-applications/{application}/institutions", Query: []string{"country"}}
+	opListBankConns        = operation{ID: "listBankConnections", Method: http.MethodGet, Path: "/bank-connections", Query: []string{"limit", "cursor"}}
+	opStartBankConn        = operation{ID: "startBankConnection", Method: http.MethodPost, Path: "/bank-connections"}
+	opGetBankConn          = operation{ID: "getBankConnection", Method: http.MethodGet, Path: "/bank-connections/{id}"}
+	opReconnectBankConn    = operation{ID: "reconnectBankConnection", Method: http.MethodPost, Path: "/bank-connections/{id}/reconnect"}
+	opRefreshBankConn      = operation{ID: "refreshBankConnection", Method: http.MethodPost, Path: "/bank-connections/{id}/refresh"}
+	opDisconnectBankConn   = operation{ID: "disconnectBankConnection", Method: http.MethodPost, Path: "/bank-connections/{id}/disconnect"}
+
 	// opCreateMyToken needs a root token of the root account (decision D25).
 	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
@@ -67,5 +76,6 @@ var operations = []operation{
 	opSetOverride, opUndoOverride,
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch,
 	opRunMatching,
+	opListBankApps, opListBankInstitutions, opListBankConns, opStartBankConn, opGetBankConn, opReconnectBankConn, opRefreshBankConn, opDisconnectBankConn,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
 }
