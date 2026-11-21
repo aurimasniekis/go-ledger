@@ -58,7 +58,7 @@ type apiParts struct {
 	commitments *commitmentstore.Store
 	payments    *paymentstore.Store
 	matches     *matchstore.Store
-	// matching is the automatic payment matching (ADR-0037); registerAPI
+	// matching is the automatic payment matching (ADR-0038); registerAPI
 	// builds one when ledger serve has not.
 	matching *automatch.Engine
 	db       *store.DB

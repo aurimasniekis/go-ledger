@@ -590,7 +590,7 @@ func (s *Store) Confirm(ctx context.Context, actor audit.Actor, id string, expec
 }
 
 // ConfirmAuto confirms one of the matching engine's suggestions as the
-// system (task X2, ADR-0037). The automatic rules apply as for any automation
+// system (task X2, ADR-0038). The automatic rules apply as for any automation
 // actor, with tolerance as the commitment's match tolerance (the zero value
 // means an exact amount); a model suggestion is never confirmed this way.
 func (s *Store) ConfirmAuto(ctx context.Context, id string, expected int64, tolerance money.Money, reason *string) (matches.Change, error) {

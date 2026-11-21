@@ -51,7 +51,7 @@ const (
 	PaymentMatchReversed  Action = "payment_match.reversed"
 
 	// A person asked for an automatic matching run through the API (X2,
-	// ADR-0037). The matches it wrote are audited one by one as
+	// ADR-0038). The matches it wrote are audited one by one as
 	// payment_match.* with the system as actor. The target is the run
 	// (target ID "run"). Details: the counts.
 	PaymentMatchingRun Action = "payment_matching.run" // Details: confirmed, suggested, dropped, skipped

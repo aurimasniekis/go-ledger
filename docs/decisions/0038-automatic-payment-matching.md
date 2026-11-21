@@ -1,4 +1,4 @@
-# ADR-0037: Automatic payment matching engine
+# ADR-0038: Automatic payment matching engine
 
 Status: Proposed (2026-11-21). The safeguards of point 4 follow operator decisions D9, D8 and D5 and are not open. The
 candidate window, amount band, hint score, drop rule, run triggers and the guard of point 9 are implementation choices no

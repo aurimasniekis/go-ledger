@@ -67,7 +67,7 @@ type Deps struct {
 	// Matches stores payment matches between bank transactions and
 	// occurrences (ADR-0035).
 	Matches matches.Store
-	// Matching runs the automatic payment matching (ADR-0037).
+	// Matching runs the automatic payment matching (ADR-0038).
 	Matching MatchingRunner
 	// Audit reads the audit log.
 	Audit audit.Reader

@@ -38,7 +38,7 @@ type commitmentJSON struct {
 	EndDate   *calendar.Date        `json:"end_date"`
 	Priority  *commitments.Priority `json:"priority"`
 	Notes     *string               `json:"notes"`
-	// MatchTolerance is null when the user set none (ADR-0037).
+	// MatchTolerance is null when the user set none (ADR-0038).
 	MatchTolerance *money.Money `json:"match_tolerance"`
 	Version        int64        `json:"version"`
 	CreatedAt      time.Time    `json:"created_at"`

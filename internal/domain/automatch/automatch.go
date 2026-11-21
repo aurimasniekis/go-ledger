@@ -1,5 +1,5 @@
 // Package automatch is the automatic payment-matching engine (task X2,
-// ADR-0037). It pairs outgoing bank transactions with open commitment
+// ADR-0038). It pairs outgoing bank transactions with open commitment
 // occurrences, confirms a pair only when every safeguard of decision D9
 // passes, and otherwise leaves a suggestion for a person to review.
 //
@@ -40,7 +40,7 @@ import (
 )
 
 // Policy values. ConfirmDays is decision D9; the candidate window and band
-// are proposed in ADR-0037 (not operator decisions).
+// are proposed in ADR-0038 (not operator decisions).
 const (
 	// ConfirmDays is how many days before or after the due date a
 	// transaction may be dated and still be confirmed automatically (D9).

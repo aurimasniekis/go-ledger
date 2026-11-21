@@ -113,7 +113,7 @@ type Options struct {
 	// AfterRefresh, when set, is called after every refresh that stored
 	// something (outcome succeeded or partial), from any trigger, once the
 	// connection's lock is released: the automatic payment matching (task
-	// X2, ADR-0037) runs from here. It must be idempotent; it is not called
+	// X2, ADR-0038) runs from here. It must be idempotent; it is not called
 	// when ctx has ended.
 	AfterRefresh func(ctx context.Context, res Result)
 }

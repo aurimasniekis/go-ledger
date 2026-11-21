@@ -43,6 +43,8 @@ Two separate axes, separate types (`CommitmentStatus`, `DataState`), so a data s
 | Data state | Stale | history | default |
 | Data state | Error | octagon X | strong |
 | Data state | Not saved yet (pending save) | spinner | default |
+| Data state | Disconnected | unplug | default |
+| Data state | Not saved (save failed) | save off | strong |
 
 **Emphasis tiers** order badges by visual mass so the order survives greyscale: *strong* is a solid fill with `status-strong-foreground` text (things the user must act on or a failure), *default* is a tint with a coloured border, *quiet* is coloured text and icon on a neutral border with no tint (settled or parked). Overdue (amber/orange, triangle) and Error (red/magenta, octagon) differ in hue and shape.
 
@@ -52,7 +54,24 @@ Two separate axes, separate types (`CommitmentStatus`, `DataState`), so a data s
 
 **Provenance markers** (C4, `features/month/provenance.tsx`) are a third axis next to commitment status and data state: where a settled row came from. *Manual payment* (a payment recorded by hand), *Set by hand* (an override with a reason) and *Bank match* (a confirmed match of a bank transaction), or *Bank match and manual payment* when a row has both. The kind comes from the payload's `manual_evidence_count` and `bank_evidence_count`; evidence of no known kind shows no marker, and a bank match is never labelled manual. They are neutral chips (text plus icon, `border-control`), so a bank fact, a user correction and a manual payment never read as a status.
 
-**Reserved, not yet built** (tokens and badges to add with U1, X4, B4 before those screens): disconnected, save-failed, bank-pending transaction, needs-review (ambiguous match).
+**Reserved, not yet built** (to add with X4, B4 before those screens): bank-pending transaction, needs-review (ambiguous match). Disconnected and save-failed exist (U1); they reuse the stale and error hues, so icon and words, not a new colour, tell them apart.
+
+## Shell and shared state components (U1, [ADR-0037](decisions/0037-app-shell-and-state-primitives.md))
+
+Reuse these before writing screen-specific markup.
+
+| Need | Use | Notes |
+| --- | --- | --- |
+| Page chrome | `AppShell` (`components/app-shell.tsx`) | skip link, brand, primary nav, Account menu, theme, offline banner; no navigation while signed out |
+| Loading, empty, failed, disconnected, stale | `LoadingState`, `EmptyState`, `FailedState`, `DisconnectedState`, `StaleNotice` (`components/state-panels.tsx`) | `QueryState` wraps a TanStack query with all of them |
+| Save with pending, failure and reconcile | `useOptimisticSave` (`lib/optimistic-save.ts`) | pass `apply` only for changes that are safe to show early; money changes show "Not saved yet" until the server confirms |
+| Say what happened without moving focus | `useAnnounce()` (`components/announcer.tsx`) | polite for outcomes, assertive for failures; the live regions have no role |
+| Give focus back | `useFocusRestore` (`lib/focus.ts`); dialogs do it themselves | falls back to the main region, never BODY |
+| Amounts and dates for display | `Amount`, `DateText`, `formatAmount`, `formatDate` | the server's decimal strings are grouped as text; nothing is parsed into a number |
+
+Layout rules the shell checks (Playwright, `e2e/shell-responsive.spec.ts`): no horizontal scrolling and every header control inside the viewport at 320 CSS px, at 200% page zoom and at 320 px with 200% text size. Fixed widths need `max-w-full`, long labels need to wrap (`whitespace-normal`), and a menu panel is anchored to the header, not to the control that opens it.
+
+Headings: one h1 per page, sections h2, members h3. Navigation group labels are not headings.
 
 ## Contrast (automated)
 

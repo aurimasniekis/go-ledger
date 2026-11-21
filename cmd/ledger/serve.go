@@ -202,7 +202,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// state-changing token request is audited through the recorder.
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil),
 		httpapi.WithAuthenticators(httpapi.NewTokenAuth(parts.tokens), httpapi.NewSessionAuth(parts.auth)), httpapi.WithRecentAuth(parts.auth.Recent))
-	// Automatic payment matching (X2, ADR-0037): after every bank refresh that
+	// Automatic payment matching (X2, ADR-0038): after every bank refresh that
 	// stored something, and on request through the API.
 	parts.matching = newMatcher(db, auditLog, parts.matches, zone.Zone(), nil, log)
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)

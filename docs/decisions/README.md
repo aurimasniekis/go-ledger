@@ -38,6 +38,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0034: The monthly view](0034-monthly-view.md)
 - [ADR-0035: Payment matches, manual matching, corrections and reversal](0035-payment-matches-and-corrections.md)
 - [ADR-0036: Auth and account UI](0036-auth-and-account-ui.md)
-- [ADR-0037: Automatic payment matching engine](0037-automatic-payment-matching.md)
+- [ADR-0037: App shell and shared state primitives](0037-app-shell-and-state-primitives.md)
+- [ADR-0038: Automatic payment matching engine](0038-automatic-payment-matching.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

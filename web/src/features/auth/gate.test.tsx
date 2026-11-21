@@ -20,10 +20,11 @@ describe('required-2FA gate', () => {
     renderApp('/account/tokens')
     expect(await screen.findByRole('heading', { name: 'Account security' })).toBeInTheDocument()
     expect(screen.getByRole('note')).toHaveTextContent('requires two-factor');
-    const nav = screen.getByRole('navigation', { name: 'Main' })
-    expect(within(nav).queryByRole('link', { name: 'API tokens' })).not.toBeInTheDocument()
-    expect(within(nav).queryByRole('link', { name: 'Sessions' })).not.toBeInTheDocument()
-    expect(within(nav).getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(screen.queryByRole('navigation', { name: 'Account' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Sessions' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Change password' })).not.toBeInTheDocument()
   })
 
