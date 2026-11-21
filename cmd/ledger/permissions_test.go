@@ -44,11 +44,11 @@ var permissionMatrix = map[string]string{
 	"PATCH /api/v1/users/{id}":          "users:write+recent",
 	"PUT /api/v1/users/{id}/password":   "users:write+recent",
 	"POST /api/v1/auth/sign-in":         "public",
-	"POST /api/v1/auth/sign-out":        "session",
-	"GET /api/v1/auth/session":          "session",
+	"POST /api/v1/auth/sign-out":        "session+enroll",
+	"GET /api/v1/auth/session":          "session+enroll",
 	"GET /api/v1/auth/sessions":         "session",
 	"DELETE /api/v1/auth/sessions/{id}": "session",
-	"POST /api/v1/auth/reauthenticate":  "session",
+	"POST /api/v1/auth/reauthenticate":  "session+enroll",
 	"PUT /api/v1/auth/password":         "session+recent",
 	"GET /api/v1/auth/tokens":           "session",
 	"POST /api/v1/auth/tokens":          "session+recent",
@@ -57,6 +57,13 @@ var permissionMatrix = map[string]string{
 	"GET /api/v1/tokens":                "tokens:read",
 	"GET /api/v1/tokens/{id}":           "tokens:read",
 	"DELETE /api/v1/tokens/{id}":        "tokens:write",
+
+	"POST /api/v1/auth/sign-in/second-factor":     "public",
+	"GET /api/v1/auth/two-factor":                 "session+enroll",
+	"DELETE /api/v1/auth/two-factor":              "session+recent",
+	"POST /api/v1/auth/two-factor/totp":           "session+recent+enroll",
+	"POST /api/v1/auth/two-factor/totp/confirm":   "session+recent+enroll",
+	"POST /api/v1/auth/two-factor/recovery-codes": "session+recent",
 
 	"GET /api/v1/commitments":         "commitments:read",
 	"POST /api/v1/commitments":        "commitments:write",
@@ -69,12 +76,17 @@ var permissionMatrix = map[string]string{
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
-// with "+recent" when it needs recent authentication.
+// with "+recent" when it needs recent authentication and "+enroll" when a
+// session confined to two-factor enrolment may reach it (ADR-0030).
 func matrixAccess(a httpapi.Access) string {
+	s := a.String()
 	if a.RecentAuth() {
-		return a.String() + "+recent"
+		s += "+recent"
 	}
-	return a.String()
+	if a.AllowedDuringEnrollment() {
+		s += "+enroll"
+	}
+	return s
 }
 
 // apiFixture is the API as ledger serve registers it, with a test

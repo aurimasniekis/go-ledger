@@ -15,6 +15,9 @@ import (
 // testPassword is the password the fixtures set for every user.
 const testPassword = "correct horse battery staple"
 
+// testKEK is the key-encryption key of test API stacks (synthetic).
+const testKEK = "test-kek-0123456789abcdef0123456789abcdef"
+
 // cheapParams keep Argon2id fast in tests; production uses auth.DefaultParams.
 var cheapParams = auth.Params{MemoryKiB: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32}
 
@@ -28,7 +31,7 @@ func testAuthConfig() config.Auth {
 
 func mustParts(t *testing.T, db *store.DB, al auditLog) apiParts {
 	t.Helper()
-	p, err := buildAPI(db, al, testAuthConfig(), auth.NewArgon2id(cheapParams, 4), nil)
+	p, err := buildAPI(db, al, testAuthConfig(), testKEK, auth.NewArgon2id(cheapParams, 4), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

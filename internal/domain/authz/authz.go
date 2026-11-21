@@ -272,6 +272,11 @@ type Principal struct {
 	// AuthTime is when the session last checked the user's password (sign-in
 	// or re-authentication), for actions that need recent authentication.
 	AuthTime time.Time
+	// EnrollmentRequired is set for a session principal whose user must
+	// enrol a second factor first (auth.require_2fa, ADR-0030): it may reach
+	// only the enrolment, session and sign-out routes. Never set for API
+	// tokens, which skip interactive steps by design.
+	EnrollmentRequired bool
 }
 
 // UserPrincipal is a signed-in user acting with their role's grants.

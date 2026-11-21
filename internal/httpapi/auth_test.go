@@ -94,6 +94,8 @@ func TestCSRFAndRecentAuthentication(t *testing.T) {
 	admin := authz.UserPrincipal("A", authz.RoleAdministrator)
 	admin.SessionID = "S"
 	token := authz.TokenPrincipal("T", "A", authz.RoleAdministrator, authz.Grants{write})
+	confined := admin
+	confined.EnrollmentRequired = true
 	recentNo := func(authz.Principal) bool { return false }
 	recentYes := func(authz.Principal) bool { return true }
 	cases := []struct {
@@ -122,6 +124,15 @@ func TestCSRFAndRecentAuthentication(t *testing.T) {
 		{"recent auth recent", fixed(admin, nil), recentYes, Requires(write).WithRecentAuth(), "POST", nil, 200, ""},
 		{"recent auth exempts tokens", noCSRF(token), recentNo, Requires(write).WithRecentAuth(), "POST", nil, 200, ""},
 		{"CSRF is checked before recent auth", fixed(admin, nil), recentNo, Requires(write).WithRecentAuth(), "POST", map[string]string{"X-Test-CSRF": "bad"}, 403, CodeCSRF},
+		// Required 2FA (ADR-0030): a confined session reaches only routes
+		// marked DuringEnrollment, reads included; tokens are never confined.
+		{"confined session cannot read", fixed(confined, nil), nil, Requires(authz.G(authz.ResourceUsers, authz.ActionRead)), "GET", nil, 403, CodeEnrollmentRequired},
+		{"confined session cannot write", fixed(confined, nil), recentYes, Requires(write), "POST", nil, 403, CodeEnrollmentRequired},
+		{"confined session cannot use Authenticated", fixed(confined, nil), nil, Authenticated(), "GET", nil, 403, CodeEnrollmentRequired},
+		{"confined session cannot use other session routes", fixed(confined, nil), nil, SessionOnly(), "GET", nil, 403, CodeEnrollmentRequired},
+		{"confined session reaches enrolment routes", fixed(confined, nil), recentYes, SessionOnly().WithRecentAuth().DuringEnrollment(), "POST", nil, 200, ""},
+		{"enrolment routes still need CSRF", fixed(confined, nil), recentYes, SessionOnly().DuringEnrollment(), "POST", map[string]string{"X-Test-CSRF": "bad"}, 403, CodeCSRF},
+		{"unconfined session on an enrolment route", fixed(admin, nil), nil, SessionOnly().DuringEnrollment(), "GET", nil, 200, ""},
 	}
 	for _, c := range cases {
 		opts := []Option{WithAuthenticators(c.authn), WithAuditRecorder(nopRecorder{}, nil)}
@@ -151,6 +162,12 @@ func TestCSRFAndRecentAuthentication(t *testing.T) {
 	})
 	if SessionOnly().String() != "session" || !Requires(write).WithRecentAuth().RecentAuth() || Requires(write).RecentAuth() {
 		t.Error("access strings")
+	}
+	for name, a := range map[string]Access{"grant": Requires(write).DuringEnrollment(), "authenticated": Authenticated().DuringEnrollment(), "public": Public().DuringEnrollment()} {
+		mustPanic(t, "DuringEnrollment on a "+name+" route", func() { apiServer(t).HandleAPI("GET /api/v1/x", a, http.NotFoundHandler()) })
+	}
+	if !SessionOnly().DuringEnrollment().AllowedDuringEnrollment() || SessionOnly().AllowedDuringEnrollment() {
+		t.Error("DuringEnrollment flag")
 	}
 }
 

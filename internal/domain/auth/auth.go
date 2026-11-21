@@ -48,6 +48,9 @@ type Config struct {
 	// client address ([AddressKey]).
 	AccountLimit Limit
 	AddressLimit Limit
+	// Require2FA confines every signed-in user without TOTP enabled to
+	// enrolment (auth.require_2fa, ADR-0030).
+	Require2FA bool
 }
 
 // DefaultConfig returns the proposed defaults.
@@ -118,6 +121,7 @@ type Credential struct {
 // Store is the persistence port; internal/store/auth implements it. Events
 // passed to a write are recorded in the same transaction as the change.
 type Store interface {
+	TwoFactorStore
 	// CredentialByUsername and CredentialByUser return resource.ErrNotFound
 	// for an unknown account.
 	CredentialByUsername(ctx context.Context, username string) (Credential, error)
@@ -180,6 +184,9 @@ type Service struct {
 	newID      func() string
 	accounts   *Limiter
 	addresses  *Limiter
+	// sealer seals TOTP secrets; nil disables enrolment (ErrTwoFactorUnavailable).
+	sealer     Sealer
+	challenges challenges
 	// dummy is verified when there is no real hash to check, so every
 	// failed sign-in costs one hash computation. It is made in NewService,
 	// so no request pays for it.
@@ -190,6 +197,9 @@ type Service struct {
 type Options struct {
 	Now   func() time.Time
 	NewID func() string
+	// Sealer seals TOTP secrets (NewKEKSealer with TOTPPurpose). Without it,
+	// TOTP cannot be enrolled or checked; recovery codes still work.
+	Sealer Sealer
 }
 
 // NewService returns a Service. rec records audit events that are not part
@@ -213,7 +223,7 @@ func NewService(cfg Config, st Store, principals Principals, hasher Hasher, rec 
 	}
 	return &Service{cfg: cfg, store: st, principals: principals, hasher: hasher, rec: rec, now: o.Now, newID: o.NewID,
 		accounts: NewLimiter(cfg.AccountLimit, DefaultLimiterKeys, o.Now), addresses: NewLimiter(cfg.AddressLimit, DefaultLimiterKeys, o.Now),
-		dummy: dummy}, nil
+		sealer: o.Sealer, dummy: dummy}, nil
 }
 
 // Config returns the policy.
@@ -229,11 +239,14 @@ type SignInInput struct {
 }
 
 // Issued is a new session with its secrets. The secrets exist only here and
-// in the response that sets them; the store keeps their hashes.
+// in the response that sets them; the store keeps their hashes. When the
+// password was right but the user has TOTP enabled, SecondFactor is set
+// instead and there is no session yet ([Service.CompleteSignIn]).
 type Issued struct {
-	Session   Session
-	Token     string
-	CSRFToken string
+	Session      Session
+	Token        string
+	CSRFToken    string
+	SecondFactor *SecondFactorChallenge
 }
 
 // normalizeUsername lower-cases a submitted username (usernames are lower
@@ -298,6 +311,16 @@ func (a *attempt) succeeded() {
 	a.s.addresses.Release(a.addrKey)
 }
 
+// passed releases the attempt without clearing the account's failures: the
+// password was right but a second factor must follow, and only a complete
+// sign-in clears the count. Otherwise a known password would reset the
+// limit on second-factor guesses at will.
+func (a *attempt) passed() {
+	a.ended = true
+	a.s.accounts.Release(a.accKey)
+	a.s.addresses.Release(a.addrKey)
+}
+
 func (a *attempt) done() {
 	if !a.ended {
 		a.ended = true
@@ -346,7 +369,9 @@ func (s *Service) rehash(ctx context.Context, c Credential, pw string) {
 // *RateLimitedError before any hashing. The attempt is reserved in both
 // limits before hashing, so concurrent attempts cannot exceed them.
 // Successes and failures are audited (a failure never records the submitted
-// username).
+// username). For a user with TOTP enabled, a right password returns a
+// second-factor challenge instead of a session; the password step is then
+// not audited as a sign-in (the second step is).
 func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 	username, valid := normalizeUsername(in.Username)
 	accKey, addrKey := accountKey(username), AddressKey(in.Address)
@@ -382,10 +407,25 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 		}
 		return Issued{}, ErrInvalidCredentials
 	}
-	at.succeeded()
+	st, err := s.store.TwoFactor(ctx, cred.UserID)
+	if err != nil {
+		return Issued{}, err
+	}
 	if rehash {
 		s.rehash(ctx, cred, in.Password)
 	}
+	if st.Enabled() {
+		at.passed()
+		exp := now.Add(ChallengeTTL)
+		tok := s.challenges.add(now, &challenge{userID: cred.UserID, accKey: accKey, expires: exp, userAgent: in.UserAgent})
+		return Issued{SecondFactor: &SecondFactorChallenge{Token: tok, ExpiresAt: exp, Methods: []string{MethodTOTP, MethodRecoveryCode}}}, nil
+	}
+	at.succeeded()
+	return s.startSession(ctx, cred.UserID, in.Address, in.UserAgent, now, audit.SignIn(actorFor(cred, true), true, "password", "", now))
+}
+
+// startSession creates a session for userID and records ev with it.
+func (s *Service) startSession(ctx context.Context, userID, address, userAgent string, now time.Time, ev audit.Event) (Issued, error) {
 	// Expired sessions of anyone are removed here, so the table stays small
 	// without a background job.
 	if _, err := s.store.DeleteExpired(ctx, now, now.Add(-s.cfg.IdleTimeout)); err != nil {
@@ -393,10 +433,10 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 	}
 	tok := newSecret()
 	iss := Issued{Token: tok, CSRFToken: CSRFToken(tok)}
-	iss.Session = Session{ID: s.newID(), UserID: cred.UserID, TokenHash: hashSecret(tok),
+	iss.Session = Session{ID: s.newID(), UserID: userID, TokenHash: hashSecret(tok),
 		CreatedAt: now, LastSeenAt: now, AuthenticatedAt: now, ExpiresAt: now.Add(s.cfg.AbsoluteTimeout),
-		UserAgent: clean(in.UserAgent, 256), Address: clean(in.Address, 64)}
-	if err := s.store.CreateSession(ctx, iss.Session, audit.SignIn(actorFor(cred, true), true, "password", "", now)); err != nil {
+		UserAgent: clean(userAgent, 256), Address: clean(address, 64)}
+	if err := s.store.CreateSession(ctx, iss.Session, ev); err != nil {
 		return Issued{}, err
 	}
 	return iss, nil
@@ -410,7 +450,8 @@ func (s *Service) touchEvery() time.Duration { return min(time.Minute, s.cfg.Idl
 const MaxTokenLength = 128
 
 // Authenticate returns the session of token and its user's current principal
-// (with SessionID and AuthTime set). It returns [ErrInvalidSession] for an
+// (with SessionID and AuthTime set, and EnrollmentRequired when
+// auth.require_2fa confines the user to enrolling a second factor). It returns [ErrInvalidSession] for an
 // unknown, ended, idle or expired session, or a user who can no longer act;
 // an expired session is deleted. Termination therefore takes effect on the
 // next request: there is no cache.
@@ -444,6 +485,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Session, auth
 			return Session{}, authz.Principal{}, err
 		}
 		sess.LastSeenAt = now
+	}
+	if p.EnrollmentRequired, err = s.enrollmentRequired(ctx, sess.UserID); err != nil {
+		return Session{}, authz.Principal{}, err
 	}
 	p.SessionID, p.AuthTime = sess.ID, sess.AuthenticatedAt
 	return sess, p, nil

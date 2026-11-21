@@ -132,7 +132,7 @@ func runToken(args []string, stdout, stderr io.Writer, env opsEnv) int {
 	}
 	defer func() { _ = db.Close() }()
 	al := store.NewAuditLog(db)
-	parts, err := buildAPI(db, al, cfg.Auth, auth.NewArgon2id(auth.DefaultParams, 1), env.Now)
+	parts, err := buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now)
 	if err != nil {
 		say(stderr, "ledger token: "+err.Error())
 		return 1
