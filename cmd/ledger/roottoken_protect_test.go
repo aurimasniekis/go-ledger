@@ -195,3 +195,64 @@ func TestRootAccountNoOpsStayOpenOnceDemotedOrDisabled(t *testing.T) {
 	session(`{"disabled":true,"version":%d}`)
 	token(`{"disabled":true,"version":%d}`)
 }
+
+// TestOnlyTheRootTokenOrASessionRenamesTheRootAccount is decision D35: changing
+// the root (first) account's username is protected like D34. Other tokens get
+// 403 root_token_required (pinned to the version); a same-name patch, other
+// users and a root token or session stay open.
+func TestOnlyTheRootTokenOrASessionRenamesTheRootAccount(t *testing.T) {
+	e := newSignInEnv(t, nil)
+	e.addAdministrator("erin")
+	ctx := context.Background()
+	alice, _ := e.signIn("alice")
+	rootTok := e.createToken(alice, `{"name":"terraform","root":true}`)
+	narrow := e.createToken(alice, `{"name":"um","grants":["users:read","users:write"]}`)
+	erin, _ := e.signIn("erin")
+	erinRoot := e.createToken(erin, `{"name":"other-root","root":true}`)
+	get := func(id string) (string, int64) {
+		u, err := e.parts.users.Get(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.Username, u.Version
+	}
+	patch := func(id, secret, body string, session *browser) (int, string) {
+		_, v := get(id)
+		var hdr map[string]string
+		if secret != "" {
+			hdr = bearer(secret)
+		}
+		w := e.req("PATCH", "/api/v1/users/"+id, fmt.Sprintf(body, v), session, hdr)
+		return w.Code, w.Body.String()
+	}
+	for who, secret := range map[string]string{"a users:write token": narrow.Secret, "another administrator's root token": erinRoot.Secret} {
+		if code, out := patch(e.ids["alice"], secret, `{"username":"mallory","version":%d}`, nil); code != 403 || !strings.Contains(out, "root_token_required") {
+			t.Errorf("%s renames the root account: %d %s", who, code, out)
+		}
+		_, v := get(e.ids["alice"])
+		if w := e.req("PATCH", "/api/v1/users/"+e.ids["alice"], fmt.Sprintf(`{"username":"mallory","version":%d}`, v+5), nil, bearer(secret)); w.Code != 409 {
+			t.Errorf("%s, stale version: %d", who, w.Code)
+		}
+	}
+	if name, _ := get(e.ids["alice"]); name != "alice" {
+		t.Fatalf("a refused request renamed the root account: %s", name)
+	}
+	// The same name is a no-op and stays open.
+	if code, out := patch(e.ids["alice"], narrow.Secret, `{"username":"alice","version":%d}`, nil); code != 200 {
+		t.Errorf("same username on the root account: %d %s", code, out)
+	}
+	// Other users can be renamed by a users:write token.
+	if code, out := patch(e.ids["erin"], narrow.Secret, `{"username":"erin2","version":%d}`, nil); code != 200 {
+		t.Errorf("users:write renames another user: %d %s", code, out)
+	}
+	// A root token of the root account renames it, then a session renames it back.
+	if code, out := patch(e.ids["alice"], rootTok.Secret, `{"username":"alice2","version":%d}`, nil); code != 200 {
+		t.Fatalf("root token renames the root account: %d %s", code, out)
+	}
+	if name, _ := get(e.ids["alice"]); name != "alice2" {
+		t.Fatalf("root token's rename did not apply: %s", name)
+	}
+	if code, out := patch(e.ids["alice"], "", `{"username":"alice","version":%d}`, alice); code != 200 {
+		t.Errorf("session renames the root account: %d %s", code, out)
+	}
+}

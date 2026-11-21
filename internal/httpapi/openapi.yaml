@@ -406,11 +406,11 @@ paths:
         intact. A disabled user's sessions and tokens stop working on their
         next request. With an API token, making a user an administrator or
         re-enabling a disabled administrator needs a root token of the root
-        account (decision D32); so does demoting or disabling the root
-        (first) account (decision D34). Any other token is refused with 403
+        account (decision D32); so does demoting, disabling or renaming
+        the root (first) account (decisions D34, D35). Any other token is refused with 403
         `root_token_required` before anything changes, and that check is
-        pinned to the version (a stale version is a 409). Demoting or
-        disabling other users, no-op changes and profile edits stay open to a
+        pinned to the version (a stale version is a 409). Demoting,
+        disabling or renaming other users, no-op changes and profile edits stay open to a
         `users:write` token. Sessions are unchanged.
       tags: [users]
       parameters:
@@ -446,7 +446,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/User"
         "403":
-          description: "With an API token: code `root_token_required` when promoting to administrator or re-enabling an administrator (decision D32), or when demoting or disabling the root account (decision D34), unless the caller is a root token of the root account; also the usual authorization refusals."
+          description: "With an API token: code `root_token_required` when promoting to administrator or re-enabling an administrator (decision D32), or when demoting, disabling or renaming the root account (decisions D34, D35), unless the caller is a root token of the root account; also the usual authorization refusals."
           content:
             application/json:
               schema:
