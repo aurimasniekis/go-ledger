@@ -43,6 +43,8 @@ Last updated: 2026-11-20.
   - Follow-ups: X2 engine and review queue (uses `matches.Store.Create`); X4 UI and MCP; CLI commands; linking bank reversal transactions to reversed matches; following `superseded_by` from pending suggestions.
 - **A7 Auth and account UI** (ADR-0036): sign-in (two-step with 2FA), re-authentication prompt that repeats the action, 2FA enrolment (key and otpauth link, no QR code), recovery codes shown once with copy and download, regenerate and disable, required-2FA gate, sessions list and end, own API tokens (grants picker limited to the user's grants, root warning, token shown once and never reopenable, revoke), users, roles and all-tokens admin screens, password change. CSRF header on writes; `errors[]` mapped to fields. Minimal shell to be absorbed by U1.
   - Follow-ups: U1 takes over the shell, `RequireSession` and `QueryState`; a QR encoder (needs an ADR note); sign-in e2e needs a seeded database; TanStack Form with the first substantial form.
+- **P-MCP1 MCP server core** (ADR-0038, docs/mcp.md): official Go SDK v1.8.0; `POST /api/v1/mcp` (token-only access rule, stateless streamable HTTP) and `ledger mcp stdio`; tools run API operations through the server's own routes so grants, validation and token-write audit are the HTTP ones; `mcp.tool_called` audit with token identity; per-token rate and size limits; resources `ledger://me|grants|openapi`.
+  - Follow-ups: P-MCP2 adds tools per slice; stdio writes are audited by the server as `token.write_used` only; tool lists are not filtered by grant.
 
 ## Next (first wave)
 

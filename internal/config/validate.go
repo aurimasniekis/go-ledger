@@ -165,6 +165,7 @@ func (c *Config) validate(sources map[string]string) []Problem {
 		}
 	}
 	c.Auth.validateOIDC(bad)
+	c.MCP.validate(bad)
 	c.Events.Pulse.validate(bad)
 	c.Banking.EnableBanking.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {

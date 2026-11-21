@@ -60,7 +60,9 @@ var (
 	// provisioning); identity_mismatch: an OIDC re-authentication returned
 	// another identity than the linked one.
 	signInReasons = []string{"invalid_credentials", "invalid_second_factor", "account_disabled", "locked_out", "identity_not_linked", "identity_mismatch"}
-	mcpOutcomes   = []string{"succeeded", "failed", "denied"}
+	// "requested" is a stdio call: the server saw the write and the tool
+	// name the client asserted, not the outcome (the route's own answer).
+	mcpOutcomes = []string{"succeeded", "failed", "denied", "requested"}
 	// A session ended by its own user signing out, or terminated from
 	// another session of the same user. Sessions ended by a password change
 	// are counted in auth.password_changed instead.

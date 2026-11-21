@@ -68,6 +68,13 @@ func TestOpenAPISecurityMatchesAccess(t *testing.T) {
 				continue
 			}
 			others++
+			if op.Access == "token" {
+				// The MCP endpoint takes a bearer API token only.
+				if op.Security == nil || len(*op.Security) != 1 || len((*op.Security)[0]) != 1 || (*op.Security)[0]["bearerAuth"] == nil {
+					t.Errorf("%s %s is token-only; its security must be exactly [bearerAuth]", method, path)
+				}
+				continue
+			}
 			if op.Access == "session" {
 				// A session route refuses API tokens: it declares the cookie only.
 				if op.Security == nil || len(*op.Security) != 1 || len((*op.Security)[0]) != 1 || (*op.Security)[0]["sessionCookie"] == nil {

@@ -36,6 +36,7 @@ import (
 // deliberate change here; TestPermissionMatrixCoversEveryRoute fails otherwise.
 var permissionMatrix = map[string]string{
 	"GET /api/v1/openapi.json":          "public",
+	"POST /api/v1/mcp":                  "token",
 	"GET /api/v1/openapi.yaml":          "public",
 	"GET /api/v1/me":                    "authenticated",
 	"GET /api/v1/grants":                "authenticated",
@@ -310,6 +311,7 @@ func TestPermissionMatrix(t *testing.T) {
 		valid    bool
 		readOnly bool // must never pass a state-changing route that needs a grant
 		session  bool // signed in with a session cookie
+		token    bool // an API token
 		allows   func(g authz.Grant) bool
 	}
 	static := func(h map[string]string) func() map[string]string { return func() map[string]string { return h } }
@@ -327,11 +329,11 @@ func TestPermissionMatrix(t *testing.T) {
 		{name: "administrator", hdr: session("alice"), valid: true, session: true, allows: func(authz.Grant) bool { return true }},
 		{name: "read-only user", hdr: session("bob"), valid: true, readOnly: true, session: true,
 			allows: func(g authz.Grant) bool { return g.Action == authz.ActionRead && !adminOnly[g.Resource] }},
-		{name: "administrator's users:read token", hdr: static(map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "users:read"}), valid: true, readOnly: true,
+		{name: "administrator's users:read token", hdr: static(map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "users:read"}), valid: true, readOnly: true, token: true,
 			allows: func(g authz.Grant) bool { return g == authz.G(authz.ResourceUsers, authz.ActionRead) }},
 		// The owner's read-only role does not allow users:write (nor users:read),
 		// so the token holds no effective grant at all.
-		{name: "read-only user's users:write token", hdr: static(map[string]string{"X-Test-User": f.ids["bob"], "X-Test-Token-Grants": "users:write"}), valid: true, readOnly: true,
+		{name: "read-only user's users:write token", hdr: static(map[string]string{"X-Test-User": f.ids["bob"], "X-Test-Token-Grants": "users:write"}), valid: true, readOnly: true, token: true,
 			allows: func(authz.Grant) bool { return false }},
 	}
 	n := 0
@@ -360,6 +362,10 @@ func TestPermissionMatrix(t *testing.T) {
 				allowed = s.valid
 			case "session":
 				allowed = s.valid && s.session
+			case "token":
+				// The MCP endpoint takes any valid API token and checks grants
+				// per tool (TestMCPHTTPGrantParity); sessions are refused.
+				allowed = s.valid && s.token
 			case "session-or-root-token":
 				// No matrix subject is a root token of the root account (the
 				// test tokens are not stored), so only sessions pass.
