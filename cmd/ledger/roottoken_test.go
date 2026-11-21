@@ -245,6 +245,10 @@ func TestTokenCreatedTokensAreContained(t *testing.T) {
 	if early.Token.ExpiresAt == nil || early.Token.ExpiresAt.Year() != 2029 {
 		t.Fatalf("an earlier requested expiry is kept: %v", early.Token.ExpiresAt)
 	}
+	grandchild := mint(child.Secret, `{"name":"grandchild","grants":["commitments:read"]}`)
+	if grandchild.Token.ExpiresAt == nil || !grandchild.Token.ExpiresAt.Equal(want) {
+		t.Fatalf("a grandchild expires at %v, want the parent's 2030", grandchild.Token.ExpiresAt)
+	}
 	// A parent that never expires leaves the requested expiry (none) alone.
 	if c := mint(forever.Secret, `{"name":"free","grants":["commitments:read"]}`); c.Token.ExpiresAt != nil {
 		t.Fatalf("child of a token without expiry: %v", c.Token.ExpiresAt)
@@ -252,7 +256,7 @@ func TestTokenCreatedTokensAreContained(t *testing.T) {
 	grand := mint(forever.Secret, `{"name":"mid","root":true}`)
 	leaf := mint(grand.Secret, `{"name":"leaf","grants":["commitments:read"]}`)
 
-	for name, secret := range map[string]string{"child": child.Secret, "late": late.Secret, "early": early.Secret, "leaf": leaf.Secret} {
+	for name, secret := range map[string]string{"child": child.Secret, "grandchild": grandchild.Secret, "late": late.Secret, "early": early.Secret, "leaf": leaf.Secret} {
 		if w := e.req("GET", "/api/v1/commitments", "", nil, bearer(secret)); w.Code != 200 {
 			t.Fatalf("%s before revocation: %d", name, w.Code)
 		}
@@ -260,7 +264,7 @@ func TestTokenCreatedTokensAreContained(t *testing.T) {
 	if w := e.req("DELETE", "/api/v1/auth/tokens/"+parent.Token.ID, "", alice, nil); w.Code != 204 {
 		t.Fatalf("revoke parent: %d %s", w.Code, w.Body.String())
 	}
-	for name, secret := range map[string]string{"parent": parent.Secret, "child": child.Secret, "late": late.Secret, "early": early.Secret} {
+	for name, secret := range map[string]string{"parent": parent.Secret, "child": child.Secret, "grandchild": grandchild.Secret, "late": late.Secret, "early": early.Secret} {
 		if w := e.req("POST", "/api/v1/auth/tokens", tokenBody, nil, bearer(secret)); w.Code != 401 {
 			t.Errorf("%s after the parent's revocation creates tokens: %d", name, w.Code)
 		}
@@ -287,7 +291,7 @@ func TestTokenCreatedTokensAreContained(t *testing.T) {
 			cascaded[ev.TargetID] = from
 		}
 	}
-	for _, c := range []createdToken{child, late, early} {
+	for _, c := range []createdToken{child, grandchild, late, early} {
 		if cascaded[c.Token.ID] != parent.Token.ID {
 			t.Errorf("no token.revoked entry with cascaded_from for %s: %v", c.Token.ID, cascaded)
 		}

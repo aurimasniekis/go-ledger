@@ -326,6 +326,8 @@ type APIToken struct {
 	ExpiresAt  *string  `json:"expires_at"`
 	LastUsedAt *string  `json:"last_used_at"`
 	RevokedAt  *string  `json:"revoked_at"`
+	// ParentTokenID is the token that created this one through the API; nil when none.
+	ParentTokenID *string `json:"parent_token_id"`
 }
 
 // NewAPIToken is the body of CreateMyToken: a name and either grants or Root.
