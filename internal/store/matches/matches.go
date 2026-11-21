@@ -23,6 +23,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
@@ -41,6 +42,20 @@ type Store struct {
 	audit store.AuditWriter
 	now   func() time.Time
 	newID func() string
+	// zone is the reporting zone payment facts are derived in (see
+	// paymentstore.Store.WithZone); UTC when unset.
+	zone calendar.Zone
+}
+
+// WithZone returns a copy of the store that derives payment facts in the
+// reporting zone z (the zero zone means UTC).
+func (s *Store) WithZone(z calendar.Zone) *Store {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	c.zone = z
+	return &c
 }
 
 var _ matches.Store = (*Store)(nil)
@@ -310,12 +325,12 @@ func confirmedAllocations(ctx context.Context, tx *sql.Tx, transactionID banking
 
 // checkConfirm runs matches.CheckConfirm against the stored data, leaving the
 // match except out of the allocations and the occurrence's evidence.
-func checkConfirm(ctx context.Context, tx *sql.Tx, t matches.Transaction, o occurrences.Occurrence, amount money.Money, except string, allow bool) error {
+func (s *Store) checkConfirm(ctx context.Context, tx *sql.Tx, t matches.Transaction, o occurrences.Occurrence, amount money.Money, except string, allow bool) error {
 	others, err := confirmedAllocations(ctx, tx, t.ID, except)
 	if err != nil {
 		return err
 	}
-	facts, err := paymentstore.FactsTx(ctx, tx, []string{o.ID})
+	facts, err := paymentstore.FactsTx(ctx, tx, s.zone, []string{o.ID})
 	if err != nil {
 		return err
 	}
@@ -393,7 +408,7 @@ func (s *Store) finish(ctx context.Context, tx *sql.Tx, a matches.Action, actor 
 	if err := s.audit.WriteAudit(ctx, tx, matches.AuditEvent(a, actor, m, from, at)); err != nil {
 		return matches.Change{}, err
 	}
-	ch, err := paymentstore.ChangeTx(ctx, tx, o.ID)
+	ch, err := paymentstore.ChangeTx(ctx, tx, s.zone, o.ID)
 	if err != nil {
 		return matches.Change{}, err
 	}
@@ -458,21 +473,28 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 			}
 		}
 		if n.State == matches.StateConfirmed {
-			if err := checkConfirm(ctx, tx, t, o, n.Amount, "", n.AllowOverpayment); err != nil {
+			if err := s.checkConfirm(ctx, tx, t, o, n.Amount, "", n.AllowOverpayment); err != nil {
 				return err
 			}
 			action = matches.ActionConfirmed
 		}
 		now := s.now().UTC()
 		id := s.newID()
-		var decidedKind, decidedUser, decidedAt any
+		var decidedKind, decidedUser, decidedAt, tolAmt, tolCur any
 		if n.State == matches.StateConfirmed {
+			tol, err := s.withinTolerance(ctx, tx, o, n.Amount, "")
+			if err != nil {
+				return err
+			}
+			if tol != nil {
+				tolAmt, tolCur = sqlvalue.Amount{Decimal: tol.Amount()}, sqlvalue.Currency{Currency: tol.Currency()}
+			}
 			decidedKind, decidedUser, decidedAt = string(storedKind(actor.Kind)), nullable(actor.UserID), store.Timestamp{Time: now}
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO payment_matches (id, transaction_id, occurrence_id, amount, currency, origin, state, created_by_kind, created_by_user,"+
-			" decided_by_kind, decided_by_user, decided_at, reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			" decided_by_kind, decided_by_user, decided_at, reason, created_at, updated_at, tolerance_amount, tolerance_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			id, string(t.ID), o.ID, sqlvalue.Amount{Decimal: n.Amount.Amount()}, sqlvalue.Currency{Currency: n.Amount.Currency()}, string(n.Origin), string(n.State),
-			string(storedKind(actor.Kind)), nullable(actor.UserID), decidedKind, decidedUser, decidedAt, n.Reason, store.Timestamp{Time: now}, store.Timestamp{Time: now}); err != nil {
+			string(storedKind(actor.Kind)), nullable(actor.UserID), decidedKind, decidedUser, decidedAt, n.Reason, store.Timestamp{Time: now}, store.Timestamp{Time: now}, tolAmt, tolCur); err != nil {
 			if isUniqueViolation(err) {
 				return matches.ErrDuplicate
 			}
@@ -618,6 +640,62 @@ func commitmentTolerance(ctx context.Context, tx *sql.Tx, occurrenceID string) (
 	return sqlvalue.Money(amt.V, cur.V)
 }
 
+// withinTolerance returns the commitment's match tolerance when a confirmed
+// match of amount to o is confirmed within it: the occurrence's counted
+// evidence, with this match, is confirmed bank matches alone (no manual
+// payment), in the occurrence's currency, short of its amount by no more than
+// the tolerance (D39 5a, ADR-0042). Nil otherwise. except is the match being
+// confirmed or corrected, left out of the existing evidence.
+func (s *Store) withinTolerance(ctx context.Context, tx *sql.Tx, o occurrences.Occurrence, amount money.Money, except string) (*money.Money, error) {
+	tol, err := commitmentTolerance(ctx, tx, o.ID)
+	if err != nil {
+		return nil, err
+	}
+	cur := o.Amount.Currency()
+	if !tol.IsValid() || tol.Currency() != cur || tol.Sign() <= 0 || amount.Currency() != cur {
+		return nil, nil
+	}
+	facts, err := paymentstore.FactsTx(ctx, tx, s.zone, []string{o.ID})
+	if err != nil {
+		return nil, err
+	}
+	total := amount
+	for _, e := range facts[o.ID].Evidence {
+		switch {
+		case e.Kind == payments.EvidenceBankTransaction && e.ID == except:
+		case e.Kind != payments.EvidenceBankTransaction:
+			return nil, nil // manual evidence: the user's own payment is never rounded up
+		case e.Amount.Currency() == cur:
+			if total, err = total.Add(e.Amount); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if c, _ := total.Cmp(o.Amount); c >= 0 {
+		return nil, nil
+	}
+	gap, _ := o.Amount.Sub(total)
+	if c, _ := gap.Cmp(tol); c > 0 {
+		return nil, nil
+	}
+	return &tol, nil
+}
+
+// recordTolerance stores on the match the tolerance it is confirmed within,
+// or clears it (migration 0021).
+func (s *Store) recordTolerance(ctx context.Context, tx *sql.Tx, id string, o occurrences.Occurrence, amount money.Money) error {
+	tol, err := s.withinTolerance(ctx, tx, o, amount, id)
+	if err != nil {
+		return err
+	}
+	var amt, cur any
+	if tol != nil {
+		amt, cur = sqlvalue.Amount{Decimal: tol.Amount()}, sqlvalue.Currency{Currency: tol.Currency()}
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE payment_matches SET tolerance_amount = ?, tolerance_currency = ? WHERE id = ?", amt, cur, id)
+	return err
+}
+
 func (s *Store) confirm(ctx context.Context, actor audit.Actor, id string, expected int64, allow bool, reason *string) (matches.Change, error) {
 	return s.decide(ctx, actor, id, expected, reason, matches.ActionConfirmed, matches.StateConfirmed, func(ctx context.Context, tx *sql.Tx, m matches.Match) error {
 		o, err := occstore.GetTx(ctx, tx, m.OccurrenceID)
@@ -647,7 +725,12 @@ func (s *Store) confirm(ctx context.Context, actor audit.Actor, id string, expec
 				return err
 			}
 		}
-		return checkConfirm(ctx, tx, m.Transaction, o, m.Amount, m.ID, allow)
+		if err := s.checkConfirm(ctx, tx, m.Transaction, o, m.Amount, m.ID, allow); err != nil {
+			return err
+		}
+		// Record, inside this transaction, whether it is confirmed within
+		// the tolerance, so a later tolerance edit never changes it.
+		return s.recordTolerance(ctx, tx, m.ID, o, m.Amount)
 	}, matches.StateSuggested)
 }
 
@@ -694,7 +777,7 @@ func (s *Store) Correct(ctx context.Context, actor audit.Actor, id string, expec
 			return err
 		}
 		if m.State == matches.StateConfirmed {
-			if err := checkConfirm(ctx, tx, m.Transaction, o, amount, m.ID, allow); err != nil {
+			if err := s.checkConfirm(ctx, tx, m.Transaction, o, amount, m.ID, allow); err != nil {
 				return err
 			}
 		}
@@ -702,6 +785,11 @@ func (s *Store) Correct(ctx context.Context, actor audit.Actor, id string, expec
 		if _, err := store.UpdateVersioned(ctx, tx, "payment_matches", "amount = ?, reason = ?, updated_at = ?",
 			m.ID, expected, sqlvalue.Amount{Decimal: amount.Amount()}, reason, store.Timestamp{Time: now}); err != nil {
 			return err
+		}
+		if m.State == matches.StateConfirmed {
+			if err := s.recordTolerance(ctx, tx, m.ID, o, amount); err != nil {
+				return err
+			}
 		}
 		if err := s.event(ctx, tx, m.ID, matches.ActionCorrected, m.State, amount, actor, reason, now); err != nil {
 			return err

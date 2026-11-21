@@ -98,6 +98,11 @@ type Evidence struct {
 	OccurrenceID string
 	Amount       money.Money
 	Date         calendar.Date
+	// ConfirmedWithin is, for a bank match, the commitment's match tolerance
+	// recorded when the match was confirmed short of the occurrence's amount
+	// by no more than that tolerance (D39 5a, ADR-0042); nil otherwise. It is
+	// history: a later tolerance edit does not change it.
+	ConfirmedWithin *money.Money
 }
 
 // OverrideStatus is what a manual status override says.
@@ -146,9 +151,6 @@ type Facts struct {
 	// commitment was created; the zero value means unknown, and no
 	// occurrence is then "not recorded" (D38 1a, ADR-0042).
 	CommitmentCreatedOn calendar.Date
-	// MatchTolerance is the commitment's match tolerance, nil when none
-	// (D39 5a, ADR-0042).
-	MatchTolerance *money.Money
 }
 
 // GraceFunc returns the end of a documented grace period for an occurrence,
@@ -173,8 +175,8 @@ type State struct {
 	Paid        money.Money
 	Outstanding money.Money
 	Overpaid    money.Money
-	// Shortfall is the amount a payment confirmed within the commitment's
-	// match tolerance fell short by (D39 5a): the status is then paid and
+	// Shortfall is the amount confirmed bank payments confirmed within the
+	// commitment's match tolerance (recorded at confirmation) fell short by (D39 5a): the status is then paid and
 	// Outstanding is zero. Zero otherwise.
 	Shortfall money.Money
 	// Unconverted lists the currencies of evidence that is not in the
@@ -238,12 +240,29 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 		st.Overpaid, _ = paid.Sub(o.Amount)
 	}
 	short := false
-	if c < 0 && paid.Sign() > 0 && st.BankEvidenceCount > 0 && f.MatchTolerance != nil && f.MatchTolerance.Currency() == cur && f.MatchTolerance.Sign() > 0 {
-		// A confirmed bank payment short of the amount by no more than the
-		// tolerance settles the occurrence (D39 5a); never a payment above it.
+	if c < 0 && paid.Sign() > 0 && st.ManualEvidenceCount == 0 {
+		// Only confirmed bank matches count (no manual evidence, and other
+		// currencies are never counted), their same-currency sum is short of
+		// the amount, and a match recorded that it was confirmed within a
+		// tolerance that covers the gap (D39 5a, ADR-0042). The smallest
+		// recorded tolerance applies. Never a payment above the amount.
 		gap, _ := o.Amount.Sub(paid)
-		if tc, _ := gap.Cmp(*f.MatchTolerance); tc <= 0 {
-			short, st.Shortfall = true, gap
+		var tol *money.Money
+		for _, e := range f.Evidence {
+			w := e.ConfirmedWithin
+			if e.Kind != EvidenceBankTransaction || w == nil || w.Currency() != cur || w.Sign() <= 0 {
+				continue
+			}
+			if tol == nil {
+				tol = w
+			} else if wc, _ := w.Cmp(*tol); wc < 0 {
+				tol = w
+			}
+		}
+		if tol != nil {
+			if tc, _ := gap.Cmp(*tol); tc <= 0 {
+				short, st.Shortfall = true, gap
+			}
 		}
 	}
 	switch {

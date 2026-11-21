@@ -590,3 +590,35 @@ func TestNotRecordedFollowsCommitmentCreation(t *testing.T) {
 		t.Fatalf("february paid: %+v", st)
 	}
 }
+
+// TestNotRecordedUsesTheInjectedReportingZone (review of C3i, F4 and F5): the
+// reporting zone is a property of the store, not a global. A commitment
+// created at 2026-03-10T23:30Z is created on 11 March in Europe/Vilnius
+// (UTC+2), so its 10 March occurrence is not recorded there, while the same
+// data read in UTC dates the creation 10 March and the occurrence is overdue.
+func TestNotRecordedUsesTheInjectedReportingZone(t *testing.T) {
+	saved := clock
+	t.Cleanup(func() { clock = saved })
+	clock = time.Date(2026, 3, 10, 23, 30, 0, 0, time.UTC)
+	f := newFixture(t)
+	_, march := f.commitment(t, "50.00", "2026-03")
+	read := func(s *paymentstore.Store) payments.State {
+		t.Helper()
+		facts, err := s.Facts(context.Background(), []string{march.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return payments.Derive(march, facts[march.ID], today, nil)
+	}
+	if st := read(f.ps); st.Status != payments.StatusOverdue {
+		t.Fatalf("UTC: %+v", st)
+	}
+	vilnius := f.ps.WithZone(calendar.MustLoadZone("Europe/Vilnius"))
+	st := read(vilnius)
+	if st.Status != payments.StatusNotRecorded {
+		t.Fatalf("Vilnius: %+v", st)
+	}
+	if got := read(f.ps); got.Status != payments.StatusOverdue {
+		t.Fatalf("WithZone must not change the original store: %+v", got)
+	}
+}

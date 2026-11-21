@@ -22,16 +22,24 @@ The status is still derived on read (D7), never stored.
 2. **Totals.** A `not_recorded` occurrence stays in the month list and in `due`/`occurrence_count`, but adds nothing to
    `outstanding`, `overdue` or `overdue_count`. Its own `outstanding_amount` still shows the full amount. No grace
    period is looked up for it.
-3. **Tolerance counts as paid.** When the commitment has a positive `match_tolerance` in the occurrence's currency, the
-   counted evidence includes at least one confirmed bank match, and the evidence total is below the amount by no more than
-   the tolerance (inclusive), the derived status is `paid`, `outstanding_amount` is zero and the new
-   `shortfall_amount` holds the gap (zero otherwise). The tolerance is short-only: a larger gap changes nothing, and a
-   payment above the amount is not affected (it is "paid" with `overpaid_amount` as before). Manual partial payments
-   without a bank match keep their behaviour (`partially_paid`). An "unpaid" override still wins; the shortfall stays
-   visible. Bank facts and the match are not touched.
-4. **Facts.** `payments.Facts` gains `CommitmentCreatedOn` and `MatchTolerance`, read with the evidence by the
-   payments store (one join on the commitment), so every reader derives the same state. The reporting zone for the
-   creation date is set once at start-up (`SetReportingZone`; UTC until then).
+3. **Tolerance counts as paid, from what was recorded at confirmation.** When a bank match is confirmed (created
+   confirmed, confirmed from a suggestion, or its amount corrected while confirmed), the store checks, inside the write
+   transaction, whether the occurrence's counted evidence with this match is **confirmed bank matches alone** (no
+   manual payment), in the occurrence's currency, short of its amount by no more than the commitment's positive
+   `match_tolerance` (inclusive). If so it records that tolerance on the match (`tolerance_amount`,
+   `tolerance_currency`, migration 0021); otherwise the columns are NULL. The derived status is `paid`,
+   `outstanding_amount` zero and `shortfall_amount` the gap when the counted evidence is bank matches only, short of
+   the amount, and a recorded tolerance (the smallest among the matches) covers the gap. This is the conservative reading
+   of D39 5a ("confirmed within tolerance"): a **mixed** manual and bank payment stays `partially_paid`, a bank match in
+   another currency is never counted (so it cannot turn a manual partial payment into paid), a larger gap changes
+   nothing, and a payment above the amount is unaffected. An "unpaid" override still wins; the shortfall stays visible.
+   Bank facts are not touched. Because the state reads the recorded tolerance, never the commitment's current one,
+   editing or clearing a tolerance later does not change past occurrences, and a tolerance set later does not rescue a
+   past short match. Existing matches have none recorded.
+4. **Facts.** `payments.Facts` gains `CommitmentCreatedOn`; each bank `Evidence` carries `ConfirmedWithin` (the
+   recorded tolerance). The payments store reads them with the evidence, so every reader derives the same state. The
+   reporting zone for the creation date is injected into the payments and matches stores
+   (`WithZone`, applied where the API is registered; UTC when unset); there is no package global.
 5. **API, client, UI.** `PaymentStatus` and `PaymentState.timing` gain `not_recorded`; `PaymentState` gains
    `shortfall_amount`. The Go client gets `PaymentNotRecorded` and `ShortfallAmount`. The month row shows a muted
    "Not recorded" badge (icon and text, never the overdue look) with the sentence "Due before this commitment was
@@ -41,6 +49,8 @@ The status is still derived on read (D7), never stored.
 
 - A commitment created today with a start date in the past shows its earlier unpaid occurrences as "Not recorded". The
   user can mark any of them paid.
-- Editing a commitment does not change its creation date.
+- Editing a commitment does not change its creation date, and editing its tolerance does not change past occurrences.
+- Migration 0021 is numbered after 0020 on the base branch; the open PR that adds a migration 0021 for bank consent
+  origin means whichever merges second renumbers its file (migrations must have no gaps).
 - Open: whether the shortfall should be added to the totals row; it is not (the tolerance is the user's own, per
   commitment).

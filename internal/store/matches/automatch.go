@@ -35,7 +35,7 @@ func (s *Store) Snapshot(ctx context.Context, through calendar.YearMonth) (autom
 		if snap.Transactions, err = snapshotTransactions(ctx, tx); err != nil {
 			return err
 		}
-		if snap.Occurrences, err = snapshotOccurrences(ctx, tx); err != nil {
+		if snap.Occurrences, err = s.snapshotOccurrences(ctx, tx); err != nil {
 			return err
 		}
 		snap.Matches, err = snapshotMatches(ctx, tx)
@@ -72,7 +72,7 @@ func snapshotTransactions(ctx context.Context, tx *sql.Tx) ([]automatch.Transact
 	return out, rows.Err()
 }
 
-func snapshotOccurrences(ctx context.Context, tx *sql.Tx) ([]automatch.Occurrence, error) {
+func (s *Store) snapshotOccurrences(ctx context.Context, tx *sql.Tx) ([]automatch.Occurrence, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT o.id, o.commitment_id, c.name, o.due_date, o.amount, o.currency, c.match_tolerance_amount, c.match_tolerance_currency"+
 		" FROM commitment_occurrences o JOIN commitments c ON c.id = o.commitment_id"+
 		" WHERE o.cancelled_at IS NULL AND c.deleted_at IS NULL"+
@@ -118,7 +118,7 @@ func snapshotOccurrences(ctx context.Context, tx *sql.Tx) ([]automatch.Occurrenc
 	for i, o := range all {
 		ids[i] = o.ID
 	}
-	facts, err := paymentstore.FactsTx(ctx, tx, ids)
+	facts, err := paymentstore.FactsTx(ctx, tx, s.zone, ids)
 	if err != nil {
 		return nil, err
 	}

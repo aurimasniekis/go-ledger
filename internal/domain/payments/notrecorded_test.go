@@ -1,6 +1,7 @@
 package payments_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
@@ -87,12 +88,22 @@ func TestToleranceBoundaries(t *testing.T) {
 		{"no tolerance", []payments.Evidence{bank("49.70", "EUR")}, nil, payments.StatusPartiallyPaid, "0.00 EUR", "0.30 EUR", "0.00 EUR"},
 		{"zero tolerance", []payments.Evidence{bank("49.70", "EUR")}, tol("0.00"), payments.StatusPartiallyPaid, "0.00 EUR", "0.30 EUR", "0.00 EUR"},
 		{"manual partial payment keeps today's behaviour", []payments.Evidence{ev("49.70", "EUR")}, tol("0.50"), payments.StatusPartiallyPaid, "0.00 EUR", "0.30 EUR", "0.00 EUR"},
+		{"manual short plus bank in another currency stays partial", []payments.Evidence{ev("49.70", "EUR"), bank("10.00", "USD")}, tol("0.50"), payments.StatusPartiallyPaid, "0.00 EUR", "0.30 EUR", "0.00 EUR"},
+		{"manual plus bank short within tolerance stays partial", []payments.Evidence{ev("39.70", "EUR"), bank("10.00", "EUR")}, tol("0.50"), payments.StatusPartiallyPaid, "0.00 EUR", "0.30 EUR", "0.00 EUR"},
+		{"bank only, two matches short within", []payments.Evidence{bank("30.00", "EUR"), bank("19.80", "EUR")}, tol("0.50"), payments.StatusPaid, "0.20 EUR", "0.00 EUR", "0.00 EUR"},
+		{"bank in another currency alone is not counted", []payments.Evidence{bank("10.00", "USD")}, tol("0.50"), payments.StatusOverdue, "0.00 EUR", "50.00 EUR", "0.00 EUR"},
 		{"no evidence", nil, tol("0.50"), payments.StatusOverdue, "0.00 EUR", "50.00 EUR", "0.00 EUR"},
 		{"tolerance in another currency is ignored", []payments.Evidence{bank("49.70", "EUR")}, func() *money.Money { m := money.MustParse("0.50", "USD"); return &m }(), payments.StatusPartiallyPaid, "0.00 EUR", "0.30 EUR", "0.00 EUR"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			st := payments.Derive(occ, payments.Facts{Evidence: c.evidence, MatchTolerance: c.tolerance}, d("2026-03-20"), nil)
+			ev := slices.Clone(c.evidence)
+			for i := range ev {
+				if ev[i].Kind == payments.EvidenceBankTransaction {
+					ev[i].ConfirmedWithin = c.tolerance // the tolerance recorded at confirmation
+				}
+			}
+			st := payments.Derive(occ, payments.Facts{Evidence: ev}, d("2026-03-20"), nil)
 			if st.Status != c.status || st.Shortfall.String() != c.shortfall || st.Outstanding.String() != c.out || st.Overpaid.String() != c.overpaid {
 				t.Fatalf("%+v", st)
 			}
@@ -103,7 +114,9 @@ func TestToleranceBoundaries(t *testing.T) {
 // TestToleranceDoesNotOverridePaidStatusRules: an unpaid override still wins
 // over a tolerance-confirmed payment, and the shortfall stays visible.
 func TestToleranceUnpaidOverrideWins(t *testing.T) {
-	st := payments.Derive(occ, payments.Facts{Evidence: []payments.Evidence{bank("49.70", "EUR")}, MatchTolerance: tol("0.50"), Override: ov(payments.OverrideUnpaid)}, d("2026-03-20"), nil)
+	b := bank("49.70", "EUR")
+	b.ConfirmedWithin = tol("0.50")
+	st := payments.Derive(occ, payments.Facts{Evidence: []payments.Evidence{b}, Override: ov(payments.OverrideUnpaid)}, d("2026-03-20"), nil)
 	if st.Status != payments.StatusOverdue || st.Derived != payments.StatusPaid || st.Outstanding.String() != "50.00 EUR" || st.Shortfall.String() != "0.30 EUR" {
 		t.Fatalf("%+v", st)
 	}

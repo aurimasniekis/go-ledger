@@ -54,9 +54,9 @@ export const COMMITMENT_STATUSES = {
   due: { label: 'Due today', Icon: CalendarClock, tier: 'default', color: 'upcoming' },
   partially_paid: { label: 'Partly paid', Icon: CircleDashed, tier: 'default', color: 'upcoming' },
   overdue: { label: 'Overdue', Icon: TriangleAlert, tier: 'strong', color: 'overdue' },
-  // A cancelled occurrence (D31) owes nothing: quiet, never the overdue look.
   // Due before the commitment was created (D38 1a): not tracked yet, so never the overdue look.
   not_recorded: { label: 'Not recorded', Icon: CircleSlash, tier: 'quiet', color: 'deferred' },
+  // A cancelled occurrence (D31) owes nothing: quiet, never the overdue look.
   cancelled: { label: 'Cancelled', Icon: Ban, tier: 'quiet', color: 'deferred' },
   deferred: { label: 'Deferred', Icon: Hourglass, tier: 'quiet', color: 'deferred' },
 } satisfies Record<string, Entry>

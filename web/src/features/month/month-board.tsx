@@ -293,7 +293,7 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
         </p>
       )}
       {p.timing === 'not_recorded' && (
-        <p className="text-sm text-muted-foreground">Due before this commitment was created: not counted as overdue or outstanding. You can still record a payment.</p>
+        <p className="text-sm text-muted-foreground">Due before this commitment was created: not counted in the overdue or outstanding totals. You can still record a payment.</p>
       )}
       {p.status === 'paid' && !isZeroAmount(p.shortfall_amount.amount) && (
         <p className="text-sm">Paid within the commitment's tolerance; {money(p.shortfall_amount)} short.</p>

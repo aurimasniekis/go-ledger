@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
@@ -51,6 +50,10 @@ type Store struct {
 	audit store.AuditWriter
 	now   func() time.Time
 	newID func() string
+	// zone is the reporting zone in which a commitment's creation instant
+	// becomes the date before which unpaid occurrences are "not recorded"
+	// (D38 1a, ADR-0042); UTC when unset.
+	zone calendar.Zone
 }
 
 var _ payments.Store = (*Store)(nil)
@@ -68,6 +71,17 @@ func New(db *store.DB, aw store.AuditWriter, now func() time.Time, newID func() 
 		newID = resource.NewID
 	}
 	return &Store{db: db, audit: aw, now: now, newID: newID}
+}
+
+// WithZone returns a copy of the store that reads commitment creation dates in
+// the reporting zone z (the zero zone means UTC).
+func (s *Store) WithZone(z calendar.Zone) *Store {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	c.zone = z
+	return &c
 }
 
 const manualColumns = "id, occurrence_id, amount, currency, paid_on, note, version, created_at, updated_at"
@@ -99,7 +113,7 @@ const maxIn = 500
 func placeholders(n int) string { return "?" + strings.Repeat(", ?", n-1) }
 
 // factsTx reads the evidence and active override of each listed occurrence.
-func factsTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]payments.Facts, error) {
+func factsTx(ctx context.Context, tx *sql.Tx, zone calendar.Zone, ids []string) (map[string]payments.Facts, error) {
 	out := make(map[string]payments.Facts, len(ids))
 	for start := 0; start < len(ids); start += maxIn {
 		chunk := ids[start:min(start+maxIn, len(ids))]
@@ -113,7 +127,7 @@ func factsTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]payments
 		if err := overridesTx(ctx, tx, chunk, args, out); err != nil {
 			return nil, err
 		}
-		if err := commitmentTx(ctx, tx, chunk, args, out); err != nil {
+		if err := commitmentTx(ctx, tx, zone, chunk, args, out); err != nil {
 			return nil, err
 		}
 	}
@@ -145,59 +159,64 @@ func evidenceTx(ctx context.Context, tx *sql.Tx, chunk []string, args []any, out
 		f.Evidence = append(f.Evidence, e)
 		out[e.OccurrenceID] = f
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return withinToleranceTx(ctx, tx, chunk, args, out)
+}
+
+// withinToleranceTx attaches to each bank evidence the tolerance its match was
+// confirmed within, as recorded at confirmation (migration 0021); the
+// commitment's current tolerance is never read, so history does not change.
+func withinToleranceTx(ctx context.Context, tx *sql.Tx, chunk []string, args []any, out map[string]payments.Facts) error {
+	rows, err := tx.QueryContext(ctx, "SELECT id, occurrence_id, tolerance_amount, tolerance_currency FROM payment_matches"+
+		" WHERE state = 'confirmed' AND tolerance_amount IS NOT NULL AND occurrence_id IN ("+placeholders(len(chunk))+")", args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, occ string
+		var amt sqlvalue.Amount
+		var cur sqlvalue.Currency
+		if err := rows.Scan(&id, &occ, &amt, &cur); err != nil {
+			return err
+		}
+		m, err := sqlvalue.Money(amt, cur)
+		if err != nil {
+			return err
+		}
+		f := out[occ]
+		for i := range f.Evidence {
+			if f.Evidence[i].Kind == payments.EvidenceBankTransaction && f.Evidence[i].ID == id {
+				f.Evidence[i].ConfirmedWithin = &m
+			}
+		}
+	}
 	return rows.Err()
 }
 
-// reportingZone is the zone commitment creation dates are read in; UTC until
-// the application sets it with [SetReportingZone].
-var reportingZone atomic.Pointer[calendar.Zone]
-
-// SetReportingZone sets the reporting zone in which the creation instant of a
-// commitment becomes the date before which unpaid occurrences are "not
-// recorded" (D38 1a, ADR-0042). Call it once at start-up.
-func SetReportingZone(z calendar.Zone) {
-	if z.IsZero() {
-		reportingZone.Store(nil)
-		return
-	}
-	reportingZone.Store(&z)
-}
-
-func zoneOrUTC() calendar.Zone {
-	if z := reportingZone.Load(); z != nil {
-		return *z
-	}
-	return calendar.MustLoadZone("UTC")
-}
-
-// commitmentTx adds the commitment's creation date and match tolerance to the
-// facts of every listed occurrence.
-func commitmentTx(ctx context.Context, tx *sql.Tx, chunk []string, args []any, out map[string]payments.Facts) error {
-	rows, err := tx.QueryContext(ctx, "SELECT o.id, c.created_at, c.match_tolerance_amount, c.match_tolerance_currency FROM commitment_occurrences o"+
+// commitmentTx adds the commitment's creation date, read in zone (the
+// reporting zone, D38 1a, ADR-0042), to the facts of every listed occurrence.
+func commitmentTx(ctx context.Context, tx *sql.Tx, zone calendar.Zone, chunk []string, args []any, out map[string]payments.Facts) error {
+	rows, err := tx.QueryContext(ctx, "SELECT o.id, c.created_at FROM commitment_occurrences o"+
 		" JOIN commitments c ON c.id = o.commitment_id WHERE o.id IN ("+placeholders(len(chunk))+")", args...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
-	zone := zoneOrUTC()
+	if zone.IsZero() {
+		zone = calendar.MustLoadZone("UTC")
+	}
 	for rows.Next() {
 		var id string
 		var created store.Timestamp
-		var amt sql.Null[sqlvalue.Amount]
-		var cur sql.Null[sqlvalue.Currency]
-		if err := rows.Scan(&id, &created, &amt, &cur); err != nil {
+		if err := rows.Scan(&id, &created); err != nil {
 			return err
 		}
 		f := out[id]
 		if f.CommitmentCreatedOn, err = zone.DateOf(created.Time); err != nil {
 			return err
-		}
-		if amt.Valid {
-			m, err := sqlvalue.Money(amt.V, cur.V)
-			if err != nil {
-				return err
-			}
-			f.MatchTolerance = &m
 		}
 		out[id] = f
 	}
@@ -234,14 +253,14 @@ func overridesTx(ctx context.Context, tx *sql.Tx, chunk []string, args []any, ou
 
 // FactsTx reads the facts of each listed occurrence inside tx (for other
 // stores that write payment evidence, such as payment matches).
-func FactsTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]payments.Facts, error) {
-	return factsTx(ctx, tx, ids)
+func FactsTx(ctx context.Context, tx *sql.Tx, zone calendar.Zone, ids []string) (map[string]payments.Facts, error) {
+	return factsTx(ctx, tx, zone, ids)
 }
 
 // ChangeTx reads the occurrence and its facts after a payment-state write
 // inside tx.
-func ChangeTx(ctx context.Context, tx *sql.Tx, id string) (payments.Change, error) {
-	return change(ctx, tx, id)
+func ChangeTx(ctx context.Context, tx *sql.Tx, zone calendar.Zone, id string) (payments.Change, error) {
+	return change(ctx, tx, zone, id)
 }
 
 // Facts returns the facts of each listed occurrence.
@@ -249,7 +268,7 @@ func (s *Store) Facts(ctx context.Context, ids []string) (map[string]payments.Fa
 	var out map[string]payments.Facts
 	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		out, err = factsTx(ctx, tx, ids)
+		out, err = factsTx(ctx, tx, s.zone, ids)
 		return err
 	})
 	return out, err
@@ -306,12 +325,12 @@ func (s *Store) bump(ctx context.Context, tx *sql.Tx, id string, version int64, 
 }
 
 // change reads the occurrence and its facts after a write.
-func change(ctx context.Context, tx *sql.Tx, id string) (payments.Change, error) {
+func change(ctx context.Context, tx *sql.Tx, zone calendar.Zone, id string) (payments.Change, error) {
 	o, err := occstore.GetTx(ctx, tx, id)
 	if err != nil {
 		return payments.Change{}, err
 	}
-	f, err := factsTx(ctx, tx, []string{id})
+	f, err := factsTx(ctx, tx, zone, []string{id})
 	if err != nil {
 		return payments.Change{}, err
 	}
@@ -348,7 +367,7 @@ func (s *Store) RecordManual(ctx context.Context, actor audit.Actor, occurrenceI
 		if err := s.audit.WriteAudit(ctx, tx, payments.RecordedEvent(actor, p, now)); err != nil {
 			return err
 		}
-		ch, err = change(ctx, tx, o.ID)
+		ch, err = change(ctx, tx, s.zone, o.ID)
 		return err
 	})
 	if err != nil {
@@ -398,7 +417,7 @@ func (s *Store) DeleteManual(ctx context.Context, actor audit.Actor, occurrenceI
 		if err := s.audit.WriteAudit(ctx, tx, payments.DeletedEvent(actor, p, now)); err != nil {
 			return err
 		}
-		ch, err = change(ctx, tx, o.ID)
+		ch, err = change(ctx, tx, s.zone, o.ID)
 		return err
 	})
 	return ch, err
@@ -432,7 +451,7 @@ func (s *Store) SetOverride(ctx context.Context, actor audit.Actor, occurrenceID
 		if o.CancelledAt != nil {
 			return occurrences.ErrCancelled
 		}
-		facts, err := factsTx(ctx, tx, []string{o.ID})
+		facts, err := factsTx(ctx, tx, s.zone, []string{o.ID})
 		if err != nil {
 			return err
 		}
@@ -460,7 +479,7 @@ func (s *Store) SetOverride(ctx context.Context, actor audit.Actor, occurrenceID
 		if err := s.audit.WriteAudit(ctx, tx, payments.OverriddenEvent(actor, o.ID, status, prevStatus, now)); err != nil {
 			return err
 		}
-		ch, err = change(ctx, tx, o.ID)
+		ch, err = change(ctx, tx, s.zone, o.ID)
 		return err
 	})
 	return ch, err
@@ -505,7 +524,7 @@ func (s *Store) UndoOverride(ctx context.Context, actor audit.Actor, occurrenceI
 		if err := s.audit.WriteAudit(ctx, tx, payments.UndoneEvent(actor, o.ID, payments.OverrideStatus(status), restored, now)); err != nil {
 			return err
 		}
-		ch, err = change(ctx, tx, o.ID)
+		ch, err = change(ctx, tx, s.zone, o.ID)
 		return err
 	})
 	return ch, err

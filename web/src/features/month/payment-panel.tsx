@@ -81,6 +81,16 @@ export function PaymentPanel(p: PaymentPanelProps) {
         </span>
         <StatusBadge status={item.payment.status} />
       </p>
+      {item.payment.timing === 'not_recorded' && (
+        <p className="text-sm text-muted-foreground">
+          Due before this commitment was created: not counted in the overdue or outstanding totals.
+        </p>
+      )}
+      {Number(item.payment.shortfall_amount.amount) > 0 && (
+        <p className="text-sm text-muted-foreground">
+          Paid within the commitment&apos;s tolerance; {item.payment.shortfall_amount.amount} {item.payment.shortfall_amount.currency} short.
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-3">
         {p.chooser && <label className="grid gap-1 text-sm sm:col-span-3">
           Occurrence

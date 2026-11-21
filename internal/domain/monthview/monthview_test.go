@@ -198,7 +198,7 @@ func TestMonthTotalsLeaveOutNotRecordedAndCountToleranceAsPaid(t *testing.T) {
 	f := facts{by: map[string]payments.Facts{
 		"o1": {CommitmentCreatedOn: date(t, "2026-11-10")},
 		"o2": {CommitmentCreatedOn: date(t, "2026-11-12")},
-		"o3": {MatchTolerance: &tolerance, Evidence: []payments.Evidence{{Kind: payments.EvidenceBankTransaction, ID: "b", OccurrenceID: "o3", Amount: mustMoney(t, "29.50", "EUR"), Date: date(t, "2026-11-14")}}},
+		"o3": {Evidence: []payments.Evidence{{Kind: payments.EvidenceBankTransaction, ID: "b", OccurrenceID: "o3", Amount: mustMoney(t, "29.50", "EUR"), Date: date(t, "2026-11-14"), ConfirmedWithin: &tolerance}}},
 	}}
 	s, err := monthview.Service{Occurrences: fakeOcc{items: occ}, Payments: f}.Month(context.Background(), month, date(t, "2026-11-20"))
 	if err != nil {
