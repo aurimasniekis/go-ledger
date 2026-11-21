@@ -15,6 +15,39 @@ import (
 
 // resolveSecretFiles reads a secret named by a *_file key into its value field.
 func resolveSecretFiles(c *Config, sources map[string]string, readFile func(string) ([]byte, error)) []Problem {
+	ps := resolveKEKFile(c, sources, readFile)
+	for _, slot := range []struct {
+		mode string
+		app  *EnableBankingApp
+	}{{"app", &c.Banking.EnableBanking.App}, {"developer", &c.Banking.EnableBanking.Developer}} {
+		ps = append(ps, resolveKeyFile(slot.app, "banking.enable_banking."+slot.mode, sources, readFile)...)
+	}
+	return ps
+}
+
+// resolveKeyFile reads an Enable Banking private key file into the value.
+func resolveKeyFile(a *EnableBankingApp, prefix string, sources map[string]string, readFile func(string) ([]byte, error)) []Problem {
+	if a.PrivateKeyFile == "" {
+		return nil
+	}
+	key := prefix + ".private_key_file"
+	src := sources[key]
+	if a.PrivateKey != "" {
+		return []Problem{{Source: src, Key: key, Msg: "set only one of " + prefix + ".private_key (" + EnvName(prefix+".private_key") + ") and " + key}}
+	}
+	data, err := readFile(a.PrivateKeyFile)
+	if err != nil {
+		return []Problem{{Source: src, Key: key, Msg: fmt.Sprintf("cannot read the file: %v", pathErr(err))}}
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return []Problem{{Source: src, Key: key, Msg: "the file is empty"}}
+	}
+	a.PrivateKey = string(data)
+	sources[prefix+".private_key"] = "file " + a.PrivateKeyFile
+	return nil
+}
+
+func resolveKEKFile(c *Config, sources map[string]string, readFile func(string) ([]byte, error)) []Problem {
 	if c.KEK.File == "" {
 		return nil
 	}
@@ -97,6 +130,7 @@ func (c *Config) validate(sources map[string]string) []Problem {
 		}
 	}
 	c.Events.Pulse.validate(bad)
+	c.Banking.EnableBanking.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {
 		ps = append(ps, Problem{Key: "kek", Msg: "required: set " + EnvName("kek.value") + " or " + EnvName("kek.file")})
 	}

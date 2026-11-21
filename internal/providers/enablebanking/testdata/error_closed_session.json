@@ -1,0 +1,5 @@
+{
+  "message": "Session closed SECRET-ECHO",
+  "code": 400,
+  "error": "CLOSED_SESSION"
+}

@@ -1,0 +1,5 @@
+{
+  "message": "Unauthorized SECRET-ECHO",
+  "code": 401,
+  "error": "UNAUTHORIZED_ACCESS"
+}

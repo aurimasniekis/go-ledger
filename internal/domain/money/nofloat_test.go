@@ -17,8 +17,9 @@ import (
 // moneyPackages are the packages that must not use binary floating point:
 // the money and calendar primitives, their SQL encoding, and the bank-fact
 // boundary (ADR-0013) with its fake provider, the import engine (ADR-0020),
-// the rate cache and conversion service (ADR-0022) with its test doubles,
-// and commitment definitions (ADR-0024). Paths are
+// the Enable Banking adapter (ADR-0023), the rate cache and conversion
+// service (ADR-0022) with its test doubles, and commitment definitions
+// (ADR-0024). Paths are
 // relative to this package's directory.
 var moneyPackages = []string{
 	".",
@@ -30,6 +31,7 @@ var moneyPackages = []string{
 	"../fx/fxtest",
 	"../bankimport",
 	"../commitments",
+	"../../providers/enablebanking",
 }
 
 // scanOnlyPackages are money packages that link the SQLite driver, so they

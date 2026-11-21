@@ -1,0 +1,25 @@
+{
+  "account_id": {
+    "iban": "XX00SYNTHETIC0000000001"
+  },
+  "all_account_ids": [
+    {
+      "identification": "XX00SYNTHETIC0000000001",
+      "scheme_name": "IBAN"
+    },
+    {
+      "identification": "5555 4444 3333 1111",
+      "scheme_name": "CPAN"
+    }
+  ],
+  "name": "Synthetic Holder",
+  "details": "Everyday account",
+  "product": "Current account",
+  "currency": "EUR",
+  "cash_account_type": "CACC",
+  "uid": "{{uid}}",
+  "identification_hash": "synthetic-hash-eur",
+  "identification_hashes": [
+    "synthetic-hash-eur"
+  ]
+}

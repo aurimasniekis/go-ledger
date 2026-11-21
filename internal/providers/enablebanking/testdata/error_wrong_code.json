@@ -1,0 +1,5 @@
+{
+  "message": "Wrong authorization code SECRET-ECHO",
+  "code": 422,
+  "error": "WRONG_AUTHORIZATION_CODE"
+}
