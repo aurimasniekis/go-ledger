@@ -1,6 +1,7 @@
 // Package auth persists passwords and sign-in sessions (task A2, ADR-0026)
 // in the tables of migration 0010_auth_sessions, second factors (ADR-0030)
-// and single-sign-on links and recovery sign-ins (ADR-0033). It implements [auth.Store];
+// single-sign-on links and recovery sign-ins (ADR-0033) and device cookies
+// (decision D23-1b). It implements [auth.Store];
 // writes record their audit events in the same transaction through a
 // [store.AuditWriter].
 package auth
@@ -74,7 +75,8 @@ func (s *Store) ReplaceHash(ctx context.Context, userID, old, hash string) error
 	})
 }
 
-// SetPassword stores the hash and ends the user's other sessions.
+// SetPassword stores the hash, ends the user's other sessions and deletes
+// the user's device cookies.
 func (s *Store) SetPassword(ctx context.Context, userID, hash, keep string, at time.Time, events func(int) []audit.Event) (int, error) {
 	var ended int
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -87,6 +89,10 @@ func (s *Store) SetPassword(ctx context.Context, userID, hash, keep string, at t
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO user_passwords (user_id, hash, changed_at) VALUES (?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET hash = excluded.hash, changed_at = excluded.changed_at",
 			userID, hash, store.Timestamp{Time: at}); err != nil {
+			return err
+		}
+		// A new password revokes every known browser (decision D23-1b).
+		if _, err := tx.ExecContext(ctx, "DELETE FROM device_cookies WHERE user_id = ?", userID); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ? AND id <> ?", userID, keep)

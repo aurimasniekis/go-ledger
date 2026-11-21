@@ -25,7 +25,7 @@ func testAuthConfig() config.Auth {
 	return config.Auth{
 		Password: config.AuthPassword{Enabled: true, MinLength: 12},
 		Session:  config.AuthSession{IdleTimeout: 30 * time.Minute, AbsoluteTimeout: 12 * time.Hour, ReauthWindow: 10 * time.Minute},
-		SignIn:   config.AuthSignIn{AccountMaxFailures: 10, AddressMaxFailures: 1000, Window: 15 * time.Minute},
+		SignIn:   config.AuthSignIn{AccountMaxFailures: 10, AddressMaxFailures: 1000, Window: 15 * time.Minute, DeviceCookieTTL: auth.DefaultDeviceCookieTTL},
 	}
 }
 

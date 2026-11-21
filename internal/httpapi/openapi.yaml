@@ -58,6 +58,16 @@ info:
       end after an idle and an absolute timeout, on sign-out, when ended from
       another session, and (other sessions) when the password changes; the
       next request with an ended session is 401.
+    - **Known browsers** (ADR-0026 amendment, decision D23-1b). A complete
+      password sign-in also sets the `__Host-ledger_device` cookie (same
+      attributes, expiring after `auth.sign_in.device_cookie_ttl`). While
+      it is valid for the submitted account, that browser's failed sign-ins
+      and re-authentications count against the cookie instead of the
+      username, so a username locked out by someone else does not lock out
+      the owner's known browsers. The per-address limit, the password and
+      the second factor always apply. The cookie is replaced at each
+      sign-in, outlives sign-out, and every device cookie of a user is
+      revoked when the user's password is set.
     - **Recent authentication.** Operations marked
       `x-ledger-recent-auth: true` (credential changes, user management;
       API token creation) need a password check within the
@@ -683,7 +693,8 @@ paths:
       description: |
         Sets the user's password (minimum length in bytes, no composition
         rules) and ends every session of that user, except the caller's own
-        current session when they set their own password. Audited
+        current session when they set their own password, and revokes every
+        device cookie of that user. Audited
         (auth.password_changed with by and sessions_ended); the password is
         never recorded.
       tags: [users]
@@ -715,6 +726,11 @@ paths:
         disabled account) is the same 401 `invalid_credentials` after the
         same work. Too many failures for the username or from the client
         address within the window are 429 `rate_limited` with Retry-After.
+        A browser sending a valid `__Host-ledger_device` cookie of the
+        account counts its failures against that cookie instead of the
+        username (it is not blocked by failures from other browsers); a
+        forged, expired, replaced or other user's cookie changes nothing. A
+        complete sign-in sets a new device cookie in place of the old one.
         A browser request from another origin is 403 `csrf_failed`. Success
         and failure are audited; a failure never records the username.
         When `auth.password.enabled` is false, every request is 403
@@ -746,7 +762,7 @@ paths:
           description: Signed in.
           headers:
             Set-Cookie:
-              description: The session cookie.
+              description: The session cookie and a new device cookie (`__Host-ledger_device`).
               schema:
                 type: string
           content:
@@ -772,10 +788,13 @@ paths:
         challenge from `POST /auth/sign-in` and exactly one of `code`
         (from the authenticator; accepted within one 30-second step either
         side, and only once) or `recovery_code` (consumed by its use). On
-        success the session starts exactly as after a password-only sign-in.
+        success the session starts exactly as after a password-only sign-in,
+        with a new device cookie.
         A wrong, malformed or reused code is 401 `invalid_second_factor` and
         counts towards the same per-username and per-address limits as a
-        wrong password (429 `rate_limited` with Retry-After); a challenge
+        wrong password (429 `rate_limited` with Retry-After; the device
+        cookie's limit instead of the username's when the password step came
+        from a known browser); a challenge
         takes at most five wrong codes. An unknown, expired or used-up
         challenge is 401 `unauthenticated`: sign in again. A browser
         request from another origin is 403 `csrf_failed`. Audited
@@ -807,7 +826,7 @@ paths:
           description: Signed in.
           headers:
             Set-Cookie:
-              description: The session cookie.
+              description: The session cookie and a new device cookie (`__Host-ledger_device`).
               schema:
                 type: string
           content:
@@ -898,7 +917,9 @@ paths:
         Checks the signed-in user's password again; when it matches, the
         session counts as recently authenticated until recent_auth_until. A
         wrong password is 403 `invalid_credentials` (the session stays
-        valid) and counts towards the sign-in limits (429 with Retry-After).
+        valid) and counts towards the sign-in limits (429 with Retry-After;
+        with a valid device cookie, against the cookie instead of the
+        username).
         403 `password_sign_in_disabled` when `auth.password.enabled` is
         false: use `POST /auth/oidc/reauthenticate`. Audited
         (auth.reauthenticated, auth.reauthentication_failed).
@@ -935,7 +956,8 @@ paths:
       description: |
         Sets the signed-in user's password (minimum length in bytes, no
         composition rules) and ends every other session of the user; the
-        current session stays. Audited (auth.password_changed, by self).
+        current session stays. Revokes every device cookie of the user and
+        clears this browser's. Audited (auth.password_changed, by self).
       tags: [auth]
       requestBody:
         required: true

@@ -147,6 +147,7 @@ var unversionedTables = map[string]string{
 	"user_recovery_codes":            "recovery code hashes (ADR-0030), replaced as a set and deleted when used; never read or edited as an API object",
 	"oidc_links":                     "single-sign-on links (ADR-0033): created by linking or provisioning, stamped with last use by the server, and deleted to unlink; never edited through the API",
 	"recovery_sign_ins":              "one-time recovery sign-in hashes (ADR-0033) issued from the host and deleted when used; never read or edited as an API object",
+	"device_cookies":                 "known-browser cookie hashes (ADR-0026 amendment, D23-1b), issued and rotated by sign-in and deleted when replaced, expired or the password changes; never read or edited as an API object",
 	"occurrence_status_overrides":    "append-only override history (ADR-0031); rows only change state, and concurrency is the occurrence's version, which every override change increases",
 }
 
