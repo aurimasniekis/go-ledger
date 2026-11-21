@@ -33,8 +33,14 @@ CREATE INDEX commitment_occurrences_month ON commitment_occurrences (month, due_
 -- follow the definition's current terms when they are generated. No row means
 -- nothing is materialised yet. Server-owned bookkeeping, deleted with the
 -- commitment.
+-- pending_effective_from is the effective date of the latest terms edit that
+-- takes effect after the day it was made: the definition holds only the latest
+-- terms, so until that date the stored rows are the only record of the older
+-- terms, and an edit effective earlier would overwrite them (ADR-0027). Null
+-- when no such edit is pending; ignored once the date has passed.
 CREATE TABLE commitment_occurrence_horizons (
     commitment_id     TEXT PRIMARY KEY REFERENCES commitments (id) ON DELETE CASCADE,
     generated_through TEXT NOT NULL CHECK (length(generated_through) = 7 AND generated_through GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]' AND substr(generated_through, 6, 2) BETWEEN '01' AND '12' AND generated_through >= '0001-01'),
+    pending_effective_from TEXT CHECK (pending_effective_from IS NULL OR (length(pending_effective_from) = 10 AND pending_effective_from GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(pending_effective_from) = pending_effective_from)),
     updated_at        TEXT NOT NULL CHECK (length(updated_at) = 30 AND updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z')
 ) STRICT;

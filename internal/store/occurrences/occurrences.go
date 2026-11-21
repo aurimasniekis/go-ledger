@@ -90,6 +90,22 @@ func horizon(ctx context.Context, q querier, commitmentID string) (calendar.Year
 	return m, err == nil, err
 }
 
+// pending returns the effective date of the commitment's latest terms edit
+// that took effect after the day it was made, if one is recorded. The caller
+// decides whether it has passed.
+func pending(ctx context.Context, q querier, commitmentID string) (calendar.Date, bool, error) {
+	var s sql.NullString
+	err := q.QueryRowContext(ctx, "SELECT pending_effective_from FROM commitment_occurrence_horizons WHERE commitment_id = ?", commitmentID).Scan(&s)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !s.Valid) {
+		return calendar.Date{}, false, nil
+	}
+	if err != nil {
+		return calendar.Date{}, false, err
+	}
+	d, err := calendar.ParseDate(s.String)
+	return d, err == nil, err
+}
+
 func (s *Store) setHorizon(ctx context.Context, tx *sql.Tx, commitmentID string, through calendar.YearMonth) error {
 	_, err := tx.ExecContext(ctx, "INSERT INTO commitment_occurrence_horizons (commitment_id, generated_through, updated_at) VALUES (?, ?, ?)"+
 		" ON CONFLICT (commitment_id) DO UPDATE SET generated_through = excluded.generated_through, updated_at = excluded.updated_at"+
@@ -143,9 +159,20 @@ func (s *Store) MaterialiseTx(ctx context.Context, tx *sql.Tx, commitmentID stri
 // it, then rewrites, removes or adds unpaid occurrences from that month
 // through the horizon as [occurrences.PlanEdit] decides. Paid occurrences are
 // never changed. It returns the plan it carried out.
-func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, old, next occurrences.Terms, effective calendar.Date) (occurrences.Plan, error) {
-	if effective.IsZero() {
-		return occurrences.Plan{}, errors.New("occurrences: an effective date is required to apply changed terms")
+//
+// today is the current date in the reporting zone. A terms edit effective
+// after today is recorded as pending; until that date passes, an edit
+// effective earlier is refused with [occurrences.PendingTermsError], because
+// the definition no longer holds the terms the months in between were
+// generated from.
+func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, old, next occurrences.Terms, effective, today calendar.Date) (occurrences.Plan, error) {
+	if effective.IsZero() || today.IsZero() {
+		return occurrences.Plan{}, errors.New("occurrences: an effective date and today are required to apply changed terms")
+	}
+	if p, ok, err := pending(ctx, tx, commitmentID); err != nil {
+		return occurrences.Plan{}, err
+	} else if ok && p.After(today) && effective.Before(p) {
+		return occurrences.Plan{}, &occurrences.PendingTermsError{Pending: p, Effective: effective}
 	}
 	through, has, err := horizon(ctx, tx, commitmentID)
 	if err != nil {
@@ -181,15 +208,27 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 			return occurrences.Plan{}, fmt.Errorf("occurrences: create: %w", err)
 		}
 	}
+	var marker any // an edit effective today or earlier leaves nothing pending
+	if effective.After(today) {
+		marker = sqlvalue.Date{Date: effective}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE commitment_occurrence_horizons SET pending_effective_from = ? WHERE commitment_id = ?", marker, commitmentID); err != nil {
+		return occurrences.Plan{}, fmt.Errorf("occurrences: pending marker: %w", err)
+	}
 	return plan, nil
 }
 
 // RemoveUnpaidTx deletes the commitment's occurrences that no payment
 // evidence refers to, before the commitment itself is deleted. Paid ones stay
 // and their foreign key then refuses the delete.
-func (s *Store) RemoveUnpaidTx(ctx context.Context, tx *sql.Tx, commitmentID string) error {
-	_, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT "+s.paid, commitmentID)
-	return err
+// It returns how many it deleted.
+func (s *Store) RemoveUnpaidTx(ctx context.Context, tx *sql.Tx, commitmentID string) (int, error) {
+	res, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT "+s.paid, commitmentID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 const columns = "o.id, o.commitment_id, o.month, o.due_date, o.amount, o.currency, o.version, o.created_at, o.updated_at"
@@ -300,51 +339,86 @@ func (s *Store) MaterialiseAllTx(ctx context.Context, tx *sql.Tx, month calendar
 	return nil
 }
 
-// List materialises every commitment through f.Month, then returns up to
-// f.Limit+1 occurrences of that month after f.After, by due date then ID.
+// List returns up to f.Limit+1 occurrences of f.Month after f.After, by due
+// date then ID. When a commitment is not yet materialised through that month
+// it first materialises them in one write transaction; otherwise (the usual
+// case) it only reads, so a month read does not take the write lock.
 func (s *Store) List(ctx context.Context, f occurrences.ListFilter) ([]occurrences.Occurrence, error) {
+	var needs bool
+	if err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		needs, err = needsMaterialising(ctx, tx, f.Month)
+		return err
+	}); err != nil {
+		return nil, err
+	}
 	var out []occurrences.Occurrence
+	if !needs {
+		err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			var err error
+			out, err = listMonth(ctx, tx, f)
+			return err
+		})
+		return out, err
+	}
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := s.MaterialiseAllTx(ctx, tx, f.Month); err != nil {
 			return err
 		}
-		where := []string{"o.month = ?"}
-		vals := []any{f.Month.String()}
-		if len(f.CommitmentIDs) > 0 {
-			where = append(where, "o.commitment_id IN (?"+strings.Repeat(", ?", len(f.CommitmentIDs)-1)+")")
-			for _, id := range f.CommitmentIDs {
-				vals = append(vals, id)
-			}
-		}
-		if f.After != "" {
-			var due string
-			err := tx.QueryRowContext(ctx, "SELECT due_date FROM commitment_occurrences WHERE id = ?", f.After).Scan(&due)
-			if errors.Is(err, sql.ErrNoRows) {
-				return occurrences.ErrCursorGone
-			}
-			if err != nil {
-				return err
-			}
-			where = append(where, "(o.due_date, o.id) > (?, ?)")
-			vals = append(vals, due, f.After)
-		}
-		vals = append(vals, f.Limit+1)
-		rows, err := tx.QueryContext(ctx, "SELECT "+columns+" FROM commitment_occurrences AS o WHERE "+strings.Join(where, " AND ")+
-			" ORDER BY o.due_date, o.id LIMIT ?", vals...)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			o, err := scan(rows)
-			if err != nil {
-				return err
-			}
-			out = append(out, o)
-		}
-		return rows.Err()
+		var err error
+		out, err = listMonth(ctx, tx, f)
+		return err
 	})
 	return out, err
+}
+
+// needsMaterialising reports whether some commitment is not materialised
+// through month.
+func needsMaterialising(ctx context.Context, q querier, month calendar.YearMonth) (bool, error) {
+	var n int
+	err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM commitments c"+
+		" LEFT JOIN commitment_occurrence_horizons h ON h.commitment_id = c.id"+
+		" WHERE h.generated_through IS NULL OR h.generated_through < ?)", month.String()).Scan(&n)
+	return n != 0, err
+}
+
+func listMonth(ctx context.Context, tx *sql.Tx, f occurrences.ListFilter) ([]occurrences.Occurrence, error) {
+	where := []string{"o.month = ?"}
+	vals := []any{f.Month.String()}
+	if len(f.CommitmentIDs) > 0 {
+		where = append(where, "o.commitment_id IN (?"+strings.Repeat(", ?", len(f.CommitmentIDs)-1)+")")
+		for _, id := range f.CommitmentIDs {
+			vals = append(vals, id)
+		}
+	}
+	if f.After != "" {
+		var due string
+		err := tx.QueryRowContext(ctx, "SELECT due_date FROM commitment_occurrences WHERE id = ?", f.After).Scan(&due)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, occurrences.ErrCursorGone
+		}
+		if err != nil {
+			return nil, err
+		}
+		where = append(where, "(o.due_date, o.id) > (?, ?)")
+		vals = append(vals, due, f.After)
+	}
+	vals = append(vals, f.Limit+1)
+	rows, err := tx.QueryContext(ctx, "SELECT "+columns+" FROM commitment_occurrences AS o WHERE "+strings.Join(where, " AND ")+
+		" ORDER BY o.due_date, o.id LIMIT ?", vals...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []occurrences.Occurrence
+	for rows.Next() {
+		o, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
 }
 
 // Get returns one occurrence or resource.ErrNotFound.

@@ -524,7 +524,16 @@ paths:
         due before it and every paid occurrence stay as they are. Without
         effective_from the change applies from today in the reporting time
         zone, so overdue unpaid occurrences keep their terms. Audited as
-        occurrences.regenerated with the effective date and counts.
+        occurrences.regenerated with the effective date and the counts
+        created, updated, removed, kept_paid and kept_history.
+
+        An effective_from after today is allowed and recorded as pending.
+        Until that date passes, a later change to these terms whose effective
+        date is earlier than the pending one is refused with 409
+        pending_terms_change (field effective_from): the definition holds only
+        the latest terms, so it would overwrite the older terms of the months
+        in between. Retry with effective_from on or after the pending date. An
+        edit effective on or after the pending date supersedes it.
       tags: [commitments]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
@@ -582,6 +591,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Commitment"
+        "409":
+          description: |
+            version_conflict (stale version, with reconciliation) or
+            pending_terms_change (an earlier edit takes effect after this
+            edit's effective_from).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
     delete:
@@ -795,7 +813,7 @@ components:
     Date:
       type: string
       format: date
-      description: A calendar date, YYYY-MM-DD.
+      description: A calendar date, YYYY-MM-DD. A commitment's start_date must not be before 1900-01-01.
       examples: ["2026-11-20"]
     Schedule:
       description: |
@@ -1084,6 +1102,7 @@ components:
             - rate_limited
             - internal_error
             - dependency_unavailable
+            - pending_terms_change
         message:
           type: string
         field:

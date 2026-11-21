@@ -64,7 +64,7 @@ const (
 const (
 	CommitmentCreated Action = "commitment.created" // Details: kind, currency
 	CommitmentUpdated Action = "commitment.updated" // Details: fields (comma-separated names of changed fields)
-	CommitmentDeleted Action = "commitment.deleted" // Details: kind
+	CommitmentDeleted Action = "commitment.deleted" // Details: kind, unpaid_occurrences_removed
 
 	// OccurrencesRegenerated records changed commitment terms reaching stored
 	// occurrences (task C2, ADR-0027); the target is the commitment.

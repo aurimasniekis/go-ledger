@@ -221,8 +221,10 @@ func (s *Store) List(ctx context.Context, f commitments.ListFilter) ([]commitmen
 // nothing changes it writes nothing, keeps the version and records nothing.
 // When the terms that decide occurrences change (amount, schedule, start or
 // end date), they reach the stored occurrences from effective forward in the
-// same transaction (ADR-0027), recorded as occurrences.regenerated.
-func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expected int64, f commitments.Fields, effective calendar.Date) (commitments.Commitment, error) {
+// same transaction (ADR-0027), recorded as occurrences.regenerated. today is
+// the current date in the reporting zone: an edit effective earlier than a
+// pending future-dated one fails with [occurrences.PendingTermsError].
+func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expected int64, f commitments.Fields, effective, today calendar.Date) (commitments.Commitment, error) {
 	if err := commitments.Validation(f.Validate()); err != nil {
 		return commitments.Commitment{}, err
 	}
@@ -253,7 +255,7 @@ func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expect
 			return err
 		}
 		if old, next := occurrences.TermsOf(before.Fields), occurrences.TermsOf(f); !old.Equal(next) {
-			plan, err := s.occ.ApplyTx(ctx, tx, id, old, next, effective)
+			plan, err := s.occ.ApplyTx(ctx, tx, id, old, next, effective, today)
 			if err != nil {
 				return err
 			}
@@ -280,7 +282,8 @@ func (s *Store) Delete(ctx context.Context, actor audit.Actor, id string, expect
 		if before.Version != expected {
 			return &resource.VersionConflictError{Expected: expected, Current: before.Version}
 		}
-		if err := s.occ.RemoveUnpaidTx(ctx, tx, id); err != nil {
+		removed, err := s.occ.RemoveUnpaidTx(ctx, tx, id)
+		if err != nil {
 			return err
 		}
 		if err := store.DeleteVersioned(ctx, tx, table, id, expected); err != nil {
@@ -289,7 +292,7 @@ func (s *Store) Delete(ctx context.Context, actor audit.Actor, id string, expect
 			}
 			return err
 		}
-		return s.audit.WriteAudit(ctx, tx, commitments.DeletedEvent(actor, before, s.now().UTC()))
+		return s.audit.WriteAudit(ctx, tx, commitments.DeletedEvent(actor, before, removed, s.now().UTC()))
 	})
 }
 

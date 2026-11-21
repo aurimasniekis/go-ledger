@@ -150,7 +150,7 @@ func TestUpdate(t *testing.T) {
 	f.Amount = money.MustParse("14.00", "EUR")
 	f.Schedule = commitments.Monthly(3, 31)
 	f.Priority = ptr(commitments.PriorityImportant)
-	u, err := st.Update(ctx, alice, c.ID, 1, f, eff)
+	u, err := st.Update(ctx, alice, c.ID, 1, f, eff, eff)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,33 +164,33 @@ func TestUpdate(t *testing.T) {
 	}
 	// Stale version.
 	var vc *resource.VersionConflictError
-	if _, err := st.Update(ctx, alice, c.ID, 1, f, eff); !errors.As(err, &vc) || vc.Current != 2 {
+	if _, err := st.Update(ctx, alice, c.ID, 1, f, eff, eff); !errors.As(err, &vc) || vc.Current != 2 {
 		t.Fatalf("stale: %v", err)
 	}
 	// No change: no write, no version bump, no audit.
-	same, err := st.Update(ctx, alice, c.ID, 2, f, eff)
+	same, err := st.Update(ctx, alice, c.ID, 2, f, eff, eff)
 	if err != nil || same.Version != 2 || len(rec.events) != 3 {
 		t.Fatalf("no-op: %+v %v %v", same, err, rec.events)
 	}
 	// Clearing an optional member.
 	f.Priority = nil
-	if u, err := st.Update(ctx, alice, c.ID, 2, f, eff); err != nil || u.Priority != nil || u.Version != 3 {
+	if u, err := st.Update(ctx, alice, c.ID, 2, f, eff, eff); err != nil || u.Priority != nil || u.Version != 3 {
 		t.Fatalf("clear: %+v %v", u, err)
 	}
 	// Invalid fields are refused before anything is read.
 	f.EndDate = ptr(calendar.MustDate(2020, time.January, 1))
 	var ve *commitments.ValidationError
-	if _, err := st.Update(ctx, alice, c.ID, 3, f, eff); !errors.As(err, &ve) || ve.Errors[0].Field != "end_date" {
+	if _, err := st.Update(ctx, alice, c.ID, 3, f, eff, eff); !errors.As(err, &ve) || ve.Errors[0].Field != "end_date" {
 		t.Fatalf("invalid: %v", err)
 	}
-	if _, err := st.Update(ctx, alice, "01JD3Y4C8V9M2Q7W5R6T0XZBNZ", 1, vps(), eff); !errors.Is(err, resource.ErrNotFound) {
+	if _, err := st.Update(ctx, alice, "01JD3Y4C8V9M2Q7W5R6T0XZBNZ", 1, vps(), eff, eff); !errors.Is(err, resource.ErrNotFound) {
 		t.Fatalf("missing: %v", err)
 	}
 	// A failing audit write rolls the change back.
 	rec.fail = errors.New("audit down")
 	f.EndDate = nil
 	f.Name = "Renamed"
-	if _, err := st.Update(ctx, alice, c.ID, 3, f, eff); err == nil {
+	if _, err := st.Update(ctx, alice, c.ID, 3, f, eff, eff); err == nil {
 		t.Fatal("update succeeded without its audit entry")
 	}
 	if got, _ := st.Get(ctx, c.ID); got.Name != "VPS" || got.Version != 3 {

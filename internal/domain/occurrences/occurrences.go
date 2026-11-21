@@ -248,7 +248,22 @@ func RegeneratedEvent(actor audit.Actor, commitmentID string, effective calendar
 			"updated":        strconv.Itoa(len(p.Update)),
 			"removed":        strconv.Itoa(len(p.Remove)),
 			"kept_paid":      strconv.Itoa(p.KeptPaid),
+			"kept_history":   strconv.Itoa(p.KeptHistory),
 		}}
+}
+
+// PendingTermsError means a terms edit was refused because an earlier edit
+// takes effect later: the definition holds only the latest terms, so applying
+// an edit that takes effect before Pending would rewrite the months in between
+// with the terms of the pending edit (ADR-0027).
+type PendingTermsError struct {
+	Pending   calendar.Date // effective date of the pending edit
+	Effective calendar.Date // effective date of the refused edit
+}
+
+func (e *PendingTermsError) Error() string {
+	return "occurrences: a terms change effective " + e.Pending.String() + " is pending; an edit effective " +
+		e.Effective.String() + " would overwrite the earlier terms in between"
 }
 
 // ErrCursorGone means the occurrence a page cursor points after no longer

@@ -195,7 +195,7 @@ func TestEditKeepsPaidHistory(t *testing.T) {
 	next := c.Fields
 	next.Amount = money.MustParse("12.00", "EUR")
 	next.Schedule = commitments.Monthly(1, 20)
-	if _, err := f.cs.Update(ctx, alice, c.ID, 1, next, d("2026-03-15")); err != nil {
+	if _, err := f.cs.Update(ctx, alice, c.ID, 1, next, d("2026-03-15"), d("2026-03-15")); err != nil {
 		t.Fatal(err)
 	}
 	// Jan and Mar are before the effective date, Feb and May are paid: all
@@ -221,7 +221,7 @@ func TestEditKeepsPaidHistory(t *testing.T) {
 	ended := next
 	ended.EndDate = new(calendar.Date)
 	*ended.EndDate = d("2026-04-30")
-	if _, err := f.cs.Update(ctx, alice, c.ID, 2, ended, d("2026-04-01")); err != nil {
+	if _, err := f.cs.Update(ctx, alice, c.ID, 2, ended, d("2026-04-01"), d("2026-03-15")); err != nil {
 		t.Fatal(err)
 	}
 	want = "2026-01-10@10.00#1 2026-02-10@10.00#1 2026-03-10@10.00#1 2026-04-20@12.00#2 2026-05-10@10.00#1"
@@ -244,7 +244,7 @@ func TestEditBeforeAnythingIsMaterialised(t *testing.T) {
 	c := f.create(t, commitments.Monthly(1, 5), "2026-01-01", "10.00")
 	next := c.Fields
 	next.Amount = money.MustParse("11.00", "EUR")
-	if _, err := f.cs.Update(ctx, alice, c.ID, 1, next, d("2026-06-01")); err != nil {
+	if _, err := f.cs.Update(ctx, alice, c.ID, 1, next, d("2026-06-01"), d("2026-03-15")); err != nil {
 		t.Fatal(err)
 	}
 	// The months before the effective date keep the terms in force then.
@@ -258,7 +258,7 @@ func TestEditBeforeAnythingIsMaterialised(t *testing.T) {
 	renamed := next
 	renamed.Name = "Renamed"
 	n := len(f.rec.events)
-	if _, err := f.cs.Update(ctx, alice, c.ID, 2, renamed, d("2026-01-01")); err != nil {
+	if _, err := f.cs.Update(ctx, alice, c.ID, 2, renamed, d("2026-01-01"), d("2026-03-15")); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.rec.events) != n+1 || f.rec.events[n].Action != audit.CommitmentUpdated {
@@ -302,5 +302,180 @@ func TestListOrderFilterAndCursor(t *testing.T) {
 	}
 	if _, err := f.occ.List(ctx, occurrences.ListFilter{Month: ym("2026-02"), Limit: 2, After: "01JD3Y4C8V9M2Q7W5R6T0XZBNZ"}); !errors.Is(err, occurrences.ErrCursorGone) {
 		t.Fatalf("unknown cursor: %v", err)
+	}
+}
+
+// TestFutureDatedTermsAreNotOverwritten is the regression for a future-dated
+// terms change silently overwritten by a later edit that takes effect earlier.
+// Today is 2026-03-15; the definition is monthly on day 10 at 10.00.
+func TestFutureDatedTermsAreNotOverwritten(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	today := d("2026-03-15")
+	c := f.create(t, commitments.Monthly(1, 10), "2026-01-01", "10.00")
+	f.month(t, "2026-04")
+
+	priced := c.Fields
+	priced.Amount = money.MustParse("12.00", "EUR")
+	if _, err := f.cs.Update(ctx, alice, c.ID, 1, priced, d("2026-09-01"), today); err != nil {
+		t.Fatal(err)
+	}
+	f.month(t, "2026-09")
+	before := f.all(t)
+	if !strings.Contains(before, "2026-08-10@10.00#1 2026-09-10@12.00") {
+		t.Fatalf("future price change: %s", before)
+	}
+
+	// A day edit effective today, or a deliberate reach-back, would rewrite
+	// April to August with the September amount: both are refused.
+	moved := priced
+	moved.Schedule = commitments.Monthly(1, 11)
+	for _, eff := range []string{"2026-03-15", "2026-01-01", "2026-08-31"} {
+		var pe *occurrences.PendingTermsError
+		_, err := f.cs.Update(ctx, alice, c.ID, 2, moved, d(eff), today)
+		if !errors.As(err, &pe) || pe.Pending != d("2026-09-01") || pe.Effective != d(eff) {
+			t.Fatalf("effective %s: %v", eff, err)
+		}
+	}
+	if got := f.all(t); got != before {
+		t.Fatalf("a refused edit changed occurrences\n got %s\nwant %s", got, before)
+	}
+	if got, _ := f.cs.Get(ctx, c.ID); got.Version != 2 || got.Schedule != priced.Schedule {
+		t.Fatalf("a refused edit changed the definition: %+v", got)
+	}
+
+	// An edit effective on or after the pending date supersedes it.
+	if _, err := f.cs.Update(ctx, alice, c.ID, 2, moved, d("2026-09-01"), today); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.all(t); !strings.Contains(got, "2026-08-10@10.00#1 2026-09-11@12.00#3") {
+		t.Fatalf("superseding edit: %s", got)
+	}
+	// ...and the new pending date is the one that guards now.
+	later := moved
+	later.Amount = money.MustParse("13.00", "EUR")
+	if _, err := f.cs.Update(ctx, alice, c.ID, 3, later, d("2026-12-01"), today); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.cs.Update(ctx, alice, c.ID, 4, later, d("2026-09-01"), today); err != nil {
+		t.Fatalf("no change is not an edit: %v", err)
+	}
+	earlier := later
+	earlier.Schedule = commitments.Monthly(1, 12)
+	var pe *occurrences.PendingTermsError
+	if _, err := f.cs.Update(ctx, alice, c.ID, 4, earlier, d("2026-09-01"), today); !errors.As(err, &pe) || pe.Pending != d("2026-12-01") {
+		t.Fatalf("second pending date: %v", err)
+	}
+	// Once the pending date has passed, nothing is pending.
+	if _, err := f.cs.Update(ctx, alice, c.ID, 4, earlier, d("2026-09-01"), d("2026-12-02")); err != nil {
+		t.Fatalf("after the pending date: %v", err)
+	}
+}
+
+func TestTermsEditEffectiveTodayLeavesNothingPending(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	today := d("2026-03-15")
+	c := f.create(t, commitments.Monthly(1, 10), "2026-01-01", "10.00")
+	a := c.Fields
+	a.Amount = money.MustParse("11.00", "EUR")
+	if _, err := f.cs.Update(ctx, alice, c.ID, 1, a, d("2026-06-01"), today); err != nil {
+		t.Fatal(err)
+	}
+	b := a
+	b.Amount = money.MustParse("12.00", "EUR")
+	if _, err := f.cs.Update(ctx, alice, c.ID, 2, b, d("2026-06-01"), today); err != nil { // equal date supersedes
+		t.Fatal(err)
+	}
+	var marker sql.NullString
+	err := f.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT pending_effective_from FROM commitment_occurrence_horizons WHERE commitment_id = ?", c.ID).Scan(&marker)
+	})
+	if err != nil || marker.String != "2026-06-01" {
+		t.Fatalf("marker %v %v", marker, err)
+	}
+}
+
+func TestRegeneratedAndDeletedAuditCounts(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	c := f.create(t, commitments.Monthly(1, 10), "2026-01-01", "10.00")
+	f.month(t, "2026-05")
+	next := c.Fields
+	next.Amount = money.MustParse("12.00", "EUR")
+	if _, err := f.cs.Update(ctx, alice, c.ID, 1, next, d("2026-03-15"), d("2026-03-15")); err != nil {
+		t.Fatal(err)
+	}
+	last := f.rec.events[len(f.rec.events)-1]
+	// January to March 10 are unpaid history before the effective date.
+	if last.Action != audit.OccurrencesRegenerated || last.Details["kept_history"] != "1" {
+		t.Fatalf("regeneration audit %+v", last)
+	}
+	if err := f.cs.Delete(ctx, alice, c.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	del := f.rec.events[len(f.rec.events)-1]
+	if del.Action != audit.CommitmentDeleted || del.Details["unpaid_occurrences_removed"] != "5" {
+		t.Fatalf("delete audit %+v", del)
+	}
+}
+
+// occurrenceReferenceProblems lists foreign keys to commitment_occurrences(id)
+// that are neither ON DELETE CASCADE nor ON DELETE RESTRICT with the table
+// named in an evidence expression (F6: otherwise an edit could rewrite a paid
+// occurrence in place).
+func occurrenceReferenceProblems(t *testing.T, db *store.DB, evidence []string) []string {
+	t.Helper()
+	var problems []string
+	err := db.ReadTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT m.name, f.\"from\", f.on_delete FROM sqlite_schema m, pragma_foreign_key_list(m.name) f"+
+			" WHERE m.type = 'table' AND f.\"table\" = 'commitment_occurrences'")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var table, col, onDelete string
+			if err := rows.Scan(&table, &col, &onDelete); err != nil {
+				return err
+			}
+			covered := false
+			for _, e := range evidence {
+				covered = covered || strings.Contains(e, table)
+			}
+			switch {
+			case onDelete == "CASCADE":
+			case onDelete == "RESTRICT" && covered:
+			default:
+				problems = append(problems, table+"."+col+" ON DELETE "+onDelete)
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return problems
+}
+
+func TestOccurrenceReferencesAreEvidenceOrCascade(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t) // has test_payments (RESTRICT)
+	evidence := []string{"EXISTS (SELECT 1 FROM test_payments p WHERE p.occurrence_id = o.id)"}
+	if p := occurrenceReferenceProblems(t, f.db, evidence); len(p) != 0 {
+		t.Fatalf("test fixture: %v", p)
+	}
+	// The real schema: every reference in use must be covered by DefaultEvidence.
+	real, err := store.Open(ctx, filepath.Join(t.TempDir(), "real.db"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = real.Close() })
+	if p := occurrenceReferenceProblems(t, real, occstore.DefaultEvidence); len(p) != 0 {
+		t.Fatalf("add the evidence expression to DefaultEvidence (or use ON DELETE CASCADE): %v", p)
+	}
+	// The check itself: an uncovered RESTRICT reference is reported.
+	if p := occurrenceReferenceProblems(t, f.db, nil); len(p) != 1 || !strings.HasPrefix(p[0], "test_payments.occurrence_id") {
+		t.Fatalf("uncovered reference not reported: %v", p)
 	}
 }

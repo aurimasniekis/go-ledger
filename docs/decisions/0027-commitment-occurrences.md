@@ -1,6 +1,7 @@
 # ADR-0027: Commitment occurrences
 
-Status: Proposed (2026-11-21). Points 5, 6, 7, 9 and 10 are implementation choices that no operator decision covers.
+Status: Proposed (2026-11-21). Points 2 (the interval anchor and the late-start first occurrence), 5, 6, 7, 9, 10, 11 and 12
+and the start_date lower bound are implementation choices that no operator decision covers.
 They are marked "proposed" and listed for the operator under Consequences.
 
 ## Context
@@ -28,13 +29,16 @@ ADR-0024 left C2 three jobs: reading schedules through `commitments.Schedule`, d
    one date a month. That month is the *slot* an edit rewrites in place. `due_date` always lies in `month`. The
    foreign key to `commitments` is `ON DELETE RESTRICT`.
 2. **Calendar rules** (`occurrences.Terms.DueIn`, pure domain code):
-   - Monthly every N months: the months counted are those of `start_date`.
+   - **Proposed:** Monthly every N months: the months counted are those of `start_date`'s month, not of the first
+     real occurrence.
    - Annual: once a year, in the schedule's month.
    - Day past month end: the month's last day (`calendar.ClampedDate`). So Feb 29 is Feb 28 in common years, and
      day 31 falls on Apr 30 and on Feb 28 or 29.
-   - **First occurrence:** a scheduled date before `start_date` is not an occurrence. With a start of January 20 and
+   - **Proposed: first occurrence:** a scheduled date before `start_date` is not an occurrence. With a start of January 20 and
      day 15, the first monthly occurrence is February 15. With every 3 months it is April 15, because the counted
      months still start in January. An annual schedule whose date has passed in the start year starts the next year.
+     Example: start Jan 20, day 15, interval 3 gives Apr 15 as the first occurrence, nearly three months after the
+     start. Anchoring on the first real occurrence would give Feb 15, May 15 and so on. D6 does not decide this.
    - `end_date` is inclusive.
    - Due dates are calendar dates in the reporting zone. They are not instants.
 3. **Materialisation horizon.** `commitment_occurrence_horizons.generated_through` records, per commitment, the last
@@ -72,7 +76,10 @@ ADR-0024 left C2 three jobs: reading schedules through `commitments.Schedule`, d
 8. **Payment evidence is a seam for C3.** `store/occurrences.DefaultEvidence` lists SQL conditions (over alias
    `o`) that make an occurrence paid. The list is empty until C3 adds manual payment records and confirmed
    allocations. C3's evidence tables must refer to `commitment_occurrences(id)` with `ON DELETE RESTRICT`, so the
-   database also refuses to drop a paid occurrence. The tests stand in a `test_payments` table.
+   database also refuses to drop a paid occurrence. The tests stand in a `test_payments` table. A schema test
+   (`TestOccurrenceReferencesAreEvidenceOrCascade`) fails when a foreign key to `commitment_occurrences(id)` is neither
+   `CASCADE` nor `RESTRICT` and named in a `DefaultEvidence` expression, because a forgotten entry would let an edit
+   rewrite a paid occurrence in place. C3 must treat a *partially paid* occurrence (D7) as evidence, so it is immutable too.
 9. **Proposed: deleting a commitment removes its unpaid occurrences.** They are derived data. Paid occurrences
    (evidence) keep the foreign key, so the delete becomes 409 `conflict` (`commitments.ErrInUse`) and payment history
    is never lost. Setting `end_date` remains the way to stop a commitment.
@@ -81,6 +88,21 @@ ADR-0024 left C2 three jobs: reading schedules through `commitments.Schedule`, d
     `GET /api/v1/occurrences/{id}` (with an ETag). Both need `commitments:read`: occurrences are derived from
     commitments, so no new grant was added to the ADR-0021 vocabulary. Occurrences have no write endpoint. Payment
     actions are C3.
+
+11. **Proposed: a future-dated terms edit is protected.** A definition holds only the latest terms, so a terms edit with
+    `effective_from` after today leaves the older terms of the months in between only in the stored rows. The edit
+    records `commitment_occurrence_horizons.pending_effective_from`. While that date is after today, a terms edit
+    whose effective date is earlier is refused with 409 `pending_terms_change` (it would rewrite those months with
+    the future terms, or with an amount that was never in force then). This also covers a deliberate reach-back over
+    them. An edit effective on or after the pending date supersedes it; once the date has passed nothing is pending.
+    The alternative, refusing any `effective_from` after today, was rejected: a price change announced in advance is
+    a normal case. A terms-revisions table (allowed by ADR-0024) would lift the restriction and is not built.
+12. **Proposed: `start_date` is not before 1900-01-01** (C1 validation, `commitments.MinStartDate`), so the first read of a
+    month cannot materialise tens of thousands of rows in one write transaction.
+
+Audit: `occurrences.regenerated` also carries `kept_history` (unpaid occurrences before the effective date, left
+unchanged), and `commitment.deleted` carries `unpaid_occurrences_removed`. A month read that needs no materialising
+reads only; it takes the write lock only when some commitment is behind.
 
 ## Why
 
@@ -97,7 +119,9 @@ ADR-0024 left C2 three jobs: reading schedules through `commitments.Schedule`, d
 
 ## Consequences
 
-- **For the operator (proposed, not decided):** the slot rule (point 5), today as the default effective date
+- **For the operator (proposed, not decided):** the every-N-months anchor and the late-start first occurrence
+  (point 2: start Jan 20, day 15, interval 3 gives Apr 15), the pending future-dated edit guard (point 11), the
+  1900-01-01 lower bound on `start_date` (point 12), the slot rule (point 5), today as the default effective date
   (point 6), materialising on read with a 60-month horizon (point 7), deleting unpaid occurrences with the commitment
   (point 9), and reading occurrences under `commitments:read` (point 10).
 - C3 must add its evidence conditions to `DefaultEvidence`, with `RESTRICT` foreign keys. Any other table that

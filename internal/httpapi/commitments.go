@@ -108,9 +108,13 @@ func fieldErrors(errs []commitments.FieldError) *Error {
 // commitmentError maps the commitments package's errors to API errors.
 func commitmentError(err error) error {
 	var ve *commitments.ValidationError
+	var pt *occurrences.PendingTermsError
 	switch {
 	case errors.As(err, &ve) && len(ve.Errors) > 0:
 		return fieldErrors(ve.Errors)
+	case errors.As(err, &pt):
+		return &Error{Status: http.StatusConflict, Code: CodePendingTerms, Field: "effective_from", Cause: err,
+			Message: fmt.Sprintf("a terms change effective %s is pending; effective_from must be %s or later", pt.Pending, pt.Pending)}
 	case errors.Is(err, commitments.ErrInUse):
 		return Conflict(commitments.ErrInUse.Error())
 	}
@@ -284,11 +288,7 @@ func newToday(zone calendar.Zone, now func() time.Time) today {
 // commitment patch: the date from which changed terms reach occurrences
 // (decision D6 edits option a). Without it the change applies from today in
 // the reporting zone, so overdue unpaid occurrences keep their terms.
-func effectiveFrom(patch MergePatch, todayFn today) (calendar.Date, error) {
-	t, err := todayFn()
-	if err != nil {
-		return calendar.Date{}, Internal(err)
-	}
+func effectiveFrom(patch MergePatch, t calendar.Date) (calendar.Date, error) {
 	if !patch.Has("effective_from") {
 		return t, nil
 	}
@@ -383,7 +383,12 @@ func registerCommitments(s *Server, st commitments.Store, todayFn today) {
 			bodyVersion = &v
 			delete(patch, "version")
 		}
-		effective, err := effectiveFrom(patch, todayFn)
+		today, err := todayFn()
+		if err != nil {
+			WriteError(w, r, Internal(err))
+			return
+		}
+		effective, err := effectiveFrom(patch, today)
 		if err != nil {
 			WriteError(w, r, err)
 			return
@@ -428,7 +433,7 @@ func registerCommitments(s *Server, st commitments.Store, todayFn today) {
 			WriteError(w, r, fieldErrors(ferrs))
 			return
 		}
-		c, err := st.Update(r.Context(), actor(r), id, expected, fields, effective)
+		c, err := st.Update(r.Context(), actor(r), id, expected, fields, effective, today)
 		if err != nil {
 			var vc *resource.VersionConflictError
 			if errors.As(err, &vc) {

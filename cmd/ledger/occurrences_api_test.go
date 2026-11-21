@@ -151,3 +151,42 @@ func TestOccurrencesAPI(t *testing.T) {
 		t.Errorf("missing occurrence: %d", rec.Code)
 	}
 }
+
+// TestFutureDatedTermsAPI repeats the sequence that used to turn April to
+// August into the September price: today 2026-03-15, monthly day 10 at 10.00.
+func TestFutureDatedTermsAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)
+	admin := map[string]string{"X-Test-User": f.ids["alice"]}
+	id := f.createCommitment(t, strings.Replace(monthEndBody, `"day":31`, `"day":10`, 1))
+	f.occurrences(t, "month=2026-04", "alice")
+
+	if rec := f.do("PATCH", "/api/v1/commitments/"+id, `{"amount":{"amount":"12.00"},"effective_from":"2026-09-01","version":1}`, admin); rec.Code != 200 {
+		t.Fatalf("future price: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, body := range []string{`{"schedule":{"day":11},"version":2}`, `{"schedule":{"day":11},"effective_from":"2026-01-01","version":2}`} {
+		rec := f.do("PATCH", "/api/v1/commitments/"+id, body, admin)
+		if rec.Code != 409 || !strings.Contains(rec.Body.String(), `"code":"pending_terms_change"`) || errFields(t, rec.Body.Bytes()) != "effective_from" ||
+			!strings.Contains(rec.Body.String(), "2026-09-01") {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	for m, want := range map[string]string{"2026-04": "10.00", "2026-08": "10.00", "2026-09": "12.00"} {
+		p := f.occurrences(t, "month="+m, "alice")
+		if len(p.Items) != 1 || p.Items[0].Amount.Amount != want || p.Items[0].DueDate != m+"-10" {
+			t.Errorf("%s: %+v, want %s on the 10th", m, p, want)
+		}
+	}
+	// On or after the pending date it is accepted.
+	if rec := f.do("PATCH", "/api/v1/commitments/"+id, `{"schedule":{"day":11},"effective_from":"2026-09-01","version":2}`, admin); rec.Code != 200 {
+		t.Fatalf("at the pending date: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestStartDateLowerBoundAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	rec := f.do("POST", "/api/v1/commitments", strings.Replace(monthEndBody, "2026-01-01", "1899-12-31", 1), map[string]string{"X-Test-User": f.ids["alice"]})
+	if rec.Code != 400 || errFields(t, rec.Body.Bytes()) != "start_date" {
+		t.Fatalf("1899: %d %s", rec.Code, rec.Body.String())
+	}
+}

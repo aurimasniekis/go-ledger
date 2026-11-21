@@ -29,6 +29,7 @@ const (
 	CodePrecondition    Code = "precondition_required"  // 428: a write did not say which version it applies to
 	CodeVersionConflict Code = "version_conflict"       // 409: the write was based on a stale version; carries reconciliation
 	CodeUnsupportedType Code = "unsupported_media_type" // 415: the request body's media type is not accepted here
+	CodePendingTerms    Code = "pending_terms_change"   // 409: a commitment terms edit is refused because an earlier edit takes effect later
 )
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.

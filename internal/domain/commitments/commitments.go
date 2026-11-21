@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -143,6 +144,8 @@ func (f Fields) Validate() []FieldError {
 	errs = append(errs, f.Schedule.Validate("schedule")...)
 	if f.StartDate.IsZero() {
 		errs = append(errs, FieldError{"start_date", "start_date is required"})
+	} else if f.StartDate.Before(MinStartDate) {
+		errs = append(errs, FieldError{"start_date", "start_date must not be before " + MinStartDate.String()})
 	}
 	if f.EndDate != nil && !f.StartDate.IsZero() && f.EndDate.Before(f.StartDate) {
 		errs = append(errs, FieldError{"end_date", "end_date must not be before start_date"})
@@ -219,11 +222,18 @@ func UpdatedEvent(actor audit.Actor, id string, fields []string, at time.Time) a
 		Details: map[string]string{"fields": strings.Join(fields, ",")}}
 }
 
-// DeletedEvent is the audit event for deleting a commitment.
-func DeletedEvent(actor audit.Actor, c Commitment, at time.Time) audit.Event {
+// DeletedEvent is the audit event for deleting a commitment; unpaid counts
+// the unpaid occurrences (possibly overdue obligations) deleted with it.
+func DeletedEvent(actor audit.Actor, c Commitment, unpaid int, at time.Time) audit.Event {
 	return audit.Event{Action: audit.CommitmentDeleted, Actor: actor, TargetType: TargetType, TargetID: c.ID, At: at,
-		Details: map[string]string{"kind": string(c.Kind)}}
+		Details: map[string]string{"kind": string(c.Kind), "unpaid_occurrences_removed": strconv.Itoa(unpaid)}}
 }
+
+// MinStartDate is the earliest start_date accepted: occurrences are
+// materialised from the start date, so an unbounded past would store thousands
+// of rows on the first read. (Proposed in ADR-0024 and ADR-0027; not an operator
+// decision.)
+var MinStartDate = calendar.MustDate(1900, time.January, 1)
 
 // ErrInUse means a commitment cannot be deleted because other records (for
 // example occurrences with payment history, once they exist) refer to it.
@@ -251,7 +261,7 @@ type Store interface {
 	// the amount, schedule, start or end date change, the change reaches the
 	// commitment's occurrences from effective forward (decision D6 edits
 	// option a, ADR-0027): paid occurrences never change.
-	Update(ctx context.Context, actor audit.Actor, id string, expected int64, f Fields, effective calendar.Date) (Commitment, error)
+	Update(ctx context.Context, actor audit.Actor, id string, expected int64, f Fields, effective, today calendar.Date) (Commitment, error)
 	// Delete removes the commitment and its unpaid occurrences when it still
 	// has version expected. It returns resource.ErrNotFound, a
 	// *resource.VersionConflictError or ErrInUse (paid occurrences refer to
