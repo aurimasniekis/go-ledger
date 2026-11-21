@@ -36,6 +36,6 @@ Rejected: a persisted schedule table (more state to keep consistent; the history
 
 ## Consequences
 
-- **Accepted by the operator (D22, 2026-11-21):** the interval (6 h), failure backoff (15 min doubling to 6 h), rate-limit floor (6 h), the cap on Retry-After (24 h) and the 90-day first-import window (§8). **Still open:** the "a run is one fetch" budget estimate, and the first-import depth beyond 90 days (§8).
+- **Accepted by the operator (D22, 2026-11-21):** the interval (6 h), failure backoff (15 min doubling to 6 h), rate-limit floor (6 h), the cap on Retry-After (24 h), the "a run is one fetch" budget estimate (§5) and the 90-day first-import window (§8). **Still open:** the first-import depth beyond 90 days (§8).
 - **Not built here:** the connection API and a status endpoint (B4) and the UI surfacing (B5); until then the freshness shows in logs, metrics and `Scheduler.Status()`. B4's manual refresh must use the same engine instance as the scheduler so the in-process lock covers both.
 - **Limitations.** The budget counts runs, not provider calls. A failure backoff is counted from the history, so a user-triggered success resets it, and a user-triggered run also resets the interval. A refresh running longer than the engine's run lease can be taken over (ADR-0020). Times are the process clock; a large clock jump can run a refresh early or late (the budget check still limits it).

@@ -74,7 +74,7 @@ func TestCredentialsAndPasswords(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	n, err := s.SetPassword(ctx, alice, hash1, "01JD3Y4C8V9M2Q7W5R6T0XZBN2", now, func(ended int) []audit.Event {
+	n, err := s.SetPassword(ctx, alice, hash1, "01JD3Y4C8V9M2Q7W5R6T0XZBN2", now, func(ended, _ int) []audit.Event {
 		return []audit.Event{{Action: audit.PasswordChanged, Actor: audit.System, TargetType: "user", TargetID: alice, At: now,
 			Details: map[string]string{"by": "host", "sessions_ended": "2"}}}
 	})
@@ -93,7 +93,7 @@ func TestCredentialsAndPasswords(t *testing.T) {
 		t.Fatalf("audit %+v", got)
 	}
 	// An event the audit log refuses rolls the password change back.
-	_, err = s.SetPassword(ctx, alice, hash1+"x", "", now, func(int) []audit.Event {
+	_, err = s.SetPassword(ctx, alice, hash1+"x", "", now, func(int, int) []audit.Event {
 		return []audit.Event{{Action: "nope.unknown", Actor: audit.System, At: now}}
 	})
 	if err == nil {

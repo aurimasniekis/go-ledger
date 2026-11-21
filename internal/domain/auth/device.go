@@ -88,6 +88,9 @@ func (s *Service) issueDevice(ctx context.Context, iss *Issued, userID, replace 
 	tok := newSecret()
 	d := DeviceCookie{ID: s.newID(), UserID: userID, TokenHash: hashSecret(tok), CreatedAt: now, ExpiresAt: now.Add(s.cfg.DeviceCookieTTL)}
 	if err := s.store.IssueDeviceCookie(ctx, d, replace, MaxDeviceCookies); err != nil {
+		// The token is never logged: it is the credential. The error is the
+		// store's, and the browser stays as known as before.
+		s.log.WarnContext(ctx, "device cookie not issued; the sign-in still succeeded", "user_id", userID, "error", err.Error())
 		return
 	}
 	iss.DeviceToken, iss.DeviceExpiresAt = tok, d.ExpiresAt

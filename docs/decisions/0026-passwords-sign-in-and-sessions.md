@@ -94,7 +94,7 @@ outbound timeouts only).
    rarely meets it.
 10. **Audit.** New actions (ADR-0025's vocabulary, extended here): `auth.session_ended` (reason `signed_out` or
     `terminated`, target the session), `auth.password_changed` (by `self`, `administrator` or `host`;
-    `sessions_ended`), `auth.reauthenticated` and `auth.reauthentication_failed`. Sign-in success is written in the
+    `sessions_ended`, and `device_cookies_revoked` since D23-1b), `auth.reauthenticated` and `auth.reauthentication_failed`. Sign-in success is written in the
     same transaction as the new session; failures with `Record`.
 11. **Host CLI.** `ledger auth set-password [--create ROLE] <username>` reads the password from the first line of
     standard input, needs `ledger serve` stopped (instance lock), ends the user's sessions and is audited as the
@@ -113,7 +113,7 @@ outbound timeouts only).
   usernames locked). There is no way to sign in while that continues, and **restarting `ledger serve` is the only
   recovery**: it clears the in-memory counts, and the attacker can start again. The host CLI does not help, since it
   needs `ledger serve` stopped. This design (per-username lock, no exemption for known devices such as OWASP's
-  device cookie) is kept as it is pending an operator decision; it is recorded here as an accepted risk until then.
+  device cookie) was kept as an accepted risk until decision D23-1b, which adds the device-cookie exemption (see the amendment at the end).
   Persistent limits were rejected for now: a restart clears an attacker's counts too, but persisting would add a
   write per failed attempt.
 - Reserving attempts before hashing (rather than counting failures after it) is what makes the limits hold under
@@ -151,8 +151,8 @@ online guessing attacks with device cookies).
 
 1. **Issuing.** Every complete *password* sign-in (the password alone, or the password and then the second factor)
    sets `__Host-ledger_device`: a 256-bit random token with the session cookie's attributes (`Secure`, `HttpOnly`,
-   `SameSite=Strict`, `Path=/`, no `Domain`), expiring after `auth.sign_in.device_cookie_ttl` (proposed default
-   90 days, `2160h`; not an operator decision). The table `device_cookies` (migration `0016_device_cookies`)
+   `SameSite=Strict`, `Path=/`, no `Domain`), expiring after `auth.sign_in.device_cookie_ttl` (default
+   90 days, `2160h`; accepted by the operator, 2026-11-21, D30). The table `device_cookies` (migration `0016_device_cookies`)
    keeps its SHA-256 hash, the user it is bound to, and its creation and expiry times; never the token. The 202
    password step of a two-step sign-in sets nothing. OIDC and recovery sign-ins issue no device cookie: they do not
    use the password limits.
@@ -174,7 +174,8 @@ online guessing attacks with device cookies).
    next gets a cookie. A user keeps at most 20 device cookies; issuing one more deletes the oldest.
 6. **Revocation.** Setting a user's password (by themselves, an administrator or `ledger auth set-password`)
    deletes every device cookie of that user in the same transaction; `PUT /auth/password` also clears the calling
-   browser's cookie. There is no separate list or revoke endpoint for device cookies.
+   browser's cookie. The `auth.password_changed` audit entry records `device_cookies_revoked`, how many were deleted.
+   There is no separate list or revoke endpoint for device cookies.
 7. **Audit.** `auth.signin_succeeded`, `auth.signin_failed` and `auth.reauthentication_failed` carry
    `device: known` when the attempt came from a browser with a valid device cookie (and so counted against it).
 
@@ -199,6 +200,6 @@ online guessing attacks with device cookies).
   themselves are in the database and survive restarts.
 - A copied device cookie gives its holder the known browser's own failure budget, never a session: the password
   (and second factor) are still needed.
-- The device-cookie lifetime and the per-user cap of 20 are proposed values.
+- The device-cookie lifetime (90 days) and the per-user cap of 20 are accepted by the operator (2026-11-21, D30).
 - Migration number: `0016` on this branch (after `0015_oidc`); the payment-matches change also uses `0016`, so
   one of them is renumbered at merge. The fixture `0015_oidc` covers the previous version.
