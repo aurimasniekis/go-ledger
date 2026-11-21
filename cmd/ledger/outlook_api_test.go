@@ -210,3 +210,33 @@ func TestOutlookAPIRefusesBadParameters(t *testing.T) {
 		t.Errorf("anonymous: %d", rec.Code)
 	}
 }
+
+// checkEmptyWindow requires the window to name the current month and to have
+// no from month: no commitment starts by it. A fresh database and one whose
+// only commitment starts later both answer that, with a body that decodes
+// (N1: the zero month used to leave an empty 200).
+func checkEmptyWindow(t *testing.T, o outlookResponse) {
+	t.Helper()
+	if o.Window.Through != "2026-11" {
+		t.Errorf("window.through = %q, want the current month 2026-11", o.Window.Through)
+	}
+	if o.Window.From != nil {
+		t.Errorf("window.from = %q, want null", *o.Window.From)
+	}
+	if len(o.Currencies) != 0 {
+		t.Errorf("currencies = %+v, want none", o.Currencies)
+	}
+}
+
+func TestOutlookAPIDecodesWhenNoCommitmentStartsByTheWindow(t *testing.T) {
+	f := newAPIFixture(t)
+	alice := map[string]string{"X-Test-User": f.ids["alice"]}
+	f.now = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+
+	o, _ := f.outlook(t, "", alice)
+	checkEmptyWindow(t, o)
+
+	f.createCommitment(t, `{"name":"Later","kind":"subscription","amount":{"amount":"12.50","currency":"EUR"},"schedule":{"version":1,"frequency":"monthly","interval":1,"day":5},"start_date":"2027-03-05"}`)
+	o, _ = f.outlook(t, "", alice)
+	checkEmptyWindow(t, o)
+}

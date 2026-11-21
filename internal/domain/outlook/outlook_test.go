@@ -440,7 +440,7 @@ func TestEmptyAndTruncatedWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !o.From.IsZero() || len(o.Currencies) != 0 || o.BalancesShown || o.Converted == nil || o.Converted.StillDue.String() != "0.00 EUR" || !o.Converted.Complete() {
+	if !o.From.IsZero() || o.Through != ym(t, "2026-11") || len(o.Currencies) != 0 || o.BalancesShown || o.Converted == nil || o.Converted.StillDue.String() != "0.00 EUR" || !o.Converted.Complete() {
 		t.Fatalf("empty outlook %+v", o)
 	}
 	old := commitmentList{{ID: "c", Fields: commitments.Fields{StartDate: d(t, "1990-01-01")}}}

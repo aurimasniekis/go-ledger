@@ -108,9 +108,10 @@ var ErrBeyondHorizon = occurrences.ErrBeyondHorizon
 // Outlook is the comparison as of one day.
 type Outlook struct {
 	AsOf calendar.Date
-	// From and Through are the months read: From is the month of the
-	// earliest commitment start (bounded by [MaxMonthsBack]); both are zero
-	// when there are no commitments, or none starts by Through.
+	// From and Through are the months read: Through is always the month used
+	// (never zero); From is the month of the earliest commitment start
+	// (bounded by [MaxMonthsBack]) and zero when there are no commitments, or
+	// none starts by Through.
 	From, Through calendar.YearMonth
 	// Truncated is true when commitments start before From: occurrences
 	// older than [MaxMonthsBack] months are not counted.
@@ -274,7 +275,9 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 	if through.Compare(today.YearMonth()) < 0 {
 		through = today.YearMonth()
 	}
-	out := Outlook{AsOf: today, Currencies: []CurrencyLine{}, Accounts: []Account{}}
+	// Through is always the month used, even when no commitment starts by it:
+	// the zero YearMonth does not encode, so the response would be empty.
+	out := Outlook{AsOf: today, Through: through, Currencies: []CurrencyLine{}, Accounts: []Account{}}
 
 	lines := map[money.Currency]*CurrencyLine{}
 	line := func(cur money.Currency, scale int32) *CurrencyLine {
@@ -300,7 +303,7 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 		if from.Compare(earliest) < 0 {
 			from, out.Truncated = earliest, true
 		}
-		out.From, out.Through = from, through
+		out.From = from
 		var latest time.Time
 		for m := from; m.Compare(through) <= 0; {
 			sum, err := s.Months.Month(ctx, m, today)

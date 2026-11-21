@@ -1679,7 +1679,7 @@ paths:
         - name: through
           in: query
           required: false
-          description: The last month whose commitments count; default the current month in the reporting time zone. At most 60 months ahead.
+          description: "The last month whose commitments count; default the current month in the reporting time zone. At most 60 months ahead. A month before the current one is treated as the current month: every occurrence due up to today is always counted; window.through reports the month used."
           schema:
             $ref: "#/components/schemas/YearMonth"
         - name: currency
