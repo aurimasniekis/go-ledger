@@ -1,8 +1,14 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryHistory } from '@tanstack/react-router'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from '@/App'
+import { installApi, signedIn } from '@/test/fake-api'
+
+beforeEach(() => {
+  installApi(signedIn())
+})
+afterEach(() => vi.unstubAllGlobals())
 
 describe('App shell', () => {
   it('renders the overview at /', async () => {
@@ -26,7 +32,7 @@ describe('App shell', () => {
   it('reaches the theme select by Tab and keeps a visible-focus class', async () => {
     render(<App history={createMemoryHistory({ initialEntries: ['/'] })} />)
     const select = await screen.findByLabelText('Theme')
-    for (let i = 0; i < 6 && document.activeElement !== select; i++) await userEvent.tab()
+    for (let i = 0; i < 15 && document.activeElement !== select; i++) await userEvent.tab()
     expect(select).toHaveFocus()
     expect(select.className).toContain('focus-visible:outline-ring')
     expect(select.className).toContain('border-border-control')

@@ -1,36 +1,40 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createMemoryHistory } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { App } from '@/App'
-import { setCsrfToken } from '@/lib/csrf'
+import { setCsrfToken } from '@/lib/api'
+import { installApi, renderApp, signedIn, type Reply, type Req } from '@/test/fake-api'
 import { item, payment, summary } from './fixtures'
 
-type Call = { method: string; url: string; headers: Record<string, string>; body?: string }
+type Call = Req
 let calls: Call[]
-let responder: (c: Call) => Response | Promise<Response>
+let responder: (c: Call) => Reply | Promise<Reply>
 
-const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+const json = (status: number, body: unknown): Reply => ({ status, json: body })
+const noContent = (): Reply => ({ status: 204 })
+const MONTH = '/api/v1/occurrences/summary'
+const PAY = '/api/v1/occurrences/a/manual-payments'
 
 beforeEach(() => {
-  calls = []
-  setCsrfToken('csrf-test')
-  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-    const c: Call = { method: init?.method ?? 'GET', url, headers: (init?.headers ?? {}) as Record<string, string>, body: init?.body as string | undefined }
-    calls.push(c)
-    return responder(c)
+  calls = installApi({
+    ...signedIn(),
+    ['GET ' + MONTH]: (r) => responder(r),
+    ['POST ' + PAY]: (r) => responder(r),
+    ['DELETE ' + PAY + '/p1']: (r) => responder(r),
   })
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  setCsrfToken(null)
+})
 
-const open = () => render(<App history={createMemoryHistory({ initialEntries: ['/month?month=2026-11'] })} />)
+const open = () => renderApp('/month?month=2026-11')
 
 describe('Month page', () => {
   it('loads the month from the summary endpoint and shows rows', async () => {
     responder = () => json(200, summary([item('a')]))
     open()
     expect(await screen.findByText('Rent a')).toBeInTheDocument()
-    expect(calls[0]!.url).toBe('/api/v1/occurrences/summary?month=2026-11')
+    expect(calls.find((c) => c.path === MONTH)!.query.get('month')).toBe('2026-11')
     expect(screen.getByRole('heading', { level: 2, name: 'November 2026' })).toBeInTheDocument()
   })
 
@@ -44,12 +48,12 @@ describe('Month page', () => {
   })
 
   it('records a payment: Not saved yet while pending, saved only after the server answers, with undo', async () => {
-    let release: (r: Response) => void = () => {}
-    const posted = new Promise<Response>((res) => (release = res))
+    let release: (r: Reply) => void = () => {}
+    const posted = new Promise<Reply>((res) => (release = res))
     let saved = false
     responder = (c) => {
       if (c.method === 'POST') return posted
-      if (c.method === 'DELETE') { saved = false; return new Response(null, { status: 204 }) }
+      if (c.method === 'DELETE') { saved = false; return noContent() }
       return json(200, saved ? summary([item('a', { payment: payment({ status: 'paid' }) })]) : summary([item('a')]))
     }
     open()
@@ -62,9 +66,9 @@ describe('Month page', () => {
     expect(await within(form).findByText('Not saved yet')).toBeInTheDocument()
     expect(screen.queryByText(/^Saved:/)).toBeNull()
     const post = calls.find((c) => c.method === 'POST')!
-    expect(post.url).toBe('/api/v1/occurrences/a/manual-payments')
-    expect(post.headers['X-CSRF-Token']).toBe('csrf-test')
-    expect(JSON.parse(post.body!)).toEqual({ amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21' })
+    expect(post.path).toBe('/api/v1/occurrences/a/manual-payments')
+    expect(post.headers['X-CSRF-Token']).toBe('csrf-abc')
+    expect(post.body).toEqual({ amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21' })
 
     saved = true
     release(json(201, { id: 'p1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21', version: 3 }))
@@ -74,7 +78,7 @@ describe('Month page', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
     expect(await screen.findByText(/Payment removed/)).toBeInTheDocument()
     const del = calls.find((c) => c.method === 'DELETE')!
-    expect(del.url).toBe('/api/v1/occurrences/a/manual-payments/p1')
+    expect(del.path).toBe('/api/v1/occurrences/a/manual-payments/p1')
     expect(del.headers['If-Match']).toBe('"3"')
     await waitFor(() => expect(screen.queryByText('Paid', { selector: '[data-status] *' })).toBeNull())
   })
@@ -119,7 +123,7 @@ describe('Month page', () => {
   it('moves focus to the undo notice after a save, then back to the opener after Dismiss', async () => {
     responder = (c) =>
       c.method === 'POST' ? json(201, { id: 'p1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21', version: 1 })
-      : c.method === 'DELETE' ? new Response(null, { status: 204 }) : json(200, summary([item('a')]))
+      : c.method === 'DELETE' ? noContent() : json(200, summary([item('a')]))
     open()
     const opener = await screen.findByRole('button', { name: /^Record payment for Rent a/ })
     await userEvent.click(opener)

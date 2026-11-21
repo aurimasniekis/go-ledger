@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
-import { csrfHeaders } from '@/lib/csrf'
 import type { ManualPayment, MonthSummary } from './types'
 
 export const monthKey = (month: string) => ['occurrences', 'summary', month] as const
@@ -16,8 +15,7 @@ export function useMonthSummary(month: string) {
 export function recordPayment(occurrenceId: string, body: { amount: string; currency: string; paid_on: string }): Promise<ManualPayment> {
   return apiFetch<ManualPayment>(`/api/v1/occurrences/${encodeURIComponent(occurrenceId)}/manual-payments`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...csrfHeaders() },
-    body: JSON.stringify({ amount: { amount: body.amount, currency: body.currency }, paid_on: body.paid_on }),
+    json: { amount: { amount: body.amount, currency: body.currency }, paid_on: body.paid_on },
   })
 }
 
@@ -25,6 +23,6 @@ export function recordPayment(occurrenceId: string, body: { amount: string; curr
 export function deletePayment(p: Pick<ManualPayment, 'id' | 'occurrence_id' | 'version'>): Promise<void> {
   return apiFetch<void>(`/api/v1/occurrences/${encodeURIComponent(p.occurrence_id)}/manual-payments/${encodeURIComponent(p.id)}`, {
     method: 'DELETE',
-    headers: { 'If-Match': `"${p.version}"`, ...csrfHeaders() },
+    headers: { 'If-Match': `"${p.version}"` },
   })
 }
