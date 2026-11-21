@@ -431,8 +431,12 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 		if open > 0 {
 			return matches.ErrDuplicate
 		}
+		automated := automation(actor)
+		if automated && n.Origin == matches.OriginUser {
+			return matches.ErrActorOrigin
+		}
 		action := matches.ActionSuggested
-		if n.State == matches.StateConfirmed && n.Origin == matches.OriginAutoRule {
+		if n.State == matches.StateConfirmed && (n.Origin == matches.OriginAutoRule || automated) {
 			var others int
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_matches WHERE transaction_id = ? AND state IN ('suggested', 'confirmed')", string(t.ID)).Scan(&others); err != nil {
 				return err
@@ -469,6 +473,13 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 		return err
 	})
 	return ch, err
+}
+
+// automation says whether the actor is neither a user nor a token: such a
+// change is held to the automatic-matching rules (decision D8) whatever origin
+// it claims.
+func automation(actor audit.Actor) bool {
+	return actor.Kind != audit.ActorUser && actor.Kind != audit.ActorToken
 }
 
 func isUniqueViolation(err error) bool {
@@ -537,6 +548,16 @@ func (s *Store) Confirm(ctx context.Context, actor audit.Actor, id string, expec
 		if err := matches.CheckTarget(m.Transaction, o, m.Amount); err != nil {
 			return err
 		}
+		if automation(actor) {
+			var others int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_matches WHERE transaction_id = ? AND id <> ? AND state IN ('suggested', 'confirmed')",
+				string(m.Transaction.ID), m.ID).Scan(&others); err != nil {
+				return err
+			}
+			if err := matches.CheckAuto(m.Transaction, others, m.Amount, o, money.Money{}); err != nil {
+				return err
+			}
+		}
 		return checkConfirm(ctx, tx, m.Transaction, o, m.Amount, m.ID, allow)
 	}, matches.StateSuggested)
 }
@@ -563,6 +584,9 @@ func (s *Store) Reverse(ctx context.Context, actor audit.Actor, id string, expec
 func (s *Store) Correct(ctx context.Context, actor audit.Actor, id string, expected int64, amount money.Money, allow bool, reason *string) (matches.Change, error) {
 	if err := commitments.Validation(append(matches.ValidateAmount(amount), matches.ValidateReason(reason)...)); err != nil {
 		return matches.Change{}, err
+	}
+	if automation(actor) {
+		return matches.Change{}, matches.ErrActorCorrect
 	}
 	var ch matches.Change
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
