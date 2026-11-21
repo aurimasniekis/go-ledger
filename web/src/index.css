@@ -47,6 +47,8 @@
   --status-error: #c0155a;
   --status-error-bg: #fbe1ea;
   --status-strong-foreground: #ffffff;
+  --warning: #3a2d1f;
+  --warning-bg: #f1ece4;
   --elevation-1: 0 1px 2px rgb(27 43 58 / 0.08);
   --elevation-2: 0 2px 8px rgb(27 43 58 / 0.12);
   --radius-small: 4px;
@@ -90,6 +92,8 @@
   --status-error: #ff6b8e;
   --status-error-bg: #4a1f36;
   --status-strong-foreground: #011627;
+  --warning: #e8d9c0;
+  --warning-bg: #2c2a22;
   --elevation-1: 0 1px 2px rgb(1 10 20 / 0.5);
   --elevation-2: 0 2px 8px rgb(1 10 20 / 0.6);
 }
@@ -128,6 +132,8 @@
     --status-error: #ff6b8e;
     --status-error-bg: #4a1f36;
     --status-strong-foreground: #011627;
+    --warning: #e8d9c0;
+    --warning-bg: #2c2a22;
     --elevation-1: 0 1px 2px rgb(1 10 20 / 0.5);
     --elevation-2: 0 2px 8px rgb(1 10 20 / 0.6);
   }
@@ -169,6 +175,8 @@
   --color-status-error: var(--status-error);
   --color-status-error-bg: var(--status-error-bg);
   --color-status-strong-foreground: var(--status-strong-foreground);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
   --color-transparent: transparent;
   --color-current: currentColor;
   --radius-sm: var(--radius-small);

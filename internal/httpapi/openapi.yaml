@@ -2703,7 +2703,7 @@ components:
         override (ADR-0031). Only evidence in the occurrence's currency is
         counted; other currencies are listed in unconverted_currencies and
         never converted or summed.
-      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, unconverted_currencies, evidence_count, grace_until, within_grace, override]
+      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, unconverted_currencies, evidence_count, manual_evidence_count, bank_evidence_count, grace_until, within_grace, override]
       properties:
         status:
           $ref: "#/components/schemas/PaymentStatus"
@@ -2734,6 +2734,14 @@ components:
             type: string
             pattern: "^[A-Z]{3}$"
         evidence_count:
+          type: integer
+          minimum: 0
+        manual_evidence_count:
+          description: Pieces of evidence that are manual payment records; with bank_evidence_count it adds up to evidence_count.
+          type: integer
+          minimum: 0
+        bank_evidence_count:
+          description: Pieces of evidence that are confirmed matches of bank transactions.
           type: integer
           minimum: 0
         grace_until:

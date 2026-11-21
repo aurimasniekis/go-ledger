@@ -2,6 +2,7 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  redirect,
   Link,
   Outlet,
 } from '@tanstack/react-router'
@@ -39,9 +40,6 @@ function Shell() {
       <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-surface px-4 py-3">
         <span className="font-semibold">Ledger</span>
         <nav aria-label="Main" className="flex flex-wrap items-center gap-2">
-          <Link to="/" className="rounded-md px-2 py-1 hover:bg-muted [&.active]:font-semibold">
-            Overview
-          </Link>
           <Link to="/month" className="rounded-md px-2 py-1 hover:bg-muted [&.active]:font-semibold">
             Month
           </Link>
@@ -56,24 +54,13 @@ function Shell() {
   )
 }
 
-function Overview() {
-  return (
-    <section className="space-y-3">
-      <h1 className="text-2xl font-semibold">Ledger</h1>
-      <p className="text-muted-foreground">
-        The monthly view of paid, upcoming and overdue commitments will appear here. Nothing is imported yet.
-      </p>
-    </section>
-  )
-}
-
 function NotFound() {
   return (
     <section className="space-y-3">
       <h1 className="text-2xl font-semibold">Page not found</h1>
       <p className="text-muted-foreground">This address does not match any page in Ledger.</p>
       <Button asChild>
-        <Link to="/">Go to the overview</Link>
+        <Link to="/month">Go to the monthly view</Link>
       </Button>
     </section>
   )
@@ -104,6 +91,15 @@ const appRoute = createRoute({ getParentRoute: () => rootRoute, id: 'app', compo
 const child = <P extends string>(path: P, component: () => React.JSX.Element) =>
   createRoute({ getParentRoute: () => appRoute, path, component })
 
+// The landing page is the monthly view: "/" leads straight to it (the current month).
+const indexRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/',
+  beforeLoad: () => {
+    throw redirect({ to: '/month', replace: true })
+  },
+})
+
 // The month comes from the address (?month=YYYY-MM); without a valid one it is the current month in the browser's zone (limitation: the server's reporting zone may differ near a month boundary).
 const monthRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -119,7 +115,7 @@ const routeTree = rootRoute.addChildren([
   signInRoute,
   designRoute,
   appRoute.addChildren([
-    child('/', Overview),
+    indexRoute,
     monthRoute,
     child('/account/security', SecurityPage),
     child('/account/sessions', SessionsPage),

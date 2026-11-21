@@ -51,4 +51,12 @@ export const TOKEN_GROUPS: { id: string; title: string; tokens: TokenInfo[] }[] 
       { name: 'status-strong-foreground', swatch: 'bg-status-strong-foreground', note: 'Label on the solid fill of strong badges (overdue, error)' },
     ],
   },
+  {
+    id: 'warning',
+    title: 'Warning (caution, not a status)',
+    tokens: [
+      { name: 'warning', swatch: 'bg-warning', note: 'Ink and border of a caution note (security, root token); pair with the icon and a label' },
+      { name: 'warning-bg', swatch: 'bg-warning-bg', note: 'Tint behind a caution note' },
+    ],
+  },
 ]

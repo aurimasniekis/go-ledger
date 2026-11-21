@@ -86,7 +86,7 @@ describe('sign-in with single sign-on', () => {
   it('asks the server for the session on load, so a cookie set by the callback is seen', async () => {
     const calls = installApi({ ...signedIn(), 'GET /api/v1/auth/methods': ok(sso) })
     renderApp('/sign-in')
-    expect(await screen.findByRole('heading', { level: 1, name: 'Ledger' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Monthly view' })).toBeInTheDocument()
     expect(calls.some((c) => c.path === '/api/v1/auth/session')).toBe(true)
   })
 })

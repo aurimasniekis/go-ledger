@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ShowOnceDialog } from '@/components/show-once-dialog'
@@ -110,18 +110,18 @@ describe('ShowOnceDialog', () => {
   })
 
   it('downloads the secret as a text file', async () => {
-    const user = userEvent.setup()
     const create = vi.fn(() => 'blob:x')
     const revoke = vi.fn()
     Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke })
-    // The revoke is deferred to a timer, not run during the click.
-    const timer = vi.spyOn(globalThis, 'setTimeout')
     render(<Host />)
-    await user.click(await screen.findByRole('button', { name: 'Download' }))
+    const button = await screen.findByRole('button', { name: 'Download' })
+    // fireEvent runs the handler synchronously, so this sees the state right after the click, before any timer.
+    // The URL must still be alive then: revoking it during the click can cancel the download in some browsers.
+    fireEvent.click(button)
     expect(create).toHaveBeenCalledOnce()
+    expect(revoke).not.toHaveBeenCalled()
     const blob = (create.mock.calls[0] as unknown as [Blob])[0]
     expect(await blob.text()).toBe(SECRET + '\n')
-    expect(timer.mock.calls.some(([, ms]) => ms === 0)).toBe(true)
     await waitFor(() => expect(revoke).toHaveBeenCalledWith('blob:x'))
     expect(await screen.findByText('Download started.')).toBeInTheDocument()
   })

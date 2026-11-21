@@ -3,6 +3,7 @@ import { Download, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Mono } from '@/components/mono'
+import { Notice } from '@/components/notice'
 
 /**
  * Shows a secret exactly once: an API token or a set of recovery codes. The parent holds the secret
@@ -76,9 +77,7 @@ export function ShowOnceDialog({
           Done button once you have stored it.
         </p>
         {warning && (
-          <p role="note" className="rounded-md border border-status-overdue bg-status-overdue-bg p-3 text-sm text-status-overdue">
-            {warning}
-          </p>
+          <Notice>{warning}</Notice>
         )}
         <ul aria-label={listLabel} className="grid gap-1 rounded-md border border-border bg-muted p-3 sm:grid-cols-2">
           {lines.map((l) => (

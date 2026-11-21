@@ -114,6 +114,25 @@ describe('Month page', () => {
     expect(await screen.findByText(/The payment is still recorded/)).toBeInTheDocument()
   })
 
+  it('opens the payment form under the row that opened it, naming that occurrence', async () => {
+    responder = () => json(200, summary([item('a'), item('b')]))
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: /^Record payment for Rent b/ }))
+    const form = await screen.findByRole('form', { name: 'Record a payment' })
+    const row = screen.getByText('Rent b', { selector: 'p' }).closest('li')!
+    expect(row).toContainElement(form)
+    expect(within(form).getByTestId('panel-occurrence')).toHaveTextContent('Rent b')
+    expect(within(form).getByTestId('panel-occurrence')).toHaveTextContent('Upcoming')
+    await waitFor(() => expect(within(form).getByRole('heading', { name: 'Record a payment' })).toHaveFocus())
+  })
+
+  it('says why the primary action is disabled in an empty month', async () => {
+    responder = () => json(200, summary([]))
+    open()
+    expect(await screen.findByRole('button', { name: 'Record a payment' })).toBeDisabled()
+    expect(await screen.findByText(/nothing to record/)).toBeInTheDocument()
+  })
+
   it('the primary action is disabled when every occurrence is paid', async () => {
     responder = () => json(200, summary([item('a', { payment: payment({ status: 'paid' }) })]))
     open()
@@ -183,8 +202,40 @@ describe('Month page', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
     expect(await within(form).findByText(/is no longer unpaid/, { selector: 'p' })).toBeInTheDocument()
     expect(within(form).getByRole('button', { name: 'Save payment' })).toBeDisabled()
-    expect(within(form).getByLabelText('Occurrence')).toHaveValue('a')
+    expect(within(form).queryByLabelText('Occurrence')).toBeNull() // a form opened from a row stays on that row
     expect(amount).toHaveValue('7.00')
     expect(calls.some((c) => c.method === 'POST')).toBe(false)
+  })
+
+  it('keeps an open form, with what was typed, and the Cancel way out when a refetch empties the month', async () => {
+    let empty = false
+    responder = () => json(200, summary(empty ? [] : [item('a')]))
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: /^Record payment for Rent a/ }))
+    const form = await screen.findByRole('form', { name: 'Record a payment' })
+    const amount = within(form).getByLabelText(/Amount paid/)
+    await userEvent.clear(amount)
+    await userEvent.type(amount, '7.00')
+    empty = true
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByText(/no longer in this month's list/)).toBeInTheDocument()
+    expect(screen.getByRole('form', { name: 'Record a payment' })).toBe(form)
+    expect(amount).toHaveValue('7.00')
+    expect(within(form).getByRole('button', { name: 'Save payment' })).toBeDisabled()
+    await userEvent.click(within(form).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('form', { name: 'Record a payment' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Record a payment' })).toBeDisabled() // nothing left to record
+    expect(screen.getByText(/No commitments fall due/)).toBeInTheDocument()
+  })
+
+  it('the form opened from the header lets you choose the occurrence and stays put while you do', async () => {
+    responder = () => json(200, summary([item('a'), item('b')]))
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: 'Record a payment' }))
+    const form = await screen.findByRole('form', { name: 'Record a payment' })
+    expect(form.closest('li')).toBeNull() // not under a row, so choosing cannot leave it under the wrong one
+    await userEvent.selectOptions(within(form).getByLabelText('Occurrence'), 'b')
+    expect(screen.getByRole('form', { name: 'Record a payment' })).toBe(form)
+    expect(within(form).getByTestId('panel-occurrence')).toHaveTextContent('Rent b')
   })
 })

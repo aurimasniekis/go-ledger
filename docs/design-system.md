@@ -19,6 +19,7 @@ Three choices: **System** (follows the OS), **Light**, **Dark**. The choice is c
 | Borders | `border` (decorative), `border-control` (3:1), `ring` (3:1) | dividers; form-control boundaries; focus |
 | Accents | `primary` (= teal), `accent-teal`, `accent-cyan`, `accent-violet`, `accent-warm`, `accent` (= violet), `secondary` | actions and emphasis |
 | Status | `status-paid`, `-upcoming`, `-overdue`, `-deferred`, `-stale`, `-error`, each with a `-bg` tint | commitment and data state |
+| Warning | `warning`, `warning-bg` | caution notes on security and account screens (two-factor required, root tokens, show-once secrets); not a status |
 | Radius | `rounded-sm` 4px, `rounded-md` 6px, `rounded-lg` 8px (larger steps collapse to 8px) | `rounded-full` only for dots |
 | Elevation | `shadow-sm`, `shadow-md` | flat by default; use sparingly |
 | Type | `font-sans`, `font-mono` | `<Mono>` for IDs, codes, references |
@@ -47,7 +48,11 @@ Two separate axes, separate types (`CommitmentStatus`, `DataState`), so a data s
 
 **Hue rules**: status tokens are never equal to, and stay at least 20 CIE76 delta-E from, any accent or the focus ring, and from each other; overdue and error at least 35 apart. The dark focus ring is near-white for that reason. `contrast.test.ts` enforces it in both themes. Violet and warm accents therefore never read as a commitment or freshness state.
 
-**Reserved, not yet built** (tokens and badges to add with U1, C4, X4, B4 before those screens): disconnected, save-failed, bank-pending transaction, needs-review (ambiguous match), and provenance markers (bank fact, user correction, manual paid).
+**Warning is not a status.** The status hues mean one thing each (a commitment or data state), so a caution on a security screen must not reuse them. `warning` is a neutral warm ink (dark brown in light, sand in dark) with a 2px border and a tint, always shown with a triangle icon and words through `Notice` (`web/src/components/notice.tsx`). Being near-neutral is deliberate: every saturated hue is already taken by an accent or a status, and the contrast test keeps `warning` at least 20 delta-E from all of them.
+
+**Provenance markers** (C4, `features/month/provenance.tsx`) are a third axis next to commitment status and data state: where a settled row came from. *Manual payment* (a payment recorded by hand), *Set by hand* (an override with a reason) and *Bank match* (a confirmed match of a bank transaction), or *Bank match and manual payment* when a row has both. The kind comes from the payload's `manual_evidence_count` and `bank_evidence_count`; evidence of no known kind shows no marker, and a bank match is never labelled manual. They are neutral chips (text plus icon, `border-control`), so a bank fact, a user correction and a manual payment never read as a status.
+
+**Reserved, not yet built** (tokens and badges to add with U1, X4, B4 before those screens): disconnected, save-failed, bank-pending transaction, needs-review (ambiguous match).
 
 ## Contrast (automated)
 

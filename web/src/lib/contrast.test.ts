@@ -26,6 +26,7 @@ const themes = {
 
 const STATUS = ['paid', 'upcoming', 'overdue', 'deferred', 'stale', 'error'].map((s) => 'status-' + s)
 const ACCENT = ['accent-teal', 'accent-cyan', 'accent-violet', 'accent-warm', 'primary', 'accent']
+const WARNING = ['warning']
 const SURFACES = ['background', 'surface', 'surface-raised', 'muted']
 
 // Text (and icon, which carries meaning) pairs: 4.5:1.
@@ -40,6 +41,8 @@ const textPairs: [string, string][] = [
   ['status-strong-foreground', 'status-error'],
   ...ACCENT.flatMap((a) => SURFACES.map((s): [string, string] => [a, s])),
   ...STATUS.flatMap((s) => [...SURFACES.map((b): [string, string] => [s, b]), [s, s + '-bg'] as [string, string]]),
+  // The caution ink and its tint (security notes, root-token warnings): never a status hue.
+  ...WARNING.flatMap((s) => [...SURFACES.map((b): [string, string] => [s, b]), [s, s + '-bg'] as [string, string]]),
 ]
 // Non-text pairs (WCAG 1.4.11): control boundaries and focus rings, 3:1.
 const uiPairs: [string, string][] = ['border-control', 'ring'].flatMap((t) =>
@@ -51,7 +54,7 @@ const exempt: Record<string, string> = {
   secondary: 'fill, checked as the secondary-foreground pair',
   'primary-foreground': 'checked on primary',
   'secondary-foreground': 'checked on secondary',
-  ...Object.fromEntries(STATUS.map((s) => [s + '-bg', 'tint, checked as the background of ' + s])),
+  ...Object.fromEntries([...STATUS, ...WARNING].map((s) => [s + '-bg', 'tint, checked as the background of ' + s])),
 }
 
 describe('theme tokens meet WCAG 2.2 AA', () => {
@@ -96,7 +99,7 @@ describe('theme tokens meet WCAG 2.2 AA', () => {
   for (const [name, t] of Object.entries(themes)) {
     it(`${name}: status tokens never equal and stay visibly distinct from accent and ring tokens`, () => {
       const others = ['ring', 'accent-teal', 'accent-cyan', 'accent-violet', 'accent-warm', 'primary', 'accent']
-      for (const s of STATUS) {
+      for (const s of [...STATUS, ...WARNING]) {
         for (const o of others) {
           expect(t[s], `${s} must not equal ${o}`).not.toBe(t[o])
           expect(deltaE(t[s]!, t[o]!), `${s} vs ${o}`).toBeGreaterThanOrEqual(20)
@@ -104,7 +107,7 @@ describe('theme tokens meet WCAG 2.2 AA', () => {
       }
     })
     it(`${name}: status hues are distinct from each other, overdue and error clearly apart`, () => {
-      for (const a of STATUS) for (const b of STATUS) if (a < b) expect(deltaE(t[a]!, t[b]!), `${a} vs ${b}`).toBeGreaterThanOrEqual(20)
+      for (const a of [...STATUS, ...WARNING]) for (const b of [...STATUS, ...WARNING]) if (a < b) expect(deltaE(t[a]!, t[b]!), `${a} vs ${b}`).toBeGreaterThanOrEqual(20)
       expect(deltaE(t['status-overdue']!, t['status-error']!)).toBeGreaterThanOrEqual(35)
     })
   }
