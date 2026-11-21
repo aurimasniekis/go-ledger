@@ -11,6 +11,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -51,6 +52,12 @@ type Config struct {
 	// Require2FA confines every signed-in user without TOTP enabled to
 	// enrolment (auth.require_2fa, ADR-0030).
 	Require2FA bool
+	// PasswordSignInDisabled refuses password sign-in and password
+	// re-authentication for everyone (auth.password.enabled=false, decision
+	// D16); sign-in goes to OIDC. Linking an identity never sets it.
+	PasswordSignInDisabled bool
+	// OIDC is the single-sign-on policy (ADR-0033).
+	OIDC OIDCPolicy
 }
 
 // DefaultConfig returns the proposed defaults.
@@ -71,8 +78,10 @@ func (c Config) Validate() error {
 		return errors.New("auth: the idle timeout must not exceed the absolute timeout")
 	case c.AccountLimit.Max < 1 || c.AddressLimit.Max < 1 || c.AccountLimit.Window <= 0 || c.AddressLimit.Window <= 0:
 		return errors.New("auth: sign-in limits need a positive count and window")
+	case c.PasswordSignInDisabled && !c.OIDC.Enabled:
+		return errors.New("auth: password sign-in can only be disabled when OIDC sign-in is enabled")
 	}
-	return nil
+	return c.OIDC.validate()
 }
 
 // Session is a server-side sign-in session. The cookie holds a random token;
@@ -98,7 +107,18 @@ type Session struct {
 	// shown in the session list to help a user recognise their sessions.
 	UserAgent string
 	Address   string
+	// Method is how the session was started: [SessionMethodPassword] (with
+	// a second factor when the user has one), [SessionMethodOIDC] or
+	// [SessionMethodRecovery].
+	Method string
 }
+
+// How a session was started.
+const (
+	SessionMethodPassword = "password"
+	SessionMethodOIDC     = "oidc"
+	SessionMethodRecovery = "recovery"
+)
 
 // IdleExpiresAt is when the session ends if it is not used again.
 func (s Session) IdleExpiresAt(idle time.Duration) time.Time {
@@ -122,6 +142,7 @@ type Credential struct {
 // passed to a write are recorded in the same transaction as the change.
 type Store interface {
 	TwoFactorStore
+	OIDCStore
 	// CredentialByUsername and CredentialByUser return resource.ErrNotFound
 	// for an unknown account.
 	CredentialByUsername(ctx context.Context, username string) (Credential, error)
@@ -164,6 +185,9 @@ var (
 	// ErrInvalidSession: no such session, or it expired or was ended, or its
 	// user can no longer act.
 	ErrInvalidSession = errors.New("the session is not valid")
+	// ErrPasswordSignInDisabled: auth.password.enabled is false, so passwords
+	// are not checked at all; sign in with OIDC.
+	ErrPasswordSignInDisabled = errors.New("password sign-in is disabled; sign in with single sign-on")
 )
 
 // RateLimitedError is returned while a sign-in limit is exhausted.
@@ -187,6 +211,9 @@ type Service struct {
 	// sealer seals TOTP secrets; nil disables enrolment (ErrTwoFactorUnavailable).
 	sealer     Sealer
 	challenges challenges
+	// users creates accounts for OIDC provisioning; provision serialises it.
+	users     UserCreator
+	provision sync.Mutex
 	// dummy is verified when there is no real hash to check, so every
 	// failed sign-in costs one hash computation. It is made in NewService,
 	// so no request pays for it.
@@ -200,6 +227,9 @@ type Options struct {
 	// Sealer seals TOTP secrets (NewKEKSealer with TOTPPurpose). Without it,
 	// TOTP cannot be enrolled or checked; recovery codes still work.
 	Sealer Sealer
+	// Users creates accounts when OIDC provisioning is enabled; required
+	// then.
+	Users UserCreator
 }
 
 // NewService returns a Service. rec records audit events that are not part
@@ -217,13 +247,16 @@ func NewService(cfg Config, st Store, principals Principals, hasher Hasher, rec 
 	if o.NewID == nil {
 		o.NewID = resource.NewID
 	}
+	if cfg.OIDC.Provisioning && o.Users == nil {
+		return nil, errors.New("auth: OIDC provisioning needs a user creator")
+	}
 	dummy, err := newDummyHash(hasher)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{cfg: cfg, store: st, principals: principals, hasher: hasher, rec: rec, now: o.Now, newID: o.NewID,
 		accounts: NewLimiter(cfg.AccountLimit, DefaultLimiterKeys, o.Now), addresses: NewLimiter(cfg.AddressLimit, DefaultLimiterKeys, o.Now),
-		sealer: o.Sealer, dummy: dummy}, nil
+		sealer: o.Sealer, users: o.Users, dummy: dummy}, nil
 }
 
 // Config returns the policy.
@@ -373,6 +406,9 @@ func (s *Service) rehash(ctx context.Context, c Credential, pw string) {
 // second-factor challenge instead of a session; the password step is then
 // not audited as a sign-in (the second step is).
 func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
+	if s.cfg.PasswordSignInDisabled {
+		return Issued{}, ErrPasswordSignInDisabled
+	}
 	username, valid := normalizeUsername(in.Username)
 	accKey, addrKey := accountKey(username), AddressKey(in.Address)
 	var cred Credential
@@ -417,15 +453,18 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 	if st.Enabled() {
 		at.passed()
 		exp := now.Add(ChallengeTTL)
-		tok := s.challenges.add(now, &challenge{userID: cred.UserID, accKey: accKey, expires: exp, userAgent: in.UserAgent})
+		tok := s.challenges.add(now, &challenge{userID: cred.UserID, accKey: accKey, expires: exp, userAgent: in.UserAgent, method: SessionMethodPassword})
 		return Issued{SecondFactor: &SecondFactorChallenge{Token: tok, ExpiresAt: exp, Methods: []string{MethodTOTP, MethodRecoveryCode}}}, nil
 	}
 	at.succeeded()
-	return s.startSession(ctx, cred.UserID, in.Address, in.UserAgent, now, audit.SignIn(actorFor(cred, true), true, "password", "", now))
+	return s.startSession(ctx, cred.UserID, SessionMethodPassword, in.Address, in.UserAgent, now, now, audit.SignIn(actorFor(cred, true), true, "password", "", now))
 }
 
-// startSession creates a session for userID and records ev with it.
-func (s *Service) startSession(ctx context.Context, userID, address, userAgent string, now time.Time, ev audit.Event) (Issued, error) {
+// startSession creates a session for userID, started by method, and records
+// ev with it. authAt is when the user last proved who they are (it starts the
+// recent-authentication window): now for a password or a recovery link, the
+// provider's auth_time for single sign-on.
+func (s *Service) startSession(ctx context.Context, userID, method, address, userAgent string, now, authAt time.Time, ev audit.Event) (Issued, error) {
 	// Expired sessions of anyone are removed here, so the table stays small
 	// without a background job.
 	if _, err := s.store.DeleteExpired(ctx, now, now.Add(-s.cfg.IdleTimeout)); err != nil {
@@ -434,8 +473,8 @@ func (s *Service) startSession(ctx context.Context, userID, address, userAgent s
 	tok := newSecret()
 	iss := Issued{Token: tok, CSRFToken: CSRFToken(tok)}
 	iss.Session = Session{ID: s.newID(), UserID: userID, TokenHash: hashSecret(tok),
-		CreatedAt: now, LastSeenAt: now, AuthenticatedAt: now, ExpiresAt: now.Add(s.cfg.AbsoluteTimeout),
-		UserAgent: clean(userAgent, 256), Address: clean(address, 64)}
+		CreatedAt: now, LastSeenAt: now, AuthenticatedAt: authAt, ExpiresAt: now.Add(s.cfg.AbsoluteTimeout),
+		UserAgent: clean(userAgent, 256), Address: clean(address, 64), Method: method}
 	if err := s.store.CreateSession(ctx, iss.Session, ev); err != nil {
 		return Issued{}, err
 	}
@@ -486,7 +525,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Session, auth
 		}
 		sess.LastSeenAt = now
 	}
-	if p.EnrollmentRequired, err = s.enrollmentRequired(ctx, sess.UserID); err != nil {
+	if p.EnrollmentRequired, err = s.sessionConfined(ctx, sess); err != nil {
 		return Session{}, authz.Principal{}, err
 	}
 	p.SessionID, p.AuthTime = sess.ID, sess.AuthenticatedAt
@@ -528,6 +567,9 @@ func (s *Service) Recent(p authz.Principal) bool {
 // marks the session as recently authenticated. Failures count towards the
 // same limits as sign-in and return [ErrInvalidCredentials].
 func (s *Service) Reauthenticate(ctx context.Context, p authz.Principal, password, address string) (time.Time, error) {
+	if s.cfg.PasswordSignInDisabled {
+		return time.Time{}, ErrPasswordSignInDisabled
+	}
 	if p.Kind != authz.PrincipalUser || p.SessionID == "" {
 		return time.Time{}, ErrInvalidSession
 	}

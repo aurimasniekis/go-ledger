@@ -34,6 +34,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0030: TOTP, recovery codes and required two-factor authentication](0030-totp-recovery-codes-and-required-2fa.md)
 - [ADR-0031: Payment state, manual payments and status overrides](0031-payment-state-and-manual-payments.md)
 - [ADR-0032: Go client and CLI management commands](0032-go-client-and-cli-management-commands.md)
+- [ADR-0033: Optional OIDC single sign-on, password disablement and break-glass](0033-oidc-single-sign-on.md)
 - [ADR-0034: The monthly view](0034-monthly-view.md)
 - [ADR-0036: Auth and account UI](0036-auth-and-account-ui.md)
 

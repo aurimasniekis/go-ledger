@@ -254,6 +254,16 @@ auth:
 
   password:
 
+    # Allow signing in with a username and password. false refuses password
+    # sign-in and password re-authentication for everyone (403
+    # password_sign_in_disabled) and sends the sign-in page to single sign-on;
+    # it needs auth.oidc.enabled. Linking an OIDC identity never turns
+    # password sign-in off by itself. If the identity provider is unavailable
+    # while this is false, the host can issue a one-time sign-in with ledger
+    # auth recovery-sign-in (docs/oidc.md).
+    # Environment: LEDGER_AUTH_PASSWORD_ENABLED  Flag: --auth.password.enabled
+    enabled: true
+
     # Minimum password length in bytes (1 to 1024). Length is the only rule:
     # there are no composition rules.
     # Environment: LEDGER_AUTH_PASSWORD_MIN_LENGTH  Flag: --auth.password.min_length
@@ -292,6 +302,80 @@ auth:
     # Sliding window over which failed sign-ins are counted.
     # Environment: LEDGER_AUTH_SIGN_IN_WINDOW  Flag: --auth.sign_in.window
     window: "15m"
+
+  oidc:
+
+    # Allow signing in with one OpenID Connect identity provider
+    # (authorization code flow with PKCE). Users link their identity while
+    # signed in; an identity that is not linked gets no access unless
+    # auth.oidc.provisioning.enabled is true.
+    # Environment: LEDGER_AUTH_OIDC_ENABLED  Flag: --auth.oidc.enabled
+    enabled: false
+
+    # Name of the identity provider shown on the sign-in page and recorded in
+    # audit entries: 1 to 64 printable characters.
+    # Environment: LEDGER_AUTH_OIDC_NAME  Flag: --auth.oidc.name
+    name: "Single sign-on"
+
+    # Issuer URL of the provider, exactly as its discovery document states it
+    # (a trailing slash matters), for example
+    # https://id.example.com/realms/home. https only (plain http only for a
+    # loopback test provider). Links are keyed by issuer and subject: changing
+    # the issuer leaves every existing link unusable.
+    # Environment: LEDGER_AUTH_OIDC_ISSUER  Flag: --auth.oidc.issuer
+    issuer: ""
+
+    # Client ID registered for Ledger at the provider. Required when
+    # auth.oidc.enabled is true.
+    # Environment: LEDGER_AUTH_OIDC_CLIENT_ID  Flag: --auth.oidc.client_id
+    client_id: ""
+
+    # Secret auth.oidc.client_secret: Client secret registered for Ledger at the
+    # provider. Secret: environment only, never in the YAML file and never a
+    # flag. Set this or client_secret_file.
+
+    # Path of a file that contains the client secret. Alternative to the
+    # client_secret variable; trailing newlines are ignored. Only the path is
+    # configuration; the secret is never logged.
+    # Environment: LEDGER_AUTH_OIDC_CLIENT_SECRET_FILE  Flag: --auth.oidc.client_secret_file
+    client_secret_file: ""
+
+    # Callback URL registered at the provider: Ledger's external address
+    # followed by /api/v1/auth/oidc/callback, for example
+    # https://ledger.example.com/api/v1/auth/oidc/callback. https only (plain
+    # http only on loopback).
+    # Environment: LEDGER_AUTH_OIDC_REDIRECT_URL  Flag: --auth.oidc.redirect_url
+    redirect_url: ""
+
+    # Scopes requested (a list in YAML, comma separated in the variable). Must
+    # include openid. email and profile only fill in display data and a
+    # provisioned account's username; identity is never taken from them.
+    # Environment: LEDGER_AUTH_OIDC_SCOPES  Flag: --auth.oidc.scopes
+    scopes: ["openid", "email", "profile"]
+
+    # Ask users who have Ledger TOTP enabled for their code after an OIDC
+    # sign-in too, and apply auth.require_2fa to OIDC sessions. false (the
+    # default, decision D16) trusts the identity provider's own
+    # authentication.
+    # Environment: LEDGER_AUTH_OIDC_REQUIRE_2FA  Flag: --auth.oidc.require_2fa
+    require_2fa: false
+
+    # Clock difference tolerated when checking ID token times (exp, nbf, iat,
+    # auth_time): 0 to 5m.
+    # Environment: LEDGER_AUTH_OIDC_CLOCK_SKEW  Flag: --auth.oidc.clock_skew
+    clock_skew: "1m"
+
+    provisioning:
+
+      # Create an account, with no password, the first time an identity that
+      # is linked to no account signs in, and link it. Off by default: unknown
+      # identities are refused. Accounts are never matched by email address.
+      # Environment: LEDGER_AUTH_OIDC_PROVISIONING_ENABLED  Flag: --auth.oidc.provisioning.enabled
+      enabled: false
+
+      # Role of accounts created by provisioning.
+      # Environment: LEDGER_AUTH_OIDC_PROVISIONING_ROLE  Flag: --auth.oidc.provisioning.role  Allowed: administrator, read-only
+      role: "read-only"
 
   # Require two-factor authentication (TOTP) for everyone. A signed-in user
   # without it can only enrol an authenticator, see their session,

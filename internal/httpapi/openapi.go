@@ -69,6 +69,8 @@ type Deps struct {
 	Auth *auth.Service
 	// Tokens is API tokens.
 	Tokens *tokens.Service
+	// OIDC is single sign-on (ADR-0033); nil when it is not configured.
+	OIDC *OIDCDeps
 	// Zone is the reporting time zone (D5): it decides "today" for default
 	// effective dates and the materialisation horizon. Now defaults to
 	// time.Now.
@@ -100,6 +102,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerUserPassword(s, d.Auth)
 	registerSessions(s, d.Auth)
 	registerTwoFactor(s, d.Auth)
+	registerOIDC(s, d.Auth, d.OIDC)
 	registerAudit(s, d.Audit)
 	registerTokens(s, d.Tokens)
 	todayFn := newToday(d.Zone, d.Now)

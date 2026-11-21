@@ -163,12 +163,13 @@ type sessionJSON struct {
 	ExpiresAt       time.Time `json:"expires_at"`
 	UserAgent       string    `json:"user_agent"`
 	Address         string    `json:"address"`
+	Method          string    `json:"method"`
 }
 
 func toSessionJSON(x auth.Session, idle time.Duration, current string) sessionJSON {
 	return sessionJSON{ID: x.ID, Current: x.ID == current, CreatedAt: x.CreatedAt.UTC(), LastSeenAt: x.LastSeenAt.UTC(),
 		AuthenticatedAt: x.AuthenticatedAt.UTC(), IdleExpiresAt: x.IdleExpiresAt(idle).UTC(), ExpiresAt: x.ExpiresAt.UTC(),
-		UserAgent: x.UserAgent, Address: x.Address}
+		UserAgent: x.UserAgent, Address: x.Address, Method: x.Method}
 }
 
 // currentSessionJSON is the answer of sign-in and GET /auth/session.
@@ -213,6 +214,12 @@ func authError(w http.ResponseWriter, err error, failStatus int) error {
 	var rl *auth.RateLimitedError
 	var pe *auth.PolicyError
 	switch {
+	case errors.Is(err, auth.ErrPasswordSignInDisabled):
+		return &Error{Status: http.StatusForbidden, Code: CodePasswordSignInDisabled, Message: err.Error()}
+	case errors.Is(err, auth.ErrOIDCNotConfigured):
+		return NotFound(err.Error())
+	case errors.Is(err, auth.ErrOIDCAlreadyLinked), errors.Is(err, auth.ErrLastSignInMethod):
+		return Conflict(err.Error())
 	case errors.Is(err, auth.ErrInvalidSecondFactor):
 		return invalidSecondFactor(failStatus)
 	case errors.Is(err, auth.ErrInvalidChallenge):
@@ -267,8 +274,13 @@ func registerSessions(s *Server, svc *auth.Service) {
 			WriteError(w, r, err)
 			return
 		}
+		confined, err := svc.SessionConfined(r.Context(), x)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		out := currentSessionJSON{UserID: x.UserID, Session: toSessionJSON(x, cfg.IdleTimeout, x.ID), CSRFToken: auth.CSRFToken(token),
-			TwoFactor: sessionTwoFactorJSON{Enabled: tf.Enabled, Required: tf.Required, EnrollmentRequired: tf.Required && !tf.Enabled}}
+			TwoFactor: sessionTwoFactorJSON{Enabled: tf.Enabled, Required: tf.Required, EnrollmentRequired: confined}}
 		if svc.Recent(authz.Principal{Kind: authz.PrincipalUser, SessionID: x.ID, AuthTime: x.AuthenticatedAt}) {
 			t := x.AuthenticatedAt.Add(cfg.ReauthWindow).UTC()
 			out.RecentAuthUntil = &t

@@ -82,7 +82,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// Everything that is logged or returned in an error from here on passes
 	// through the redactor, which knows the configured secrets.
 	eb := cfg.Banking.EnableBanking
-	redact.Default().Add(cfg.KEK.Value, eb.App.PrivateKey, eb.Developer.PrivateKey, eb.App.AppID, eb.Developer.AppID)
+	redact.Default().Add(cfg.KEK.Value, eb.App.PrivateKey, eb.Developer.PrivateKey, eb.App.AppID, eb.Developer.AppID, cfg.Auth.OIDC.ClientSecret)
 	log, err := logging.New(stderr, cfg.Log.Level, cfg.Log.Format, redact.Default())
 	if err != nil {
 		say(stderr, "ledger: "+err.Error())
@@ -186,10 +186,17 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
 	parts, err := buildAPI(db, auditLog, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, hashConcurrency), nil)
+	if err == nil {
+		parts.oidc, err = oidcDeps(cfg.Auth.OIDC, nil)
+	}
 	if err != nil {
 		log.Error("invalid sign-in settings", "error", err.Error())
 		_ = ln.Close()
 		return 1
+	}
+	if parts.oidc != nil {
+		log.Info("single sign-on is enabled; the provider is contacted at the first sign-in", "provider", cfg.Auth.OIDC.Name,
+			"provisioning", cfg.Auth.OIDC.Provisioning.Enabled, "password_sign_in", cfg.Auth.Password.Enabled)
 	}
 	// Bearer API tokens are tried before the session cookie (ADR-0029); every
 	// state-changing token request is audited through the recorder.
@@ -317,6 +324,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Audit:       al,
 		Auth:        parts.auth,
 		Tokens:      parts.tokens,
+		OIDC:        parts.oidc,
 		Zone:        zone,
 		Now:         now,
 	})

@@ -331,6 +331,10 @@ type challenge struct {
 	expires        time.Time
 	failures       int
 	userAgent      string
+	// method is the session method the first step used (password or oidc).
+	method string
+	// authAt is when the first step's authentication happened (see startSession).
+	authAt time.Time
 }
 
 // challenges holds pending second steps in memory: a restart discards them
@@ -483,7 +487,11 @@ func (s *Service) CompleteSignIn(ctx context.Context, in SecondFactorInput) (Iss
 	if method == MethodRecoveryCode {
 		ev.Details["recovery_codes_remaining"] = strconv.Itoa(remaining)
 	}
-	return s.startSession(ctx, ch.userID, in.Address, ch.userAgent, now, ev)
+	authAt := ch.authAt
+	if authAt.IsZero() { // a password first step: the second factor completes the check
+		authAt = now
+	}
+	return s.startSession(ctx, ch.userID, ch.method, in.Address, ch.userAgent, now, authAt, ev)
 }
 
 // checkSecondFactor verifies a TOTP code (recording its step as used) or a
@@ -513,6 +521,17 @@ func (s *Service) checkSecondFactor(ctx context.Context, userID string, st TwoFa
 	}
 	ok, err = s.store.UseTOTPStep(ctx, userID, st.Secret, step)
 	return ok, 0, err
+}
+
+// sessionConfined reports whether the session must enrol a second factor
+// before anything else: auth.require_2fa is on, TOTP is not enabled, and the
+// session was not started through OIDC while Ledger trusts the identity
+// provider's own authentication (auth.oidc.require_2fa off, decision D16).
+func (s *Service) sessionConfined(ctx context.Context, sess Session) (bool, error) {
+	if sess.Method == SessionMethodOIDC && !s.cfg.OIDC.Require2FA {
+		return false, nil
+	}
+	return s.enrollmentRequired(ctx, sess.UserID)
 }
 
 // enrollmentRequired reports whether userID must enrol a second factor before

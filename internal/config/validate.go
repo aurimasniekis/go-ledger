@@ -16,6 +16,7 @@ import (
 // resolveSecretFiles reads a secret named by a *_file key into its value field.
 func resolveSecretFiles(c *Config, sources map[string]string, readFile func(string) ([]byte, error)) []Problem {
 	ps := resolveKEKFile(c, sources, readFile)
+	ps = append(ps, resolveOIDCSecretFile(c, sources, readFile)...)
 	for _, slot := range []struct {
 		mode string
 		app  *EnableBankingApp
@@ -160,6 +161,7 @@ func (c *Config) validate(sources map[string]string) []Problem {
 			bad(d.key, "must be at least 1m")
 		}
 	}
+	c.Auth.validateOIDC(bad)
 	c.Events.Pulse.validate(bad)
 	c.Banking.EnableBanking.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {

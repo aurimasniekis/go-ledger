@@ -82,6 +82,13 @@ type signInEnv struct {
 
 func newSignInEnv(t *testing.T, mod func(*config.Auth)) *signInEnv {
 	t.Helper()
+	return newSignInEnvWith(t, mod, nil)
+}
+
+// newSignInEnvWith is [newSignInEnv] with setup run after the API parts are
+// built and before routes are registered (for example to add single sign-on).
+func newSignInEnvWith(t *testing.T, mod func(*config.Auth), setup func(e *signInEnv, cfg config.Auth)) *signInEnv {
+	t.Helper()
 	ctx := context.Background()
 	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "ledger.db"), store.Options{})
 	if err != nil {
@@ -102,6 +109,9 @@ func newSignInEnv(t *testing.T, mod func(*config.Auth)) *signInEnv {
 	e.parts, err = buildAPI(db, e.al, cfg, testKEK, e.hasher, e.clock.now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if setup != nil {
+		setup(e, cfg)
 	}
 	e.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log,
 		httpapi.WithAuthenticators(httpapi.NewTokenAuth(e.parts.tokens), httpapi.NewSessionAuth(e.parts.auth)), httpapi.WithRecentAuth(e.parts.auth.Recent),
