@@ -7,6 +7,11 @@ import { test as base, type Browser, type BrowserContextOptions } from '@playwri
 // that limit (the browser exits when its first context
 // closes, so a worker's second test would find it dead). Everywhere else the shared
 // per-worker browser is used unchanged.
+//
+// Limits of this mode: a test gets exactly ONE browser context (a second
+// newContext in the same test relaunches the browser and closes the first
+// context's pages), and the launchOptions of playwright.config.ts are ignored:
+// the relaunch below passes only --single-process.
 const singleProcess = process.env.PLAYWRIGHT_SINGLE_PROCESS === '1'
 
 export const test = singleProcess
