@@ -97,7 +97,11 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
               : 'This action needs a recent password check. Your change has not been made yet; it runs as soon as you confirm.'
           }
         >
-          {passwordOff ? (
+          {methods.isPending ? (
+            <p role="status" className="text-sm">
+              Checking how you can confirm…
+            </p>
+          ) : passwordOff ? (
             <div className="space-y-4">
               <FormError message={provider.error?.message} />
               <div className="flex flex-wrap justify-end gap-2">

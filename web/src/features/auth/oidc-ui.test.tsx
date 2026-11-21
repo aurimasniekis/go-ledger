@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -57,7 +57,7 @@ describe('sign-in with single sign-on', () => {
     renderApp(`/sign-in?oidc_error=${code}`)
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(text)
-    expect(alert).not.toHaveTextContent(code === 'something_new' ? code : 'zzzz')
+    expect(alert).not.toHaveTextContent(code)
   })
 
   it('shows recovery_error and never the raw code', async () => {
@@ -68,7 +68,7 @@ describe('sign-in with single sign-on', () => {
 
   it('takes the second step after the provider from the #second_factor fragment, and clears it', async () => {
     const user = userEvent.setup()
-    window.history.replaceState(null, '', '/sign-in#second_factor=chal%2Btoken')
+    window.history.replaceState(null, '', '/sign-in?step=second_factor#second_factor=chal%2Btoken')
     const calls = installApi({
       ...signedOut,
       'GET /api/v1/auth/methods': ok(sso),
@@ -77,6 +77,7 @@ describe('sign-in with single sign-on', () => {
     renderApp('/sign-in')
     const code = await screen.findByLabelText('Authenticator code')
     expect(window.location.hash).toBe('')
+    expect(window.location.search).toBe('')
     await user.type(code, '123456{Enter}')
     await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true))
     expect(calls.find((c) => c.method === 'POST')!.body).toEqual({ challenge: 'chal+token', code: '123456' })
@@ -135,8 +136,19 @@ describe('account security: single sign-on link', () => {
     const calls = installApi({ ...base(link({ linked: true, created_at: '2026-11-21T10:00:00Z' })), 'DELETE /api/v1/auth/oidc/link': none() })
     renderApp('/account/security')
     await user.click(await screen.findByRole('button', { name: 'Unlink' }))
-    await user.click(await screen.findByRole('button', { name: 'Unlink', hidden: false }).then(() => screen.getAllByRole('button', { name: 'Unlink' }).at(-1)!))
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Unlink' }))
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE')).toBe(true))
+    await waitFor(() => expect(window.location.search).toBe(''))
+  })
+
+  it('drops the stale linked confirmation after unlinking', async () => {
+    const user = userEvent.setup()
+    installApi({ ...base(link({ linked: true, created_at: '2026-11-21T10:00:00Z' })), 'DELETE /api/v1/auth/oidc/link': none() })
+    renderApp('/account/security?oidc=linked')
+    expect(await screen.findByText('Your single-sign-on account is linked.')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'Unlink' }))
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Unlink' }))
+    await waitFor(() => expect(screen.queryByText('Your single-sign-on account is linked.')).not.toBeInTheDocument())
   })
 })
 

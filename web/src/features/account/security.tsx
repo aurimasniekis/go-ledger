@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useSearch } from '@tanstack/react-router'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiFetch, splitErrors } from '@/lib/api'
 import { api, useSession } from '@/lib/auth'
@@ -59,6 +59,7 @@ function SingleSignOn() {
   const qc = useQueryClient()
   const search = useSearch({ strict: false }) as { oidc?: unknown; oidc_error?: unknown }
   const status = useQuery({ queryKey: ['oidc-link'], queryFn: () => apiFetch<OIDCLinkStatus>(api('/auth/oidc/link')) })
+  const navigate = useNavigate()
   const [unlinking, setUnlinking] = useState(false)
   const link = useMutation({
     mutationFn: async () => {
@@ -121,6 +122,8 @@ function SingleSignOn() {
         onConfirm={async () => {
           await apiFetch(api('/auth/oidc/link'), { method: 'DELETE' })
           await qc.invalidateQueries({ queryKey: ['oidc-link'] })
+          // The earlier link outcome no longer describes the account.
+          await navigate({ to: '/account/security', search: {}, replace: true })
         }}
       />
     </div>

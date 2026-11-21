@@ -583,6 +583,32 @@ func TestOIDCNotConfigured(t *testing.T) {
 	}
 }
 
+const secondFactorPrefix = "/sign-in?step=second_factor#second_factor="
+
+// With passwords off, the page the callback sends a user with a second factor
+// to must be served, not bounced back to the provider.
+func TestOIDCSecondFactorPageWithPasswordsOff(t *testing.T) {
+	e := newOIDCEnv(t, func(c *config.Auth) { c.Password.Enabled = false; c.Require2FA = true; c.OIDC.Require2FA = true })
+	if err := authstore.New(e.db, e.al).CreateOIDCLink(context.Background(), auth.OIDCLink{ID: "01JD3Y4C8V9M2Q7W5R6T0XZBN5", UserID: e.ids["alice"],
+		Issuer: e.op.Issuer, Subject: "subject-0001", CreatedAt: e.clock.now()}); err != nil {
+		t.Fatal(err)
+	}
+	e.enrol(e.sessionFrom(e.signInOIDC()))
+	w := e.signInOIDC()
+	loc := location(w)
+	if w.Code != 303 || !strings.HasPrefix(loc, secondFactorPrefix) {
+		t.Fatalf("callback: %d %q", w.Code, loc)
+	}
+	// The browser requests the path without the fragment.
+	path := strings.SplitN(loc, "#", 2)[0]
+	if p := e.req("GET", path, "", nil, nil); p.Code == 303 || p.Header().Get("Location") != "" {
+		t.Fatalf("second-factor page redirected: %d %q", p.Code, location(p))
+	}
+	if p := e.req("GET", "/sign-in", "", nil, nil); p.Code != 303 {
+		t.Fatalf("bare sign-in page: %d", p.Code)
+	}
+}
+
 func TestOIDCSessionsAndRequiredTwoFactor(t *testing.T) {
 	// By default Ledger trusts the provider: auth.require_2fa does not
 	// confine an OIDC session (decision D16).
@@ -621,10 +647,10 @@ func TestOIDCSessionsAndRequiredTwoFactor(t *testing.T) {
 	en := e.enrol(b)
 	w := e.signInOIDC()
 	loc := location(w)
-	if w.Code != 303 || !strings.HasPrefix(loc, "/sign-in#second_factor=") || cookieValue(w, httpapi.SessionCookie) != "" {
+	if w.Code != 303 || !strings.HasPrefix(loc, secondFactorPrefix) || cookieValue(w, httpapi.SessionCookie) != "" {
 		t.Fatalf("second factor after OIDC: %d %q", w.Code, loc)
 	}
-	challenge, _ := url.QueryUnescape(strings.TrimPrefix(loc, "/sign-in#second_factor="))
+	challenge, _ := url.QueryUnescape(strings.TrimPrefix(loc, secondFactorPrefix))
 	e.clock.advance(31 * time.Second)
 	res := e.secondStep(challenge, "code", auth.TOTPCode(en.secret, e.clock.now()))
 	if res.code != 200 || res.b == nil {
@@ -762,7 +788,7 @@ func TestOIDCAuthTimeSurvivesSecondFactor(t *testing.T) {
 			en := e.enrol(e.sessionFrom(e.signInOIDC()))
 			e.op.Mutate = c.mutate(e)
 			w := e.signInOIDC()
-			challenge, _ := url.QueryUnescape(strings.TrimPrefix(location(w), "/sign-in#second_factor="))
+			challenge, _ := url.QueryUnescape(strings.TrimPrefix(location(w), secondFactorPrefix))
 			e.clock.advance(31 * time.Second)
 			res := e.secondStep(challenge, "code", auth.TOTPCode(en.secret, e.clock.now()))
 			if res.code != 200 || res.b == nil {

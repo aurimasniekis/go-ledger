@@ -128,8 +128,8 @@ Research R13 (and its review) compared OIDC libraries and listed checks that go-
 - Two browser tabs signing in at once share the state cookie: the older tab's callback fails with `invalid_state` and
   that user starts again.
 - An attacker who can reach `/auth/oidc/authorize` can fill the 1000 pending slots and so make a legitimate user's
-  pending request drop; the user retries. There is no per-address limit on starting requests.
-- The UI (A6c) handles `/sign-in` with `oidc_error`, `recovery_error` and `#second_factor=`, the link outcomes
+  pending request drop; the user retries. Starting requests are limited per client address (per /64 for IPv6, see `DefaultAuthorizeLimit`), but a distributed attacker can still fill the slots.
+- The UI (A6c) handles `/sign-in` with `oidc_error`, `recovery_error` and `?step=second_factor#second_factor=` (the callback sends the second-factor challenge there; the query marker is what lets `GET /sign-in` serve the page instead of redirecting to the provider when passwords are off, while the token stays in the fragment), the link outcomes
   (`oidc=linked`, `oidc_error` on Account security), offers the provider from `GET /auth/methods`, and uses
   `POST /auth/oidc/reauthenticate` when `reauthentication_required` arrives and passwords are off. The recovery page
   uses `Referrer-Policy: same-origin` rather than `no-referrer`: a form POST from a no-referrer page sends

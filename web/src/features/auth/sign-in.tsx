@@ -13,7 +13,7 @@ import { FALLBACK_METHODS, methodsQuery, navigation, oidcErrorMessage, recoveryE
 
 /**
  * The second-factor challenge the single-sign-on callback leaves in the address fragment
- * (/sign-in#second_factor=<token>). It is removed from the address bar at once so it is not kept in history.
+ * (/sign-in?step=second_factor#second_factor=<token>). It is removed from the address bar at once so it is not kept in history.
  */
 function takeFragmentChallenge(): SecondFactorChallenge | null {
   const m = /^#second_factor=(.+)$/.exec(window.location.hash)
@@ -24,7 +24,10 @@ function takeFragmentChallenge(): SecondFactorChallenge | null {
   } catch {
     return null
   }
-  window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+  const params = new URLSearchParams(window.location.search)
+  params.delete('step')
+  const rest = params.toString()
+  window.history.replaceState(window.history.state, '', window.location.pathname + (rest ? `?${rest}` : ''))
   return { second_factor_required: true, challenge: token, methods: ['totp', 'recovery_code'] }
 }
 
