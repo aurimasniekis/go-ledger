@@ -118,6 +118,7 @@ var permissionMatrix = map[string]string{
 	"POST /api/v1/bank-connections/{id}/reconnect":             "connections:write",
 	"POST /api/v1/bank-connections/{id}/refresh":               "connections:write",
 	"POST /api/v1/bank-connections/{id}/disconnect":            "connections:write",
+	"POST /api/v1/payment-matching/runs":        "commitments:write",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, apiFetch, setCsrfToken, setReauthHandler, splitErrors } from '@/lib/api'
+import { ApiError, NetworkError, apiFetch, setCsrfToken, setReauthHandler, splitErrors } from '@/lib/api'
+import { isNetworkError } from '@/lib/connection'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -16,6 +17,24 @@ describe('apiFetch', () => {
     const err = await apiFetch('/api/x').catch((e: unknown) => e)
     expect(err).toBeInstanceOf(ApiError)
     expect(err).toMatchObject({ status: 404, code: 'not_found', requestId: 'r1', message: 'no such resource' })
+  })
+
+  it('turns a fetch that never reached the server into a NetworkError', async () => {
+    const cause = new TypeError('Failed to fetch')
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(cause))
+    const err = await apiFetch('/api/x').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(NetworkError)
+    expect(isNetworkError(err)).toBe(true)
+    expect(err).toHaveProperty('cause', cause)
+  })
+
+  it('leaves any other thrown error alone: an abort is not a connection problem', async () => {
+    const abort = new DOMException('The operation was aborted.', 'AbortError')
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abort))
+    const err = await apiFetch('/api/x').catch((e: unknown) => e)
+    expect(err).toBe(abort)
+    expect(err).not.toBeInstanceOf(NetworkError)
+    expect(isNetworkError(err)).toBe(false)
   })
 
   it('survives a non-JSON failure body', async () => {

@@ -95,6 +95,11 @@ type Fields struct {
 	EndDate   *calendar.Date
 	Priority  *Priority
 	Notes     *string
+	// MatchTolerance is how far a bank payment's amount may fall short of
+	// Amount and still be confirmed automatically by the matching engine
+	// (decision D9, task X2, ADR-0039). nil means none: only the exact amount
+	// confirms automatically. It is in Amount's currency and never negative.
+	MatchTolerance *money.Money
 }
 
 // FieldError is a validation error about one field. Message is safe to show.
@@ -153,6 +158,16 @@ func (f Fields) Validate() []FieldError {
 	if f.Priority != nil && !f.Priority.Valid() {
 		errs = append(errs, FieldError{"priority", "priority must be one of " + joinNames(Priorities())})
 	}
+	if t := f.MatchTolerance; t != nil {
+		switch {
+		case !t.IsValid():
+			errs = append(errs, FieldError{"match_tolerance.currency", "currency is required"})
+		case t.Currency() != f.Amount.Currency():
+			errs = append(errs, FieldError{"match_tolerance.currency", "match_tolerance must be in the commitment's currency; amounts are never converted"})
+		case t.Sign() < 0:
+			errs = append(errs, FieldError{"match_tolerance.amount", "match_tolerance must not be negative"})
+		}
+	}
 	if f.Notes != nil && (!utf8.ValidString(*f.Notes) || strings.TrimSpace(*f.Notes) == "" || utf8.RuneCountInString(*f.Notes) > MaxNotes) {
 		errs = append(errs, FieldError{"notes", fmt.Sprintf("notes must be 1 to %d characters and not blank; use null for none", MaxNotes)})
 	}
@@ -186,6 +201,9 @@ func ChangedFields(a, b Fields) []string {
 	if !equalPtr(a.Notes, b.Notes) {
 		out = append(out, "notes")
 	}
+	if !sameTolerance(a.MatchTolerance, b.MatchTolerance) {
+		out = append(out, "match_tolerance")
+	}
 	slices.Sort(out)
 	return out
 }
@@ -195,6 +213,14 @@ func equalPtr[T comparable](a, b *T) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+// sameTolerance compares two optional tolerances exactly, scale included.
+func sameTolerance(a, b *money.Money) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Identical(*b)
 }
 
 func joinNames[T ~string](vs []T) string {

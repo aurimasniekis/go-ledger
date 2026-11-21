@@ -20,7 +20,7 @@ import (
 // the Enable Banking adapter (ADR-0023), the rate cache and conversion
 // service (ADR-0022) with its test doubles, commitment definitions
 // (ADR-0024), their occurrences (ADR-0027), payment state (ADR-0031) and payment
-// matches (ADR-0035). Paths are
+// matches (ADR-0035) and the automatic matching engine (ADR-0039). Paths are
 // relative to this package's directory.
 var moneyPackages = []string{
 	".",
@@ -38,6 +38,7 @@ var moneyPackages = []string{
 	"../../store/payments",
 	"../matches",
 	"../../store/matches",
+	"../automatch",
 	"../../providers/enablebanking",
 }
 

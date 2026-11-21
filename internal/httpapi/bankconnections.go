@@ -19,7 +19,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
-// Bank connection routes (task B4, ADR-0039).
+// Bank connection routes (task B4, ADR-0040).
 const (
 	BankApplicationsPath = APIPrefix + "/bank-applications"
 	BankConnectionsPath  = APIPrefix + "/bank-connections"
@@ -333,7 +333,7 @@ func bodyDays(doc map[string]json.RawMessage, key string) (time.Duration, error)
 }
 
 // registerBankConnections registers the bank connection routes (task B4,
-// ADR-0039). Reading needs connections:read and everything that changes
+// ADR-0040). Reading needs connections:read and everything that changes
 // something connections:write; both are administrator grants. Nothing here
 // returns a provider session, authorisation code, account handle or full
 // account identifier.

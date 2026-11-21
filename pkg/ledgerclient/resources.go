@@ -414,6 +414,18 @@ func (c *Client) ReversePaymentMatch(ctx context.Context, id string, version int
 	return c.matchAction(ctx, opReverseMatch, id, version, MatchDecision{Reason: reason})
 }
 
+// RunPaymentMatching runs the automatic payment matching once (needs
+// commitments:write). It is idempotent: over unchanged data a second run
+// writes nothing. Matches it confirms passed every safeguard; the others are
+// suggestions to review (ListPaymentMatches with state suggested).
+func (c *Client) RunPaymentMatching(ctx context.Context) (*PaymentMatchingRun, error) {
+	var out PaymentMatchingRun
+	if err := c.do(ctx, request{op: opRunMatching, body: struct{}{}}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // TokenFilter filters ListTokens (every user's tokens; needs tokens:read).
 type TokenFilter struct {
 	ListOptions

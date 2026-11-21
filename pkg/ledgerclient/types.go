@@ -124,9 +124,13 @@ type Commitment struct {
 	EndDate   *string  `json:"end_date"`
 	Priority  *string  `json:"priority"`
 	Notes     *string  `json:"notes"`
-	Version   int64    `json:"version"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
+	// MatchTolerance is how far a booked payment may fall short of Amount and
+	// still be confirmed automatically; nil when none is set (only the exact
+	// amount confirms automatically).
+	MatchTolerance *Money `json:"match_tolerance"`
+	Version        int64  `json:"version"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 // NewCommitment is the body of CreateCommitment.
@@ -139,6 +143,8 @@ type NewCommitment struct {
 	EndDate   *string  `json:"end_date,omitempty"`
 	Priority  *string  `json:"priority,omitempty"`
 	Notes     *string  `json:"notes,omitempty"`
+	// MatchTolerance is optional; see Commitment.MatchTolerance.
+	MatchTolerance *Money `json:"match_tolerance,omitempty"`
 }
 
 // Occurrence is one due date of a commitment.
@@ -284,6 +290,21 @@ type PaymentMatch struct {
 	OccurrenceVersion *int64 `json:"occurrence_version,omitempty"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at"`
+}
+
+// PaymentMatchingRun counts what one automatic payment-matching run did.
+type PaymentMatchingRun struct {
+	// Candidates counts the candidate pairs evaluated.
+	Candidates int `json:"candidates"`
+	// Confirmed counts matches confirmed automatically.
+	Confirmed int `json:"confirmed"`
+	// Suggested counts new suggestions left for review.
+	Suggested int `json:"suggested"`
+	// Dropped counts the engine's own suggestions dropped as no longer
+	// candidates.
+	Dropped int `json:"dropped"`
+	// Skipped counts actions the server's guards refused.
+	Skipped int `json:"skipped"`
 }
 
 // NewPaymentMatch is the body of CreatePaymentMatch: the user's confirmed

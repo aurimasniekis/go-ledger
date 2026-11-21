@@ -162,15 +162,15 @@ var notImplemented = map[string]string{
 	"confirmTOTPEnrollment":   "session-only: two-factor enrolment, not reachable with a bearer token",
 	"regenerateRecoveryCodes": "session-only: recovery codes, not reachable with a bearer token",
 
-	"listBankApplications":      "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
-	"listBankInstitutions":      "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
-	"listBankConnections":       "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
-	"startBankConnection":       "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
-	"completeBankConnection":    "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
-	"getBankConnection":         "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
-	"reconnectBankConnection":   "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
-	"refreshBankConnection":     "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
-	"disconnectBankConnection":  "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0039",
+	"listBankApplications":      "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"listBankInstitutions":      "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"listBankConnections":       "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"startBankConnection":       "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"completeBankConnection":    "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"getBankConnection":         "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"reconnectBankConnection":   "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"refreshBankConnection":     "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"disconnectBankConnection":  "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
 	"getOccurrencesSummary":     "the monthly view serves the browser UI (task C4); a typed client method and CLI view come with the MCP read tool (P-MCP2), which reuses internal/domain/monthview",
 	"getSignInMethods":          "what the browser sign-in page offers; the client authenticates with API tokens",
 	"startOIDCSignIn":           "browser redirect to the identity provider (single sign-on), not a JSON operation",
@@ -280,6 +280,7 @@ func TestTypesMatchSchemas(t *testing.T) {
 		{"MatchActor", reflect.TypeFor[MatchActor](), ref("MatchActor"), false},
 		{"MatchEvent", reflect.TypeFor[MatchEvent](), get(ref("PaymentMatch"), "properties", "history", "items").(node), false},
 		{"NewPaymentMatch", reflect.TypeFor[NewPaymentMatch](), body("/payment-matches", "post"), true},
+		{"PaymentMatchingRun", reflect.TypeFor[PaymentMatchingRun](), ref("PaymentMatchingRun"), false},
 	}
 	// Match action bodies also allow "version"; the client sends it as If-Match.
 	for path, typ := range map[string]reflect.Type{

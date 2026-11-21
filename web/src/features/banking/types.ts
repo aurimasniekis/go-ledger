@@ -1,4 +1,4 @@
-// The bank connection API (task B4, ADR-0039). Amounts arrive as exact decimal strings and are only displayed.
+// The bank connection API (task B4, ADR-0040). Amounts arrive as exact decimal strings and are only displayed.
 
 export type ConnectionStatus = 'pending' | 'active' | 'reconnect_required' | 'failed' | 'disconnected'
 export type FreshnessState = 'fresh' | 'stale' | 'failed' | 'reconnect_required' | 'disconnected' | 'never_refreshed'

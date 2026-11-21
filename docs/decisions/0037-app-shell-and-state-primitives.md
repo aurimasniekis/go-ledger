@@ -50,11 +50,12 @@ does when the user changes month.
    keeps its existing ISO dates and ungrouped amounts: the date and number convention is part of the open D3 scale and
    changing it is a visible product decision, not a side effect of the shell.
 
-## Undo notice across months (proposal, for the operator)
+## Undo notice across months (decided: D37)
 
-The review asked whether the Undo notice should follow the user to another month. Decision taken in this change, open to
-reversal: **it persists until dismissed, undone or the user leaves the page, and it names the commitment, its due date
-and the amount**, so it is meaningful in any month. Rationale: clearing it on navigation would silently take away the
+The review asked whether the Undo notice should follow the user to another month. The operator decided (D37, 2026-11-21):
+the notice is **dismiss-only, with no timeout**. It persists until it is dismissed or replaced by the next recorded payment,
+or until the user leaves the monthly view, and it names the commitment, its due date and the amount, so it is meaningful
+in any month. Rationale: clearing it on navigation would silently take away the
 only prompt for a reversible action; a notice that explains itself costs nothing. Undo now refreshes the month the payment
 was recorded in (before this change it used whichever month was on screen, a bug). Alternatives: clear on navigation
 (simple, loses the undo), or an activity list of recent changes with undo (more complete, a product decision, not built).

@@ -288,7 +288,7 @@ func TestBankConnectionErrorsKeepTheirKind(t *testing.T) {
 
 // TestRetryableConsentCompletionKeepsTheRedirectUsable: a bank that cannot be
 // reached while a consent is completed changes nothing, so the callback page's
-// retry with the same state and code works (B4, ADR-0039 point 6).
+// retry with the same state and code works (B4, ADR-0040 point 6).
 func TestRetryableConsentCompletionKeepsTheRedirectUsable(t *testing.T) {
 	f := newAPIFixture(t)
 	c := bankCall{t: t, f: f, hdr: f.signIn(t, "alice")}

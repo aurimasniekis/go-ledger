@@ -68,9 +68,11 @@ type Deps struct {
 	// Matches stores payment matches between bank transactions and
 	// occurrences (ADR-0035).
 	Matches matches.Store
-	// Banking is the bank connection service (ADR-0039); nil in tests that
+	// Banking is the bank connection service (ADR-0040); nil in tests that
 	// never call the routes.
 	Banking *bankconnect.Service
+	// Matching runs the automatic payment matching (ADR-0039).
+	Matching MatchingRunner
 	// Audit reads the audit log.
 	Audit audit.Reader
 	// Auth is sign-in, sessions and passwords.
@@ -121,6 +123,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
 	registerBankConnections(s, d.Banking)
+	registerMatching(s, d.Matching)
 	registerMCP(s, d.MCP)
 }
 

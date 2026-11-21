@@ -4,7 +4,16 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { describe, expect, it } from 'vitest'
 import { AnnouncerProvider } from '@/components/announcer'
 import { ApiError } from '@/lib/api'
-import { useOptimisticSave } from '@/lib/optimistic-save'
+import { isVersionConflict, useOptimisticSave } from '@/lib/optimistic-save'
+
+describe('isVersionConflict', () => {
+  it('matches only 409 version_conflict: no 412 is sent, and a 428 means no version was sent', () => {
+    expect(isVersionConflict(new ApiError(409, { code: 'version_conflict', message: 'changed' }))).toBe(true)
+    expect(isVersionConflict(new ApiError(412, { code: 'version_conflict', message: 'changed' }))).toBe(false)
+    expect(isVersionConflict(new ApiError(428, { code: 'precondition_required', message: 'send a version' }))).toBe(false)
+    expect(isVersionConflict(new Error('changed'))).toBe(false)
+  })
+})
 
 type List = string[]
 const KEY = ['list']

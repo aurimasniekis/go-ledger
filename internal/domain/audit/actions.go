@@ -50,7 +50,7 @@ const (
 	PaymentMatchCorrected Action = "payment_match.corrected"
 	PaymentMatchReversed  Action = "payment_match.reversed"
 
-	// Bank connections (B4, ADR-0039). The target is the connection. Details:
+	// Bank connections (B4, ADR-0040). The target is the connection. Details:
 	// provider and application (names only: never a session, code, account or
 	// institution), reconnect (true when the consent renewed an existing
 	// connection) and, for a refresh on request, the run's outcome.
@@ -59,6 +59,11 @@ const (
 	BankConnectionConnected        Action = "bank_connection.connected"
 	BankConnectionDisconnected     Action = "bank_connection.disconnected"
 	BankRefreshRequested           Action = "bank_connection.refresh_requested"
+	// A person asked for an automatic matching run through the API (X2,
+	// ADR-0039). The matches it wrote are audited one by one as
+	// payment_match.* with the system as actor. The target is the run
+	// (target ID "run"). Details: the counts.
+	PaymentMatchingRun Action = "payment_matching.run" // Details: confirmed, suggested, dropped, skipped
 )
 
 // Fixed value sets for detail fields that are not identifiers.
@@ -167,6 +172,7 @@ var Definitions = map[Action][]Field{
 	BankConnectionConnected:        {f("provider"), f("application"), f("reconnect", "true", "false")},
 	BankConnectionDisconnected:     {f("provider"), f("application")},
 	BankRefreshRequested:           {f("provider"), f("application"), f("outcome", refreshOutcomes...)},
+	PaymentMatchingRun: {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

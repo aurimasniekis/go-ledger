@@ -1,4 +1,4 @@
-# ADR-0039: Bank connection API and UI
+# ADR-0040: Bank connection API and UI
 
 Status: Accepted (2026-11-21)
 

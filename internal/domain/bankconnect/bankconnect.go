@@ -1,5 +1,5 @@
 // Package bankconnect is the user-facing side of bank connections (task B4,
-// ADR-0039): which provider applications are configured, starting and
+// ADR-0040): which provider applications are configured, starting and
 // completing consent, reconnecting, refreshing on request, disconnecting, and
 // reading every connection with the freshness of each of its accounts.
 //

@@ -26,7 +26,7 @@ export interface OptimisticSaveOptions<TVars, TServer, TCache> {
   /** Runs after the server confirmed and the cache was reconciled. */
   onSaved?: (server: TServer, vars: TVars) => void
   /**
-   * Optional: after a version conflict (409/412), the variables to resend, rebuilt on the server's current
+   * Optional: after a version conflict (409 version_conflict), the variables to resend, rebuilt on the server's current
    * version from the error's reconciliation data. Without it, or when it returns undefined, retry() does
    * nothing after a conflict: a stale version is never resent.
    */
@@ -35,9 +35,12 @@ export interface OptimisticSaveOptions<TVars, TServer, TCache> {
   messages?: { saved?: string | ((server: TServer) => string); failed?: (error: Error) => string }
 }
 
-/** A refusal because the saved object changed since it was read (409 or 412 with version_conflict, or any 412). */
-export const isVersionConflict = (e: unknown): e is ApiError =>
-  e instanceof ApiError && (e.status === 412 || (e.status === 409 && e.code === 'version_conflict'))
+/**
+ * A refusal because the saved object changed since it was read: 409 with code version_conflict (ADR-0011, amended by
+ * ADR-0015). The server never sends 412 for this. A 428 precondition_required means no version was sent, a caller bug,
+ * so it is not a conflict either.
+ */
+export const isVersionConflict = (e: unknown): e is ApiError => e instanceof ApiError && e.status === 409 && e.code === 'version_conflict'
 
 /**
  * The shared optimistic-save primitive (U1). One save at a time: save() while one is in flight is ignored,
@@ -46,6 +49,10 @@ export const isVersionConflict = (e: unknown): e is ApiError =>
  * version conflict, where the cache is refetched and retry() only resends variables rebuilt by `rebase`;
  * discard() drops it. Every failure invalidates the affected queries. Failure and the confirmed save are
  * announced through the live region (pending is shown by the caller as "Not saved yet", not announced).
+ *
+ * The stale-version protection covers retry() only. save() sends the variables it is given, so a caller that calls
+ * save() again with a version it already holds resends that version. A consumer of a versioned object must take the
+ * version from the refetched data, not from the variables of the last save.
  */
 export function useOptimisticSave<TVars, TServer = unknown, TCache = unknown>(o: OptimisticSaveOptions<TVars, TServer, TCache>) {
   const qc = useQueryClient()
