@@ -247,3 +247,115 @@ func (c *Client) AllAudit(ctx context.Context, f AuditFilter) iter.Seq2[AuditEnt
 		return c.ListAudit(ctx, f)
 	})
 }
+
+// ManualPaymentFilter pages ListManualPayments.
+type ManualPaymentFilter struct{ ListOptions }
+
+// ListManualPayments returns one page of an occurrence's manual payments,
+// ordered by paid_on, then ID.
+func (c *Client) ListManualPayments(ctx context.Context, occurrenceID string, f ManualPaymentFilter) (Page[ManualPayment], error) {
+	q := url.Values{}
+	f.apply(q)
+	var p Page[ManualPayment]
+	err := c.do(ctx, request{op: opListManualPayments, pathID: occurrenceID, query: q}, &p)
+	return p, err
+}
+
+// AllManualPayments walks every manual payment of an occurrence.
+func (c *Client) AllManualPayments(ctx context.Context, occurrenceID string, f ManualPaymentFilter) iter.Seq2[ManualPayment, error] {
+	return Walk(ctx, func(ctx context.Context, cur string) (Page[ManualPayment], error) {
+		f.Cursor = cur
+		return c.ListManualPayments(ctx, occurrenceID, f)
+	})
+}
+
+// RecordManualPayment records a payment made by hand. It is payment evidence:
+// the occurrence's status is derived again and its version increases. The
+// amount must be positive and in the occurrence's currency.
+func (c *Client) RecordManualPayment(ctx context.Context, occurrenceID string, in NewManualPayment) (*ManualPayment, error) {
+	var m ManualPayment
+	if err := c.do(ctx, request{op: opRecordManualPayment, pathID: occurrenceID, body: in}, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// GetManualPayment returns one manual payment.
+func (c *Client) GetManualPayment(ctx context.Context, occurrenceID, paymentID string) (*ManualPayment, error) {
+	var m ManualPayment
+	if err := c.do(ctx, request{op: opGetManualPayment, pathID: occurrenceID, pathID2: paymentID}, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// DeleteManualPayment deletes the payment whose current version is version
+// (the payment's, sent as If-Match; not the occurrence's).
+func (c *Client) DeleteManualPayment(ctx context.Context, occurrenceID, paymentID string, version int64) error {
+	return c.do(ctx, request{op: opDeleteManualPayment, pathID: occurrenceID, pathID2: paymentID, version: version}, nil)
+}
+
+// SetStatusOverride overrides the occurrence's derived status with a reason.
+// version is the occurrence's current version (If-Match). A "paid" override
+// needs payment evidence (409 payment_evidence_required otherwise).
+func (c *Client) SetStatusOverride(ctx context.Context, occurrenceID string, version int64, in StatusOverride) (*Occurrence, error) {
+	var o Occurrence
+	if err := c.do(ctx, request{op: opSetOverride, pathID: occurrenceID, version: version, body: in}, &o); err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+// UndoStatusOverride undoes the last override change of the occurrence whose
+// current version is version (404 when none is active).
+func (c *Client) UndoStatusOverride(ctx context.Context, occurrenceID string, version int64) (*Occurrence, error) {
+	var o Occurrence
+	if err := c.do(ctx, request{op: opUndoOverride, pathID: occurrenceID, version: version}, &o); err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
+// TokenFilter filters ListTokens (every user's tokens; needs tokens:read).
+type TokenFilter struct {
+	ListOptions
+	OwnerID string
+}
+
+func (f TokenFilter) query() url.Values {
+	q := url.Values{}
+	f.apply(q)
+	setIf(q, "owner_id", f.OwnerID)
+	return q
+}
+
+// ListTokens returns one page of API tokens, including expired and revoked
+// ones. It never returns a token's secret.
+func (c *Client) ListTokens(ctx context.Context, f TokenFilter) (Page[APIToken], error) {
+	var p Page[APIToken]
+	err := c.do(ctx, request{op: opListTokens, query: f.query()}, &p)
+	return p, err
+}
+
+// AllTokens walks every API token matching f (its Cursor is ignored).
+func (c *Client) AllTokens(ctx context.Context, f TokenFilter) iter.Seq2[APIToken, error] {
+	return Walk(ctx, func(ctx context.Context, cur string) (Page[APIToken], error) {
+		f.Cursor = cur
+		return c.ListTokens(ctx, f)
+	})
+}
+
+// GetToken returns any user's API token (needs tokens:read).
+func (c *Client) GetToken(ctx context.Context, id string) (*APIToken, error) {
+	var t APIToken
+	if err := c.do(ctx, request{op: opGetToken, pathID: id}, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// RevokeToken revokes any user's API token at once (needs tokens:write).
+// Revoking a revoked token succeeds and changes nothing.
+func (c *Client) RevokeToken(ctx context.Context, id string) error {
+	return c.do(ctx, request{op: opRevokeToken, pathID: id}, nil)
+}

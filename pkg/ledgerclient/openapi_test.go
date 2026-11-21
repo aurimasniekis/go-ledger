@@ -11,7 +11,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 )
 
-// These tests tie the client to the served OpenAPI document (ADR-0029): they
+// These tests tie the client to the served OpenAPI document (ADR-0032): they
 // fail when an operation, a query parameter, a request or response member or
 // an enum changes on one side only.
 
@@ -138,6 +138,17 @@ var notImplemented = map[string]string{
 	"endMySession":      "cookie sessions",
 	"reauthenticate":    "cookie sessions",
 	"changeMyPassword":  "cookie sessions",
+
+	"signInSecondFactor":      "session-only: the second step of a browser sign-in, so not reachable with a bearer token",
+	"listMyTokens":            "session-only: own tokens are managed with the browser session; a bearer token uses the admin token routes (listTokens)",
+	"createMyToken":           "session-only: creation needs recent re-authentication, and tokens cannot create tokens",
+	"getMyToken":              "session-only: own tokens are managed with the browser session",
+	"revokeMyToken":           "session-only: own tokens are managed with the browser session",
+	"getMyTwoFactor":          "session-only: two-factor management is for the signed-in browser session, not reachable with a bearer token",
+	"disableMyTwoFactor":      "session-only: two-factor management, not reachable with a bearer token",
+	"startTOTPEnrollment":     "session-only: two-factor enrolment, not reachable with a bearer token",
+	"confirmTOTPEnrollment":   "session-only: two-factor enrolment, not reachable with a bearer token",
+	"regenerateRecoveryCodes": "session-only: recovery codes, not reachable with a bearer token",
 }
 
 func TestOperationsMatchOpenAPI(t *testing.T) {
@@ -215,6 +226,11 @@ func TestTypesMatchSchemas(t *testing.T) {
 		{"Commitment", reflect.TypeFor[Commitment](), ref("Commitment"), false},
 		{"Occurrence", reflect.TypeFor[Occurrence](), ref("Occurrence"), false},
 		{"AuditEntry", reflect.TypeFor[AuditEntry](), ref("AuditEntry"), false},
+		{"PaymentState", reflect.TypeFor[PaymentState](), ref("PaymentState"), false},
+		{"PaymentOverride", reflect.TypeFor[PaymentOverride](), get(ref("PaymentState"), "properties", "override", "oneOf").([]any)[1].(node), false},
+		{"ManualPayment", reflect.TypeFor[ManualPayment](), ref("ManualPayment"), false},
+		{"APIToken", reflect.TypeFor[APIToken](), ref("ApiToken"), false},
+		{"NewManualPayment", reflect.TypeFor[NewManualPayment](), ref("ManualPaymentInput"), true},
 		{"Money", reflect.TypeFor[Money](), ref("PositiveMoney"), false},
 		{"Schedule", reflect.TypeFor[Schedule](), ref("Schedule"), false},
 		{"GrantVocabulary", reflect.TypeFor[GrantVocabulary](), ref("GrantVocabulary"), false},
@@ -237,6 +253,12 @@ func TestTypesMatchSchemas(t *testing.T) {
 				t.Errorf("%s: required member %s missing", c.name, k)
 			}
 		}
+	}
+	// The override body also allows "version"; the client sends it as If-Match.
+	op, _ := schemaProps(doc, body("/occurrences/{id}/status-override", "put"))
+	delete(op, "version")
+	if !slices.Equal(keys(op), keys(jsonTags(reflect.TypeFor[StatusOverride]()))) {
+		t.Errorf("StatusOverride: members %v, openapi.yaml has %v (minus version)", keys(jsonTags(reflect.TypeFor[StatusOverride]())), keys(op))
 	}
 	// A Page decodes the documented list envelope.
 	lp, lr := schemaProps(doc, get(doc, "paths", "/users", "get", "responses", "200", "content", "application/json", "schema").(node))
@@ -265,6 +287,16 @@ func TestEnumsMatchSchemas(t *testing.T) {
 	check("CommitmentPriority", PriorityEssential, PriorityImportant, PriorityFlexible)
 	check("Role", RoleAdministrator, RoleReadOnly)
 	check("AuditActorKind", ActorUser, ActorToken, ActorSystem, ActorAnonymous)
+	check("PaymentStatus", PaymentPaid, PaymentPartiallyPaid, PaymentUpcoming, PaymentDue, PaymentOverdue)
+	check("OverrideStatus", OverridePaid, OverrideUnpaid)
+	var ts []string
+	for _, v := range get(doc, "components", "schemas", "ApiToken", "properties", "status", "enum").([]any) {
+		ts = append(ts, v.(string))
+	}
+	slices.Sort(ts)
+	if !slices.Equal(ts, []string{TokenActive, TokenExpired, TokenRevoked}) {
+		t.Errorf("token statuses %v", ts)
+	}
 	var freq []string
 	for _, n := range []string{"MonthlySchedule", "AnnualSchedule"} {
 		freq = append(freq, get(doc, "components", "schemas", n, "properties", "frequency", "const").(string))

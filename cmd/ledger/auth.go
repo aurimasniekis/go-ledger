@@ -16,10 +16,13 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
+	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
+	tokenstore "github.com/aurimasniekis/go-ledger/internal/store/tokens"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
 
@@ -36,6 +39,7 @@ func authConfig(c config.Auth) auth.Config {
 		ReauthWindow:    c.Session.ReauthWindow,
 		AccountLimit:    auth.Limit{Max: c.SignIn.AccountMaxFailures, Window: c.SignIn.Window},
 		AddressLimit:    auth.Limit{Max: c.SignIn.AddressMaxFailures, Window: c.SignIn.Window},
+		Require2FA:      c.Require2FA,
 	}
 }
 
@@ -43,18 +47,26 @@ func authConfig(c config.Auth) auth.Config {
 type apiParts struct {
 	users       *userstore.Store
 	commitments *commitmentstore.Store
+	payments    *paymentstore.Store
 	auth        *auth.Service
+	tokens      *tokens.Service
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their
-// audit entries through al in the same transaction (ADR-0025).
-func buildAPI(db *store.DB, al auditLog, c config.Auth, hasher auth.Hasher, now func() time.Time) (apiParts, error) {
+// audit entries through al in the same transaction (ADR-0025). kek is the
+// key-encryption key that seals TOTP secrets (ADR-0030).
+func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.Hasher, now func() time.Time) (apiParts, error) {
 	us := userstore.New(db, al, now, nil)
-	svc, err := auth.NewService(authConfig(c), authstore.New(db, al), us, hasher, recorder{db: db, w: al}, auth.Options{Now: now})
+	sealer, err := auth.NewKEKSealer(kek, auth.TOTPPurpose)
 	if err != nil {
 		return apiParts{}, err
 	}
-	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), auth: svc}, nil
+	svc, err := auth.NewService(authConfig(c), authstore.New(db, al), us, hasher, recorder{db: db, w: al}, auth.Options{Now: now, Sealer: sealer})
+	if err != nil {
+		return apiParts{}, err
+	}
+	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil), auth: svc,
+		tokens: tokens.NewService(tokenstore.New(db, al), us, tokens.Options{Now: now})}, nil
 }
 
 // recorder records one audit event in a transaction of its own through w,
@@ -76,10 +88,22 @@ const setPasswordUsage = `usage: ledger auth set-password [flags] <username>
   you type it. Pipe it in instead (for example from a password manager), or
   make sure nobody can see the screen and clear the terminal afterwards.`
 
-// runAuth implements "ledger auth set-password".
+// reset2FAUsage is the help text of "ledger auth reset-2fa".
+const reset2FAUsage = `usage: ledger auth reset-2fa [flags] <username>
+  Removes the user's TOTP authenticator and recovery codes, for a lost
+  authenticator without recovery codes or a changed key-encryption key.
+  The user signs in with the password alone afterwards (and must enrol again
+  first when auth.require_2fa is on). Flags go before the username; stop
+  ledger serve first. Audited as the host.`
+
+// runAuth implements "ledger auth set-password" and "ledger auth reset-2fa".
 func runAuth(args []string, stdout, stderr io.Writer, env opsEnv) int {
+	if len(args) > 0 && args[0] == "reset-2fa" {
+		return runReset2FA(args[1:], stdout, stderr, env)
+	}
 	if len(args) == 0 || args[0] != "set-password" {
 		say(stderr, setPasswordUsage)
+		say(stderr, reset2FAUsage)
 		return 2
 	}
 	fs := flag.NewFlagSet("ledger auth set-password", flag.ContinueOnError)
@@ -140,7 +164,7 @@ func runAuth(args []string, stdout, stderr io.Writer, env opsEnv) int {
 	}
 	defer func() { _ = db.Close() }()
 	al := store.NewAuditLog(db)
-	parts, err := buildAPI(db, al, cfg.Auth, auth.NewArgon2id(auth.DefaultParams, 1), env.Now)
+	parts, err := buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now)
 	if err != nil {
 		say(stderr, "ledger auth: "+err.Error())
 		return 1
@@ -168,5 +192,69 @@ func runAuth(args []string, stdout, stderr io.Writer, env opsEnv) int {
 		return 1
 	}
 	say(stdout, fmt.Sprintf("password set for %s; %d session(s) ended", username, n))
+	return 0
+}
+
+// runReset2FA implements "ledger auth reset-2fa": the host's recovery path
+// when a user has lost their authenticator and recovery codes (ADR-0030).
+func runReset2FA(args []string, stdout, stderr io.Writer, env opsEnv) int {
+	fs := flag.NewFlagSet("ledger auth reset-2fa", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		say(stderr, reset2FAUsage)
+		fs.PrintDefaults()
+	}
+	fl := config.RegisterFlags(fs)
+	cfg, code := loadDBConfig(fs, fl, args, stderr, env)
+	if cfg == nil {
+		return code
+	}
+	if fs.NArg() != 1 {
+		say(stderr, reset2FAUsage)
+		return 2
+	}
+	username := fs.Arg(0)
+	if err := ensureDir(cfg.Database.Path); err != nil {
+		say(stderr, "ledger auth: "+err.Error())
+		return 1
+	}
+	lock, err := store.LockInstance(cfg.Database.Path)
+	if err != nil {
+		say(stderr, "ledger auth: "+err.Error()+"; stop it first")
+		return 1
+	}
+	defer func() { _ = lock.Close() }()
+	ctx := context.Background()
+	db, err := store.Open(ctx, cfg.Database.Path, store.Options{BusyTimeout: cfg.Database.BusyTimeout})
+	if err != nil {
+		say(stderr, "ledger auth: "+err.Error())
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+	al := store.NewAuditLog(db)
+	parts, err := buildAPI(db, al, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, 1), env.Now)
+	if err != nil {
+		say(stderr, "ledger auth: "+err.Error())
+		return 1
+	}
+	cred, err := authstore.New(db, al).CredentialByUsername(ctx, strings.ToLower(username))
+	if errors.Is(err, resource.ErrNotFound) {
+		say(stderr, fmt.Sprintf("ledger auth: no user %q", username))
+		return 1
+	}
+	if err != nil {
+		say(stderr, "ledger auth: "+err.Error())
+		return 1
+	}
+	err = parts.auth.DisableTwoFactor(ctx, authz.Principal{}, true, cred.UserID, auth.ByHost)
+	if errors.Is(err, auth.ErrTwoFactorNotEnabled) {
+		say(stdout, fmt.Sprintf("%s has no two-factor authentication; nothing to reset", username))
+		return 0
+	}
+	if err != nil {
+		say(stderr, "ledger auth: "+err.Error())
+		return 1
+	}
+	say(stdout, fmt.Sprintf("two-factor authentication removed for %s", username))
 	return 0
 }

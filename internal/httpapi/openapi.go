@@ -18,6 +18,8 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
@@ -56,10 +58,17 @@ type Deps struct {
 	Commitments commitments.Store
 	// Occurrences reads materialised commitment occurrences (ADR-0027).
 	Occurrences occurrences.Reader
+	// Payments stores manual payments and status overrides and reads the
+	// facts payment state is derived from (ADR-0031). Grace is the hook for
+	// documented grace periods (task DF2); nil means none is known.
+	Payments payments.Store
+	Grace    payments.GraceFunc
 	// Audit reads the audit log.
 	Audit audit.Reader
 	// Auth is sign-in, sessions and passwords.
 	Auth *auth.Service
+	// Tokens is API tokens.
+	Tokens *tokens.Service
 	// Zone is the reporting time zone (D5): it decides "today" for default
 	// effective dates and the materialisation horizon. Now defaults to
 	// time.Now.
@@ -90,10 +99,13 @@ func RegisterAPI(s *Server, d Deps) {
 	registerUsers(s, d.Users)
 	registerUserPassword(s, d.Auth)
 	registerSessions(s, d.Auth)
+	registerTwoFactor(s, d.Auth)
 	registerAudit(s, d.Audit)
+	registerTokens(s, d.Tokens)
 	todayFn := newToday(d.Zone, d.Now)
 	registerCommitments(s, d.Commitments, todayFn)
-	registerOccurrences(s, d.Occurrences, todayFn)
+	registerOccurrences(s, d.Occurrences, d.Payments, todayFn, d.Grace)
+	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {
@@ -145,6 +157,7 @@ func CheckContract(doc []byte, routes []Route) []string {
 	documented := map[string]bool{}
 	access := map[string]string{}
 	recent := map[string]bool{}
+	enrollment := map[string]bool{}
 	opIDs := map[string]string{}
 	paths, _ := root["paths"].(map[string]any)
 	for p, item := range paths {
@@ -158,6 +171,7 @@ func CheckContract(doc []byte, routes []Route) []string {
 			documented[key] = true
 			access[key], _ = op["x-ledger-access"].(string)
 			recent[key], _ = op["x-ledger-recent-auth"].(bool)
+			enrollment[key], _ = op["x-ledger-during-enrollment"].(bool)
 			id, _ := op["operationId"].(string)
 			switch {
 			case id == "":
@@ -207,6 +221,8 @@ func CheckContract(doc []byte, routes []Route) []string {
 			problems = append(problems, fmt.Sprintf("%s: x-ledger-access is %q, the route requires %q", r, got, want))
 		} else if recent[r.String()] != r.Access.RecentAuth() {
 			problems = append(problems, fmt.Sprintf("%s: x-ledger-recent-auth is %v, the route's is %v", r, recent[r.String()], r.Access.RecentAuth()))
+		} else if enrollment[r.String()] != r.Access.AllowedDuringEnrollment() {
+			problems = append(problems, fmt.Sprintf("%s: x-ledger-during-enrollment is %v, the route's is %v", r, enrollment[r.String()], r.Access.AllowedDuringEnrollment()))
 		}
 	}
 	for key := range documented {

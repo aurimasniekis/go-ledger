@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
@@ -36,6 +37,15 @@ const (
 	CodeCSRF               Code = "csrf_failed"               // 403: a cookie-authenticated write without the session's CSRF token, or from another origin
 	CodeReauthRequired     Code = "reauthentication_required" // 403: the action needs a recent password check (POST /auth/reauthenticate)
 	CodePendingTerms       Code = "pending_terms_change"      // 409: a commitment terms edit is refused because an earlier edit takes effect later
+	// CodeEnrollmentRequired: 403, auth.require_2fa is on and the signed-in
+	// user has not enrolled a second factor; only enrolment, the current
+	// session, re-authentication and sign-out are reachable (ADR-0030).
+	CodeEnrollmentRequired Code = "two_factor_enrollment_required"
+	// CodeInvalidSecondFactor: a TOTP or recovery code did not match, was
+	// malformed or was already used (401 at sign-in, 400 when confirming an
+	// enrolment). The same answer for every reason.
+	CodeInvalidSecondFactor Code = "invalid_second_factor"
+	CodeEvidenceRequired    Code = "payment_evidence_required" // 409: a "paid" status override for an occurrence with no payment evidence
 )
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.
@@ -152,6 +162,15 @@ func Internal(cause error) *Error {
 
 func csrfFailed() *Error {
 	return &Error{Status: http.StatusForbidden, Code: CodeCSRF, Message: "missing or invalid CSRF token, or a cross-origin request"}
+}
+
+func enrollmentRequired() *Error {
+	return &Error{Status: http.StatusForbidden, Code: CodeEnrollmentRequired,
+		Message: "two-factor authentication is required: enrol an authenticator (POST /auth/two-factor/totp) before anything else"}
+}
+
+func invalidSecondFactor(status int) *Error {
+	return &Error{Status: status, Code: CodeInvalidSecondFactor, Message: auth.ErrInvalidSecondFactor.Error()}
 }
 
 func reauthRequired() *Error {

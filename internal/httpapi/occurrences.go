@@ -9,14 +9,15 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
 // OccurrencesPath is the occurrence collection (task C2, ADR-0027).
 const OccurrencesPath = APIPrefix + "/occurrences"
 
-// occurrenceJSON is the API representation of an occurrence. It has no payment
-// status yet: status is derived from payment evidence (task C3, D7).
+// occurrenceJSON is the API representation of an occurrence with its derived
+// payment state (task C3, ADR-0031).
 type occurrenceJSON struct {
 	ID           string             `json:"id"`
 	CommitmentID string             `json:"commitment_id"`
@@ -26,11 +27,12 @@ type occurrenceJSON struct {
 	Version      int64              `json:"version"`
 	CreatedAt    time.Time          `json:"created_at"`
 	UpdatedAt    time.Time          `json:"updated_at"`
+	Payment      paymentStateJSON   `json:"payment"`
 }
 
-func toOccurrenceJSON(o occurrences.Occurrence) occurrenceJSON {
+func toOccurrenceJSON(o occurrences.Occurrence, st payments.State) occurrenceJSON {
 	return occurrenceJSON{ID: o.ID, CommitmentID: o.CommitmentID, Month: o.Month, DueDate: o.DueDate, Amount: o.Amount,
-		Version: o.Version, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt}
+		Version: o.Version, CreatedAt: o.CreatedAt, UpdatedAt: o.UpdatedAt, Payment: toPaymentStateJSON(st)}
 }
 
 var occurrencesListSpec = ListSpec{Filters: map[string]FilterSpec{
@@ -50,7 +52,7 @@ var occurrencesListSpec = ListSpec{Filters: map[string]FilterSpec{
 
 // Occurrences are derived from commitment definitions, so reading them needs
 // the commitments read grant; there is no separate occurrence grant.
-func registerOccurrences(s *Server, st occurrences.Reader, todayFn today) {
+func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, todayFn today, grace payments.GraceFunc) {
 	s.HandleAPI("GET "+OccurrencesPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q, err := ParseList(r, occurrencesListSpec)
 		if err != nil {
@@ -80,9 +82,18 @@ func registerOccurrences(s *Server, st occurrences.Reader, todayFn today) {
 			WriteError(w, r, err)
 			return
 		}
+		ids := make([]string, len(items))
+		for i, o := range items {
+			ids[i] = o.ID
+		}
+		facts, err := pay.Facts(r.Context(), ids)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		out := make([]occurrenceJSON, len(items))
 		for i, o := range items {
-			out[i] = toOccurrenceJSON(o)
+			out[i] = toOccurrenceJSON(o, payments.Derive(o, facts[o.ID], t, grace))
 		}
 		WriteJSON(w, http.StatusOK, NewPage(out, q, func(o occurrenceJSON) string { return o.ID }))
 	}))
@@ -92,7 +103,17 @@ func registerOccurrences(s *Server, st occurrences.Reader, todayFn today) {
 			WriteError(w, r, err)
 			return
 		}
+		t, err := todayFn()
+		if err != nil {
+			WriteError(w, r, Internal(err))
+			return
+		}
+		facts, err := pay.Facts(r.Context(), []string{o.ID})
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		SetVersion(w, o.Version)
-		WriteJSON(w, http.StatusOK, toOccurrenceJSON(o))
+		WriteJSON(w, http.StatusOK, toOccurrenceJSON(o, payments.Derive(o, facts[o.ID], t, grace)))
 	}))
 }

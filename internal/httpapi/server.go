@@ -83,6 +83,14 @@ func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
 	for _, o := range opts {
 		o(s)
 	}
+	// API tokens skip interactive steps, so every state-changing token
+	// request must be audited (ADR-0029): a server that accepts bearer tokens
+	// needs the recorder.
+	for _, a := range s.authn {
+		if _, ok := a.(TokenAuth); ok && s.auditTokenWrites == nil {
+			panic("httpapi: the API token authenticator needs WithAuditRecorder")
+		}
+	}
 	// The catch-all is labelled "unmatched", not "/", in metrics.
 	notFound := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if i := infoFrom(r.Context()); i != nil {

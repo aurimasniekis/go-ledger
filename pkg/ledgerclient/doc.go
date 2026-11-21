@@ -5,7 +5,7 @@
 // API with a bearer token and imports nothing from Ledger's internal packages.
 // Its operations, request fields, response fields and enums are checked
 // against the served OpenAPI document by tests (see openapi_test.go), so the
-// two cannot drift silently (ADR-0029).
+// two cannot drift silently (ADR-0032).
 //
 // Money is always a decimal string with its currency; the client never
 // converts it to a floating-point number.

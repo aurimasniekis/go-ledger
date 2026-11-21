@@ -65,8 +65,9 @@ func (h *countingHasher) Verify(ctx context.Context, encoded, pw string) (bool, 
 	return h.Hasher.Verify(ctx, encoded, pw)
 }
 
-// signInEnv is ledger serve's API stack with session authentication only, a
-// test clock and a counting hasher.
+// signInEnv is ledger serve's API stack (bearer tokens, then session
+// cookies, and the token-write audit recorder) with a test clock and a
+// counting hasher.
 type signInEnv struct {
 	t      *testing.T
 	srv    *httpapi.Server
@@ -98,12 +99,13 @@ func newSignInEnv(t *testing.T, mod func(*config.Auth)) *signInEnv {
 	if mod != nil {
 		mod(&cfg)
 	}
-	e.parts, err = buildAPI(db, e.al, cfg, e.hasher, e.clock.now)
+	e.parts, err = buildAPI(db, e.al, cfg, testKEK, e.hasher, e.clock.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log,
-		httpapi.WithAuthenticators(httpapi.NewSessionAuth(e.parts.auth)), httpapi.WithRecentAuth(e.parts.auth.Recent))
+		httpapi.WithAuthenticators(httpapi.NewTokenAuth(e.parts.tokens), httpapi.NewSessionAuth(e.parts.auth)), httpapi.WithRecentAuth(e.parts.auth.Recent),
+		httpapi.WithAuditRecorder(e.al, e.clock.now))
 	registerAPI(e.srv, e.al, e.parts, calendar.MustLoadZone("UTC"), e.clock.now)
 	for _, u := range []struct {
 		name string

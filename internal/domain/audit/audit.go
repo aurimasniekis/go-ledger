@@ -72,6 +72,15 @@ const (
 	OccurrencesRegenerated Action = "occurrences.regenerated"
 )
 
+// Payment-state actions (task C3, ADR-0031). The target is the occurrence.
+// Details never carry amounts, notes or override reasons.
+const (
+	ManualPaymentRecorded          Action = "manual_payment.recorded"           // Details: payment_id, currency
+	ManualPaymentDeleted           Action = "manual_payment.deleted"            // Details: payment_id, currency
+	OccurrenceStatusOverridden     Action = "occurrence.status_overridden"      // Details: status, previous (none, paid, unpaid)
+	OccurrenceStatusOverrideUndone Action = "occurrence.status_override_undone" // Details: undone, restored (none, paid, unpaid)
+)
+
 // Event is one audited change.
 type Event struct {
 	Action     Action

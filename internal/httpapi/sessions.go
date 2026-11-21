@@ -179,6 +179,16 @@ type currentSessionJSON struct {
 	// RecentAuthUntil is when the last password check stops counting as
 	// recent; null when it already has.
 	RecentAuthUntil *time.Time `json:"recent_auth_until"`
+	// TwoFactor tells the UI whether to send the user to enrolment.
+	TwoFactor sessionTwoFactorJSON `json:"two_factor"`
+}
+
+type sessionTwoFactorJSON struct {
+	Enabled  bool `json:"enabled"`
+	Required bool `json:"required"`
+	// EnrollmentRequired: the session may reach only enrolment, this
+	// session, re-authentication and sign-out until TOTP is enabled.
+	EnrollmentRequired bool `json:"enrollment_required"`
 }
 
 func noStore(w http.ResponseWriter) {
@@ -203,6 +213,16 @@ func authError(w http.ResponseWriter, err error, failStatus int) error {
 	var rl *auth.RateLimitedError
 	var pe *auth.PolicyError
 	switch {
+	case errors.Is(err, auth.ErrInvalidSecondFactor):
+		return invalidSecondFactor(failStatus)
+	case errors.Is(err, auth.ErrInvalidChallenge):
+		return Unauthenticated(auth.ErrInvalidChallenge.Error())
+	case errors.Is(err, auth.ErrNoPendingEnrollment), errors.Is(err, auth.ErrTwoFactorNotEnabled), errors.Is(err, auth.ErrTwoFactorRequired):
+		return Conflict(err.Error())
+	case errors.Is(err, auth.ErrTwoFactorUnavailable):
+		return Unavailable(err.Error(), err)
+	case errors.Is(err, auth.ErrUnsealable):
+		return Internal(err)
 	case errors.As(err, &rl):
 		w.Header().Set("Retry-After", strconv.Itoa(int((rl.RetryAfter+time.Second-1)/time.Second)))
 		return RateLimited(rl.Error())
@@ -240,9 +260,15 @@ type passwordSetJSON struct {
 }
 
 func registerSessions(s *Server, svc *auth.Service) {
-	current := func(w http.ResponseWriter, x auth.Session, token string, status int) {
+	current := func(w http.ResponseWriter, r *http.Request, x auth.Session, token string, status int) {
 		cfg := svc.Config()
-		out := currentSessionJSON{UserID: x.UserID, Session: toSessionJSON(x, cfg.IdleTimeout, x.ID), CSRFToken: auth.CSRFToken(token)}
+		tf, err := svc.TwoFactorStatus(r.Context(), x.UserID)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		out := currentSessionJSON{UserID: x.UserID, Session: toSessionJSON(x, cfg.IdleTimeout, x.ID), CSRFToken: auth.CSRFToken(token),
+			TwoFactor: sessionTwoFactorJSON{Enabled: tf.Enabled, Required: tf.Required, EnrollmentRequired: tf.Required && !tf.Enabled}}
 		if svc.Recent(authz.Principal{Kind: authz.PrincipalUser, SessionID: x.ID, AuthTime: x.AuthenticatedAt}) {
 			t := x.AuthenticatedAt.Add(cfg.ReauthWindow).UTC()
 			out.RecentAuthUntil = &t
@@ -250,10 +276,15 @@ func registerSessions(s *Server, svc *auth.Service) {
 		noStore(w)
 		WriteJSON(w, status, out)
 	}
+	started := func(w http.ResponseWriter, r *http.Request, iss auth.Issued) {
+		setSessionCookie(w, iss.Token, iss.Session.ExpiresAt, iss.Session.ExpiresAt.Sub(iss.Session.CreatedAt))
+		current(w, r, iss.Session, iss.Token, http.StatusOK)
+	}
 
 	// Sign-in. Every failure is the same 401 invalid_credentials, after the
 	// same work; a blocked account or address is 429 with Retry-After. A
-	// cross-origin browser request is refused (login CSRF).
+	// cross-origin browser request is refused (login CSRF). A user with TOTP
+	// enabled gets 202 and a challenge for the second step, no session.
 	s.HandleAPI("POST "+AuthPath+"/sign-in", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := crossOrigin.Check(r); err != nil {
 			WriteError(w, r, csrfFailed())
@@ -282,21 +313,61 @@ func registerSessions(s *Server, svc *auth.Service) {
 			WriteError(w, r, authError(w, err, http.StatusUnauthorized))
 			return
 		}
-		setSessionCookie(w, iss.Token, iss.Session.ExpiresAt, iss.Session.ExpiresAt.Sub(iss.Session.CreatedAt))
-		current(w, iss.Session, iss.Token, http.StatusOK)
+		if iss.SecondFactor != nil {
+			noStore(w)
+			WriteJSON(w, http.StatusAccepted, secondFactorJSON{SecondFactorRequired: true, Challenge: iss.SecondFactor.Token,
+				ExpiresAt: iss.SecondFactor.ExpiresAt.UTC(), Methods: iss.SecondFactor.Methods})
+			return
+		}
+		started(w, r, iss)
 	}))
 
-	s.HandleAPI("GET "+AuthPath+"/session", SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The second step of a sign-in with TOTP enabled: the challenge from
+	// sign-in and a TOTP code or a recovery code. Wrong codes count towards
+	// the sign-in limits (ADR-0030).
+	s.HandleAPI("POST "+AuthPath+"/sign-in/second-factor", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := crossOrigin.Check(r); err != nil {
+			WriteError(w, r, csrfFailed())
+			return
+		}
+		var in struct {
+			Challenge    *string `json:"challenge"`
+			Code         string  `json:"code"`
+			RecoveryCode string  `json:"recovery_code"`
+		}
+		if err := DecodeJSON(r, &in); err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		if in.Challenge == nil {
+			WriteError(w, r, Validation("challenge", "challenge is required"))
+			return
+		}
+		if (in.Code == "") == (in.RecoveryCode == "") {
+			WriteError(w, r, Validation("code", "send exactly one of code and recovery_code"))
+			return
+		}
+		iss, err := svc.CompleteSignIn(r.Context(), auth.SecondFactorInput{Challenge: *in.Challenge, Code: in.Code,
+			RecoveryCode: in.RecoveryCode, Address: s.ClientAddress(r), UserAgent: r.UserAgent()})
+		if err != nil {
+			noStore(w)
+			WriteError(w, r, authError(w, err, http.StatusUnauthorized))
+			return
+		}
+		started(w, r, iss)
+	}))
+
+	s.HandleAPI("GET "+AuthPath+"/session", SessionOnly().DuringEnrollment(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tok := sessionToken(r)
 		x, _, err := svc.Authenticate(r.Context(), tok)
 		if err != nil {
 			WriteError(w, r, authError(w, err, http.StatusUnauthorized))
 			return
 		}
-		current(w, x, tok, http.StatusOK)
+		current(w, r, x, tok, http.StatusOK)
 	}))
 
-	s.HandleAPI("POST "+AuthPath+"/sign-out", SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.HandleAPI("POST "+AuthPath+"/sign-out", SessionOnly().DuringEnrollment(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := principal(r)
 		if err := svc.EndSession(r.Context(), p, p.SessionID); err != nil && !errors.Is(err, resource.ErrNotFound) {
 			WriteError(w, r, err)
@@ -343,7 +414,7 @@ func registerSessions(s *Server, svc *auth.Service) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	s.HandleAPI("POST "+AuthPath+"/reauthenticate", SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.HandleAPI("POST "+AuthPath+"/reauthenticate", SessionOnly().DuringEnrollment(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pw, err := passwordBody(r)
 		if err != nil {
 			WriteError(w, r, err)

@@ -6,7 +6,7 @@ import "time"
 // are read by the audit API and by people. Each is registered in [Definitions]
 // with the detail fields it may carry.
 const (
-	SignInSucceeded Action = "auth.signin_succeeded" // Details: method
+	SignInSucceeded Action = "auth.signin_succeeded" // Details: method, recovery_codes_remaining (method recovery_code)
 	SignInFailed    Action = "auth.signin_failed"    // Details: method, reason
 
 	// Sessions and credentials (A2, ADR-0026). The target of a session event
@@ -16,16 +16,17 @@ const (
 	Reauthenticated        Action = "auth.reauthenticated"         // Details: method
 	ReauthenticationFailed Action = "auth.reauthentication_failed" // Details: method, reason
 
-	TwoFactorEnabled   Action = "two_factor.enabled"
-	TwoFactorDisabled  Action = "two_factor.disabled"
-	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated"
+	// Second factors (A3, ADR-0030). The target is the user.
+	TwoFactorEnabled   Action = "two_factor.enabled"                    // Details: method, replaced (true, false), sessions_ended
+	TwoFactorDisabled  Action = "two_factor.disabled"                   // Details: method, by (self, administrator, host)
+	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated" // Details: count
 
 	OIDCLinked   Action = "oidc.linked"   // Details: provider
 	OIDCUnlinked Action = "oidc.unlinked" // Details: provider
 
-	TokenCreated   Action = "token.created"    // Details: grants, expires_at
-	TokenRevoked   Action = "token.revoked"    //
-	TokenWriteUsed Action = "token.write_used" // Details: method, route (the route pattern, never the URL)
+	TokenCreated   Action = "token.created"    // Details: grants, root, expires_at (never the token)
+	TokenRevoked   Action = "token.revoked"    // the actor is the owner, an administrator or a token with tokens:write
+	TokenWriteUsed Action = "token.write_used" // Details: method, route (the route pattern, never the URL), interactive_steps (skipped)
 
 	MCPToolCalled Action = "mcp.tool_called" // state-changing MCP call. Details: tool, outcome
 
@@ -48,6 +49,8 @@ var (
 	sessionEndReasons = []string{"signed_out", "terminated"}
 	passwordChangedBy = []string{"self", "administrator", "host"}
 	correctionKinds   = []string{"match", "unmatch", "payment_status", "categorisation", "other"}
+	overrideStatuses  = []string{"paid", "unpaid"}
+	overrideOrNone    = []string{"none", "paid", "unpaid"}
 )
 
 // Field declares one allowed detail field. Enum, when set, lists the only
@@ -68,7 +71,7 @@ var Definitions = map[Action][]Field{
 	UserDisabled:    nil,
 	UserEnabled:     nil,
 
-	SignInSucceeded: {f("method", signInMethods...)},
+	SignInSucceeded: {f("method", signInMethods...), f("recovery_codes_remaining")},
 	SignInFailed:    {f("method", signInMethods...), f("reason", signInReasons...)},
 
 	SessionEnded:           {f("reason", sessionEndReasons...)},
@@ -76,16 +79,18 @@ var Definitions = map[Action][]Field{
 	Reauthenticated:        {f("method", signInMethods...)},
 	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...)},
 
-	TwoFactorEnabled:   {f("method", "totp")},
-	TwoFactorDisabled:  {f("method", "totp")},
-	RecoveryCodesReset: nil,
+	TwoFactorEnabled:   {f("method", "totp"), f("replaced", "true", "false"), f("sessions_ended")},
+	TwoFactorDisabled:  {f("method", "totp"), f("by", passwordChangedBy...)},
+	RecoveryCodesReset: {f("count")},
 
 	OIDCLinked:   {f("provider")},
 	OIDCUnlinked: {f("provider")},
 
-	TokenCreated:   {f("grants"), f("expires_at")},
-	TokenRevoked:   nil,
-	TokenWriteUsed: {f("method"), f("route")},
+	TokenCreated: {f("grants"), f("root", "true", "false"), f("expires_at")},
+	TokenRevoked: nil,
+	// interactive_steps records that the request skipped two-factor and
+	// recent re-authentication, which API tokens do by design (ADR-0029).
+	TokenWriteUsed: {f("method"), f("route"), f("interactive_steps", "skipped")},
 
 	MCPToolCalled: {f("tool"), f("outcome", mcpOutcomes...)},
 
@@ -99,6 +104,11 @@ var Definitions = map[Action][]Field{
 	CommitmentDeleted: {f("kind"), f("unpaid_occurrences_removed")},
 
 	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history")},
+
+	ManualPaymentRecorded:          {f("payment_id"), f("currency")},
+	ManualPaymentDeleted:           {f("payment_id"), f("currency")},
+	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
+	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

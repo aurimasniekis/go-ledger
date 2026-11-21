@@ -30,14 +30,28 @@ var (
 	opDeleteCommit = operation{ID: "deleteCommitment", Method: http.MethodDelete, Path: "/commitments/{id}"}
 	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "month", "commitment_id"}}
 	opGetOccur     = operation{ID: "getOccurrence", Method: http.MethodGet, Path: "/occurrences/{id}"}
+
+	opListManualPayments  = operation{ID: "listManualPayments", Method: http.MethodGet, Path: "/occurrences/{id}/manual-payments", Query: []string{"limit", "cursor"}}
+	opRecordManualPayment = operation{ID: "recordManualPayment", Method: http.MethodPost, Path: "/occurrences/{id}/manual-payments"}
+	opGetManualPayment    = operation{ID: "getManualPayment", Method: http.MethodGet, Path: "/occurrences/{id}/manual-payments/{payment_id}"}
+	opDeleteManualPayment = operation{ID: "deleteManualPayment", Method: http.MethodDelete, Path: "/occurrences/{id}/manual-payments/{payment_id}"}
+	opSetOverride         = operation{ID: "setOccurrenceStatusOverride", Method: http.MethodPut, Path: "/occurrences/{id}/status-override"}
+	opUndoOverride        = operation{ID: "undoOccurrenceStatusOverride", Method: http.MethodDelete, Path: "/occurrences/{id}/status-override"}
+
+	opListTokens  = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
+	opGetToken    = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
+	opRevokeToken = operation{ID: "revokeToken", Method: http.MethodDelete, Path: "/tokens/{id}"}
 )
 
 // operations is every implemented operation. Resources of tasks still in
-// flight (API tokens, TOTP, payment state, sign-in sessions) are added here,
-// with a method and a test row, when their OpenAPI operations land.
+// flight are added here, with a method and a test row, when their OpenAPI
+// operations land.
 var operations = []operation{
 	opGetMe, opGetGrants, opListAudit,
 	opListUsers, opCreateUser, opGetUser, opUpdateUser,
 	opListCommit, opCreateCommit, opGetCommit, opUpdateCommit, opDeleteCommit,
 	opListOccur, opGetOccur,
+	opListManualPayments, opRecordManualPayment, opGetManualPayment, opDeleteManualPayment,
+	opSetOverride, opUndoOverride,
+	opListTokens, opGetToken, opRevokeToken,
 }

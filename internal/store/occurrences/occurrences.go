@@ -26,13 +26,16 @@ import (
 )
 
 // DefaultEvidence lists the payment evidence that makes an occurrence paid
-// and so immutable. It is empty until task C3 adds manual payment records and
-// confirmed match allocations: each entry is a SQL boolean expression over
-// the occurrence aliased "o", for example
-// "EXISTS (SELECT 1 FROM manual_payments p WHERE p.occurrence_id = o.id)".
-// Evidence tables must refer to commitment_occurrences(id) with ON DELETE
-// RESTRICT, so the database also refuses to drop a paid occurrence.
-var DefaultEvidence = []string{}
+// and so immutable: each entry is a SQL boolean expression over the
+// occurrence aliased "o". Any evidence counts, so a partially paid occurrence
+// (D7) is immutable too. Task C3 (ADR-0031) adds manual payment records; task
+// X1 adds confirmed bank-transaction allocations here and to
+// internal/store/payments EvidenceSources. Evidence tables must refer to
+// commitment_occurrences(id) with ON DELETE RESTRICT, so the database also
+// refuses to drop a paid occurrence.
+var DefaultEvidence = []string{
+	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id)",
+}
 
 // Options configures a [Store].
 type Options struct {
@@ -426,11 +429,19 @@ func (s *Store) Get(ctx context.Context, id string) (occurrences.Occurrence, err
 	var o occurrences.Occurrence
 	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		o, err = scan(tx.QueryRowContext(ctx, "SELECT "+columns+" FROM commitment_occurrences AS o WHERE o.id = ?", id))
-		if errors.Is(err, sql.ErrNoRows) {
-			return resource.ErrNotFound
-		}
+		o, err = GetTx(ctx, tx, id)
 		return err
 	})
+	return o, err
+}
+
+// GetTx returns one occurrence read in the caller's transaction, or
+// resource.ErrNotFound (internal/store/payments reads the occurrence it
+// changes in its own write transaction).
+func GetTx(ctx context.Context, tx *sql.Tx, id string) (occurrences.Occurrence, error) {
+	o, err := scan(tx.QueryRowContext(ctx, "SELECT "+columns+" FROM commitment_occurrences AS o WHERE o.id = ?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return occurrences.Occurrence{}, resource.ErrNotFound
+	}
 	return o, err
 }

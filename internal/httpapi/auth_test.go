@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 )
 
@@ -92,6 +94,8 @@ func TestCSRFAndRecentAuthentication(t *testing.T) {
 	admin := authz.UserPrincipal("A", authz.RoleAdministrator)
 	admin.SessionID = "S"
 	token := authz.TokenPrincipal("T", "A", authz.RoleAdministrator, authz.Grants{write})
+	confined := admin
+	confined.EnrollmentRequired = true
 	recentNo := func(authz.Principal) bool { return false }
 	recentYes := func(authz.Principal) bool { return true }
 	cases := []struct {
@@ -120,9 +124,18 @@ func TestCSRFAndRecentAuthentication(t *testing.T) {
 		{"recent auth recent", fixed(admin, nil), recentYes, Requires(write).WithRecentAuth(), "POST", nil, 200, ""},
 		{"recent auth exempts tokens", noCSRF(token), recentNo, Requires(write).WithRecentAuth(), "POST", nil, 200, ""},
 		{"CSRF is checked before recent auth", fixed(admin, nil), recentNo, Requires(write).WithRecentAuth(), "POST", map[string]string{"X-Test-CSRF": "bad"}, 403, CodeCSRF},
+		// Required 2FA (ADR-0030): a confined session reaches only routes
+		// marked DuringEnrollment, reads included; tokens are never confined.
+		{"confined session cannot read", fixed(confined, nil), nil, Requires(authz.G(authz.ResourceUsers, authz.ActionRead)), "GET", nil, 403, CodeEnrollmentRequired},
+		{"confined session cannot write", fixed(confined, nil), recentYes, Requires(write), "POST", nil, 403, CodeEnrollmentRequired},
+		{"confined session cannot use Authenticated", fixed(confined, nil), nil, Authenticated(), "GET", nil, 403, CodeEnrollmentRequired},
+		{"confined session cannot use other session routes", fixed(confined, nil), nil, SessionOnly(), "GET", nil, 403, CodeEnrollmentRequired},
+		{"confined session reaches enrolment routes", fixed(confined, nil), recentYes, SessionOnly().WithRecentAuth().DuringEnrollment(), "POST", nil, 200, ""},
+		{"enrolment routes still need CSRF", fixed(confined, nil), recentYes, SessionOnly().DuringEnrollment(), "POST", map[string]string{"X-Test-CSRF": "bad"}, 403, CodeCSRF},
+		{"unconfined session on an enrolment route", fixed(admin, nil), nil, SessionOnly().DuringEnrollment(), "GET", nil, 200, ""},
 	}
 	for _, c := range cases {
-		opts := []Option{WithAuthenticators(c.authn)}
+		opts := []Option{WithAuthenticators(c.authn), WithAuditRecorder(nopRecorder{}, nil)}
 		if c.recent != nil {
 			opts = append(opts, WithRecentAuth(c.recent))
 		}
@@ -149,6 +162,12 @@ func TestCSRFAndRecentAuthentication(t *testing.T) {
 	})
 	if SessionOnly().String() != "session" || !Requires(write).WithRecentAuth().RecentAuth() || Requires(write).RecentAuth() {
 		t.Error("access strings")
+	}
+	for name, a := range map[string]Access{"grant": Requires(write).DuringEnrollment(), "authenticated": Authenticated().DuringEnrollment(), "public": Public().DuringEnrollment()} {
+		mustPanic(t, "DuringEnrollment on a "+name+" route", func() { apiServer(t).HandleAPI("GET /api/v1/x", a, http.NotFoundHandler()) })
+	}
+	if !SessionOnly().DuringEnrollment().AllowedDuringEnrollment() || SessionOnly().AllowedDuringEnrollment() {
+		t.Error("DuringEnrollment flag")
 	}
 }
 
@@ -352,4 +371,27 @@ func TestAuthorizationRunsBeforeAPIMiddleware(t *testing.T) {
 	if rec := do(s.Handler(), req); rec.Code != 200 || ran != 1 || !sawPrincipal {
 		t.Fatalf("authorised: status %d, ran %d, principal in context %v", rec.Code, ran, sawPrincipal)
 	}
+}
+
+type nopRecorder struct{}
+
+func (nopRecorder) Record(context.Context, audit.Event) error { return nil }
+
+// TestTokenWritesNeedAnAuditRecorder: a token's state-changing request is
+// refused when the server cannot audit it, and a server with the bearer-token
+// authenticator cannot be built without the recorder (ADR-0029).
+func TestTokenWritesNeedAnAuditRecorder(t *testing.T) {
+	token := authz.TokenPrincipal("01JD3Y4C8V9M2Q7W5R6T0XZBNT", "01JD3Y4C8V9M2Q7W5R6T0XZBNA", authz.RoleAdministrator, authz.AllGrants())
+	authn := AuthenticatorFunc(func(*http.Request) (authz.Principal, error) { return token, nil })
+	s := apiServer(t, WithAuthenticators(authn))
+	ran := false
+	s.HandleAPI("POST /api/v1/t", Requires(authz.G(authz.ResourceUsers, authz.ActionWrite)), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { ran = true }))
+	s.HandleAPI("GET /api/v1/t", Requires(authz.G(authz.ResourceUsers, authz.ActionRead)), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	if rec := do(s.Handler(), httptest.NewRequest("POST", "/api/v1/t", nil)); rec.Code != 500 || ran {
+		t.Fatalf("unaudited token write: status %d, handler ran %v", rec.Code, ran)
+	}
+	if rec := do(s.Handler(), httptest.NewRequest("GET", "/api/v1/t", nil)); rec.Code != 200 {
+		t.Fatalf("token read: status %d", rec.Code)
+	}
+	mustPanic(t, "token authenticator without a recorder", func() { apiServer(t, WithAuthenticators(NewTokenAuth(nil))) })
 }

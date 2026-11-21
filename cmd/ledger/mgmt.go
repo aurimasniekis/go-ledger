@@ -21,9 +21,9 @@ import (
 )
 
 // The management commands (ledger me, grants, users, commitments, occurrences,
-// audit) talk to a running server through the public Management API with an
+// tokens, audit) talk to a running server through the public Management API with an
 // API token, using pkg/ledgerclient. They never open the database and have no
-// other way in (ADR-0029): what a token may do is exactly what the server's
+// other way in (ADR-0032): what a token may do is exactly what the server's
 // grants allow.
 
 const defaultServerURL = "http://127.0.0.1:8080"
@@ -95,8 +95,19 @@ var mgmtVerbs = map[string]map[string]verb{
 		"delete": {"delete <id> [--version N]", commitmentsDelete},
 	},
 	"occurrences": {
-		"list": {"list --month YYYY-MM [--commitment-id ID]... [--limit N] [--cursor C] [--all]", occurrencesList},
-		"get":  {"get <id>", occurrencesGet},
+		"list":           {"list --month YYYY-MM [--commitment-id ID]... [--limit N] [--cursor C] [--all]", occurrencesList},
+		"get":            {"get <id>", occurrencesGet},
+		"payments":       {"payments <id> [--limit N] [--cursor C] [--all]   (manual payments of the occurrence)", occurrencesPayments},
+		"pay":            {"pay <id> --amount 12.50 --currency EUR --paid-on YYYY-MM-DD [--note T]   (record a manual payment)", occurrencesPay},
+		"payment":        {"payment <id> <payment-id>   (get a manual payment)", occurrencesPayment},
+		"delete-payment": {"delete-payment <id> <payment-id> [--version N]   (--version is the payment's)", occurrencesDeletePayment},
+		"override":       {"override <id> --status paid|unpaid --reason T [--version N]", occurrencesOverride},
+		"undo-override":  {"undo-override <id> [--version N]", occurrencesUndoOverride},
+	},
+	"tokens": {
+		"list":   {"list [--owner-id ID] [--limit N] [--cursor C] [--all]   (every user's tokens; needs tokens:read)", tokensList},
+		"get":    {"get <id>", tokensGet},
+		"revoke": {"revoke <id>   (needs tokens:write)", tokensRevoke},
 	},
 	"audit": {
 		"list": {"list [--action A]... [--action-prefix P] [--actor-kind K]... [--actor-user-id ID] [--actor-token-id ID] [--target-type T] [--target-id ID] [--since TIME] [--until TIME] [--limit N] [--cursor C] [--all]", auditList},
@@ -110,7 +121,7 @@ Common flags (after the command):
   --client-config P  client config file (env LEDGER_CLIENT_CONFIG; default ~/.config/ledger/client.yaml)
   --output FMT       text (default) or json
   --insecure         allow plain http:// to a non-loopback host
-  --timeout D        per-request timeout (default 30s)
+  --timeout D        per-request timeout, greater than zero (default 30s)
 The token comes from --token-file, then LEDGER_TOKEN, then the config file's
 token_file, then its token (the file must not be readable by others). It is
 never printed.`
@@ -189,7 +200,20 @@ func (m *mgmt) flags(name string) *flag.FlagSet {
 	fs.StringVar(&m.cfgFile, "client-config", "", "")
 	fs.StringVar(&m.output, "output", "", "")
 	fs.BoolVar(&m.insecure, "insecure", false, "")
-	fs.DurationVar(&m.timeout, "timeout", 30*time.Second, "")
+	fs.Func("timeout", "", func(s string) error {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return err
+		}
+		// 0 or less would disable the HTTP timeout and let a stalled server
+		// hang the command forever.
+		if d <= 0 {
+			return errors.New("must be greater than zero")
+		}
+		m.timeout = d
+		return nil
+	})
+	m.timeout = 30 * time.Second
 	return fs
 }
 

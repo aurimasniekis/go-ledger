@@ -47,8 +47,8 @@ info:
       administrative and never a write. API tokens carry their own grants,
       limited by their owner's current role. `GET /grants` lists the
       vocabulary. `session` means a user signed in with the session
-      cookie, acting on their own session or password whatever their role;
-      API tokens get 403 there. API tokens are not available yet (task A4).
+      cookie, acting on their own session, password or API tokens whatever their role;
+      API tokens get 403 there.
     - **Sessions and CSRF** (ADR-0026). `POST /auth/sign-in` sets the
       `__Host-ledger_session` cookie (Secure, HttpOnly, SameSite=Strict) and returns
       a `csrf_token` (also from `GET /auth/session`). Every state-changing
@@ -60,11 +60,31 @@ info:
       next request with an ended session is 401.
     - **Recent authentication.** Operations marked
       `x-ledger-recent-auth: true` (credential changes, user management;
-      token creation when it arrives) need a password check within the
+      API token creation) need a password check within the
       re-authentication window when called with a session: otherwise 403
       `reauthentication_required`; confirm with
       `POST /auth/reauthenticate`. API tokens are exempt by design (their
       writes are audited as `token.write_used`).
+    - **API tokens** (ADR-0029). Send `Authorization: Bearer ldgr_…`
+      (`ldgr_` and 43 base62 characters). A request with an Authorization
+      header is judged by it alone: a wrong, expired or revoked token is 401
+      even with a valid session cookie. Tokens are created with a session
+      (`POST /auth/tokens`) or on the host (`ledger token create`), shown
+      once, and limited by their owner's current role on every request;
+      revocation applies to the next request. Token requests skip
+      two-factor and re-authentication, and each state-changing one is
+      audited (`token.write_used`, `interactive_steps: skipped`).
+    - **Two-factor authentication** (ADR-0030). A user may enrol a TOTP
+      authenticator (RFC 6238: SHA-1, 6 digits, 30 s) under
+      `/auth/two-factor`; enabling it returns recovery codes once. Sign-in
+      then takes two steps: `POST /auth/sign-in` answers 202 with a
+      challenge, and `POST /auth/sign-in/second-factor` takes a TOTP code
+      or a recovery code and starts the session. When `auth.require_2fa`
+      is on, a session whose user has no authenticator reaches only the
+      operations marked `x-ledger-during-enrollment: true` (enrolment,
+      the current session, re-authentication, sign-out); every other
+      request is 403 `two_factor_enrollment_required`. API tokens skip
+      interactive steps by design and are not affected.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -630,9 +650,9 @@ paths:
       description: |
         Deletes the definition and its unpaid occurrences (derived data).
         Requires If-Match; a stale version is a 409 version_conflict.
-        Audited (commitment.deleted). A commitment with paid occurrences
-        (payment history, task C3) cannot be deleted (409 conflict); set
-        end_date to stop it instead.
+        Audited (commitment.deleted). A commitment with an occurrence that
+        has payment evidence (a manual payment, ADR-0031) cannot be deleted
+        (409 conflict); set end_date to stop it instead.
       tags: [commitments]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
@@ -689,6 +709,11 @@ paths:
         address within the window are 429 `rate_limited` with Retry-After.
         A browser request from another origin is 403 `csrf_failed`. Success
         and failure are audited; a failure never records the username.
+
+        When the user has TOTP enabled, a right password starts no session:
+        the answer is 202 with a challenge for
+        `POST /auth/sign-in/second-factor`, valid for five minutes. Only
+        a complete sign-in clears the username's failure count.
       tags: [auth]
       requestBody:
         required: true
@@ -717,12 +742,73 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CurrentSession"
+        "202":
+          description: The password was right; a second factor must follow. No cookie is set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecondFactorChallenge"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/sign-in/second-factor:
+    post:
+      operationId: signInSecondFactor
+      x-ledger-access: public
+      summary: Complete a sign-in with a TOTP code or a recovery code
+      description: |
+        The second step of a sign-in for a user with TOTP enabled. Send the
+        challenge from `POST /auth/sign-in` and exactly one of `code`
+        (from the authenticator; accepted within one 30-second step either
+        side, and only once) or `recovery_code` (consumed by its use). On
+        success the session starts exactly as after a password-only sign-in.
+        A wrong, malformed or reused code is 401 `invalid_second_factor` and
+        counts towards the same per-username and per-address limits as a
+        wrong password (429 `rate_limited` with Retry-After); a challenge
+        takes at most five wrong codes. An unknown, expired or used-up
+        challenge is 401 `unauthenticated`: sign in again. A browser
+        request from another origin is 403 `csrf_failed`. Audited
+        (auth.signin_succeeded and auth.signin_failed with method totp or
+        recovery_code).
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge]
+              properties:
+                challenge:
+                  type: string
+                  maxLength: 128
+                code:
+                  type: string
+                  description: The 6-digit code from the authenticator.
+                  examples: ["123456"]
+                recovery_code:
+                  type: string
+                  format: password
+                  description: One unused recovery code, with or without its dashes.
+      responses:
+        "200":
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              description: The session cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentSession"
         default:
           $ref: "#/components/responses/Error"
   /auth/sign-out:
     post:
       operationId: signOut
       x-ledger-access: session
+      x-ledger-during-enrollment: true
       summary: End the current session
       description: Ends the session the request was made with and clears the cookie. Audited (auth.session_ended, reason signed_out).
       tags: [auth]
@@ -735,6 +821,7 @@ paths:
     get:
       operationId: getCurrentSession
       x-ledger-access: session
+      x-ledger-during-enrollment: true
       summary: The current session and its CSRF token
       tags: [auth]
       responses:
@@ -793,6 +880,7 @@ paths:
     post:
       operationId: reauthenticate
       x-ledger-access: session
+      x-ledger-during-enrollment: true
       summary: Confirm your password for sensitive actions
       description: |
         Checks the signed-in user's password again; when it matches, the
@@ -850,6 +938,123 @@ paths:
                 $ref: "#/components/schemas/PasswordSet"
         default:
           $ref: "#/components/responses/Error"
+  /auth/two-factor:
+    get:
+      operationId: getMyTwoFactor
+      x-ledger-access: session
+      x-ledger-during-enrollment: true
+      summary: Your two-factor authentication status
+      tags: [auth]
+      responses:
+        "200":
+          description: The status. Never includes secrets or recovery codes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TwoFactorStatus"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: disableMyTwoFactor
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Disable your two-factor authentication
+      description: |
+        Removes the authenticator and every recovery code. 409 `conflict`
+        when TOTP is not enabled, or when `auth.require_2fa` is on (enrol a
+        new authenticator to replace it instead; the host command
+        `ledger auth reset-2fa` can still remove it). Audited
+        (two_factor.disabled, by self).
+      tags: [auth]
+      responses:
+        "204":
+          description: Disabled.
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/two-factor/totp:
+    post:
+      operationId: startTOTPEnrollment
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      x-ledger-during-enrollment: true
+      summary: Start enrolling a TOTP authenticator
+      description: |
+        Generates a new secret and returns it, with its otpauth:// URI for a
+        QR code. This is the only time the secret is shown; it is stored
+        encrypted. Confirm with a code from the authenticator within ten
+        minutes (`POST /auth/two-factor/totp/confirm`). Starting again
+        replaces an unconfirmed enrolment. An enabled authenticator keeps
+        working until the new one is confirmed, so this also replaces one.
+        503 `dependency_unavailable` when no key-encryption key is
+        configured.
+      tags: [auth]
+      responses:
+        "201":
+          description: The enrolment was started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TOTPEnrollment"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/two-factor/totp/confirm:
+    post:
+      operationId: confirmTOTPEnrollment
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      x-ledger-during-enrollment: true
+      summary: Confirm a TOTP enrolment and receive recovery codes
+      description: |
+        Checks a code from the authenticator against the started enrolment.
+        When it matches, TOTP is enabled (replacing an earlier
+        authenticator), ten new recovery codes are returned (shown only
+        here; earlier codes stop working) and every other session of the
+        user ends; the current session stays and is no longer confined by
+        `auth.require_2fa`. A wrong code is 400 `invalid_second_factor`;
+        no started or an expired enrolment is 409 `conflict`. Audited
+        (two_factor.enabled).
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  examples: ["123456"]
+      responses:
+        "200":
+          description: TOTP is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodes"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/two-factor/recovery-codes:
+    post:
+      operationId: regenerateRecoveryCodes
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Replace your recovery codes
+      description: |
+        Issues ten new recovery codes, shown only here; every earlier code
+        stops working. 409 `conflict` when TOTP is not enabled. Audited
+        (two_factor.recovery_codes_regenerated).
+      tags: [auth]
+      responses:
+        "200":
+          description: The new codes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodes"
+        default:
+          $ref: "#/components/responses/Error"
   /occurrences:
     get:
       operationId: listOccurrences
@@ -863,8 +1068,9 @@ paths:
         scheduled date before start_date or after end_date is not an
         occurrence. Reading a month first materialises every commitment
         through it; materialised months are never regenerated by a read, so
-        repeated reads return the same occurrences. Occurrences carry no
-        payment status yet (task C3). Months more than 60 months after the
+        repeated reads return the same occurrences. Each occurrence carries
+        its payment state, derived when read from payment evidence and
+        dates (decision D7, ADR-0031). Months more than 60 months after the
         current month are refused.
       tags: [occurrences]
       parameters:
@@ -922,6 +1128,367 @@ paths:
                 $ref: "#/components/schemas/Occurrence"
         default:
           $ref: "#/components/responses/Error"
+  /auth/tokens:
+    get:
+      operationId: listMyTokens
+      x-ledger-access: session
+      summary: List your API tokens
+      description: |
+        The signed-in user's API tokens in ID order, including expired and
+        revoked ones (see status). Never includes the tokens themselves, only
+        a hint (prefix, first and last characters).
+      tags: [tokens]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of tokens.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenPage"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createMyToken
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Create an API token
+      description: |
+        Creates a token owned by the signed-in user and returns it once, in
+        `secret`; it is never shown again (the response is `Cache-Control:
+        no-store`). Send it as `Authorization: Bearer ldgr_…`.
+
+        Give `grants` (at least one), or `root: true` for a root token, which
+        holds every grant its owner's role holds, including grants added in
+        later versions; the response then carries a `warning`. Grants the
+        caller does not hold, or a root token requested by anyone who does
+        not hold every grant, are 403 `forbidden` (no escalation). An
+        unknown grant is 400. `expires_at` is optional; without it the
+        token never expires.
+
+        Requests made with a token skip two-factor and re-authentication;
+        each state-changing one is audited (`token.write_used`). A token is
+        limited by its owner's current role on every request. API tokens
+        cannot create tokens. Audited (`token.created`, never the token).
+      tags: [tokens]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewApiToken"
+      responses:
+        "201":
+          description: Created. This is the only time the token is shown.
+          headers:
+            Location:
+              description: The new token's URL under /auth/tokens.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedApiToken"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/tokens/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getMyToken
+      x-ledger-access: session
+      summary: Get one of your API tokens
+      description: Another user's token is 404.
+      tags: [tokens]
+      responses:
+        "200":
+          description: The token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiToken"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: revokeMyToken
+      x-ledger-access: session
+      summary: Revoke one of your API tokens
+      description: |
+        Revokes the token at once: its next request is 401. Revoking a
+        revoked token changes nothing (204). Another user's token is 404.
+        Audited (`token.revoked`).
+      tags: [tokens]
+      responses:
+        "204":
+          description: Revoked.
+        default:
+          $ref: "#/components/responses/Error"
+  /tokens:
+    get:
+      operationId: listTokens
+      x-ledger-access: tokens:read
+      summary: List every user's API tokens
+      description: |
+        All API tokens in ID order, including expired and revoked ones.
+        Administrative. Never includes the tokens themselves.
+      tags: [tokens]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: owner_id
+          in: query
+          description: Only this user's tokens.
+          schema:
+            $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: A page of tokens.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenPage"
+        default:
+          $ref: "#/components/responses/Error"
+  /tokens/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getToken
+      x-ledger-access: tokens:read
+      summary: Get any user's API token
+      tags: [tokens]
+      responses:
+        "200":
+          description: The token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiToken"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: revokeToken
+      x-ledger-access: tokens:write
+      summary: Revoke any user's API token
+      description: |
+        Revokes the token at once: its next request is 401. Revoking a
+        revoked token changes nothing (204). Audited (`token.revoked`).
+      tags: [tokens]
+      responses:
+        "204":
+          description: Revoked.
+        default:
+          $ref: "#/components/responses/Error"
+  /occurrences/{id}/manual-payments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: listManualPayments
+      x-ledger-access: commitments:read
+      summary: List an occurrence's manual payments
+      description: Ordered by paid_on, then ID.
+      tags: [occurrences]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of manual payments.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ManualPayment"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: recordManualPayment
+      x-ledger-access: commitments:write
+      summary: Record a manual payment
+      description: |
+        Records a payment the user made by hand. It is user data, kept apart
+        from bank facts and from match links, and it is payment evidence: the
+        occurrence's status is derived again (paid when the payments in its
+        currency cover its amount, partially_paid below that), the
+        occurrence becomes immutable to commitment edits, and the commitment
+        can no longer be deleted. The amount must be positive and in the
+        occurrence's currency (amounts are never converted); paid_on must
+        not be after today in the reporting zone. Like every create it needs
+        no version; the occurrence's version increases. Audited as
+        manual_payment.recorded (identifier and currency, never the amount
+        or note). Records are not edited: delete a mistaken one and record
+        it again.
+      tags: [occurrences]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualPaymentInput"
+      responses:
+        "201":
+          description: The recorded payment.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              description: The new payment's URL.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManualPayment"
+        default:
+          $ref: "#/components/responses/Error"
+  /occurrences/{id}/manual-payments/{payment_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+      - name: payment_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getManualPayment
+      x-ledger-access: commitments:read
+      summary: Get a manual payment
+      tags: [occurrences]
+      responses:
+        "200":
+          description: The payment.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManualPayment"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteManualPayment
+      x-ledger-access: commitments:write
+      summary: Delete a manual payment
+      description: |
+        Removes the payment record; the occurrence's status is derived
+        again from the evidence that remains and its version increases. A
+        "paid" override stays recorded but has no effect without evidence
+        (override.applied is false). Requires the payment's version in
+        If-Match. Audited as manual_payment.deleted.
+      tags: [occurrences]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: The payment was deleted.
+        default:
+          $ref: "#/components/responses/Error"
+  /occurrences/{id}/status-override:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    put:
+      operationId: setOccurrenceStatusOverride
+      x-ledger-access: commitments:write
+      summary: Set a manual status override
+      description: |
+        Overrides the derived status with a reason (decision D7). "paid"
+        marks the occurrence settled although the counted evidence does not
+        cover it (for example a payment in another currency, which is never
+        converted); it needs payment evidence and is refused with 409
+        payment_evidence_required without it. "unpaid" says the evidence
+        does not settle it: the status follows the dates. An active
+        override is replaced, and DELETE restores it. Requires the
+        occurrence's version in If-Match or the body; the version increases.
+        Audited as occurrence.status_overridden (status and previous status;
+        the reason is not copied to the audit log).
+      tags: [occurrences]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status, reason]
+              properties:
+                status:
+                  $ref: "#/components/schemas/OverrideStatus"
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The occurrence with its new payment state.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Occurrence"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: undoOccurrenceStatusOverride
+      x-ledger-access: commitments:write
+      summary: Undo the manual status override
+      description: |
+        The undo of the last override change: the active override is marked
+        undone and the override it replaced, if any, becomes active again;
+        otherwise the derived status applies. Repeating it walks further back.
+        404 when no override is active. Requires the occurrence's version in
+        If-Match; the version increases. Audited as
+        occurrence.status_override_undone (undone and restored status).
+      tags: [occurrences]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The occurrence with its restored payment state.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Occurrence"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: meta
     description: The API description itself.
@@ -936,7 +1503,9 @@ tags:
   - name: auth
     description: Sign-in, sessions, re-authentication and your own password.
   - name: occurrences
-    description: Dated occurrences generated from commitment definitions.
+    description: Dated occurrences generated from commitment definitions, their payment state, manual payments and status overrides.
+  - name: tokens
+    description: API tokens (Authorization Bearer); your own, and everyone's for administrators.
 components:
   parameters:
     Limit:
@@ -996,6 +1565,18 @@ components:
       description: An exact decimal number as a string, greater than zero, keeping its scale ("12.50"). Never a JSON number.
       pattern: "^([1-9][0-9]*(\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$"
       examples: ["12.50"]
+    Money:
+      type: object
+      description: An exact amount of zero or more with its currency (ADR-0005), keeping its scale. It is never converted.
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount:
+          type: string
+          description: An exact decimal number as a string, zero or more ("0.00", "12.50"). Never a JSON number.
+          pattern: "^(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+        currency:
+          $ref: "#/components/schemas/Currency"
     PositiveMoney:
       type: object
       description: An exact amount greater than zero with its currency (ADR-0005). It is never converted.
@@ -1151,10 +1732,12 @@ components:
       type: object
       description: |
         One due date of a commitment, generated from its definition
-        (ADR-0027). Paid occurrences never change; unpaid ones due on or
-        after an edit's effective date follow the edit (version increases,
-        id stays). No payment status yet (task C3).
-      required: [id, commitment_id, month, due_date, amount, version, created_at, updated_at]
+        (ADR-0027). Paid occurrences (any payment evidence) never change;
+        unpaid ones due on or after an edit's effective date follow the edit
+        (version increases, id stays). The version also increases with every
+        payment-state change (manual payment, override), so the ETag covers
+        the payment state (ADR-0031).
+      required: [id, commitment_id, month, due_date, amount, version, created_at, updated_at, payment]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -1174,6 +1757,129 @@ components:
         updated_at:
           type: string
           format: date-time
+        payment:
+          $ref: "#/components/schemas/PaymentState"
+    PaymentStatus:
+      type: string
+      enum: [paid, partially_paid, upcoming, due, overdue]
+      description: |
+        Derived payment status (decision D7). paid: payment evidence in the
+        occurrence's currency covers its amount, or an applied "paid"
+        override. partially_paid: some, not all. Otherwise by date in the
+        reporting zone: upcoming before the due date, due on it, overdue from
+        the day after it. Overdue always counts from the original due date.
+    OverrideStatus:
+      type: string
+      enum: [paid, unpaid]
+    PaymentState:
+      type: object
+      description: |
+        Derived when read from payment evidence (manual payments; confirmed
+        bank-transaction allocations from task X1), dates and the manual
+        override (ADR-0031). Only evidence in the occurrence's currency is
+        counted; other currencies are listed in unconverted_currencies and
+        never converted or summed.
+      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, unconverted_currencies, evidence_count, grace_until, within_grace, override]
+      properties:
+        status:
+          $ref: "#/components/schemas/PaymentStatus"
+        derived_status:
+          description: The status from evidence and dates alone, before the override.
+          allOf:
+            - $ref: "#/components/schemas/PaymentStatus"
+        timing:
+          description: upcoming, due or overdue for an occurrence that is not paid (for partially_paid, its unpaid remainder); null when paid.
+          type: [string, "null"]
+          enum: [upcoming, due, overdue, null]
+        paid_amount:
+          description: The sum of the evidence in the occurrence's currency (zero when none).
+          $ref: "#/components/schemas/Money"
+        outstanding_amount:
+          description: >-
+            The amount less paid_amount, never below zero; zero when paid. Under an
+            applied "unpaid" override it is the full amount (the evidence is declared
+            not to settle the occurrence), so it is never zero while the status is not paid.
+          $ref: "#/components/schemas/Money"
+        overpaid_amount:
+          description: paid_amount less the amount when positive, else zero. Informational; it does not change the status.
+          $ref: "#/components/schemas/Money"
+        unconverted_currencies:
+          type: array
+          description: Currencies of evidence not in the occurrence's currency; not counted.
+          items:
+            type: string
+            pattern: "^[A-Z]{3}$"
+        evidence_count:
+          type: integer
+          minimum: 0
+        grace_until:
+          description: |
+            End of a documented grace period of an overdue occurrence, when
+            one is known (task DF2; none is recorded yet). The occurrence is
+            overdue either way.
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        within_grace:
+          type: boolean
+          description: True while an overdue occurrence is within its documented grace period.
+        override:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [status, reason, set_at, applied, previous_status]
+              properties:
+                status:
+                  $ref: "#/components/schemas/OverrideStatus"
+                reason:
+                  type: string
+                set_at:
+                  type: string
+                  format: date-time
+                applied:
+                  type: boolean
+                  description: False for a "paid" override whose evidence has since been removed; it then has no effect.
+                previous_status:
+                  description: The override this one replaced, which an undo restores; null for none.
+                  oneOf:
+                    - $ref: "#/components/schemas/OverrideStatus"
+                    - type: "null"
+    ManualPayment:
+      type: object
+      description: A payment recorded by hand for one occurrence (ADR-0031). User data, never a bank fact.
+      required: [id, occurrence_id, amount, paid_on, note, version, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        occurrence_id:
+          $ref: "#/components/schemas/ID"
+        amount:
+          $ref: "#/components/schemas/PositiveMoney"
+        paid_on:
+          $ref: "#/components/schemas/Date"
+        note:
+          type: [string, "null"]
+        version:
+          $ref: "#/components/schemas/Version"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ManualPaymentInput:
+      type: object
+      additionalProperties: false
+      required: [amount, paid_on]
+      properties:
+        amount:
+          $ref: "#/components/schemas/PositiveMoney"
+        paid_on:
+          $ref: "#/components/schemas/Date"
+        note:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 2000
     Role:
       type: string
       enum: [administrator, read-only]
@@ -1358,7 +2064,7 @@ components:
           description: The client address at sign-in.
     CurrentSession:
       type: object
-      required: [user_id, session, csrf_token, recent_auth_until]
+      required: [user_id, session, csrf_token, recent_auth_until, two_factor]
       properties:
         user_id:
           $ref: "#/components/schemas/ID"
@@ -1371,6 +2077,188 @@ components:
           type: [string, "null"]
           format: date-time
           description: When the last password check stops counting as recent; null when it already has.
+        two_factor:
+          type: object
+          required: [enabled, required, enrollment_required]
+          properties:
+            enabled:
+              type: boolean
+            required:
+              type: boolean
+              description: auth.require_2fa.
+            enrollment_required:
+              type: boolean
+              description: The session reaches only the operations marked x-ledger-during-enrollment until an authenticator is enrolled.
+    SecondFactorChallenge:
+      type: object
+      required: [second_factor_required, challenge, expires_at, methods]
+      properties:
+        second_factor_required:
+          type: boolean
+          const: true
+        challenge:
+          type: string
+          description: Send it to POST /auth/sign-in/second-factor. A secret; it starts a session with a valid code.
+        expires_at:
+          type: string
+          format: date-time
+        methods:
+          type: array
+          items:
+            type: string
+            enum: [totp, recovery_code]
+    TwoFactorStatus:
+      type: object
+      required: [enabled, method, enabled_at, recovery_codes_remaining, required, pending_enrollment_until]
+      properties:
+        enabled:
+          type: boolean
+        method:
+          type: [string, "null"]
+          enum: [totp, null]
+        enabled_at:
+          type: [string, "null"]
+          format: date-time
+        recovery_codes_remaining:
+          type: integer
+          minimum: 0
+        required:
+          type: boolean
+          description: auth.require_2fa.
+        pending_enrollment_until:
+          type: [string, "null"]
+          format: date-time
+          description: When a started, unconfirmed enrolment stops being confirmable; null when none is pending.
+    TOTPEnrollment:
+      type: object
+      required: [secret, otpauth_uri, algorithm, digits, period, expires_at]
+      properties:
+        secret:
+          type: string
+          description: The base32 secret (no padding), shown only in this response.
+        otpauth_uri:
+          type: string
+          description: otpauth://totp URI with the secret, issuer Ledger and the parameters, for a QR code.
+        algorithm:
+          type: string
+          const: SHA1
+        digits:
+          type: integer
+          const: 6
+        period:
+          type: integer
+          const: 30
+        expires_at:
+          type: string
+          format: date-time
+          description: Confirm before this time.
+    RecoveryCodes:
+      type: object
+      required: [recovery_codes]
+      properties:
+        recovery_codes:
+          type: array
+          description: Shown only in this response; each works once. Stored only as hashes.
+          items:
+            type: string
+            pattern: "^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$"
+        sessions_ended:
+          type: integer
+          minimum: 0
+          description: Sessions of the user ended by enabling TOTP (confirmation only).
+    ApiToken:
+      type: object
+      description: An API token. Never includes the token itself.
+      required: [id, name, owner_id, root, grants, hint, prefix, last_chars, status, created_at, expires_at, last_used_at, revoked_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        owner_id:
+          $ref: "#/components/schemas/ID"
+        root:
+          type: boolean
+          description: A root token holds every grant its owner's role holds, now and in later versions.
+        grants:
+          type: array
+          description: The token's own grants (empty for a root token). Requests get only those the owner's current role allows.
+          items:
+            $ref: "#/components/schemas/Grant"
+        hint:
+          type: string
+          description: The prefix, first and last four random characters, to recognise the token.
+          examples: ["ldgr_AbCd…wXyZ"]
+        prefix:
+          type: string
+          description: "\"ldgr_\" and the first four random characters."
+        last_chars:
+          type: string
+          description: The last four characters.
+        status:
+          type: string
+          enum: [active, expired, revoked]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: Null when the token never expires.
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+          description: Updated at most once a minute.
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+    ApiTokenPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiToken"
+        next_cursor:
+          type: [string, "null"]
+    NewApiToken:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        grants:
+          type: array
+          description: The grants the token holds; each must be one you hold. Leave empty for a root token.
+          items:
+            $ref: "#/components/schemas/Grant"
+        root:
+          type: boolean
+          default: false
+          description: Ask explicitly for a root token (administrators only).
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: Optional; in the future. Without it the token never expires.
+    CreatedApiToken:
+      type: object
+      required: [secret, token, warning]
+      properties:
+        secret:
+          type: string
+          description: The token. Shown only in this response; Ledger keeps only its hash.
+          pattern: "^ldgr_[0-9A-Za-z]{43}$"
+        token:
+          $ref: "#/components/schemas/ApiToken"
+        warning:
+          type: [string, "null"]
+          description: What a root token can do; null for other tokens.
     ID:
       type: string
       description: A ULID.
@@ -1406,6 +2294,8 @@ components:
             - csrf_failed
             - reauthentication_required
             - pending_terms_change
+            - two_factor_enrollment_required
+            - invalid_second_factor
         message:
           type: string
         field:

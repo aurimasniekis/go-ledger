@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
 
@@ -44,12 +45,26 @@ var permissionMatrix = map[string]string{
 	"PATCH /api/v1/users/{id}":          "users:write+recent",
 	"PUT /api/v1/users/{id}/password":   "users:write+recent",
 	"POST /api/v1/auth/sign-in":         "public",
-	"POST /api/v1/auth/sign-out":        "session",
-	"GET /api/v1/auth/session":          "session",
+	"POST /api/v1/auth/sign-out":        "session+enroll",
+	"GET /api/v1/auth/session":          "session+enroll",
 	"GET /api/v1/auth/sessions":         "session",
 	"DELETE /api/v1/auth/sessions/{id}": "session",
-	"POST /api/v1/auth/reauthenticate":  "session",
+	"POST /api/v1/auth/reauthenticate":  "session+enroll",
 	"PUT /api/v1/auth/password":         "session+recent",
+	"GET /api/v1/auth/tokens":           "session",
+	"POST /api/v1/auth/tokens":          "session+recent",
+	"GET /api/v1/auth/tokens/{id}":      "session",
+	"DELETE /api/v1/auth/tokens/{id}":   "session",
+	"GET /api/v1/tokens":                "tokens:read",
+	"GET /api/v1/tokens/{id}":           "tokens:read",
+	"DELETE /api/v1/tokens/{id}":        "tokens:write",
+
+	"POST /api/v1/auth/sign-in/second-factor":     "public",
+	"GET /api/v1/auth/two-factor":                 "session+enroll",
+	"DELETE /api/v1/auth/two-factor":              "session+recent",
+	"POST /api/v1/auth/two-factor/totp":           "session+recent+enroll",
+	"POST /api/v1/auth/two-factor/totp/confirm":   "session+recent+enroll",
+	"POST /api/v1/auth/two-factor/recovery-codes": "session+recent",
 
 	"GET /api/v1/commitments":         "commitments:read",
 	"POST /api/v1/commitments":        "commitments:write",
@@ -59,15 +74,27 @@ var permissionMatrix = map[string]string{
 
 	"GET /api/v1/occurrences":      "commitments:read",
 	"GET /api/v1/occurrences/{id}": "commitments:read",
+
+	"GET /api/v1/occurrences/{id}/manual-payments":                 "commitments:read",
+	"POST /api/v1/occurrences/{id}/manual-payments":                "commitments:write",
+	"GET /api/v1/occurrences/{id}/manual-payments/{payment_id}":    "commitments:read",
+	"DELETE /api/v1/occurrences/{id}/manual-payments/{payment_id}": "commitments:write",
+	"PUT /api/v1/occurrences/{id}/status-override":                 "commitments:write",
+	"DELETE /api/v1/occurrences/{id}/status-override":              "commitments:write",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
-// with "+recent" when it needs recent authentication.
+// with "+recent" when it needs recent authentication and "+enroll" when a
+// session confined to two-factor enrolment may reach it (ADR-0030).
 func matrixAccess(a httpapi.Access) string {
+	s := a.String()
 	if a.RecentAuth() {
-		return a.String() + "+recent"
+		s += "+recent"
 	}
-	return a.String()
+	if a.AllowedDuringEnrollment() {
+		s += "+enroll"
+	}
+	return s
 }
 
 // apiFixture is the API as ledger serve registers it, with a test
@@ -129,6 +156,7 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 		return f.now
 	}
 	parts.commitments = commitmentstore.New(db, al, clock, nil)
+	parts.payments = paymentstore.New(db, al, clock, nil)
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {

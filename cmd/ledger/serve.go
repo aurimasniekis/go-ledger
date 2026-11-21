@@ -185,16 +185,16 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// Per D17, readiness gates only on the database; optional integrations belong on a
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
-	parts, err := buildAPI(db, auditLog, cfg.Auth, auth.NewArgon2id(auth.DefaultParams, hashConcurrency), nil)
+	parts, err := buildAPI(db, auditLog, cfg.Auth, cfg.KEK.Value, auth.NewArgon2id(auth.DefaultParams, hashConcurrency), nil)
 	if err != nil {
 		log.Error("invalid sign-in settings", "error", err.Error())
 		_ = ln.Close()
 		return 1
 	}
-	// Session cookies are the only authentication method until API tokens
-	// (task A4) add theirs.
+	// Bearer API tokens are tried before the session cookie (ADR-0029); every
+	// state-changing token request is audited through the recorder.
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil),
-		httpapi.WithAuthenticators(httpapi.NewSessionAuth(parts.auth)), httpapi.WithRecentAuth(parts.auth.Recent))
+		httpapi.WithAuthenticators(httpapi.NewTokenAuth(parts.tokens), httpapi.NewSessionAuth(parts.auth)), httpapi.WithRecentAuth(parts.auth.Recent))
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
@@ -313,8 +313,10 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Users:       parts.users,
 		Commitments: parts.commitments,
 		Occurrences: parts.commitments.Occurrences(),
+		Payments:    parts.payments,
 		Audit:       al,
 		Auth:        parts.auth,
+		Tokens:      parts.tokens,
 		Zone:        zone,
 		Now:         now,
 	})

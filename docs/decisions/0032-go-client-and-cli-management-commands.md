@@ -1,4 +1,4 @@
-# ADR-0029: Go client and CLI management commands
+# ADR-0032: Go client and CLI management commands
 
 Status: Accepted (2026-11-21)
 

@@ -40,6 +40,10 @@ const (
 	ResourceAudit Resource = "audit"
 	// ResourceCommitments is recurring commitment definitions (task C1).
 	ResourceCommitments Resource = "commitments"
+	// ResourceTokens is every user's API tokens: listing and revoking them
+	// (task A4). A user manages their own tokens with a session, whatever
+	// their role; this grant is for administering everyone's.
+	ResourceTokens Resource = "tokens"
 	// ResourceUsers is user accounts: their roles and whether they are disabled.
 	ResourceUsers Resource = "users"
 )
@@ -58,6 +62,7 @@ type ResourceInfo struct {
 var vocabulary = []ResourceInfo{
 	{Name: ResourceAudit, Description: "The audit log of security-relevant and finance-correcting changes.", Actions: []Action{ActionRead}, AdminOnly: true},
 	{Name: ResourceCommitments, Description: "Recurring commitment definitions: kind, amount, schedule, dates, priority and notes.", Actions: []Action{ActionRead, ActionWrite}},
+	{Name: ResourceTokens, Description: "Every user's API tokens: list them and revoke them. Never the tokens themselves.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceUsers, Description: "User accounts, their roles and whether they are disabled.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 }
 
@@ -267,6 +272,11 @@ type Principal struct {
 	// AuthTime is when the session last checked the user's password (sign-in
 	// or re-authentication), for actions that need recent authentication.
 	AuthTime time.Time
+	// EnrollmentRequired is set for a session principal whose user must
+	// enrol a second factor first (auth.require_2fa, ADR-0030): it may reach
+	// only the enrolment, session and sign-out routes. Never set for API
+	// tokens, which skip interactive steps by design.
+	EnrollmentRequired bool
 }
 
 // UserPrincipal is a signed-in user acting with their role's grants.

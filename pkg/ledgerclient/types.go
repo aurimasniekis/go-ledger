@@ -22,6 +22,19 @@ const (
 	ActorToken     = "token"
 	ActorSystem    = "system"
 	ActorAnonymous = "anonymous"
+
+	PaymentPaid          = "paid"
+	PaymentPartiallyPaid = "partially_paid"
+	PaymentUpcoming      = "upcoming"
+	PaymentDue           = "due"
+	PaymentOverdue       = "overdue"
+
+	OverridePaid   = "paid"
+	OverrideUnpaid = "unpaid"
+
+	TokenActive  = "active"
+	TokenExpired = "expired"
+	TokenRevoked = "revoked"
 )
 
 // Money is an exact amount with its currency. Amount is a decimal string that
@@ -128,6 +141,82 @@ type Occurrence struct {
 	Version      int64  `json:"version"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+	// Payment is derived when read from payment evidence, dates and the
+	// manual override. Only evidence in the occurrence's currency is counted.
+	Payment PaymentState `json:"payment"`
+}
+
+// PaymentState is an occurrence's derived payment state (ADR-0031). Amounts
+// are in the occurrence's currency; other currencies are only listed in
+// UnconvertedCurrencies and are never converted or summed.
+type PaymentState struct {
+	Status                string           `json:"status"`
+	DerivedStatus         string           `json:"derived_status"`
+	Timing                *string          `json:"timing"`
+	PaidAmount            Money            `json:"paid_amount"`
+	OutstandingAmount     Money            `json:"outstanding_amount"`
+	OverpaidAmount        Money            `json:"overpaid_amount"`
+	UnconvertedCurrencies []string         `json:"unconverted_currencies"`
+	EvidenceCount         int              `json:"evidence_count"`
+	GraceUntil            *string          `json:"grace_until"`
+	WithinGrace           bool             `json:"within_grace"`
+	Override              *PaymentOverride `json:"override"`
+}
+
+// PaymentOverride is the active manual status override of an occurrence.
+// Applied is false for a "paid" override whose evidence has been removed.
+type PaymentOverride struct {
+	Status         string  `json:"status"`
+	Reason         string  `json:"reason"`
+	SetAt          string  `json:"set_at"`
+	Applied        bool    `json:"applied"`
+	PreviousStatus *string `json:"previous_status"`
+}
+
+// ManualPayment is a payment recorded by hand for one occurrence: user data,
+// never a bank fact.
+type ManualPayment struct {
+	ID           string  `json:"id"`
+	OccurrenceID string  `json:"occurrence_id"`
+	Amount       Money   `json:"amount"`
+	PaidOn       string  `json:"paid_on"`
+	Note         *string `json:"note"`
+	Version      int64   `json:"version"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+}
+
+// NewManualPayment is the body of RecordManualPayment. PaidOn is YYYY-MM-DD
+// and not after today in the reporting zone; the currency must be the
+// occurrence's.
+type NewManualPayment struct {
+	Amount Money   `json:"amount"`
+	PaidOn string  `json:"paid_on"`
+	Note   *string `json:"note,omitempty"`
+}
+
+// StatusOverride is the body of SetStatusOverride (the version travels as
+// If-Match instead).
+type StatusOverride struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+}
+
+// APIToken describes an API token. It never includes the token itself.
+type APIToken struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	OwnerID    string   `json:"owner_id"`
+	Root       bool     `json:"root"`
+	Grants     []string `json:"grants"`
+	Hint       string   `json:"hint"`
+	Prefix     string   `json:"prefix"`
+	LastChars  string   `json:"last_chars"`
+	Status     string   `json:"status"`
+	CreatedAt  string   `json:"created_at"`
+	ExpiresAt  *string  `json:"expires_at"`
+	LastUsedAt *string  `json:"last_used_at"`
+	RevokedAt  *string  `json:"revoked_at"`
 }
 
 // AuditEntry is one entry of the append-only audit log.
