@@ -22,6 +22,7 @@ export function MonthPage({ month }: { month: string }) {
   }, [])
   const [panel, setPanel] = useState<{ item: MonthItem; inPlace: boolean } | null>(null) // the occurrence the open form starts on, and whether it sits under that row
   // The notice belongs to the month the payment was recorded in, so Undo still refreshes that month after the user moves on.
+  // It has no timeout (D37): it stays until dismissed or replaced by the next payment.
   const [saved, setSaved] = useState<{ payment: ManualPayment; item: MonthItem; month: string } | null>(null)
   const headerButton = useRef<HTMLButtonElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)

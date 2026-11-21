@@ -34,7 +34,7 @@ export class ApiError extends Error {
   readonly requestId?: string
   /** Seconds from Retry-After (rate_limited), when the server sent one. */
   readonly retryAfter?: number
-  /** On a version conflict (409/412): the server's current version, and its current state when sent. */
+  /** On a version conflict (409 version_conflict): the server's current version, and its current state when sent. */
   readonly reconciliation?: ErrorBody['reconciliation']
 
   constructor(status: number, body: Partial<ErrorBody>, retryAfter?: number) {

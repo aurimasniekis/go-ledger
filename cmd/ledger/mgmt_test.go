@@ -129,6 +129,18 @@ func TestCLIManagementJourney(t *testing.T) {
 		t.Fatalf("grants: %d %s", rc, out)
 	}
 
+	// matching run: one automatic matching run (nothing to match yet).
+	if rc, out, errb = c.run(adminToken, "matching", "run"); rc != 0 || !strings.Contains(out, "candidates:") || !strings.Contains(out, "confirmed:") {
+		t.Fatalf("matching run: %d %s %s", rc, out, errb)
+	}
+	var mr struct {
+		Confirmed *int `json:"confirmed"`
+	}
+	c.json(adminToken, &mr, "matching", "run")
+	if mr.Confirmed == nil || *mr.Confirmed != 0 {
+		t.Fatalf("matching run json: %+v", mr)
+	}
+
 	// users: create, get, list, update with an implicit and a stale version.
 	var u idVersion
 	c.json(adminToken, &u, "users", "create", "--username", "erin", "--role", "read-only", "--display-name", "Erin")
@@ -190,6 +202,15 @@ func TestCLIManagementJourney(t *testing.T) {
 	c.fail(adminToken, 1, "retry with --version 2", "commitments", "update", cm1.ID, "--name", "x", "--version", "1")
 	if rc, out, _ = c.run(adminToken, "commitments", "get", cm1.ID); rc != 0 || !strings.Contains(out, "13.5 EUR") || !strings.Contains(out, "yearly on 02-28") {
 		t.Fatalf("get: %d %s", rc, out)
+	}
+	// A match tolerance takes the commitment's currency (read from the server
+	// when --currency is not given), and can be cleared.
+	if rc, out, errb = c.run(adminToken, "commitments", "update", cm1.ID, "--match-tolerance", "0.25"); rc != 0 || !strings.Contains(out, "0.25 EUR") {
+		t.Fatalf("set tolerance: %d %s %s", rc, out, errb)
+	}
+	c.fail(adminToken, 2, "cannot be combined", "commitments", "update", cm1.ID, "--match-tolerance", "1", "--clear-match-tolerance")
+	if rc, out, errb = c.run(adminToken, "commitments", "update", cm1.ID, "--clear-match-tolerance"); rc != 0 || strings.Contains(out, "0.25 EUR") {
+		t.Fatalf("clear tolerance: %d %s %s", rc, out, errb)
 	}
 
 	// Paging: a page of one carries a cursor, --all follows it, filters stay fixed.
@@ -268,7 +289,7 @@ func TestCLIManagementJourney(t *testing.T) {
 	for _, e := range aud.Items {
 		actions = append(actions, e.Action)
 	}
-	if strings.Join(actions, ",") != "commitment.created,commitment.created,commitment.updated,commitment.created,commitment.deleted" {
+	if strings.Join(actions, ",") != "commitment.created,commitment.created,commitment.updated,commitment.updated,commitment.updated,commitment.created,commitment.deleted" {
 		t.Fatalf("audit actions: %v", actions)
 	}
 	if rc, out, _ = c.run(adminToken, "audit", "list", "--target-type", "commitment", "--actor-kind", "user"); rc != 0 || !strings.Contains(out, "commitment.created") {
@@ -368,7 +389,7 @@ func TestCLITokenAndURLSources(t *testing.T) {
 
 func TestCLIUsageErrors(t *testing.T) {
 	var out, errb bytes.Buffer
-	for _, args := range [][]string{{"users"}, {"users", "nope"}, {"users", "get"}, {"commitments", "get", "--url", "x"}, {"users", "get", "id", "extra"}} {
+	for _, args := range [][]string{{"users"}, {"users", "nope"}, {"users", "get"}, {"commitments", "get", "--url", "x"}, {"users", "get", "id", "extra"}, {"matching", "run", "extra"}} {
 		out.Reset()
 		errb.Reset()
 		if rc := run(args, &out, &errb); rc != 2 {

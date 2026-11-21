@@ -540,6 +540,17 @@ paths:
                   type: [string, "null"]
                   minLength: 1
                   maxLength: 2000
+                match_tolerance:
+                  description: |
+                    Optional; null for none. How far a booked bank payment may fall
+                    short of amount and still be confirmed automatically by the matching
+                    engine (decision D9, ADR-0039); without one only the exact amount
+                    confirms automatically. Zero or more, in the commitment's currency.
+                    A payment above amount is never confirmed automatically (it would
+                    overpay).
+                  oneOf:
+                    - $ref: "#/components/schemas/Money"
+                    - type: "null"
       responses:
         "201":
           description: Created.
@@ -678,6 +689,17 @@ paths:
                   type: [string, "null"]
                   minLength: 1
                   maxLength: 2000
+                match_tolerance:
+                  description: |
+                    Optional; null for none. How far a booked bank payment may fall
+                    short of amount and still be confirmed automatically by the matching
+                    engine (decision D9, ADR-0039); without one only the exact amount
+                    confirms automatically. Zero or more, in the commitment's currency.
+                    A payment above amount is never confirmed automatically (it would
+                    overpay). In a patch, send the whole object or null.
+                  oneOf:
+                    - $ref: "#/components/schemas/Money"
+                    - type: "null"
       responses:
         "200":
           description: The changed commitment.
@@ -2434,6 +2456,50 @@ paths:
           description: A notification or response was accepted; there is no body.
         default:
           $ref: "#/components/responses/Error"
+  /payment-matching/runs:
+    post:
+      operationId: runPaymentMatching
+      x-ledger-access: commitments:write
+      summary: Run the automatic payment matching
+      description: |
+        Runs the automatic matching engine once (task X2, ADR-0039), the same
+        run that follows every bank refresh that stored something. It pairs
+        outgoing bank transactions with open occurrences of the same
+        currency, an amount within 10% (or the commitment's match tolerance)
+        and a date within 7 days of the due date. A pair is confirmed only
+        when every safeguard of decision D9 passes: the exact amount (or short
+        by at most the commitment's match_tolerance), a booked transaction,
+        dated within 3 days of the due date, the only candidate on both sides,
+        and neither already assigned. Every other candidate becomes a
+        suggestion (state suggested, origin auto_rule) whose reason lists the
+        safeguards that failed; the description similarity is shown as a hint
+        and never confirms. Pending transactions are only suggested. A pair a
+        person rejected, unmatched or reversed is never suggested again, and
+        the run never changes a match a person touched (decision D33); it only
+        drops its own suggestions that are no longer candidates.
+
+        Idempotent: a second run over unchanged data writes nothing. The
+        matches are written and audited (payment_match.*) with the system as
+        actor; the request itself is audited as payment_matching.run with the
+        counts. Deterministic and offline: no bank or model is contacted.
+      tags: [payment-matches]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              description: No options yet; send nothing or an empty object.
+      responses:
+        "200":
+          description: What the run did.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatchingRun"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: mcp
     description: Model Context Protocol server.
@@ -2651,7 +2717,7 @@ components:
     Commitment:
       type: object
       description: A recurring commitment definition. Dated occurrences and payment state are not part of it.
-      required: [id, name, kind, amount, schedule, start_date, end_date, priority, notes, version, created_at, updated_at]
+      required: [id, name, kind, amount, schedule, start_date, end_date, priority, notes, match_tolerance, version, created_at, updated_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -2675,6 +2741,17 @@ components:
             - type: "null"
         notes:
           type: [string, "null"]
+        match_tolerance:
+          description: |
+            Optional; null for none. How far a booked bank payment may fall
+            short of amount and still be confirmed automatically by the matching
+            engine (decision D9, ADR-0039); without one only the exact amount
+            confirms automatically. Zero or more, in the commitment's currency.
+            A payment above amount is never confirmed automatically (it would
+            overpay).
+          oneOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
         version:
           $ref: "#/components/schemas/Version"
         created_at:
@@ -2683,6 +2760,32 @@ components:
         updated_at:
           type: string
           format: date-time
+    PaymentMatchingRun:
+      type: object
+      description: The counts of one automatic payment-matching run (ADR-0039).
+      additionalProperties: false
+      required: [candidates, confirmed, suggested, dropped, skipped]
+      properties:
+        candidates:
+          type: integer
+          minimum: 0
+          description: Candidate pairs evaluated, including those already suggested.
+        confirmed:
+          type: integer
+          minimum: 0
+          description: Matches confirmed automatically (every D9 safeguard passed).
+        suggested:
+          type: integer
+          minimum: 0
+          description: New suggestions left for review.
+        dropped:
+          type: integer
+          minimum: 0
+          description: The engine's own suggestions rejected because they are no longer candidates.
+        skipped:
+          type: integer
+          minimum: 0
+          description: Actions the match store refused (its guards, or a person changed the data meanwhile); the next run decides again.
     YearMonth:
       type: string
       pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'

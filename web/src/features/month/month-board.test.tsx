@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
-import { MonthBoard, STALE_AFTER_MS, type MonthBoardProps } from './month-board'
+import { MonthBoard, OFFLINE_NOTE_ID, STALE_AFTER_MS, type MonthBoardProps } from './month-board'
 import { item, payment, summary } from './fixtures'
 
 const T0 = Date.parse('2026-11-21T12:00:00Z')
@@ -15,6 +15,41 @@ function board(over: Partial<MonthBoardProps> = {}) {
   render(<MonthBoard {...props} />)
   return props
 }
+
+describe('MonthBoard offline', () => {
+  it('disables every record action and Refresh while offline, each with its visible reason', () => {
+    board({ data: summary([item('a'), item('b')]), offline: true })
+    const rows = screen.getAllByRole('button', { name: /^Record payment for / })
+    expect(rows).toHaveLength(2)
+    for (const b of rows) {
+      expect(b).toBeDisabled()
+      // The note itself lives on the page (MonthPage), which renders it with this id.
+      expect(b).toHaveAttribute('aria-describedby', OFFLINE_NOTE_ID)
+    }
+    const refresh = screen.getByRole('button', { name: 'Refresh' })
+    expect(refresh).toBeDisabled()
+    expect(refresh).toHaveAccessibleDescription(/Refresh is unavailable while you are offline/)
+    expect(screen.getByText('Offline')).toBeInTheDocument()
+  })
+
+  it('keeps the actions and Refresh enabled while online', () => {
+    board({ data: summary([item('a')]) })
+    expect(screen.getByRole('button', { name: /^Record payment for / })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+  })
+})
+
+describe('MonthBoard amounts and dates', () => {
+  it('groups thousands with a fixed narrow no-break space and shows ISO dates that never wrap', () => {
+    const NNBSP = String.fromCharCode(0x202f)
+    board({ data: summary([item('a', { amount: { amount: '1124.19', currency: 'EUR' } })]) })
+    const shown = [...document.querySelectorAll('[data-amount]')].map((e) => e.textContent)
+    expect(shown).toContain(`1${NNBSP}124.19${String.fromCharCode(0xa0)}EUR`)
+    const time = screen.getAllByText('2026-11-25')[0]!
+    expect(time.tagName).toBe('TIME')
+    expect(time).toHaveClass('whitespace-nowrap')
+  })
+})
 
 describe('MonthBoard states', () => {
   it('loading: announces what is loading and shows no figures', () => {
@@ -30,6 +65,12 @@ describe('MonthBoard states', () => {
     expect(screen.getByRole('heading', { name: 'No commitments fall due in November 2026' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Recorded commitments, by currency' })).toBeNull()
     expect(screen.queryByText(/Stale/)).toBeNull()
+  })
+
+  it('the month controls are a labelled group, not a navigation landmark', () => {
+    board({ data: summary([]) })
+    expect(screen.getByRole('group', { name: 'Month' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Month' })).toBeNull()
   })
 
   it('stale: data older than the threshold is labelled with text, an icon and its age', () => {
@@ -123,7 +164,7 @@ describe('MonthBoard design follow-ups', () => {
     board({ data: summary([item('a'), item('b')]) })
     expect(screen.getByText('1 overdue occurrence')).toBeInTheDocument()
     expect(screen.queryByText('(1)')).toBeNull()
-    const amount = screen.getByText('10.00', { selector: 'dd' })
+    const amount = screen.getAllByText('10.00 EUR', { selector: '[data-amount]' }).map((e) => e.closest('dd')).find(Boolean)!
     expect(amount.className).toContain('font-semibold')
     expect(screen.getByText('Overdue (past original due date)').className).toContain('font-semibold')
   })
@@ -199,7 +240,7 @@ describe('MonthBoard content', () => {
     expect(within(totals).getAllByRole('listitem')).toHaveLength(2)
     expect(totals).toHaveTextContent('never added together or converted')
     expect(totals).toHaveTextContent('not a forecast and not a measure of money that is safe to spend')
-    expect(within(totals).getByText('5.00')).toBeInTheDocument()
+    expect(within(totals).getByText('5.00 USD')).toBeInTheDocument()
   })
 
   it('notes evidence in another currency that is not counted', () => {

@@ -46,6 +46,7 @@ var (
 	opUnmatchMatch = operation{ID: "unmatchPaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/unmatch"}
 	opCorrectMatch = operation{ID: "correctPaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/correct"}
 	opReverseMatch = operation{ID: "reversePaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/reverse"}
+	opRunMatching  = operation{ID: "runPaymentMatching", Method: http.MethodPost, Path: "/payment-matching/runs"}
 
 	opListTokens  = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
 	opGetToken    = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
@@ -65,5 +66,6 @@ var operations = []operation{
 	opListManualPayments, opRecordManualPayment, opGetManualPayment, opDeleteManualPayment,
 	opSetOverride, opUndoOverride,
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch,
+	opRunMatching,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
 }

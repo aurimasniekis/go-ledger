@@ -2,17 +2,20 @@ import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge, type Status } from '@/components/status-badge'
 import { DisconnectedState, EmptyState, FailedState, LoadingState } from '@/components/state-panels'
+import { Amount, DateText } from '@/components/formatted'
 import { isNetworkError } from '@/lib/connection'
 import type { ReactNode, Ref } from 'react'
 import { ProvenanceMarker, provenanceOf } from './provenance'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from './month'
 import type { MonthItem, MonthSummary, MonthTotals, PaymentStatus } from './types'
 
+export const OFFLINE_NOTE_ID = 'record-offline-note'
+export const REFRESH_OFFLINE_ID = 'refresh-offline-note'
+
 /**
  * How old fetched data may get before the view calls it stale. A placeholder:
  * the freshness thresholds are an unresolved product decision.
  */
-export const OFFLINE_NOTE_ID = 'record-offline-note'
 export const STALE_AFTER_MS = 5 * 60 * 1000
 
 export interface MonthBoardProps {
@@ -39,7 +42,7 @@ export interface MonthBoardProps {
   titleRef?: Ref<HTMLHeadingElement>
 }
 
-const money = (m: { amount: string; currency: string }) => `${m.amount} ${m.currency}`
+const money = (m: { amount: string; currency: string }) => <Amount amount={m.amount} currency={m.currency} />
 
 export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
   const label = monthLabel(p.month)
@@ -111,11 +114,17 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
           <StatusBadge status="stale" label={`Stale, fetched ${fetchedAge}`} />
         ) : null}
         <span>
-          Statuses as of <time dateTime={data.as_of}>{data.as_of}</time> (reporting time zone); fetched{' '}
+          Statuses as of <DateText value={data.as_of} /> (reporting time zone); fetched{' '}
           <time dateTime={new Date(p.dataUpdatedAt).toISOString()}>{fetchedAge}</time>.
         </span>
         {p.isFetching && <span role="status">Refreshing…</span>}
-        <Button variant="ghost" size="sm" onClick={p.onRetry} disabled={p.isFetching}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={p.onRetry}
+          disabled={p.isFetching || p.offline}
+          aria-describedby={p.offline ? REFRESH_OFFLINE_ID : undefined}
+        >
           <RefreshCw aria-hidden className="size-4" />
           Refresh
         </Button>
@@ -126,10 +135,23 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
           {fetchedAge}; it may be out of date.
         </p>
       )}
+      {p.offline && (
+        <p id={REFRESH_OFFLINE_ID} className="text-muted-foreground">
+          Refresh is unavailable while you are offline; the data shown is what was last fetched.
+        </p>
+      )}
       <p className="text-muted-foreground">
-        {data.freshness.occurrences_changed_at
-          ? `Occurrences last changed ${utcStamp(data.freshness.occurrences_changed_at)}. `
-          : ''}
+        {data.freshness.occurrences_changed_at ? (
+          <>
+            Occurrences last changed{' '}
+            <time dateTime={data.freshness.occurrences_changed_at} className="whitespace-nowrap">
+              {utcStamp(data.freshness.occurrences_changed_at)}
+            </time>
+            .{' '}
+          </>
+        ) : (
+          ''
+        )}
         {data.freshness.bank.available ? '' : 'No bank data connected yet.'}
       </p>
     </section>
@@ -158,14 +180,14 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
             {/* Below sm each label sits over its amount; from sm up label and amount share a row. Only labels wrap: an amount never breaks. */}
             <dl className="mt-1 grid grid-cols-1 gap-x-4 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-0.5">
               <dt>Scheduled this month</dt>
-              <dd data-total-amount className={AMOUNT}>{t.due.amount}</dd>
+              <dd data-total-amount className={AMOUNT}>{money(t.due)}</dd>
               <dt>Paid</dt>
-              <dd data-total-amount className={AMOUNT}>{t.paid.amount}</dd>
+              <dd data-total-amount className={AMOUNT}>{money(t.paid)}</dd>
               <dt>Outstanding</dt>
-              <dd data-total-amount className={AMOUNT}>{t.outstanding.amount}</dd>
+              <dd data-total-amount className={AMOUNT}>{money(t.outstanding)}</dd>
               <dt className={hasOverdue(t) ? 'font-semibold' : undefined}>Overdue (past original due date)</dt>
               <dd data-total-amount className={hasOverdue(t) ? AMOUNT + ' font-semibold text-status-overdue' : AMOUNT}>
-                {t.overdue.amount}
+                {money(t.overdue)}
               </dd>
               {t.overdue_count > 0 && (
                 <dd className="text-xs text-muted-foreground sm:col-span-2 sm:text-right">
@@ -272,7 +294,7 @@ function OccurrenceRow({ item: i, onRecord, offline, form }: { item: MonthItem |
         <div className="min-w-0 flex-1">
           <p className="font-medium break-words">{i.commitment_name || i.commitment_id}</p>
           <p className="text-sm text-muted-foreground">
-            Original due date <time dateTime={i.due_date}>{i.due_date}</time>
+            Original due date <DateText value={i.due_date} />
           </p>
         </div>
         <p className="shrink-0 whitespace-nowrap font-mono">{money(i.amount)}</p>
@@ -301,9 +323,9 @@ function OccurrenceRow({ item: i, onRecord, offline, form }: { item: MonthItem |
       {p.timing === 'overdue' && p.grace_until && (
         <p className="text-sm">
           {p.within_grace ? (
-            <>Overdue since the original due date; within documented grace until <time dateTime={p.grace_until}>{p.grace_until}</time>.</>
+            <>Overdue since the original due date; within documented grace until <DateText value={p.grace_until} />.</>
           ) : (
-            <>Overdue; documented grace ended <time dateTime={p.grace_until}>{p.grace_until}</time>.</>
+            <>Overdue; documented grace ended <DateText value={p.grace_until} />.</>
           )}
         </p>
       )}

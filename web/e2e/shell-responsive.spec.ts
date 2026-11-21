@@ -47,13 +47,33 @@ async function amountsOnOneLine(page: Page) {
   expect(count).toBeGreaterThanOrEqual(4)
   for (let n = 0; n < count; n++) {
     const dd = amounts.nth(n)
-    const lines = await dd.evaluate((el) => {
+    // The visible text only: the screen-reader copy is visually hidden and positioned apart.
+    const lines = await dd.locator('[data-amount]').evaluate((el) => {
       const range = document.createRange()
       range.selectNodeContents(el)
       return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size
     })
     expect(lines, 'amount on one line: ' + (await dd.textContent())).toBe(1)
     await insideViewport(page, dd)
+  }
+}
+
+// An ISO date is one line too: it must not break at a hyphen ("2026-11-" / "05"), in rows, the freshness line or the notice.
+async function datesOnOneLine(page: Page) {
+  const times = page.locator('time')
+  await expect(times.first()).toBeVisible()
+  const count = await times.count()
+  expect(count).toBeGreaterThanOrEqual(3)
+  for (let n = 0; n < count; n++) {
+    const t = times.nth(n)
+    const text = (await t.textContent()) ?? ''
+    if (!/^\d{4}-\d{2}-\d{2}/.test(text)) continue
+    const lines = await t.evaluate((el) => {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size
+    })
+    expect(lines, 'date on one line: ' + text).toBe(1)
   }
 }
 
@@ -64,6 +84,7 @@ test.describe('375 CSS px wide', () => {
     await signedIn(page)
     await page.goto('/month?month=2026-11')
     await amountsOnOneLine(page)
+    await datesOnOneLine(page)
   })
 })
 
@@ -124,6 +145,7 @@ for (const s of sizes) {
       await zoomText(page)
       await expect(page.getByRole('heading', { name: 'Occurrences' })).toBeVisible()
       await amountsOnOneLine(page)
+      await datesOnOneLine(page)
       await insideViewport(page, page.getByRole('heading', { name: 'Occurrences' }))
       for (const row of await page.getByRole('listitem').all()) await insideViewport(page, row)
       await noOverflow(page)

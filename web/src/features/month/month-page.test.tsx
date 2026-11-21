@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -60,11 +61,11 @@ describe('Month page', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Record a payment' }))
     const form = await screen.findByRole('form', { name: 'Record a payment' })
     expect(within(form).getByLabelText(/Amount paid/)).toHaveValue('10.00') // the server's outstanding amount, not computed here
-    expect(within(form).getByLabelText('Paid on')).toHaveValue('2026-11-21')
+    expect(within(form).getByLabelText('Paid on (YYYY-MM-DD)')).toHaveValue('2026-11-21')
     await userEvent.click(within(form).getByRole('button', { name: 'Save payment' }))
 
     expect(await within(form).findByText('Not saved yet')).toBeInTheDocument()
-    expect(screen.queryByText(/EUR paid on/)).toBeNull()
+    expect(screen.queryByText(/paid on/)).toBeNull()
     const post = calls.find((c) => c.method === 'POST')!
     expect(post.path).toBe('/api/v1/occurrences/a/manual-payments')
     expect(post.headers['X-CSRF-Token']).toBe('csrf-abc')
@@ -72,7 +73,7 @@ describe('Month page', () => {
 
     saved = true
     release(json(201, { id: 'p1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21', version: 3 }))
-    expect(await screen.findByText(/^10.00 EUR paid on 2026-11-21 for Rent a/)).toBeInTheDocument()
+    expect(await screen.findByText(/paid on/)).toHaveTextContent(/10\.00\sEUR10\.00 Euro paid on 2026-11-21 for Rent a/)
     await waitFor(() => expect(screen.getAllByText('Paid').length).toBeGreaterThan(0))
 
     await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
@@ -97,8 +98,30 @@ describe('Month page', () => {
     expect(alert).toHaveTextContent('Nothing was recorded')
     expect(amount).toHaveValue('abc')
     expect(amount).toHaveAttribute('aria-invalid', 'true')
-    expect(screen.queryByText(/EUR paid on/)).toBeNull()
+    expect(screen.queryByText(/paid on/)).toBeNull()
     expect(screen.queryByText('Paid', { selector: '[data-status] *' })).toBeNull()
+  })
+
+  it('a request that never reaches the server shows the offline state, not a failure', async () => {
+    responder = () => {
+      throw new TypeError('Failed to fetch')
+    }
+    // No retries: a transport failure is retried by default, which would outlast the assertion below.
+    renderApp('/month?month=2026-11', new QueryClient({ defaultOptions: { queries: { retry: false } } }))
+    expect(await screen.findByText(/No month has loaded yet/)).toBeInTheDocument()
+    expect(screen.queryByText('Could not load this month')).toBeNull()
+  })
+
+  it('announces a failed payment once: in the form alert, not also in the live region', async () => {
+    responder = (c) => (c.method === 'POST' ? json(422, { code: 'validation_failed', message: 'amount must be a decimal', field: 'amount', request_id: 'r' }) : json(200, summary([item('a')])))
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: 'Record a payment' }))
+    const form = await screen.findByRole('form', { name: 'Record a payment' })
+    await userEvent.click(within(form).getByRole('button', { name: 'Save payment' }))
+    await within(form).findByRole('alert')
+    await new Promise((r) => setTimeout(r, 100)) // the announcer writes its text 50 ms after a message
+    expect(document.querySelector('[data-announcer="assertive"]')!.textContent).toBe('')
+    expect(document.querySelector('[data-announcer="polite"]')!.textContent).toBe('')
   })
 
   it('a failed undo says the payment is still recorded', async () => {
@@ -147,7 +170,7 @@ describe('Month page', () => {
     const opener = await screen.findByRole('button', { name: /^Record payment for Rent a/ })
     await userEvent.click(opener)
     await userEvent.click(await screen.findByRole('button', { name: 'Save payment' }))
-    const notice = await screen.findByText(/EUR paid on/)
+    const notice = await screen.findByText(/paid on/)
     await waitFor(() => expect(notice.closest('[role="status"]')).toHaveFocus())
     await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
     await screen.findByText(/Payment removed/)
@@ -183,7 +206,7 @@ describe('Month page', () => {
     open()
     await userEvent.click(await screen.findByRole('button', { name: 'Record a payment' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Save payment' }))
-    await screen.findByText(/EUR paid on/)
+    await screen.findByText(/paid on/)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Record a payment' })).toBeDisabled())
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'November 2026' })).toHaveFocus())

@@ -449,7 +449,11 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_matches WHERE transaction_id = ? AND state IN ('suggested', 'confirmed')", string(t.ID)).Scan(&others); err != nil {
 				return err
 			}
-			if err := matches.CheckAuto(t, others, n.Amount, o, n.AutoTolerance); err != nil {
+			tol, err := commitmentTolerance(ctx, tx, o.ID)
+			if err != nil {
+				return err
+			}
+			if err := matches.CheckAuto(t, others, n.Amount, o, tol); err != nil {
 				return err
 			}
 		}
@@ -586,6 +590,35 @@ func refuseUndo(ctx context.Context, tx *sql.Tx, m matches.Match) error {
 // allocation must fit the transaction and, unless allowed, the occurrence's
 // amount.
 func (s *Store) Confirm(ctx context.Context, actor audit.Actor, id string, expected int64, allow bool, reason *string) (matches.Change, error) {
+	return s.confirm(ctx, actor, id, expected, allow, reason)
+}
+
+// ConfirmAuto confirms one of the matching engine's suggestions as the
+// system (task X2, ADR-0039). The automatic rules apply as for any automation
+// actor; the tolerance is the commitment's match tolerance as the write
+// transaction reads it (none means an exact amount), never a caller's value; a
+// model suggestion is never confirmed this way.
+func (s *Store) ConfirmAuto(ctx context.Context, id string, expected int64, reason *string) (matches.Change, error) {
+	return s.confirm(ctx, audit.System, id, expected, false, reason)
+}
+
+// commitmentTolerance reads the match tolerance of the commitment an
+// occurrence belongs to; the zero value means none.
+func commitmentTolerance(ctx context.Context, tx *sql.Tx, occurrenceID string) (money.Money, error) {
+	var amt sql.Null[sqlvalue.Amount]
+	var cur sql.Null[sqlvalue.Currency]
+	err := tx.QueryRowContext(ctx, "SELECT c.match_tolerance_amount, c.match_tolerance_currency FROM commitment_occurrences o JOIN commitments c ON c.id = o.commitment_id WHERE o.id = ?",
+		occurrenceID).Scan(&amt, &cur)
+	if err != nil {
+		return money.Money{}, err
+	}
+	if !amt.Valid {
+		return money.Money{}, nil
+	}
+	return sqlvalue.Money(amt.V, cur.V)
+}
+
+func (s *Store) confirm(ctx context.Context, actor audit.Actor, id string, expected int64, allow bool, reason *string) (matches.Change, error) {
 	return s.decide(ctx, actor, id, expected, reason, matches.ActionConfirmed, matches.StateConfirmed, func(ctx context.Context, tx *sql.Tx, m matches.Match) error {
 		o, err := occstore.GetTx(ctx, tx, m.OccurrenceID)
 		if err != nil {
@@ -598,12 +631,19 @@ func (s *Store) Confirm(ctx context.Context, actor audit.Actor, id string, expec
 			if allow {
 				return matches.ErrActorOverpayment
 			}
+			if m.Origin == matches.OriginModel {
+				return matches.ErrAutoModel
+			}
 			var others int
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_matches WHERE transaction_id = ? AND id <> ? AND state IN ('suggested', 'confirmed')",
 				string(m.Transaction.ID), m.ID).Scan(&others); err != nil {
 				return err
 			}
-			if err := matches.CheckAuto(m.Transaction, others, m.Amount, o, money.Money{}); err != nil {
+			tolerance, err := commitmentTolerance(ctx, tx, o.ID)
+			if err != nil {
+				return err
+			}
+			if err := matches.CheckAuto(m.Transaction, others, m.Amount, o, tolerance); err != nil {
 				return err
 			}
 		}
