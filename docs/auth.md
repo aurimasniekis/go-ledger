@@ -182,7 +182,12 @@ Treat a root token like a password for the whole instance:
 - **Only the root token of the root account can escalate accounts** (decision D32). Creating an administrator, promoting a
   user to administrator, re-enabling a disabled administrator and setting any password (`PUT /api/v1/users/{id}/password`)
   are refused to every other token with 403 `root_token_required`, even one holding `users:write`. A `users:write` token can
-  still create non-administrators, edit profiles, demote and disable users. Sessions are unchanged (recent sign-in).
+  still create non-administrators, edit profiles, and demote and disable users other than the root account. Sessions are unchanged
+  (recent sign-in).
+- **The root account and the root token are protected the same way** (decision D34). Demoting or disabling the root (first)
+  account (`PATCH /api/v1/users/{id}`) and revoking the root token (`DELETE /api/v1/tokens/{id}`, which also ends its child
+  tokens) are refused to every token except a root token of the root account, with 403 `root_token_required`, even for a token holding
+  `users:write` or `tokens:write`. A session may do both.
 - **The root token of the root account** is the only token that can create tokens through the API. Its power is therefore the
   power to make any other token, bounded by its own grants.
 - **Long-lived tokens** outlive sign-outs, password changes and session timeouts. They end only by revocation, by expiry, by a
