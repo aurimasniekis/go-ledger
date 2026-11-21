@@ -101,9 +101,49 @@ type Service struct {
 	// uses slog.Default.
 	Log *slog.Logger
 
-	// detached counts the refresh runs that outlive their request (see
-	// Refresh); Wait waits for them. A Service must not be copied once used.
+	// detached counts the refresh runs Refresh started that have not ended;
+	// Wait waits for them. A Service must not be copied once used.
 	detached sync.WaitGroup
+	// mu guards closed and the base context of detached runs.
+	mu     sync.Mutex
+	closed bool // set by Wait: no further detached run may start
+	base   context.Context
+	cancel context.CancelFunc
+}
+
+// ErrShuttingDown is returned by Refresh once shutdown began (Wait was
+// called): no new detached run may start.
+var ErrShuttingDown = errors.New("bankconnect: Ledger is shutting down")
+
+// startDetached registers a detached run under the lock, so none can start
+// after Wait began. The returned context carries ctx's values, is not
+// cancelled with the request and ends when CancelRefreshes is called.
+func (s *Service) startDetached(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, nil, ErrShuttingDown
+	}
+	if s.base == nil {
+		s.base, s.cancel = context.WithCancel(context.Background())
+	}
+	bg, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(s.base, cancel)
+	s.detached.Add(1)
+	return bg, func() { stop(); cancel() }, nil
+}
+
+// CancelRefreshes cancels the context of every detached refresh, so the
+// engine ends each run as interrupted (and it is audited) while the database
+// is still open. Shutdown calls it when Wait ran out of time.
+func (s *Service) CancelRefreshes() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	if s.base == nil {
+		s.base, s.cancel = context.WithCancel(context.Background())
+	}
+	s.cancel()
 }
 
 func (s *Service) log() *slog.Logger {
@@ -438,6 +478,9 @@ func (s *Service) consentFailed(ctx context.Context, claim banking.ConsentClaim,
 // it after the HTTP server has stopped and before the database closes, so a
 // run that was detached from its request is not cut off.
 func (s *Service) Wait(ctx context.Context) error {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
 	done := make(chan struct{})
 	go func() { s.detached.Wait(); close(done) }()
 	select {
@@ -477,11 +520,16 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 	// deadline below, never cancels a refresh half way (it would be recorded
 	// as a failure and count against the scheduler's backoff).
 	done := make(chan refreshDone, 1)
-	bg := context.WithoutCancel(ctx)
-	s.detached.Add(1)
+	bg, release, err := s.startDetached(ctx)
+	if err != nil {
+		return View{}, err
+	}
 	go func() {
 		defer s.detached.Done()
+		defer release()
 		res, rerr := s.Engine.Refresh(bg, id, p)
+		// The audit entry is written even when the run was cancelled.
+		bg := context.WithoutCancel(bg)
 		d := refreshDone{res: res, rerr: rerr}
 		if res.Run.ID != "" {
 			outcome := "failed"
