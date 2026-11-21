@@ -29,6 +29,7 @@ const code = (e: BankError | null) => (e?.code ? <> (<Mono>{e.code}</Mono>)</> :
 function outcomeText(c: BankConnection): string {
   const run = c.last_refresh_run
   const name = c.institution.name
+  if (c.refresh_running) return `${name}: the refresh is still running at the bank. This page updates when it ends.`
   if (!run) return `${name}: no refresh result.`
   if (run.outcome === 'succeeded') return `${name} refreshed.`
   if (run.outcome === 'partial') return `${name} refreshed, but ${run.accounts_failed} account(s) failed. Their earlier data is kept.`
@@ -204,7 +205,7 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
   const doRefresh = useMutation({
     mutationFn: () => refresh(c.id),
     onSuccess: async (fresh) => {
-      announce(outcomeText(fresh), fresh.last_refresh_run?.outcome === 'succeeded' ? 'polite' : 'assertive')
+      announce(outcomeText(fresh), fresh.last_refresh_run?.outcome === 'succeeded' || fresh.refresh_running ? 'polite' : 'assertive')
       await invalidate()
     },
     onError: async (e) => {
@@ -220,7 +221,8 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
   const needsReconnect = d.kind === 'reconnect'
   const canReconnect = needsReconnect || d.kind === 'disconnected' || (d.kind === 'ok' && c.consent_expires_soon)
   const reconnectPrimary = needsReconnect || d.kind === 'disconnected'
-  const busy = doRefresh.isPending || doReconnect.isPending
+  const running = c.refresh_running
+  const busy = doRefresh.isPending || doReconnect.isPending || running
   const connectedFor = c.mode === 'developer' ? 'Developer mode: only accounts linked to the application at the provider appear.' : null
 
   return (
@@ -269,6 +271,11 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
           Refreshing {c.institution.name}… Nothing below has changed yet.
         </p>
       )}
+      {running && !doRefresh.isPending && (
+        <p role="status" className="text-sm text-muted-foreground">
+          A refresh of {c.institution.name} is still running at the bank. This page updates when it ends; nothing below has changed yet.
+        </p>
+      )}
       {doRefresh.isError && <FormError message={refreshProblem(doRefresh.error)} />}
       {doReconnect.isError && <FormError message={doReconnect.error instanceof Error ? doReconnect.error.message : 'Could not start reconnecting.'} />}
 
@@ -281,7 +288,7 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
           )}
           {canRefresh && (
             <Button variant={d.kind === 'temporary' ? 'default' : 'outline'} disabled={busy} onClick={() => doRefresh.mutate()}>
-              {doRefresh.isPending ? 'Refreshing…' : d.kind === 'temporary' ? 'Try again' : 'Refresh now'}
+              {doRefresh.isPending || running ? 'Refreshing…' : d.kind === 'temporary' ? 'Try again' : 'Refresh now'}
             </Button>
           )}
           {c.status !== 'disconnected' && (

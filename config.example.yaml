@@ -162,6 +162,12 @@ banking:
   # Environment: LEDGER_BANKING_CONSENT_TTL  Flag: --banking.consent_ttl
   consent_ttl: "1h"
 
+  # How old the last successful refresh of a bank account may be before its
+  # data is shown as stale (and the background scheduler refreshes it).
+  # Between 1 minute and 30 days.
+  # Environment: LEDGER_BANKING_STALE_AFTER  Flag: --banking.stale_after
+  stale_after: "24h"
+
   enable_banking:
 
     # Enable Banking API base URL. Sandbox and production applications use the
@@ -248,9 +254,8 @@ banking:
   refresh:
 
     # Refresh active bank connections in the background. When false,
-    # connections are only refreshed on request. Retries of one read, the 24
-    # hour staleness threshold and the provider's daily fetch budget are not
-    # configurable.
+    # connections are only refreshed on request. Retries of one read and the
+    # provider's daily fetch budget are not configurable.
     # Environment: LEDGER_BANKING_REFRESH_ENABLED  Flag: --banking.refresh.enabled
     enabled: true
 

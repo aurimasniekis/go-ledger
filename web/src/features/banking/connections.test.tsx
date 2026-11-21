@@ -17,6 +17,8 @@ afterEach(() => {
 beforeEach(() => vi.mocked(goToBank).mockReset())
 
 const list = (items = [connection()]) => ({ 'GET /api/v1/bank-connections': ok({ items, next_cursor: null }) })
+// Amounts use fixed-separator grouping (D38-3a) and appear visually and for screen readers.
+const BALANCE = /1\s250\.40\s+EUR/
 const card = async (name: string) => within(await screen.findByRole('article', { name }))
 
 describe('bank connections page', () => {
@@ -30,7 +32,7 @@ describe('bank connections page', () => {
     expect(within(acc).getAllByText(/Last successful refresh:/)).toHaveLength(1)
     expect(within(acc).getAllByText(/Last attempt:/)).toHaveLength(1)
     // Amounts are shown as exact decimal text with their currency.
-    expect(within(acc).getByText('1,250.40 EUR')).toBeInTheDocument()
+    expect(within(acc).getAllByText(BALANCE).length).toBeGreaterThan(0)
     expect(within(acc).getByText('Booked')).toBeInTheDocument()
     expect(c.getByText(/sandbox/)).toBeInTheDocument()
   })
@@ -78,7 +80,7 @@ describe('bank connections page', () => {
     renderApp('/connections')
     const c = await card('Fake Bank')
     expect(c.getAllByText('Reconnect needed').length).toBeGreaterThan(1)
-    expect(c.getByText('1,250.40 EUR')).toBeInTheDocument()
+    expect(c.getAllByText(BALANCE).length).toBeGreaterThan(0)
     expect(c.getByText(/figures above are from the last successful refresh/)).toBeInTheDocument()
   })
 
@@ -140,6 +142,31 @@ describe('bank connections page', () => {
     expect(calls.filter((x) => x.method === 'POST')).toHaveLength(1)
   })
 
+  it('shows a refresh still running at the deadline and polls until it ends (D40.4)', async () => {
+    const user = userEvent.setup()
+    const running = connection({ refresh_running: true, last_refresh_run: run({ id: 'R3', outcome: 'running', finished_at: null }) })
+    let polls = -1 // -1: nothing requested yet
+    installApi({
+      ...signedIn(),
+      'GET /api/v1/bank-connections': () => {
+        if (polls >= 0) polls++
+        if (polls < 0) return ok({ items: [connection()], next_cursor: null })
+        return ok({ items: [polls <= 2 ? running : connection({ version: 5, last_refresh_run: run({ id: 'R3' }) })], next_cursor: null })
+      },
+      'POST /api/v1/bank-connections/01JD3Y4C8V9M2Q7W5R6T0XZC01/refresh': () => {
+        polls = 0
+        return ok(running)
+      },
+    })
+    renderApp('/connections')
+    const c = await card('Fake Bank')
+    await user.click(c.getByRole('button', { name: 'Refresh now' }))
+    expect(await c.findByText(/still running at the bank/)).toBeInTheDocument()
+    expect(c.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
+    await waitFor(() => expect(c.queryByText(/still running at the bank/)).toBeNull(), { timeout: 10000 })
+    expect(c.getByRole('button', { name: 'Refresh now' })).toBeEnabled()
+  }, 15000)
+
   it('turns a refresh that failed at the bank into the retry state, not a reconnect', async () => {
     const user = userEvent.setup()
     let after = false
@@ -172,7 +199,7 @@ describe('bank connections page', () => {
     await user.click(c.getByRole('button', { name: 'Refresh now' }))
     expect(await c.findByRole('alert')).toHaveTextContent('already running')
     // Earlier data is untouched.
-    expect(c.getByText('1,250.40 EUR')).toBeInTheDocument()
+    expect(c.getAllByText(BALANCE).length).toBeGreaterThan(0)
   })
 
   it('starts a reconnect and sends the browser to the bank', async () => {

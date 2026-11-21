@@ -34,6 +34,21 @@ func TestBankRefreshDefaultsAndValidation(t *testing.T) {
 	wantProblem(t, got, "banking.refresh.max_backoff")
 }
 
+func TestBankStaleAfter(t *testing.T) {
+	res, err := load(t, okEnv(nil), nil, nil, "")
+	if err != nil || res.Config.Banking.StaleAfter != 24*time.Hour {
+		t.Fatalf("default: %v %v", err, res.Config.Banking.StaleAfter)
+	}
+	res, err = load(t, okEnv(env{"LEDGER_BANKING_STALE_AFTER": "36h"}), nil, nil, "")
+	if err != nil || res.Config.Banking.StaleAfter != 36*time.Hour {
+		t.Fatalf("36h: %v %v", err, res.Config.Banking.StaleAfter)
+	}
+	for _, bad := range []string{"30s", "0s", "721h"} {
+		_, err := load(t, okEnv(env{"LEDGER_BANKING_STALE_AFTER": bad}), nil, nil, "")
+		wantProblem(t, problems(t, err), "banking.stale_after")
+	}
+}
+
 func TestBankRedirectURL(t *testing.T) {
 	res, err := load(t, okEnv(nil), nil, nil, "")
 	if err != nil || res.Config.Banking.RedirectURL != "" {

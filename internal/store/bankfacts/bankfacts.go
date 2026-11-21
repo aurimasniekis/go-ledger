@@ -326,17 +326,6 @@ func (s *Store) ActivateConnection(ctx context.Context, id banking.ConnectionID,
 		sess.Reference.Reveal(), ts(sess.ValidUntil), ts(at), ts(at))
 }
 
-// BeginReconnect implements [banking.FactStore].
-func (s *Store) BeginReconnect(ctx context.Context, id banking.ConnectionID, consentState string, at time.Time) (banking.Connection, error) {
-	if consentState == "" {
-		return banking.Connection{}, errors.New("bankfacts: reconnect without a consent state")
-	}
-	if err := requireTime("reconnect", at); err != nil {
-		return banking.Connection{}, err
-	}
-	return s.updateConnection(ctx, id, "consent_state = ?, consent_started_at = ?, consent_initiator = '', updated_at = ?", consentState, ts(at), ts(at))
-}
-
 // BeginReconnectBy implements [banking.ConsentStore].
 func (s *Store) BeginReconnectBy(ctx context.Context, id banking.ConnectionID, consentState, initiator string, at time.Time, ev banking.AuditFunc) (banking.Connection, error) {
 	if consentState == "" {

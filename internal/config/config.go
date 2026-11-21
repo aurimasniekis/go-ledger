@@ -156,6 +156,7 @@ type Banking struct {
 	// RedirectURL is where a bank sends the user back after consent.
 	RedirectURL   string        `cfg:"redirect_url" desc:"Where a bank sends you back after you approve access: Ledger's external address followed by /connections/callback, for example https://ledger.example.com/connections/callback. The same URL must be registered with the banking provider. https only (plain http only on loopback). Empty means connecting a bank (and reconnecting) is switched off; refreshing and disconnecting existing connections still work."`
 	ConsentTTL    time.Duration `cfg:"consent_ttl" default:"1h" desc:"How long a started bank consent may wait for the bank's redirect. After it a completion is refused (409 consent_not_found) and a connection that never connected becomes failed (consent_expired). Between 1 minute and 24 hours."`
+	StaleAfter    time.Duration `cfg:"stale_after" default:"24h" desc:"How old the last successful refresh of a bank account may be before its data is shown as stale (and the background scheduler refreshes it). Between 1 minute and 30 days."`
 	EnableBanking EnableBanking `cfg:"enable_banking"`
 	Refresh       BankRefresh   `cfg:"refresh"`
 }
@@ -163,7 +164,7 @@ type Banking struct {
 // BankRefresh configures the background refresh scheduler (ADR-0028). The
 // defaults are proposals, not operator decisions.
 type BankRefresh struct {
-	Enabled    bool          `cfg:"enabled" default:"true" desc:"Refresh active bank connections in the background. When false, connections are only refreshed on request. Retries of one read, the 24 hour staleness threshold and the provider's daily fetch budget are not configurable."`
+	Enabled    bool          `cfg:"enabled" default:"true" desc:"Refresh active bank connections in the background. When false, connections are only refreshed on request. Retries of one read and the provider's daily fetch budget are not configurable."`
 	Interval   time.Duration `cfg:"interval" default:"6h" desc:"Time between successful background refreshes of a connection. Banks commonly allow about four background fetches a day; the scheduler also keeps to the provider's daily budget whatever this is set to."`
 	MaxBackoff time.Duration `cfg:"max_backoff" default:"6h" desc:"Longest wait after failed refreshes. The wait starts at 15 minutes and doubles per consecutive failure. A rate limit waits at least 6 hours, or the provider's Retry-After (at most 24 hours)."`
 }

@@ -3,11 +3,13 @@ import { apiFetch } from '@/lib/api'
 import { usePagedList } from '@/lib/paged'
 import type { BankApplication, BankConnection, BankInstitution, ConsentStart } from './types'
 
+export const REFRESH_POLL_MS = 3000
 export const connectionsKey = ['bank-connections'] as const
 const base = '/api/v1/bank-connections'
 
 export function useConnections() {
-  return usePagedList<BankConnection>(connectionsKey, base)
+  // While a refresh is still running in the background (D40.4) the list is polled until it ends.
+  return usePagedList<BankConnection>(connectionsKey, base, {}, { refetchInterval: (pages) => (pages.some((p) => p.items.some((c) => c.refresh_running)) ? REFRESH_POLL_MS : false) })
 }
 
 export function useApplications(enabled = true) {

@@ -236,11 +236,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	var sched *bankimport.Scheduler
 	if cfg.Banking.Refresh.Enabled {
 		sched = bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
-			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff,
+			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff, StaleAfter: cfg.Banking.StaleAfter,
 		})
 	}
 	connSvc := &bankconnect.Service{Facts: facts, Providers: providerMap(bankProviders), Engine: engine, Audit: auditLog, RedirectURL: cfg.Banking.RedirectURL,
-		ConsentTTL: cfg.Banking.ConsentTTL, RefreshTimeout: refreshTimeout(cfg.HTTP.WriteTimeout)}
+		ConsentTTL: cfg.Banking.ConsentTTL, StaleAfter: cfg.Banking.StaleAfter, Log: log, RefreshTimeout: refreshTimeout(cfg.HTTP.WriteTimeout)}
 	if sched != nil {
 		connSvc.Schedule = sched.Status
 	}

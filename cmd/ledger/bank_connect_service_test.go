@@ -339,27 +339,6 @@ func TestRefreshReportsItsOwnRunAndPreRunErrors(t *testing.T) {
 	}
 }
 
-func TestRefreshIsBoundedByItsTimeout(t *testing.T) {
-	e := newSvcEnv(t)
-	c := e.connect(svcAlice)
-	e.svc.RefreshTimeout = 40 * time.Millisecond
-	e.svc.Engine = blockingRefresher{}
-	start := time.Now()
-	if _, err := e.svc.Refresh(e.ctx, svcAlice, c.ID); err == nil {
-		t.Error("a refresh that outlives its deadline must report the cancellation")
-	}
-	if time.Since(start) > 5*time.Second {
-		t.Error("the refresh was not bounded")
-	}
-}
-
-type blockingRefresher struct{}
-
-func (blockingRefresher) Refresh(ctx context.Context, _ banking.ConnectionID, _ banking.Provider) (bankimport.Result, error) {
-	<-ctx.Done()
-	return bankimport.Result{}, ctx.Err()
-}
-
 // F4: the consent state has a lifetime and an owner.
 func TestExpiredConsentIsRefusedAndFailsTheConnection(t *testing.T) {
 	e := newSvcEnv(t)
@@ -522,5 +501,120 @@ func TestDisconnectedMeanwhileIsNotResurrected(t *testing.T) {
 	}
 	if got := e.conn(c.ID); got.Status != banking.ConnectionDisconnected {
 		t.Errorf("status = %s, want disconnected", got.Status)
+	}
+}
+
+// svcSlow holds Accounts (the first provider call of a refresh) until released
+// and records whether its context was cancelled while held.
+type svcSlow struct {
+	banking.Provider
+	entered chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	err     error
+}
+
+func (p *svcSlow) Accounts(ctx context.Context, s banking.Sensitive) ([]banking.Account, error) {
+	p.entered <- struct{}{}
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+	}
+	p.mu.Lock()
+	p.err = ctx.Err()
+	p.mu.Unlock()
+	if p.err != nil {
+		return nil, p.err
+	}
+	return p.Provider.Accounts(ctx, s)
+}
+
+// D40.4 with the real engine and store: a refresh that reaches the deadline is
+// not cancelled and not recorded as failed. The answer says it is running; the
+// run then finishes as a success and is audited.
+func TestRefreshPastTheDeadlineIsNotCancelledOrFailed(t *testing.T) {
+	e := newSvcEnv(t)
+	c := e.connect(svcAlice)
+	slow := &svcSlow{Provider: e.fake, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	e.svc.Providers = map[string]banking.Provider{e.fake.Capabilities().Application: slow}
+	e.svc.RefreshTimeout = 50 * time.Millisecond
+	v, err := e.svc.Refresh(e.ctx, svcAlice, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.RefreshRunning || v.LastRun == nil || v.LastRun.Outcome != banking.RefreshRunning {
+		t.Fatalf("answer at the deadline: running=%v last run=%+v, want a running run", v.RefreshRunning, v.LastRun)
+	}
+	if n := len(e.actions(audit.BankRefreshRequested)); n != 0 {
+		t.Errorf("%d refresh entries while the run is still going", n)
+	}
+	close(slow.release)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		runs, err := e.facts.RefreshRuns(e.ctx, c.ID, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(runs) == 1 && runs[0].Outcome != banking.RefreshRunning {
+			if runs[0].Outcome != banking.RefreshSucceeded {
+				t.Fatalf("the run ended %s (%s), want succeeded", runs[0].Outcome, runs[0].ErrorKind)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the run never finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	slow.mu.Lock()
+	cancelled := slow.err
+	slow.mu.Unlock()
+	if cancelled != nil {
+		t.Errorf("the provider call was cancelled: %v", cancelled)
+	}
+	for len(e.actions(audit.BankRefreshRequested)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no audit entry after the run")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := e.actions(audit.BankRefreshRequested)[0].Details["outcome"]; got != "succeeded" {
+		t.Errorf("audit outcome = %q, want succeeded", got)
+	}
+	if v, err := e.svc.View(e.ctx, c.ID); err != nil || v.RefreshRunning {
+		t.Errorf("after the run: running=%v err=%v", v.RefreshRunning, err)
+	}
+}
+
+// R1: a disconnected connection can be reconnected; the guard only refuses a
+// disconnect that happened after the consent was claimed.
+func TestReconnectAfterDisconnectCompletes(t *testing.T) {
+	e := newSvcEnv(t)
+	c := e.connect(svcAlice)
+	dc, err := e.svc.Disconnect(e.ctx, svcAlice, c.ID, e.conn(c.ID).Version)
+	if err != nil || dc.Status != banking.ConnectionDisconnected {
+		t.Fatalf("disconnect: %v %s", err, dc.Status)
+	}
+	st, err := e.svc.Reconnect(e.ctx, svcAlice, c.ID, 0)
+	if err != nil {
+		t.Fatalf("reconnect of a disconnected connection: %v", err)
+	}
+	state := stateOf(t, st.AuthorizationURL)
+
+	// A transient outage keeps the redirect usable (ReleaseConsent on a
+	// connection claimed as disconnected).
+	e.fake.FailNext(bankingtest.OpCompleteConsent, bankingtest.Failure(bankingtest.OpCompleteConsent, banking.KindRetryable, "", "TIMEOUT", 0))
+	if _, err := e.svc.Complete(e.ctx, svcAlice, svcRedirect(state)); err == nil {
+		t.Fatal("completion during an outage succeeded")
+	}
+	done, err := e.svc.Complete(e.ctx, svcAlice, svcRedirect(state))
+	if err != nil {
+		t.Fatalf("complete after reconnect: %v", err)
+	}
+	if done.Connection.Status != banking.ConnectionActive || e.conn(c.ID).Status != banking.ConnectionActive {
+		t.Errorf("status = %s, want active", e.conn(c.ID).Status)
+	}
+	if got := e.actions(audit.BankConnectionConnected); len(got) != 2 {
+		t.Errorf("%d connected entries, want 2 (connect and reconnect)", len(got))
 	}
 }

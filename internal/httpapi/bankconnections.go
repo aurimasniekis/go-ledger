@@ -141,11 +141,15 @@ type bankConnectionJSON struct {
 	LastError          *bankErrorJSON           `json:"last_error"`
 	Accounts           []bankAccountJSON        `json:"accounts"`
 	LastRun            *bankRunJSON             `json:"last_refresh_run"`
-	Schedule           *bankScheduleJSON        `json:"schedule"`
-	AsOf               time.Time                `json:"as_of"`
-	Version            int64                    `json:"version"`
-	CreatedAt          time.Time                `json:"created_at"`
-	UpdatedAt          time.Time                `json:"updated_at"`
+	// RefreshRunning: a refresh is still going on in the background (its last
+	// run is running, or a refresh just requested outlived the wait). Poll the
+	// connection until it is false.
+	RefreshRunning bool              `json:"refresh_running"`
+	Schedule       *bankScheduleJSON `json:"schedule"`
+	AsOf           time.Time         `json:"as_of"`
+	Version        int64             `json:"version"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
 	// PreviousSessionEndFailed is only ever set by completeBankConnection:
 	// a reconnect replaced a provider session that could not be ended.
 	PreviousSessionEndFailed bool `json:"previous_session_end_failed,omitempty"`
@@ -233,6 +237,7 @@ func toBankConnectionJSON(v bankconnect.View) bankConnectionJSON {
 		out.LastRun = &bankRunJSON{ID: string(r.ID), StartedAt: r.StartedAt.UTC(), FinishedAt: timePtr(r.FinishedAt), Outcome: r.Outcome, Error: bankErr(r.ErrorKind, r.ErrorCode),
 			AccountsFailed: r.AccountsFailed, TransactionsInserted: r.TransactionsInserted, TransactionsRejected: r.TransactionsRejected}
 	}
+	out.RefreshRunning = v.RefreshRunning
 	if s := v.Schedule; s != nil {
 		out.Schedule = &bankScheduleJSON{State: s.Schedule, NextAttemptAt: timePtr(s.NextAttemptAt), ConsecutiveFailures: s.ConsecutiveFailures}
 	}

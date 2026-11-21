@@ -384,11 +384,11 @@ func TestReconnectKeepsAccountsAndMovesBetweenConnections(t *testing.T) {
 	if _, err := e.p.StartConsent(e.ctx, banking.ConsentRequest{Institution: bankingtest.Standard().Institutions[0], RedirectURL: "https://ledger.example/cb", State: "s2"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.facts.BeginReconnect(e.ctx, conn.ID, "s2", e.clock.now); err != nil {
+	if _, err := e.facts.BeginReconnectBy(e.ctx, conn.ID, "s2", "user", e.clock.now, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.facts.BeginReconnect(e.ctx, conn.ID, "", e.clock.now); err == nil {
-		t.Error("BeginReconnect accepted an empty state")
+	if _, err := e.facts.BeginReconnectBy(e.ctx, conn.ID, "", "user", e.clock.now, nil); err == nil {
+		t.Error("BeginReconnectBy accepted an empty state")
 	}
 	conn, sess = e.complete(conn, "s2")
 	if conn.Status != banking.ConnectionActive || conn.LastErrorKind != "" {

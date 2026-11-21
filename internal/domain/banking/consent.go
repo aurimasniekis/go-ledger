@@ -45,8 +45,10 @@ type ConsentStore interface {
 	// StartConnection creates a pending connection that remembers when and by
 	// whom (initiator, a user id) its consent started.
 	StartConnection(ctx context.Context, c NewConnection, initiator string, at time.Time, ev AuditFunc) (Connection, error)
-	// BeginReconnectBy is BeginReconnect that also records the start time and
-	// initiator.
+	// BeginReconnectBy records the consent state of a re-authorisation of an
+	// existing connection, with its start time and initiator. The status stays
+	// as it is until the consent completes, so a failed reconnect leaves the
+	// connection as it was.
 	BeginReconnectBy(ctx context.Context, id ConnectionID, consentState, initiator string, at time.Time, ev AuditFunc) (Connection, error)
 	// ClaimConsent atomically takes the state: afterwards no connection has
 	// it, so a second completion finds [ErrNotFound]. It fails with
@@ -59,8 +61,10 @@ type ConsentStore interface {
 	// disconnected or has a newer state.
 	ReleaseConsent(ctx context.Context, claim ConsentClaim) error
 	// ActivateClaimed activates a claimed connection (like ActivateConnection)
-	// unless it was disconnected meanwhile, which returns [ErrDisconnected].
-	ActivateClaimed(ctx context.Context, id ConnectionID, s Session, at time.Time, ev AuditFunc) (Connection, error)
+	// unless it was disconnected after the claim (a connection that was already
+	// disconnected when claimed is being reconnected and is activated),
+	// which returns [ErrDisconnected].
+	ActivateClaimed(ctx context.Context, claim ConsentClaim, s Session, at time.Time, ev AuditFunc) (Connection, error)
 	// DisconnectWithAudit is DisconnectConnection with an audit entry.
 	DisconnectWithAudit(ctx context.Context, id ConnectionID, expected int64, at time.Time, ev AuditFunc) (Connection, error)
 	// ExpireConsents ends every consent started before at-ttl: a pending

@@ -80,7 +80,9 @@ func expireTx(ctx context.Context, tx *sql.Tx, c banking.Connection, at time.Tim
 // ReleaseConsent implements [banking.ConsentStore].
 func (s *Store) ReleaseConsent(ctx context.Context, claim banking.ConsentClaim) error {
 	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "UPDATE bank_connections SET consent_state = ? WHERE id = ? AND consent_state IS NULL AND status <> 'disconnected'", claim.State, claim.Connection.ID)
+		// A disconnect after the claim must not be undone; a connection that
+		// was already disconnected when claimed (a reconnect) may be.
+		_, err := tx.ExecContext(ctx, "UPDATE bank_connections SET consent_state = ? WHERE id = ? AND consent_state IS NULL AND (status <> 'disconnected' OR ? = 'disconnected')", claim.State, claim.Connection.ID, string(claim.Connection.Status))
 		if err != nil {
 			return fmt.Errorf("bankfacts: release consent: %w", err)
 		}
@@ -89,7 +91,7 @@ func (s *Store) ReleaseConsent(ctx context.Context, claim banking.ConsentClaim) 
 }
 
 // ActivateClaimed implements [banking.ConsentStore].
-func (s *Store) ActivateClaimed(ctx context.Context, id banking.ConnectionID, sess banking.Session, at time.Time, ev banking.AuditFunc) (banking.Connection, error) {
+func (s *Store) ActivateClaimed(ctx context.Context, claim banking.ConsentClaim, sess banking.Session, at time.Time, ev banking.AuditFunc) (banking.Connection, error) {
 	if sess.Reference.IsZero() {
 		return banking.Connection{}, errors.New("bankfacts: session without a reference")
 	}
@@ -99,10 +101,13 @@ func (s *Store) ActivateClaimed(ctx context.Context, id banking.ConnectionID, se
 	if err := requireTime("activation", at); err != nil {
 		return banking.Connection{}, err
 	}
+	id := claim.Connection.ID
 	var out banking.Connection
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, "UPDATE bank_connections SET status = 'active', session_reference = ?, consent_expires_at = ?, consent_granted_at = ?, consent_state = NULL, last_error_kind = '', last_error_code = '', updated_at = ?, version = version + 1 WHERE id = ? AND status <> 'disconnected'",
-			sess.Reference.Reveal(), ts(sess.ValidUntil), ts(at), ts(at), id)
+		// Refused only when the connection was disconnected after the claim:
+		// reconnecting a disconnected connection claims it as disconnected.
+		res, err := tx.ExecContext(ctx, "UPDATE bank_connections SET status = 'active', session_reference = ?, consent_expires_at = ?, consent_granted_at = ?, consent_state = NULL, last_error_kind = '', last_error_code = '', updated_at = ?, version = version + 1 WHERE id = ? AND (status <> 'disconnected' OR ? = 'disconnected')",
+			sess.Reference.Reveal(), ts(sess.ValidUntil), ts(at), ts(at), id, string(claim.Connection.Status))
 		if err != nil {
 			return fmt.Errorf("bankfacts: activate connection %s: %w", id, err)
 		}
@@ -145,6 +150,17 @@ func (s *Store) DisconnectWithAudit(ctx context.Context, id banking.ConnectionID
 // ExpireConsents implements [banking.ConsentStore].
 func (s *Store) ExpireConsents(ctx context.Context, at time.Time, ttl time.Duration) (int, error) {
 	if ttl <= 0 {
+		return 0, nil
+	}
+	// A read finds out whether anything is due, so the common case (nothing)
+	// never takes the write lock.
+	var due int
+	if err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM bank_connections WHERE consent_state IS NOT NULL AND consent_started_at IS NOT NULL AND consent_started_at <= ?", ts(at.Add(-ttl))).Scan(&due)
+	}); err != nil {
+		return 0, fmt.Errorf("bankfacts: expire consents: %w", err)
+	}
+	if due == 0 {
 		return 0, nil
 	}
 	n := 0

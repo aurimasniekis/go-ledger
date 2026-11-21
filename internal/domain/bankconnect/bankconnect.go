@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -54,8 +55,8 @@ var (
 )
 
 // DefaultConsentTTL is how long a started consent may wait for its redirect.
-// A proposal, not an operator decision: Enable Banking's authorisation-link
-// validity is not yet verified against its documentation (ADR-0040).
+// The lifetime is operator decision D40.3; the value still has to be checked
+// against Enable Banking's documented authorisation-link validity (ADR-0040).
 const DefaultConsentTTL = time.Hour
 
 // Refresher runs one refresh. *bankimport.Engine implements it; it must be the
@@ -90,10 +91,21 @@ type Service struct {
 	// ConsentTTL is how long a started consent may wait; zero means
 	// DefaultConsentTTL.
 	ConsentTTL time.Duration
-	// RefreshTimeout bounds a refresh on request; it must be below the HTTP
-	// write timeout, or the response is dropped while the run goes on. Zero
-	// means no extra bound.
+	// RefreshTimeout is how long a refresh on request is waited for; it must
+	// be below the HTTP write timeout, or the response is dropped. At the
+	// deadline the run is NOT cancelled: it goes on in the background and the
+	// answer says it is still running (D40.4). Zero waits until it ends.
 	RefreshTimeout time.Duration
+	// Log receives housekeeping failures that are not the caller's error; nil
+	// uses slog.Default.
+	Log *slog.Logger
+}
+
+func (s *Service) log() *slog.Logger {
+	if s.Log != nil {
+		return s.Log
+	}
+	return slog.Default()
 }
 
 func (s *Service) consentTTL() time.Duration {
@@ -354,7 +366,7 @@ func (s *Service) Complete(ctx context.Context, actor audit.Actor, r Redirect) (
 	if conn.Status != banking.ConnectionPending {
 		reconnect = "true"
 	}
-	out, err := s.Facts.ActivateClaimed(ctx, conn.ID, sess, now, s.event(audit.BankConnectionConnected, actor, now, func(c banking.Connection) map[string]string {
+	out, err := s.Facts.ActivateClaimed(ctx, claim, sess, now, s.event(audit.BankConnectionConnected, actor, now, func(c banking.Connection) map[string]string {
 		return map[string]string{"provider": c.Provider, "application": c.Application, "reconnect": reconnect}
 	}))
 	if err != nil {
@@ -386,7 +398,9 @@ func (s *Service) endReplacedSession(ctx context.Context, actor audit.Actor, p b
 	}
 	d := appDetails(c)
 	d["kind"] = string(banking.Classify(err))
-	_ = s.Audit.Record(bg, audit.Event{Action: audit.BankSessionEndFailed, Actor: actor, TargetType: "bank_connection", TargetID: string(c.ID), At: s.now(), Details: d})
+	if aerr := s.Audit.Record(bg, audit.Event{Action: audit.BankSessionEndFailed, Actor: actor, TargetType: "bank_connection", TargetID: string(c.ID), At: s.now(), Details: d}); aerr != nil {
+		s.log().Error("the failed end of a replaced bank session could not be audited", "connection_id", string(c.ID), "kind", d["kind"], "error", aerr.Error())
+	}
 	return false
 }
 
@@ -439,32 +453,68 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 	if err != nil {
 		return View{}, err
 	}
-	rctx := ctx
-	if s.RefreshTimeout > 0 {
-		var cancel context.CancelFunc
-		rctx, cancel = context.WithTimeout(ctx, s.RefreshTimeout)
-		defer cancel()
-	}
-	res, rerr := s.Engine.Refresh(rctx, id, p)
-	if res.Run.ID == "" {
-		// No run started: nothing to report about a run. The connection
-		// stopped being refreshable meanwhile, or the engine could not start.
-		switch {
-		case errors.Is(rerr, bankimport.ErrNotRefreshable):
-			return View{}, ErrNotActive
-		case rerr == nil:
-			rerr = errors.New("bankconnect: the refresh returned no run")
+	// The run is detached from the request: a client that gives up, or the
+	// deadline below, never cancels a refresh half way (it would be recorded
+	// as a failure and count against the scheduler's backoff).
+	done := make(chan refreshDone, 1)
+	bg := context.WithoutCancel(ctx)
+	go func() {
+		res, rerr := s.Engine.Refresh(bg, id, p)
+		d := refreshDone{res: res, rerr: rerr}
+		if res.Run.ID != "" {
+			outcome := "failed"
+			if res.Run.Outcome.Valid() {
+				outcome = string(res.Run.Outcome)
+			}
+			d.auditErr = s.record(bg, audit.BankRefreshRequested, actor, conn, map[string]string{"provider": conn.Provider, "application": conn.Application, "outcome": outcome})
+			if d.auditErr != nil {
+				s.log().Error("the audit entry of a bank refresh could not be written", "connection_id", string(id), "error", d.auditErr.Error())
+			}
 		}
-		return View{}, rerr
+		done <- d
+	}()
+	var deadline <-chan time.Time
+	if s.RefreshTimeout > 0 {
+		t := time.NewTimer(s.RefreshTimeout)
+		defer t.Stop()
+		deadline = t.C
 	}
-	outcome := "failed"
-	if res.Run.Outcome.Valid() {
-		outcome = string(res.Run.Outcome)
+	select {
+	case d := <-done:
+		if d.res.Run.ID == "" {
+			// No run started: nothing to report about a run. The connection
+			// stopped being refreshable meanwhile, or the engine could not start.
+			switch {
+			case errors.Is(d.rerr, bankimport.ErrNotRefreshable):
+				return View{}, ErrNotActive
+			case d.rerr == nil:
+				d.rerr = errors.New("bankconnect: the refresh returned no run")
+			}
+			return View{}, d.rerr
+		}
+		if d.auditErr != nil {
+			return View{}, d.auditErr
+		}
+		return s.View(ctx, id)
+	case <-deadline:
+		// Still running: answer with what is stored and let the caller poll.
+		// The goroutine finishes the run and writes the audit entry.
+		v, err := s.View(ctx, id)
+		if err != nil {
+			return View{}, err
+		}
+		v.RefreshRunning = true
+		return v, nil
+	case <-ctx.Done():
+		return View{}, ctx.Err()
 	}
-	if err := s.record(ctx, audit.BankRefreshRequested, actor, conn, map[string]string{"provider": conn.Provider, "application": conn.Application, "outcome": outcome}); err != nil {
-		return View{}, err
-	}
-	return s.View(ctx, id)
+}
+
+// refreshDone is what a detached refresh produced.
+type refreshDone struct {
+	res      bankimport.Result
+	rerr     error
+	auditErr error
 }
 
 // Disconnect ends the provider session and marks the connection
@@ -530,6 +580,9 @@ type View struct {
 	// ConsentExpiresInDays is set while the connection is active and its
 	// consent ends within ConsentWarnDays.
 	AsOf time.Time
+	// RefreshRunning is set when a refresh requested now outlived the wait and
+	// goes on in the background (a run still marked running also counts).
+	RefreshRunning bool
 }
 
 // ConsentWarnDays is how far ahead an expiring consent is called out.
@@ -574,6 +627,7 @@ func (s *Service) view(ctx context.Context, c banking.Connection, sched map[bank
 	if st, ok := sched[c.ID]; ok {
 		v.Schedule = &st
 	}
+	v.RefreshRunning = v.LastRun != nil && v.LastRun.Outcome == banking.RefreshRunning
 	return v, nil
 }
 
@@ -610,16 +664,19 @@ func (s *Service) scheduleMap() map[banking.ConnectionID]bankimport.ConnectionSt
 
 // expire ends consents that waited longer than the time to live, so a
 // pending connection nobody completed shows as failed (consent_expired).
-func (s *Service) expire(ctx context.Context) error {
-	_, err := s.Facts.ExpireConsents(ctx, s.now(), s.consentTTL())
-	return err
+// It is housekeeping: a failure (a busy database, say) is logged and the read
+// goes on, since the answer is still right (an unexpired view of a connection
+// whose consent is past its time to live is corrected by the next sweep, and
+// a completion checks the time to live itself).
+func (s *Service) expire(ctx context.Context) {
+	if _, err := s.Facts.ExpireConsents(ctx, s.now(), s.consentTTL()); err != nil {
+		s.log().Warn("expiring waiting bank consents failed", "error", err.Error())
+	}
 }
 
 // View returns one connection.
 func (s *Service) View(ctx context.Context, id banking.ConnectionID) (View, error) {
-	if err := s.expire(ctx); err != nil {
-		return View{}, err
-	}
+	s.expire(ctx)
 	c, err := s.Facts.Connection(ctx, id)
 	if err != nil {
 		return View{}, err
@@ -629,9 +686,7 @@ func (s *Service) View(ctx context.Context, id banking.ConnectionID) (View, erro
 
 // List returns every connection, oldest first.
 func (s *Service) List(ctx context.Context) ([]View, error) {
-	if err := s.expire(ctx); err != nil {
-		return nil, err
-	}
+	s.expire(ctx)
 	cs, err := s.Facts.Connections(ctx)
 	if err != nil {
 		return nil, err

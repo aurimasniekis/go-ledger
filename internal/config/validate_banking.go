@@ -68,6 +68,9 @@ func (b Banking) validateRedirect(bad func(key, msg string)) {
 	if b.ConsentTTL < time.Minute || b.ConsentTTL > 24*time.Hour {
 		bad("banking.consent_ttl", "must be between 1 minute and 24 hours")
 	}
+	if b.StaleAfter < time.Minute || b.StaleAfter > 30*24*time.Hour {
+		bad("banking.stale_after", "must be between 1 minute and 30 days")
+	}
 	if b.RedirectURL == "" {
 		return
 	}

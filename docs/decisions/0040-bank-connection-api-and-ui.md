@@ -30,7 +30,7 @@ delivers both the HTTP API and the UI. It never needs live banking access: every
    `bank_request_rejected` 422. The UI shows a solid "Reconnect needed" badge with a "Reconnect bank" action and no retry for the first, a
    tinted "Temporary problem" badge with "Try again" and no reconnect for the second, and "Refresh failed" with neither for the third.
 5. **Visible freshness.** Every account shows its last successful refresh, last attempt, the latest balance of each type with when Ledger
-   obtained it, and an up-to-date, stale (over 24 hours), failed, reconnect, never-fetched or disconnected badge. A failed refresh never
+   obtained it, and an up-to-date, stale (older than `banking.stale_after`, default 24 hours, D40.2), failed, reconnect, never-fetched or disconnected badge. A failed refresh never
    changes stored data; the figures stay on screen, labelled as from the last success. An account with no reported balance shows none,
    never zero. A connection's own state summarises the worst account.
 6. **Non-idempotent calls are not retried.** Consent start, session end and consent completion are single calls. Completing a consent
@@ -45,13 +45,18 @@ delivers both the HTTP API and the UI. It never needs live banking access: every
    reconnect, is audited as `bank_connection.session_end_failed` (error kind only) and is shown as `previous_session_end_failed` in the
    completion answer, because that session may still be open at the bank.
 8. **Consent lifetime and owner.** Each started consent stores when it started and the starting user (a token counts as its owner).
-   `banking.consent_ttl` (default 1 hour, 1 minute to 24 hours; a proposal, to be checked against Enable Banking's documented
-   authorisation-link validity once that documentation is supplied) bounds it: later completion is refused as `consent_not_found`, a
+   `banking.consent_ttl` (default 1 hour, 1 minute to 24 hours; operator decision D40.3; the 1 hour value still has to be checked against Enable Banking's
+   documented authorisation-link validity once that documentation is supplied) bounds it: later completion is refused as `consent_not_found`, a
    connection that never connected becomes `failed` with `consent_expired` (a reconnect that expired leaves the connection as it was),
-   and expired consents are also ended whenever connections are listed or read. Another user cannot complete it; their attempt leaves
+   and expired consents are also ended whenever connections are listed or read (a cheap read finds whether any is due, so the write lock is taken
+   only when one is; a failing sweep is logged and does not fail the read). Another user cannot complete it; their attempt leaves
    the state valid for the starter. Migration 0021 adds `consent_started_at` and `consent_initiator`.
-9. **Refresh on request** runs inside the request but is bounded by a deadline 5 seconds below `http.write_timeout` (at least 1 second).
-   Go's write timeout does not cancel a request: without the bound a slow bank would let the run finish after the response was dropped. The
+9. **Refresh on request** (D40.4) waits for the run up to a deadline 5 seconds below `http.write_timeout` (at least 1 second), so the
+   answer is not dropped. At the deadline the run is **not** cancelled and not recorded as failed: it goes on in the background (detached from the
+   request), the answer is 200 with `refresh_running: true`, and the UI polls the connection list every 3 seconds until no connection is
+   running. The refresh audit entry is written when the run ends. A run that outlives the process is closed by the engine's lease like any other
+   interrupted run. Reconnecting a disconnected connection is allowed: the consent claim remembers the status it saw, and only a disconnect after
+   the claim is refused at completion. The
    answer and the audit entry use the run the engine returned (`last_refresh_run` of that call); an error before any run started is not a
    200: `connection_not_active` 409 when the connection stopped being active, otherwise the error itself.
 10. **Audit in the transaction.** Start, reconnect start, completion and disconnect write their audit entry in the same transaction as the
@@ -70,14 +75,13 @@ delivers both the HTTP API and the UI. It never needs live banking access: every
 ## Consequences
 
 - **Limitations, in the open:** (a) the Go client and CLI have no bank methods yet (the new operations are listed in the client's
-  not-implemented table); the MCP server does not expose bank tools. (b) A refresh runs inside the HTTP request, bounded below the write timeout (point 9). When
-  the bound is hit the engine records the run as interrupted and the answer shows that run; a 202 job model with polling is the alternative if
-  banks are routinely slow. (c) The refresh audit entry is written after the run (point 10); the entries of the other actions are not.
+  not-implemented table); the MCP server does not expose bank tools. (b) A refresh is waited for inside the HTTP request, bounded below the write timeout (point 9). When
+  the bound is hit the run continues and the answer says it is running; a 202 job model is the alternative if banks are routinely slow. (c) The refresh audit entry is written after the run (point 10); the entries of the other actions are not.
   (c2) The reporting of a failed end of a replaced session is a boolean on the completion answer; the UI does not yet show it. (d) Only the latest 64 refresh runs feed the scheduler; the UI shows just the latest run. (e) Purging a connection's
   facts has no endpoint. (f) Balances are read from all snapshots of an account to find the latest of each type; a retention policy
   (open decision) should bound that. (g) The e2e spec (Playwright) drives the real UI against a stateful stub of the API that mirrors the fake
   provider; the real handlers and store run the same journey in the Go test `TestBankConnectionJourney`. No live Enable Banking check was made.
-- **Open decisions this touches:** who may manage connections beyond administrators (D1 audience), freshness thresholds (24 hours is a
-  proposal, not an operator decision), the consent lifetime (1 hour is a proposal) and whether a 202 job model is wanted for refresh. Whether applications of different modes
+- **Open decisions this touches:** who may manage connections beyond administrators (D1 audience), freshness threshold and consent lifetime (decided in D40.2 and D40.3: 24 hours and 1 hour by default, both configurable; the 1 hour
+  value still needs the Enable Banking check) and whether a 202 job model is wanted for refresh. Whether applications of different modes
   coexist is settled by D10: per connection, each recording its application, mode and environment (the sandbox environment is for fixtures
   and tests). The API journey test covers an app-mode and a developer-mode application side by side.

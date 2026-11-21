@@ -2687,7 +2687,10 @@ paths:
         with the connection even when the refresh failed: the last_refresh_run
         says how it ended and its error.kind tells what to do (reconnect_required:
         reconnect; retryable or rate_limited: try again later; permanent:
-        retrying will not help). A failed refresh never changes stored balances or
+        retrying will not help). The wait is bounded below the server's write
+        timeout; a refresh that is still going at the bound is not cancelled: the
+        answer is 200 with refresh_running true and the run goes on, so poll the
+        connection until refresh_running is false. A failed refresh never changes stored balances or
         transactions. 409 connection_not_active for a connection that is pending,
         disconnected, failed or needs a new consent. Audited as
         bank_connection.refresh_requested.
@@ -4137,7 +4140,7 @@ components:
               obtained_at: {type: string, format: date-time}
     BankConnection:
       type: object
-      required: [id, provider, application, mode, environment, account_access, institution, status, needs_reconnect, freshness, consent_granted_at, consent_valid_until, consent_expires_soon, last_error, accounts, last_refresh_run, schedule, as_of, version, created_at, updated_at]
+      required: [id, provider, application, mode, environment, account_access, institution, status, needs_reconnect, freshness, consent_granted_at, consent_valid_until, consent_expires_soon, last_error, accounts, last_refresh_run, refresh_running, schedule, as_of, version, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/ID"}
         provider: {type: string}
@@ -4177,6 +4180,9 @@ components:
           oneOf:
             - $ref: "#/components/schemas/BankRefreshRun"
             - type: "null"
+        refresh_running:
+          type: boolean
+          description: True while a refresh is still going on in the background (the last run is running, or a refresh just requested outlived the wait). Poll the connection until it is false.
         schedule:
           description: The background scheduler's view; null when background refresh is off or has not seen the connection yet.
           oneOf:

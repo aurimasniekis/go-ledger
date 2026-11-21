@@ -48,6 +48,7 @@ export const connection = (over: Partial<BankConnection> = {}): BankConnection =
   last_error: null,
   accounts: [account()],
   last_refresh_run: run(),
+  refresh_running: false,
   schedule: null,
   as_of: LATER,
   version: 3,

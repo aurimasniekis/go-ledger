@@ -3,10 +3,14 @@ import { apiFetch } from '@/lib/api'
 import type { Page } from '@/lib/types'
 
 /** A cursor-paged list (ADR-0011): pages are fetched on request and flattened into one array. */
-export function usePagedList<T>(key: readonly unknown[], path: string, params: Record<string, string | undefined> = {}, opts: { enabled?: boolean } = {}) {
+export function usePagedList<T>(key: readonly unknown[], path: string, params: Record<string, string | undefined> = {}, opts: { enabled?: boolean; refetchInterval?: number | false | ((pages: Page<T>[]) => number | false) } = {}) {
   return useInfiniteQuery({
     queryKey: [...key, params],
     enabled: opts.enabled,
+    refetchInterval: (q: { state: { data?: { pages: Page<T>[] } } }) => {
+      const ri = opts.refetchInterval
+      return typeof ri === 'function' ? ri(q.state.data?.pages ?? []) : (ri ?? false)
+    },
     initialPageParam: '',
     queryFn: ({ pageParam }) => {
       const q = new URLSearchParams()

@@ -56,7 +56,7 @@ func (m *memStore) ReleaseConsent(_ context.Context, c banking.ConsentClaim) err
 	return nil
 }
 
-func (m *memStore) ActivateClaimed(_ context.Context, _ banking.ConnectionID, s banking.Session, _ time.Time, ev banking.AuditFunc) (banking.Connection, error) {
+func (m *memStore) ActivateClaimed(_ context.Context, _ banking.ConsentClaim, s banking.Session, _ time.Time, ev banking.AuditFunc) (banking.Connection, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.conn.Status, m.conn.Session = banking.ConnectionActive, s.Reference
@@ -354,22 +354,77 @@ func (viewStore) ExpireConsents(context.Context, time.Time, time.Duration) (int,
 	return 0, nil
 }
 
-func TestRefreshIsBoundedByItsTimeout(t *testing.T) {
+// D40.4: at the deadline the run is not cancelled; the answer says it is
+// still running, and the run's audit entry is written when it ends.
+func TestRefreshPastTheDeadlineKeepsRunning(t *testing.T) {
 	s := newSetup(t, banking.ConnectionActive, banking.NewSensitive("sess"))
+	s.svc.Facts = &viewStore{memStore: s.mem}
 	s.svc.RefreshTimeout = 30 * time.Millisecond
-	s.svc.Engine = blockingEngine{}
-	start := time.Now()
-	if _, err := s.svc.Refresh(context.Background(), alice, "conn-1"); err == nil {
-		t.Error("a refresh that outlives its deadline must report it")
+	eng := &slowEngine{release: make(chan struct{}), seen: make(chan struct{})}
+	s.svc.Engine = eng
+	v, err := s.svc.Refresh(context.Background(), alice, "conn-1")
+	if err != nil || !v.RefreshRunning {
+		t.Fatalf("Refresh = %+v, %v; want the view with RefreshRunning", v, err)
 	}
-	if time.Since(start) > 5*time.Second {
-		t.Error("the refresh was not bounded")
+	time.Sleep(50 * time.Millisecond) // a cancelled engine would have noticed by now
+	if eng.ctxErr() != nil {
+		t.Fatalf("the engine's context was cancelled at the deadline: %v", eng.ctxErr())
+	}
+	if n := len(s.log.outcomes(audit.BankRefreshRequested)); n != 0 {
+		t.Fatalf("%d refresh entries before the run ended", n)
+	}
+	close(eng.release)
+	deadline := time.Now().Add(5 * time.Second)
+	for len(s.log.outcomes(audit.BankRefreshRequested)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no audit entry after the run ended")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if evs := s.log.outcomes(audit.BankRefreshRequested); evs[0].Details["outcome"] != "succeeded" {
+		t.Errorf("audit = %+v, want outcome succeeded", evs)
 	}
 }
 
-type blockingEngine struct{}
+// slowEngine holds the refresh until released and records whether its context
+// was cancelled meanwhile.
+type slowEngine struct {
+	release chan struct{}
+	seen    chan struct{}
+	mu      sync.Mutex
+	err     error
+}
 
-func (blockingEngine) Refresh(ctx context.Context, _ banking.ConnectionID, _ banking.Provider) (bankimport.Result, error) {
-	<-ctx.Done()
-	return bankimport.Result{}, ctx.Err()
+func (e *slowEngine) Refresh(ctx context.Context, _ banking.ConnectionID, _ banking.Provider) (bankimport.Result, error) {
+	select {
+	case <-e.release:
+	case <-ctx.Done():
+	}
+	e.mu.Lock()
+	e.err = ctx.Err()
+	e.mu.Unlock()
+	return bankimport.Result{Run: banking.RefreshRun{ID: "run-1", Outcome: banking.RefreshSucceeded}}, nil
+}
+
+// ctxErr is the context error seen when the engine stopped waiting; nil while
+// it is still held or when released without cancellation.
+func (e *slowEngine) ctxErr() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.err
+}
+
+// R5: the expiry sweep is housekeeping: a failing one does not fail a read.
+type failingSweepStore struct{ *viewStore }
+
+func (failingSweepStore) ExpireConsents(context.Context, time.Time, time.Duration) (int, error) {
+	return 0, errors.New("database is locked")
+}
+
+func TestReadsSurviveAFailingExpirySweep(t *testing.T) {
+	s := newSetup(t, banking.ConnectionActive, banking.NewSensitive("sess"))
+	s.svc.Facts = failingSweepStore{&viewStore{memStore: s.mem}}
+	if _, err := s.svc.View(context.Background(), "conn-1"); err != nil {
+		t.Errorf("View failed because the sweep failed: %v", err)
+	}
 }

@@ -321,6 +321,39 @@ func TestRetryableConsentCompletionKeepsTheRedirectUsable(t *testing.T) {
 	}
 }
 
+// R1: disconnect, reconnect, complete leaves the connection active again.
+func TestDisconnectedConnectionCanBeReconnectedThroughTheAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	c := bankCall{t: t, f: f, hdr: f.signIn(t, "alice")}
+	_, body, _ := c.do("POST", "/api/v1/bank-connections", `{"application":"fake-app","institution_id":"Fake Bank","country":"FI"}`)
+	id := asMap(t, body["connection"])["id"].(string)
+	state := stateOf(t, body["authorization_url"].(string))
+	complete := func(state string) (int, map[string]any) {
+		code, body, _ := c.do("POST", "/api/v1/bank-connections/complete", `{"state":"`+state+`","code":"`+bankingtest.AuthorizationCode(state).Reveal()+`"}`)
+		return code, body
+	}
+	if code, body := complete(state); code != 200 {
+		t.Fatalf("complete: %d %v", code, body)
+	}
+	_, body, hdr := c.do("GET", "/api/v1/bank-connections/"+id, "")
+	_ = hdr
+	version := strconv.FormatInt(int64(body["version"].(float64)), 10)
+	code, body, _ := c.do("POST", "/api/v1/bank-connections/"+id+"/disconnect", `{"version":`+version+`}`)
+	if code != 200 || body["status"] != "disconnected" {
+		t.Fatalf("disconnect: %d %v", code, body)
+	}
+	code, body, _ = c.do("POST", "/api/v1/bank-connections/"+id+"/reconnect", "")
+	if code != 200 {
+		t.Fatalf("reconnect: %d %v", code, body)
+	}
+	if code, body := complete(stateOf(t, body["authorization_url"].(string))); code != 200 || body["status"] != "active" {
+		t.Fatalf("complete after reconnect: %d %v", code, body)
+	}
+	if _, body, _ := c.do("GET", "/api/v1/bank-connections/"+id, ""); body["status"] != "active" || body["refresh_running"] != false {
+		t.Errorf("after the journey: %v", body)
+	}
+}
+
 // TestDeveloperModeApplicationThroughTheAPI: a developer-mode application
 // coexists with an app-mode one (D10). It lists only the accounts linked to it,
 // and an application with nothing linked refreshes to an empty list, not an

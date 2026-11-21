@@ -29,7 +29,7 @@ class FakeBank {
     return {
       id: ID, provider: 'fake', application: 'fake-app', mode: 'app', environment: 'sandbox', account_access: 'all', institution: { id: 'Fake Bank', name: 'Fake Bank', country: 'FI' },
       status: 'active', needs_reconnect: false, freshness: 'never_refreshed', consent_granted_at: T0, consent_valid_until: '2027-03-30T08:00:00Z', consent_expires_soon: false, last_error: null,
-      accounts: [], last_refresh_run: null, schedule: null, as_of: T0, version: 2, created_at: T0, updated_at: T0, ...over,
+      accounts: [], last_refresh_run: null, refresh_running: false, schedule: null, as_of: T0, version: 2, created_at: T0, updated_at: T0, ...over,
     }
   }
 }
@@ -134,7 +134,7 @@ test('connect, consent redirect, refresh; then a withdrawn consent and an outage
   await expect(page.getByText('Fetched 1 account(s).')).toBeVisible()
   await page.getByRole('link', { name: 'Go to bank connections' }).first().click()
   const card = page.getByRole('article', { name: 'Fake Bank' })
-  await expect(card.getByText('1,250.40 EUR', { exact: true })).toBeVisible()
+  await expect(card.locator('[data-amount="visual"]', { hasText: /1\s250\.40\s+EUR/ })).toBeVisible()
   await expect(card.getByText('Up to date')).toBeVisible()
   await expect(card.getByText('Last successful refresh:')).toBeVisible()
 
@@ -144,7 +144,7 @@ test('connect, consent redirect, refresh; then a withdrawn consent and an outage
   await expect(card.getByText('Temporary problem').first()).toBeVisible()
   await expect(card.getByRole('button', { name: 'Try again' })).toBeVisible()
   await expect(card.getByRole('button', { name: /Reconnect/ })).toHaveCount(0)
-  await expect(card.getByText('1,250.40 EUR', { exact: true })).toBeVisible()
+  await expect(card.locator('[data-amount="visual"]', { hasText: /1\s250\.40\s+EUR/ })).toBeVisible()
 
   // The consent is withdrawn at the bank: reconnect, never retry.
   bank.outage = false
@@ -154,7 +154,7 @@ test('connect, consent redirect, refresh; then a withdrawn consent and an outage
   await expect(card.getByRole('button', { name: 'Reconnect bank' })).toBeVisible()
   await expect(card.getByRole('button', { name: /Try again|Refresh now/ })).toHaveCount(0)
   await expect(card.getByText('Retrying will not help')).toBeVisible()
-  await expect(card.getByText('1,250.40 EUR', { exact: true })).toBeVisible()
+  await expect(card.locator('[data-amount="visual"]', { hasText: /1\s250\.40\s+EUR/ })).toBeVisible()
 
   // Reconnect: back through the bank, and the connection is usable again.
   await card.getByRole('button', { name: 'Reconnect bank' }).click()

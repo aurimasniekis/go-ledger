@@ -66,6 +66,8 @@ export interface BankConnection {
   last_error: BankError | null
   accounts: BankAccount[]
   last_refresh_run: BankRefreshRun | null
+  /** A refresh is still going on in the background: poll until false. */
+  refresh_running: boolean
   schedule: BankSchedule | null
   as_of: string
   version: number
