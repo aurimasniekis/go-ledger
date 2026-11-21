@@ -1,6 +1,6 @@
 # ADR-0026: Passwords, sign-in, sessions, CSRF and recent authentication
 
-Status: Accepted (2026-11-21); the default values in point 9 are **proposed** and wait for an operator decision.
+Status: Accepted (2026-11-21); the default values in point 9 are accepted (operator, 2026-11-21, D22).
 Amended (2026-11-21) by decision D23-1b: known browsers are exempt from the per-username lockout (see the amendment at
 the end).
 
@@ -85,7 +85,7 @@ outbound timeouts only).
 8. **Access rule `session`.** `httpapi.SessionOnly()` is for routes that act on the caller's own sign-in state
    (sign-out, own sessions, re-authentication, own password). It is the one rule besides a write grant allowed on a
    state-changing method; any role may use it, API tokens get 403.
-9. **Proposed defaults (not decided by the operator; each is configurable):**
+9. **Accepted (operator, 2026-11-21) defaults; each is configurable:**
    `auth.password.min_length` 12 bytes; `auth.session.idle_timeout` 30m; `auth.session.absolute_timeout` 12h;
    `auth.session.reauth_window` 10m; `auth.sign_in.account_max_failures` 10 and `address_max_failures` 30 per
    `auth.sign_in.window` 15m. Rationale: 12 bytes is above NIST SP 800-63B's 8-byte floor for multi-factor use and
