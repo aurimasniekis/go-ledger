@@ -69,6 +69,8 @@ export interface OccurrenceLite {
   amount: Money
   version: number
   cancelled_at: string | null
+  /** The occurrence's derived payment state (only what this screen reads). */
+  payment?: { status: string; shortfall_amount?: Money }
 }
 
 export interface MatchingRunResult {

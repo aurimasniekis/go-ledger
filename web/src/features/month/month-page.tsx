@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { useAnnounce } from '@/components/announcer'
 import { useFocusRestore } from '@/lib/focus'
 import { useMonthSummary } from './api'
+import { useWaitingSuggestions } from '@/features/matches/api'
 import { monthLabel } from './month'
 import { useOnline } from '@/lib/connection'
 import { MonthBoard, OFFLINE_NOTE_ID } from './month-board'
@@ -15,6 +16,7 @@ export function MonthPage({ month }: { month: string }) {
   const navigate = useNavigate()
   const q = useMonthSummary(month)
   const online = useOnline()
+  const waiting = useWaitingSuggestions()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000)
@@ -65,6 +67,7 @@ export function MonthPage({ month }: { month: string }) {
 
       <MonthBoard
         offline={!online}
+        waiting={waiting}
         notice={saved && <UndoNotice key={saved.payment.id} {...saved} shownMonth={month} onDone={() => {
           setSaved(null)
           focus.restore()

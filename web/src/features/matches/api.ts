@@ -1,5 +1,7 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/api'
+import { usePagedList } from '@/lib/paged'
 import type { MatchAction, MatchingRunResult, OccurrenceLite, PaymentMatch } from './types'
 
 /** Every cached query of this screen starts with this key, so one invalidation reloads them all. */
@@ -34,6 +36,12 @@ export function matchAction(id: string, a: ActionInput): Promise<PaymentMatch> {
 /** Asks the matching engine to run now (it also runs after every bank refresh). */
 export function runMatching(): Promise<MatchingRunResult> {
   return apiFetch<MatchingRunResult>('/api/v1/payment-matching/runs', { method: 'POST', json: {} })
+}
+
+/** The occurrences that have a suggestion waiting (first page of the queue only), for a pointer from the month view. A failure just means no pointer. */
+export function useWaitingSuggestions(): ReadonlySet<string> | undefined {
+  const q = usePagedList<PaymentMatch>(matchesKey, base, { state: 'suggested' })
+  return useMemo(() => (q.data ? new Set(q.data.map((m) => m.occurrence_id)) : undefined), [q.data])
 }
 
 export function useOccurrence(id: string) {

@@ -18,7 +18,16 @@ type mcpMatch struct {
 	OccurrenceID     string `json:"occurrence_id"`
 	CountsAsEvidence bool   `json:"counts_as_evidence"`
 	BankTextRedacted bool   `json:"bank_text_redacted"`
-	Transaction      struct {
+	DecidedBy        *struct {
+		Kind string `json:"kind"`
+	} `json:"decided_by"`
+	History []struct {
+		Action string `json:"action"`
+		By     struct {
+			Kind string `json:"kind"`
+		} `json:"by"`
+	} `json:"history"`
+	Transaction struct {
 		Description *string `json:"description"`
 	} `json:"transaction"`
 }
@@ -76,6 +85,20 @@ func TestMCPPaymentMatchJourney(t *testing.T) {
 	}
 	if again := decodeJSONText[matchingRunJSON](t, call(t, c, "run_payment_matching", nil)); again.Confirmed != 0 || again.Suggested != 0 || again.Dropped != 0 {
 		t.Errorf("a second run changed something: %+v", again)
+	}
+
+	// D33 over MCP: what the engine confirmed names the system as the decider, never the token that started the run.
+	auto := decodeJSONText[struct{ Items []mcpMatch }](t, call(t, c, "list_payment_matches", map[string]any{"state": []string{"confirmed"}}))
+	if len(auto.Items) != run.Confirmed {
+		t.Fatalf("engine confirmations: %d listed, run said %d", len(auto.Items), run.Confirmed)
+	}
+	for _, m := range auto.Items {
+		if m.DecidedBy == nil || m.DecidedBy.Kind != "system" {
+			t.Errorf("decided_by of an automatic confirmation: %+v", m.DecidedBy)
+		}
+		if len(m.History) == 0 || m.History[len(m.History)-1].By.Kind != "system" {
+			t.Errorf("history of an automatic confirmation: %+v", m.History)
+		}
 	}
 
 	queue := decodeJSONText[struct{ Items []mcpMatch }](t, call(t, c, "list_payment_matches", map[string]any{"state": []string{"suggested"}, "origin": []string{"auto_rule"}}))
@@ -174,7 +197,7 @@ func TestMCPPaymentMatchJourney(t *testing.T) {
 		}
 	}
 
-	// Every write call is audited, and the engine's matches name the system, not the token.
+	// Every write call is audited (the engine's matches naming the system is asserted above).
 	tools := map[string]int{}
 	for _, e := range f.auditEntries(t, audit.MCPToolCalled) {
 		tools[e.Details["tool"]]++
