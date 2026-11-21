@@ -1,0 +1,5 @@
+{
+  "message": "Wrong transactions period SECRET-ECHO",
+  "code": 422,
+  "error": "WRONG_TRANSACTIONS_PERIOD"
+}

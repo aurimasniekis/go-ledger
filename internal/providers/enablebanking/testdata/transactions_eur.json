@@ -1,0 +1,117 @@
+{
+  "transactions": [
+    {
+      "entry_reference": "synthetic-ref-salary",
+      "transaction_amount": {
+        "currency": "EUR",
+        "amount": "2500.00"
+      },
+      "credit_debit_indicator": "CRDT",
+      "status": "BOOK",
+      "booking_date": "2026-10-01",
+      "value_date": "2026-10-01",
+      "debtor": {
+        "name": "Example Employer"
+      },
+      "remittance_information": [
+        "SALARY OCTOBER"
+      ],
+      "transaction_id": "detail-1"
+    },
+    {
+      "entry_reference": "synthetic-ref-rent",
+      "transaction_amount": {
+        "currency": "EUR",
+        "amount": "800.00"
+      },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-10-02",
+      "creditor": {
+        "name": "Example Landlord"
+      },
+      "remittance_information": [
+        "RF18539007547034",
+        "RENT 2026-10"
+      ]
+    },
+    {
+      "transaction_amount": {
+        "currency": "EUR",
+        "amount": "-12.99"
+      },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-10-05",
+      "remittance_information": [
+        "STREAMING SERVICE"
+      ]
+    },
+    {
+      "entry_reference": "synthetic-ref-card",
+      "transaction_amount": {
+        "currency": "EUR",
+        "amount": "23.17"
+      },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-10-12",
+      "transaction_date": "2026-10-10",
+      "creditor": {
+        "name": "Example Shop Ltd"
+      },
+      "exchange_rate": {
+        "unit_currency": "GBP",
+        "exchange_rate": "1.1585",
+        "instructed_amount": {
+          "currency": "GBP",
+          "amount": "20.00"
+        }
+      },
+      "remittance_information": [
+        "CARD PURCHASE"
+      ]
+    },
+    {
+      "transaction_amount": {
+        "currency": "EUR",
+        "amount": "-5.00"
+      },
+      "credit_debit_indicator": "CRDT",
+      "status": "BOOK",
+      "booking_date": "2026-10-20",
+      "remittance_information": [
+        "CONTRADICTORY SIGN"
+      ],
+      "note": "amount below is negative on purpose"
+    },
+    {
+      "entry_reference": "synthetic-ref-hold",
+      "transaction_amount": {
+        "currency": "EUR",
+        "amount": "60.00"
+      },
+      "credit_debit_indicator": "DBIT",
+      "status": "HOLD",
+      "transaction_date": "2026-10-29",
+      "creditor": {
+        "name": "Example Hotel"
+      },
+      "remittance_information": [
+        "HOTEL DEPOSIT"
+      ]
+    },
+    {
+      "transaction_amount": {
+        "currency": "EUR",
+        "amount": "4.50"
+      },
+      "credit_debit_indicator": "DBIT",
+      "status": "PDNG",
+      "value_date": "2026-10-30",
+      "remittance_information": [
+        "COFFEE KIOSK"
+      ]
+    }
+  ]
+}

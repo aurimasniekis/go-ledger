@@ -1,0 +1,6 @@
+{
+  "message": "Session expired SECRET-ECHO",
+  "code": 401,
+  "error": "EXPIRED_SESSION",
+  "detail": "SECRET-ECHO detail"
+}

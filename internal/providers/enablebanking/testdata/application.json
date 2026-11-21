@@ -1,0 +1,15 @@
+{
+  "name": "Synthetic test application",
+  "kid": "{{kid}}",
+  "environment": "{{environment}}",
+  "redirect_urls": [
+    "https://ledger.example/callback"
+  ],
+  "active": true,
+  "countries": [
+    "FI"
+  ],
+  "services": [
+    "AIS"
+  ]
+}

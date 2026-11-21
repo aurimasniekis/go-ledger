@@ -23,6 +23,8 @@ Last updated: 2026-11-20.
 
 - **B2 Import engine** (ADR-0020): `internal/domain/bankimport`; whole-day windows stored atomically with a per-account resume cursor and overlap; every page fetched; no-longer-reported marking; `superseded_by` on a shared entry reference; D17 retries; migration `0005_bank_refresh` (refresh runs, per-account last attempt/success/error); computed freshness (24 h); unknown balances dropped, never zero; `StoredTransaction.Countable`.
   - Follow-up: refresh and freshness endpoints with the connection API (B4, auth tasks); scheduler (B6); serve wiring after B3; reversal, split and supersession handling in matching (X1/X2); retention of refresh runs.
+- **B3 Enable Banking adapter** (ADR-0023): `internal/providers/enablebanking`; RS256 application JWT; consent, session, accounts, balances and paged transactions; ISO 20022 mapping with exact signed amounts; Enable Banking error codes classified into the banking taxonomy (expired or revoked consent, bank rate limit with 6 h guidance, outages); both D10 modes (app and developer) as per-mode configuration slots (`banking.enable_banking.app|developer.*`), keys from an environment secret or a file, parsed at `ledger serve` startup; offline tests against a fake Enable Banking server with synthetic fixtures, including full refreshes through the import engine. No live check (D20).
+  - Follow-up: more than one application per mode; PSU headers for user-triggered refreshes (port change); connection endpoints and consent redirect (B4); periodic `Verify`/readiness; setup docs (B5).
 
 ## Next (first wave)
 
