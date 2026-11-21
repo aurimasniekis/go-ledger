@@ -225,6 +225,9 @@ function OccurrenceRow({ item: i, onRecord }: { item: MonthItem; onRecord: (i: M
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={statusOf(i)} />
+        {p.status === 'partially_paid' && (p.timing === 'overdue' || p.timing === 'due') && (
+          <StatusBadge status={p.timing} label={p.timing === 'overdue' ? 'Remainder overdue' : 'Remainder due today'} />
+        )}
         {p.override?.applied && <span className="text-sm">Set by hand to {p.override.status} ({p.override.reason})</span>}
         {!settled && (
           <Button
@@ -238,7 +241,7 @@ function OccurrenceRow({ item: i, onRecord }: { item: MonthItem; onRecord: (i: M
           </Button>
         )}
       </div>
-      {p.status === 'overdue' && p.grace_until && (
+      {p.timing === 'overdue' && p.grace_until && (
         <p className="text-sm">
           {p.within_grace ? (
             <>Overdue since the original due date; within documented grace until <time dateTime={p.grace_until}>{p.grace_until}</time>.</>

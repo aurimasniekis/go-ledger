@@ -25,7 +25,10 @@ confirmed it.
    original due date and never hides an obligation), `overpaid` (informational). There is no cross-currency figure.
    Evidence in another currency is never converted and is counted nowhere; the response counts the occurrences that have
    it so the UI can say so. `paid` can differ from `due - outstanding` when a manual "paid" override settles an
-   occurrence the evidence does not cover; the override is visible on the row.
+   occurrence the evidence does not cover; the override is visible on the row. In the other direction, with an "unpaid" override the evidence still counts in
+   `paid` while `outstanding` is the full amount, so `paid + outstanding` can exceed `due`. The month horizon (60 months)
+   and the reporting-zone "today" are applied inside `monthview.Service` (`Current`), not in the HTTP handler, so every
+   caller gets them.
 3. **Freshness (proposed).** `computed_at` (statuses are derived on every read), `as_of` (today in the reporting zone),
    `occurrences_changed_at` (newest `updated_at` among the month's occurrences) and `bank`. **Bank data age is not
    available:** the refresh and freshness facts of B2 (`banking.AccountFreshness`) are not exposed over HTTP yet, so

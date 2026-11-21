@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { useMonthSummary } from './api'
@@ -17,6 +17,17 @@ export function MonthPage({ month }: { month: string }) {
   }, [])
   const [panel, setPanel] = useState<string | null>(null) // the occurrence the open form starts on
   const [saved, setSaved] = useState<{ payment: ManualPayment; item: MonthItem } | null>(null)
+  const opener = useRef<HTMLElement | null>(null)
+  const headerButton = useRef<HTMLButtonElement>(null)
+  const openPanel = (id: string | null) => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setPanel(id)
+  }
+  // Give focus back to what opened the form, or to the primary button when that is gone.
+  const restoreFocus = () => {
+    const el = opener.current?.isConnected ? opener.current : headerButton.current
+    el?.focus()
+  }
   const unpaid = (q.data?.items ?? []).filter((i) => i.payment.status !== 'paid')
 
   return (
@@ -25,7 +36,7 @@ export function MonthPage({ month }: { month: string }) {
         <h1 id="month-title" className="text-2xl font-semibold">
           Monthly view
         </h1>
-        <Button onClick={() => setPanel(unpaid[0]?.id ?? null)} disabled={unpaid.length === 0 || panel !== null}>
+        <Button ref={headerButton} onClick={() => openPanel(unpaid[0]?.id ?? null)} disabled={unpaid.length === 0 || panel !== null}>
           Record a payment
         </Button>
       </header>
@@ -33,20 +44,26 @@ export function MonthPage({ month }: { month: string }) {
         <p className="text-sm text-muted-foreground">Every occurrence this month is marked paid, so there is nothing to record.</p>
       )}
 
-      {panel !== null && q.data && unpaid.length > 0 && (
+      {panel !== null && q.data && (
         <PaymentPanel
           month={month}
           asOf={q.data.as_of}
           items={unpaid}
           initialId={panel}
-          onClose={() => setPanel(null)}
+          onClose={() => {
+            setPanel(null)
+            restoreFocus()
+          }}
           onSaved={(payment, item) => {
             setPanel(null)
             setSaved({ payment, item })
           }}
         />
       )}
-      {saved && <UndoNotice key={saved.payment.id} {...saved} month={month} onDone={() => setSaved(null)} />}
+      {saved && <UndoNotice key={saved.payment.id} {...saved} month={month} onDone={() => {
+        setSaved(null)
+        restoreFocus()
+      }} />}
 
       <MonthBoard
         month={month}
@@ -61,7 +78,7 @@ export function MonthPage({ month }: { month: string }) {
           void navigate({ to: '/month', search: { month: m } })
         }}
         onRetry={() => void q.refetch()}
-        onRecord={(i) => setPanel(i.id)}
+        onRecord={(i) => openPanel(i.id)}
       />
     </section>
   )

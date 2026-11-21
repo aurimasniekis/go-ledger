@@ -25,7 +25,14 @@ export interface PaymentPanelProps {
 export function PaymentPanel(p: PaymentPanelProps) {
   const qc = useQueryClient()
   const [id, setId] = useState(p.initialId)
-  const item = p.items.find((i) => i.id === id) ?? p.items[0]!
+  const current = p.items.find((i) => i.id === id)
+  // Remember the occurrence the form started on: if a refetch drops it (it was
+  // paid elsewhere) the form says so and refuses to save, instead of silently
+  // switching to another commitment.
+  const [known, setKnown] = useState(current ?? p.items.find((i) => i.id === p.initialId))
+  if (current && current !== known) setKnown(current)
+  const item = (current ?? known)!
+  const gone = !current
   // The suggested amount is the outstanding amount as the server computed it.
   const [amount, setAmount] = useState(item.payment.outstanding_amount.amount)
   const [paidOn, setPaidOn] = useState(p.asOf)
@@ -34,7 +41,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
   useEffect(() => heading.current?.focus(), [])
 
   const save = useMutation({
-    mutationFn: () => recordPayment(item.id, { amount: amount.trim(), currency: item.amount.currency, paid_on: paidOn }),
+    mutationFn: () => (gone ? Promise.reject(new Error('This occurrence is no longer unpaid.')) : recordPayment(item.id, { amount: amount.trim(), currency: item.amount.currency, paid_on: paidOn })),
     onSuccess: async (saved) => {
       await qc.invalidateQueries({ queryKey: monthKey(p.month) })
       p.onSaved(saved, item)
@@ -71,6 +78,11 @@ export function PaymentPanel(p: PaymentPanelProps) {
               if (next) setAmount(next.payment.outstanding_amount.amount)
             }}
           >
+            {gone && (
+              <option value={item.id} disabled>
+                {item.commitment_name || item.commitment_id}, due {item.due_date} (no longer unpaid)
+              </option>
+            )}
             {p.items.map((i) => (
               <option key={i.id} value={i.id}>
                 {i.commitment_name || i.commitment_id}, due {i.due_date} ({i.amount.amount} {i.amount.currency})
@@ -101,12 +113,13 @@ export function PaymentPanel(p: PaymentPanelProps) {
             disabled={save.isPending}
             onChange={(e) => setPaidOn(e.target.value)}
             aria-invalid={err?.field === 'paid_on' ? true : undefined}
+            aria-describedby={err?.field === 'paid_on' ? `${uid}-paid-on-err` : undefined}
           />
-          {err?.field === 'paid_on' && <span>{err.message}</span>}
+          {err?.field === 'paid_on' && <span id={`${uid}-paid-on-err`}>{err.message}</span>}
         </label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" disabled={save.isPending}>
+        <Button type="submit" disabled={save.isPending || gone}>
           {save.isPending ? 'Saving…' : 'Save payment'}
         </Button>
         <Button type="button" variant="ghost" onClick={p.onClose} disabled={save.isPending}>
@@ -118,6 +131,15 @@ export function PaymentPanel(p: PaymentPanelProps) {
           </span>
         )}
       </div>
+      {gone && (
+        <div role="alert" className="space-y-1">
+          <StatusBadge status="error" label="Occurrence changed" />
+          <p>
+            {item.commitment_name || item.commitment_id}, due {item.due_date}, is no longer unpaid (it may have been paid elsewhere), so
+            nothing can be saved for it. Pick another occurrence or cancel.
+          </p>
+        </div>
+      )}
       {save.isError && (
         <div role="alert" className="space-y-1">
           <StatusBadge status="error" label="Payment not saved" />
@@ -139,13 +161,17 @@ export interface UndoNoticeProps {
 /** Confirms a saved payment and offers its undo; the undo is itself confirmed by the server. */
 export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
   const qc = useQueryClient()
+  const box = useRef<HTMLDivElement>(null)
   const undo = useMutation({
     mutationFn: () => deletePayment(payment),
     onSuccess: () => qc.invalidateQueries({ queryKey: monthKey(month) }),
   })
   const name = item.commitment_name || item.commitment_id
+  // Keyboard focus follows the change: to this notice when it appears and again
+  // when its Undo button is replaced by the confirmation.
+  useEffect(() => box.current?.focus(), [undo.isSuccess])
   return (
-    <div role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3">
+    <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3">
       {undo.isSuccess ? (
         <p>
           Payment removed. {name} is back as it was before; the view above has been refreshed.{' '}

@@ -13,6 +13,7 @@ package monthview
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -43,7 +44,9 @@ type Row struct {
 //   - Paid is the sum of payment evidence in that currency. It can exceed Due
 //     (see Overpaid) and can be below Due - Outstanding when a "paid" status
 //     override settles an occurrence the evidence does not cover; the
-//     override is a user decision and is visible on the row.
+//     override is a user decision and is visible on the row. With an
+//     "unpaid" override the evidence still counts in Paid while Outstanding
+//     is the full amount, so Paid + Outstanding can exceed Due.
 //   - Outstanding is the sum of what is still owed, as derived per occurrence.
 //   - Overdue is the part of Outstanding that belongs to occurrences past their
 //     original due date, whether or not a grace period is documented (D7).
@@ -81,15 +84,35 @@ type Service struct {
 	Occurrences occurrences.Reader
 	Payments    payments.Store
 	Grace       payments.GraceFunc
+	// Today resolves today in the reporting zone for [Service.Current].
+	Today func() (calendar.Date, error)
 	// Commitments names each row's commitment. Nil leaves names empty.
 	Commitments interface {
 		Get(ctx context.Context, id string) (commitments.Commitment, error)
 	}
 }
 
+// Current is [Service.Month] for today in the reporting zone, as given by
+// Today. Callers (HTTP, MCP) use it so the zone and the horizon are applied in
+// one place.
+func (s Service) Current(ctx context.Context, month calendar.YearMonth) (Summary, error) {
+	if s.Today == nil {
+		return Summary{}, fmt.Errorf("monthview: no Today function configured")
+	}
+	today, err := s.Today()
+	if err != nil {
+		return Summary{}, fmt.Errorf("monthview: resolving today: %w", err)
+	}
+	return s.Month(ctx, month, today)
+}
+
 // Month returns the occurrences of month, due-date ordered, with their payment
-// state as of today and the per-currency totals.
+// state as of today and the per-currency totals. A month later than
+// [occurrences.HorizonLimit] allows fails with [occurrences.ErrBeyondHorizon].
 func (s Service) Month(ctx context.Context, month calendar.YearMonth, today calendar.Date) (Summary, error) {
+	if month.Compare(occurrences.HorizonLimit(today)) > 0 {
+		return Summary{}, occurrences.ErrBeyondHorizon
+	}
 	out := Summary{Month: month, AsOf: today, Rows: []Row{}, Totals: []CurrencyTotals{}}
 	names := map[string]string{}
 	nameOf := func(id string) (string, error) {

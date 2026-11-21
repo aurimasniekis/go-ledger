@@ -2,6 +2,7 @@ package monthview_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -122,5 +123,59 @@ func TestMonthReadsEveryPage(t *testing.T) {
 	s, err := monthview.Service{Occurrences: fakeOcc{items: occ}, Payments: facts{}}.Month(context.Background(), month, date(t, "2026-11-10"))
 	if err != nil || len(s.Rows) != 450 || s.Totals[0].Due.String() != "450.00 EUR" {
 		t.Fatalf("%d %v %v", len(s.Rows), s.Totals, err)
+	}
+}
+
+func TestOverridesAndOverpaymentInTotals(t *testing.T) {
+	month, _ := calendar.ParseYearMonth("2026-11")
+	mk := func(id, amt string) occurrences.Occurrence {
+		return occurrences.Occurrence{ID: id, CommitmentID: "c", Month: month, DueDate: date(t, "2026-11-03"), Amount: mustMoney(t, amt, "EUR"), Version: 1}
+	}
+	ev := func(id, amt string) payments.Evidence {
+		return payments.Evidence{Kind: payments.EvidenceManual, ID: "m" + id, OccurrenceID: id, Amount: mustMoney(t, amt, "EUR"), Date: date(t, "2026-11-05")}
+	}
+	ov := func(status payments.OverrideStatus) *payments.Override {
+		return &payments.Override{Status: status, Reason: "test"}
+	}
+	occ := []occurrences.Occurrence{mk("o1", "10.00"), mk("o2", "10.00"), mk("o3", "10.00"), mk("o4", "10.00"), mk("o5", "10.00")}
+	f := facts{by: map[string]payments.Facts{
+		"o1": {Evidence: []payments.Evidence{ev("o1", "4.00")}},                                         // partly paid, overdue remainder
+		"o2": {Evidence: []payments.Evidence{ev("o2", "4.00")}, Override: ov(payments.OverridePaid)},    // paid override on a partial payment
+		"o3": {Evidence: []payments.Evidence{ev("o3", "10.00")}, Override: ov(payments.OverrideUnpaid)}, // unpaid override on a full payment
+		"o4": {Evidence: []payments.Evidence{ev("o4", "15.00")}},                                        // overpaid by 5
+		"o5": {Override: ov(payments.OverridePaid)},                                                     // paid override without evidence: not applied, still owed
+	}}
+	s, err := monthview.Service{Occurrences: fakeOcc{items: occ}, Payments: f}.Month(context.Background(), month, date(t, "2026-11-10"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := s.Totals[0]
+	exp := map[string][2]string{
+		"due": {got.Due.String(), "50.00 EUR"}, "paid": {got.Paid.String(), "33.00 EUR"}, "outstanding": {got.Outstanding.String(), "26.00 EUR"},
+		"overdue": {got.Overdue.String(), "26.00 EUR"}, "overpaid": {got.Overpaid.String(), "5.00 EUR"},
+	}
+	for k, v := range exp {
+		if v[0] != v[1] {
+			t.Errorf("%s = %s, want %s", k, v[0], v[1])
+		}
+	}
+	if got.OverdueCount != 3 {
+		t.Errorf("overdue count %d", got.OverdueCount)
+	}
+}
+
+func TestMonthRefusesBeyondHorizonAndCurrentResolvesToday(t *testing.T) {
+	far, _ := calendar.ParseYearMonth("2031-12")
+	near, _ := calendar.ParseYearMonth("2031-11")
+	svc := monthview.Service{Occurrences: fakeOcc{}, Payments: facts{}, Today: func() (calendar.Date, error) { return date(t, "2026-11-21"), nil }}
+	if _, err := svc.Current(context.Background(), far); !errors.Is(err, occurrences.ErrBeyondHorizon) {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := svc.Month(context.Background(), far, date(t, "2026-11-21")); !errors.Is(err, occurrences.ErrBeyondHorizon) {
+		t.Fatalf("err %v", err)
+	}
+	s, err := svc.Current(context.Background(), near)
+	if err != nil || s.AsOf.String() != "2026-11-21" {
+		t.Fatalf("%v %v", s.AsOf, err)
 	}
 }

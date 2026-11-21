@@ -1126,7 +1126,10 @@ paths:
         summed across currencies: each currency has its own entry.
 
         due is the sum of the occurrence amounts; paid the sum of payment
-        evidence in that currency; outstanding what is still owed; overdue the
+        evidence in that currency; outstanding what is still owed (with an
+        "unpaid" status override the evidence still counts in paid while
+        outstanding is the full amount, so paid + outstanding can exceed due);
+        overdue the
         part of outstanding on occurrences past their original due date (a
         documented grace period does not reduce it); overpaid evidence above
         an amount. They describe recorded commitments and recorded payments

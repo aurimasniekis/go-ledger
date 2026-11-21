@@ -167,7 +167,7 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 		}
 		WriteJSON(w, http.StatusOK, NewPage(out, q, func(o occurrenceJSON) string { return o.ID }))
 	}))
-	view := monthview.Service{Occurrences: st, Payments: pay, Grace: grace, Commitments: cs}
+	view := monthview.Service{Occurrences: st, Payments: pay, Grace: grace, Commitments: cs, Today: todayFn}
 	s.HandleAPI("GET "+OccurrencesSummaryPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for k := range r.URL.Query() {
 			if k != "month" {
@@ -185,17 +185,11 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 			WriteError(w, r, Validation("month", "month must be a month such as 2026-11"))
 			return
 		}
-		t, err := todayFn()
+		sum, err := view.Current(r.Context(), month)
 		if err != nil {
-			WriteError(w, r, Internal(err))
-			return
-		}
-		if month.Compare(occurrences.HorizonLimit(t)) > 0 {
-			WriteError(w, r, Validation("month", fmt.Sprintf("month must be within %d months after the current month", occurrences.MaxMonthsAhead)))
-			return
-		}
-		sum, err := view.Month(r.Context(), month, t)
-		if err != nil {
+			if errors.Is(err, occurrences.ErrBeyondHorizon) {
+				err = Validation("month", fmt.Sprintf("month must be within %d months after the current month", occurrences.MaxMonthsAhead))
+			}
 			WriteError(w, r, err)
 			return
 		}

@@ -115,4 +115,48 @@ describe('Month page', () => {
     open()
     expect(await screen.findByRole('button', { name: 'Record a payment' })).toBeDisabled()
   })
+
+  it('moves focus to the undo notice after a save, then back to the opener after Dismiss', async () => {
+    responder = (c) =>
+      c.method === 'POST' ? json(201, { id: 'p1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21', version: 1 })
+      : c.method === 'DELETE' ? new Response(null, { status: 204 }) : json(200, summary([item('a')]))
+    open()
+    const opener = await screen.findByRole('button', { name: /^Record payment for Rent a/ })
+    await userEvent.click(opener)
+    await userEvent.click(await screen.findByRole('button', { name: 'Save payment' }))
+    const notice = await screen.findByText(/^Saved:/)
+    await waitFor(() => expect(notice.closest('[role="status"]')).toHaveFocus())
+    await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
+    await screen.findByText(/Payment removed/)
+    await waitFor(() => expect(screen.getByText(/Payment removed/).closest('[role="status"]')).toHaveFocus())
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Record payment for Rent a/ })).toHaveFocus())
+  })
+
+  it('returns focus to the opener when the form is cancelled', async () => {
+    responder = () => json(200, summary([item('a')]))
+    open()
+    const opener = await screen.findByRole('button', { name: /^Record payment for Rent a/ })
+    await userEvent.click(opener)
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    expect(opener).toHaveFocus()
+  })
+
+  it('does not switch occurrence when the selected one disappears: says so and cannot save', async () => {
+    let gone = false
+    responder = () => json(200, summary(gone ? [item('b')] : [item('a'), item('b')]))
+    open()
+    await userEvent.click(await screen.findByRole('button', { name: /^Record payment for Rent a/ }))
+    const form = await screen.findByRole('form', { name: 'Record a payment' })
+    const amount = within(form).getByLabelText(/Amount paid/)
+    await userEvent.clear(amount)
+    await userEvent.type(amount, '7.00')
+    gone = true
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await within(form).findByText(/is no longer unpaid/, { selector: 'p' })).toBeInTheDocument()
+    expect(within(form).getByRole('button', { name: 'Save payment' })).toBeDisabled()
+    expect(within(form).getByLabelText('Occurrence')).toHaveValue('a')
+    expect(amount).toHaveValue('7.00')
+    expect(calls.some((c) => c.method === 'POST')).toBe(false)
+  })
 })

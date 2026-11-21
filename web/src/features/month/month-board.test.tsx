@@ -93,6 +93,25 @@ describe('MonthBoard content', () => {
     }
   })
 
+  it('a partly paid occurrence past its due date shows the overdue timing as text and an icon, with the grace note', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'partially_paid', timing: 'overdue', paid_amount: { amount: '4.00', currency: 'EUR' },
+      outstanding_amount: { amount: '6.00', currency: 'EUR' }, grace_until: '2026-11-30', within_grace: true }) })]) })
+    expect(screen.getByText('Partly paid')).toBeInTheDocument()
+    const badge = screen.getByText('Remainder overdue')
+    expect(badge.closest('[data-status="overdue"]')?.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    expect(screen.getByText(/within documented grace until/)).toBeInTheDocument()
+  })
+
+  it('a partly paid occurrence due today says the remainder is due today', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'partially_paid', timing: 'due' }) })]) })
+    expect(screen.getByText('Remainder due today').closest('[data-status="due"]')?.querySelector('svg')).not.toBeNull()
+  })
+
+  it('a partly paid occurrence not yet late shows no overdue text', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'partially_paid', timing: 'upcoming' }) })]) })
+    expect(screen.queryByText(/Remainder/)).toBeNull()
+  })
+
   it('annotates an overdue occurrence within documented grace, keeping it overdue', () => {
     board({ data: summary([item('a', { payment: payment({ status: 'overdue', timing: 'overdue', grace_until: '2026-11-30', within_grace: true }) })]) })
     expect(screen.getByText('Overdue')).toBeInTheDocument()
