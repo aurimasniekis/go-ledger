@@ -434,6 +434,70 @@ func (c *Client) RunPaymentMatching(ctx context.Context) (*PaymentMatchingRun, e
 	return &out, nil
 }
 
+// RateFilter filters ListRates. Empty fields match everything; From and Until
+// are dates (YYYY-MM-DD) bounding the rate date, both inclusive.
+type RateFilter struct {
+	ListOptions
+	Provider string
+	Source   string
+	Base     string
+	Quote    string
+	From     string
+	Until    string
+}
+
+func (f RateFilter) query() url.Values {
+	q := url.Values{}
+	f.apply(q)
+	setIf(q, "provider", f.Provider)
+	setIf(q, "source", f.Source)
+	setIf(q, "base", f.Base)
+	setIf(q, "quote", f.Quote)
+	setIf(q, "date[gte]", f.From)
+	setIf(q, "date[lte]", f.Until)
+	return q
+}
+
+// ListRates returns one page of cached exchange rates (needs rates:read),
+// grouped by provider, source and pair with the newest rate date first. It
+// reads Ledger's cache and never calls the rate provider.
+func (c *Client) ListRates(ctx context.Context, f RateFilter) (Page[CachedRate], error) {
+	var p Page[CachedRate]
+	err := c.do(ctx, request{op: opListRates, query: f.query()}, &p)
+	return p, err
+}
+
+// AllRates walks every cached rate matching f (its Cursor is ignored).
+func (c *Client) AllRates(ctx context.Context, f RateFilter) iter.Seq2[CachedRate, error] {
+	return Walk(ctx, func(ctx context.Context, cur string) (Page[CachedRate], error) {
+		f.Cursor = cur
+		return c.ListRates(ctx, f)
+	})
+}
+
+// GetRatesStatus reports whether a rate provider is configured, the freshness
+// policy and how the last refresh went (needs rates:read).
+func (c *Client) GetRatesStatus(ctx context.Context) (*RatesStatus, error) {
+	var out RatesStatus
+	if err := c.do(ctx, request{op: opRatesStatus}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RefreshRates asks the rate provider for fresh rates now (needs rates:write,
+// an administrator grant). The run is bounded, never overlaps another and is
+// limited to one a minute (a 429 rate_limited error). A run that fails is not
+// an error: the returned run's Outcome and Error say so and the cache is
+// unchanged.
+func (c *Client) RefreshRates(ctx context.Context) (*RatesRefreshRun, error) {
+	var out RatesRefreshRun
+	if err := c.do(ctx, request{op: opRefreshRates, body: struct{}{}}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // TokenFilter filters ListTokens (every user's tokens; needs tokens:read).
 type TokenFilter struct {
 	ListOptions

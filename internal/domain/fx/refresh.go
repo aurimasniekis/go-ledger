@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
@@ -34,6 +35,16 @@ type RefreshJob struct {
 	// After returns a channel that fires after d; defaults to time.After.
 	// Tests inject a fake clock.
 	After func(d time.Duration) <-chan time.Time
+	// Meter, when set, is told of every finished run.
+	Meter Meter
+	// Now is the clock for run times; defaults to time.Now.
+	Now func() time.Time
+	// ManualGap is the least time between manual refreshes
+	// ([RefreshJob.Request]); defaults to [DefaultManualGap].
+	ManualGap time.Duration
+
+	runMu sync.Mutex // one run at a time, scheduled or manual
+	st    runState
 }
 
 // FirstBackoff is the wait after the first failed cycle; it doubles per
@@ -73,7 +84,9 @@ func (j *RefreshJob) Run(ctx context.Context) error {
 	}
 	failures := 0
 	for {
-		out := j.Cycle(ctx, failures)
+		j.runMu.Lock()
+		out, _ := j.run(ctx, failures, TriggerScheduled)
+		j.runMu.Unlock()
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

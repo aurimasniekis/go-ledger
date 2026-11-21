@@ -122,7 +122,7 @@ var grantCommitmentsRead = authz.G(authz.ResourceCommitments, authz.ActionRead)
 var grantCommitmentsWrite = authz.G(authz.ResourceCommitments, authz.ActionWrite)
 
 func registry() []Tool {
-	return append(append(coreTools(), matchTools()...), bankTools()...)
+	return append(append(append(coreTools(), matchTools()...), bankTools()...), rateTools()...)
 }
 
 func coreTools() []Tool {
@@ -321,6 +321,36 @@ func bankTools() []Tool {
 			Grant: grantConnectionsWrite, Kind: KindWrite, OpenWorld: true,
 			Description: "Fetch the connection's accounts, balances and transactions from the bank now, only on the person's request: it calls the bank, which limits how often it may be asked. A refresh that failed still answers successfully: read last_refresh_run.error.kind and the accounts' freshness. reconnect_required means only a new consent helps (the person must reconnect with the CLI or web UI; retrying cannot work); retryable and rate_limited mean try later; stored data is never changed by a failure. If refresh_running is true the refresh outlived the wait and continues in the background: read the connection again with get_bank_connection instead of calling this again.",
 			Schema:      object(map[string]any{"id": idArg("bank connection")}, "id"),
+		},
+	}
+}
+
+var grantRatesRead = authz.G(authz.ResourceRates, authz.ActionRead)
+
+// rateTools are the exchange-rate reads (task FX2c, ADR-0048): the cached
+// rates with provenance and freshness, and the provider status. Reads only: a
+// refresh calls the rate provider and is an administrator action done with the
+// CLI or the web UI.
+func rateTools() []Tool {
+	return []Tool{
+		{
+			Name: "list_exchange_rates", Title: "List cached exchange rates", Method: "GET", Path: "/rates",
+			Grant: grantRatesRead, Kind: KindRead,
+			Description: "List the exchange rates Ledger has cached, which its converted totals use, one page at a time, ordered by provider, source and pair with the newest rate date first. Each has the provider, the source (ECB or blended: rates of different sources are never mixed), the pair, the exact value as published (a string, never rounded), the rate date (the day it is for; a provider publishes on working days only), when Ledger retrieved it and whether it is stale (not retrieved for 5 days, or dated more than 5 days ago). A stale rate is never used in a converted total. It reads the local cache and never calls the rate provider.",
+			Schema: object(pagingArgs(map[string]any{
+				"provider":  str("Only rates of this provider adapter, for example frankfurter."),
+				"source":    str("Only rates of this source key, for example ECB."),
+				"base":      map[string]any{"type": "string", "pattern": "^[A-Z]{3}$", "description": "Only rates from this currency."},
+				"quote":     map[string]any{"type": "string", "pattern": "^[A-Z]{3}$", "description": "Only rates to this currency."},
+				"date[gte]": map[string]any{"type": "string", "format": "date", "description": "Only rates dated on or after this date (YYYY-MM-DD)."},
+				"date[lte]": map[string]any{"type": "string", "format": "date", "description": "Only rates dated on or before this date (YYYY-MM-DD)."},
+			})),
+		},
+		{
+			Name: "get_exchange_rate_status", Title: "Get exchange-rate provider status", Method: "GET", Path: "/rates/status",
+			Grant: grantRatesRead, Kind: KindRead,
+			Description: "Report whether an exchange-rate provider is configured (it is optional), which source it serves, the reporting currency rates are fetched to, the freshness policy (stale after 5 days by default) and how the last refresh went since Ledger started (outcome and the provider's error kind and code, never a URL). When the provider is off, cached rates stay listed but nothing refreshes them.",
+			Schema:      object(map[string]any{}),
 		},
 	}
 }

@@ -126,6 +126,14 @@ func TestLatestParsesExactRatesAndSendsTheRoute(t *testing.T) {
 	}
 }
 
+func TestNormalizeSource(t *testing.T) {
+	for in, want := range map[string]string{"ecb": "ECB", " Ecb ": "ECB", "BLENDED": "blended", "blended": "blended", "": ""} {
+		if got := frankfurter.NormalizeSource(in); got != want {
+			t.Errorf("NormalizeSource(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestSourceKeyCaseIsNormalised(t *testing.T) {
 	s := newServer(t, body([]byte("{}")))
 	for in, want := range map[string]string{"ecb": "ECB", "Blended": frankfurter.Blended} {

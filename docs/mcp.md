@@ -1228,4 +1228,83 @@ Fetch the connection's accounts, balances and transactions from the bank now, on
 
 </details>
 
+### `list_exchange_rates`
+
+List the exchange rates Ledger has cached, which its converted totals use, one page at a time, ordered by provider, source and pair with the newest rate date first. Each has the provider, the source (ECB or blended: rates of different sources are never mixed), the pair, the exact value as published (a string, never rounded), the rate date (the day it is for; a provider publishes on working days only), when Ledger retrieved it and whether it is stale (not retrieved for 5 days, or dated more than 5 days ago). A stale rate is never used in a converted total. It reads the local cache and never calls the rate provider.
+
+- Kind: read
+- Operation: `GET /api/v1/rates`
+- Grant: `rates:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "base": {
+      "description": "Only rates from this currency.",
+      "pattern": "^[A-Z]{3}$",
+      "type": "string"
+    },
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "date[gte]": {
+      "description": "Only rates dated on or after this date (YYYY-MM-DD).",
+      "format": "date",
+      "type": "string"
+    },
+    "date[lte]": {
+      "description": "Only rates dated on or before this date (YYYY-MM-DD).",
+      "format": "date",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "provider": {
+      "description": "Only rates of this provider adapter, for example frankfurter.",
+      "type": "string"
+    },
+    "quote": {
+      "description": "Only rates to this currency.",
+      "pattern": "^[A-Z]{3}$",
+      "type": "string"
+    },
+    "source": {
+      "description": "Only rates of this source key, for example ECB.",
+      "type": "string"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_exchange_rate_status`
+
+Report whether an exchange-rate provider is configured (it is optional), which source it serves, the reporting currency rates are fetched to, the freshness policy (stale after 5 days by default) and how the last refresh went since Ledger started (outcome and the provider's error kind and code, never a URL). When the provider is off, cached rates stay listed but nothing refreshes them.
+
+- Kind: read
+- Operation: `GET /api/v1/rates/status`
+- Grant: `rates:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object"
+}
+```
+
+</details>
+
 <!-- tools:end -->

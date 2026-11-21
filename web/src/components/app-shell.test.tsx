@@ -53,8 +53,10 @@ describe('shell while signed in', () => {
     const groups = within(account).getAllByRole('list')
     expect(groups[0]).toHaveAccessibleName('Your account')
     expect(within(groups[0]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Security', 'Sessions', 'Your API tokens'])
-    expect(groups[1]).toHaveAccessibleName('Administration')
-    expect(within(groups[1]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Users', 'Roles', 'All API tokens'])
+    expect(groups[1]).toHaveAccessibleName('Reference')
+    expect(within(groups[1]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Exchange rates'])
+    expect(groups[2]).toHaveAccessibleName('Administration')
+    expect(within(groups[2]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Users', 'Roles', 'All API tokens'])
     expect(within(account).queryByRole('heading')).toBeNull() // group labels are not headings: the outline stays the page's
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })

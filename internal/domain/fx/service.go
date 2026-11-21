@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -182,18 +181,6 @@ type flight struct {
 	err  error
 }
 
-// NormalizeSource returns the canonical form of a Frankfurter source key:
-// upper case (ECB, not ecb), except the special key "blended", which is
-// lower case. Sources are cached apart, so one spelling must always give
-// one key.
-func NormalizeSource(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.EqualFold(s, "blended") {
-		return "blended"
-	}
-	return strings.ToUpper(s)
-}
-
 // NewService returns a Service. provider may be nil (cache only).
 func NewService(cache Cache, provider Provider, opts Options) (*Service, error) {
 	if cache == nil {
@@ -203,7 +190,6 @@ func NewService(cache Cache, provider Provider, opts Options) (*Service, error) 
 	if provider != nil {
 		s.name, s.source = provider.Name(), provider.Source()
 	}
-	s.source = NormalizeSource(s.source)
 	if !validProviderName(s.name) {
 		return nil, errors.New("fx: provider name must be lower-case letters, digits and underscores")
 	}
@@ -225,6 +211,10 @@ func NewService(cache Cache, provider Provider, opts Options) (*Service, error) 
 	s.failPause = min(s.failPause, s.fresh.RefreshAfter)
 	return s, nil
 }
+
+// HasProvider reports whether a rate provider is configured; without one the
+// service only serves the cache.
+func (s *Service) HasProvider() bool { return s.provider != nil }
 
 // ProviderName is the provider whose rates this service uses.
 func (s *Service) ProviderName() string { return s.name }
@@ -304,6 +294,31 @@ func (s *Service) Convert(ctx context.Context, from money.Money, to money.Curren
 		return missing(c, s.notCachedReason(), perr), nil
 	}
 	return s.result(c, cached, today(now), now, true, perr), nil
+}
+
+// ConvertCached is [Service.Convert] without the provider: it only reads the
+// cache, so it never blocks on the network and never starts a provider call.
+// A cached rate converts when the freshness policy accepts it (a rate retrieved
+// more than RefreshAfter ago is still used, with its age, until it is stale); a
+// pair with nothing cached is missing. Callers use it once their time for a
+// provider answer has run out.
+func (s *Service) ConvertCached(ctx context.Context, from money.Money, to money.Currency) (Conversion, error) {
+	c, pair, err := s.start(from, to)
+	if err != nil {
+		return Conversion{}, err
+	}
+	if pair.Base == pair.Quote {
+		return identity(c), nil
+	}
+	now := s.now()
+	cached, ok, err := s.cache.Find(ctx, s.name, s.source, pair, calendar.Date{})
+	if err != nil {
+		return Conversion{}, err
+	}
+	if !ok {
+		return missing(c, s.notCachedReason(), nil), nil
+	}
+	return s.result(c, cached, today(now), now, true, nil), nil
 }
 
 // ConvertOn converts from into to at the rate that applied on date: the
@@ -624,11 +639,8 @@ func (s *Service) result(c Conversion, rate Rate, date calendar.Date, now time.T
 	c.Age = now.Sub(rate.RetrievedAt)
 	c.FromCache = fromCache
 	c.RefreshError = perr
-	if date == today(now) && c.Age >= s.fresh.StaleAfter {
-		return staleOf(c, ReasonNotRetrievedRecently)
-	}
-	if rate.Date.DaysUntil(date) > s.fresh.staleDays() {
-		return staleOf(c, ReasonRateDateTooOld)
+	if reason := s.fresh.staleReason(rate, date, now); reason != ReasonNone {
+		return staleOf(c, reason)
 	}
 	exact := c.From.Amount().Mul(rate.Value)
 	value := exact

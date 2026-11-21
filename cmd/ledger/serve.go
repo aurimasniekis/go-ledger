@@ -30,6 +30,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
+	"github.com/aurimasniekis/go-ledger/internal/store/fxrates"
 	"github.com/aurimasniekis/go-ledger/internal/web"
 )
 
@@ -262,6 +263,16 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		return 1
 	}
 	parts.rates = rateSvc
+	// The rates routes (FX2c, ADR-0048) list the cache and trigger a refresh. The
+	// provider is optional, so its state is reported (status route, metrics)
+	// and never gates readiness.
+	parts.rateCache = &httpapi.RatesDeps{Lister: fxrates.New(db), Policy: rateSvc, Target: parts.reportingCurrency,
+		Interval: cfg.Rates.RefreshInterval, Timeout: parts.convertTimeout, Audit: recorder{db: db, w: auditLog}}
+	if rateJob != nil {
+		rateJob.Meter = app
+		parts.rateCache.Refresher = rateJob
+	}
+	app.SetRatesProvider(rateSvc.HasProvider())
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
@@ -451,6 +462,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		// the reporting currency convert and the rest are excluded and
 		// flagged.
 		Rates:             parts.rates,
+		RateCache:         parts.rateCache,
 		ConvertTimeout:    parts.convertTimeout,
 		Banks:             banks,
 		BankStaleAfter:    parts.bankStaleAfter,

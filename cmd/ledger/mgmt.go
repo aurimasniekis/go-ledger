@@ -21,7 +21,7 @@ import (
 )
 
 // The management commands (ledger me, grants, users, commitments, occurrences,
-// matching, bank, tokens, audit) talk to a running server through the public Management API with an
+// matching, bank, rates, tokens, audit) talk to a running server through the public Management API with an
 // API token, using pkg/ledgerclient. They never open the database and have no
 // other way in (ADR-0032): what a token may do is exactly what the server's
 // grants allow.
@@ -116,6 +116,11 @@ var mgmtVerbs = map[string]map[string]verb{
 		"reconnect":    {"reconnect <id> [--valid-for-days N]   (new consent for an existing connection)", bankReconnect},
 		"refresh":      {"refresh <id>   (fetch now; a failed refresh keeps stored data and is shown in the answer)", bankRefresh},
 		"disconnect":   {"disconnect <id> [--version N]   (ends the provider session; stored data stays as history)", bankDisconnect},
+	},
+	"rates": {
+		"list":    {"list [--provider P] [--source S] [--base CUR] [--quote CUR] [--from YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N] [--cursor C] [--all]   (cached exchange rates with date, retrieval time and staleness; needs rates:read)", ratesList},
+		"status":  {"status   (rate provider, freshness policy and the last refresh; needs rates:read)", ratesStatus},
+		"refresh": {"refresh   (ask the rate provider for fresh rates now; administrator, needs rates:write; at most one a minute)", ratesRefresh},
 	},
 	"tokens": {
 		"list":   {"list [--owner-id ID] [--limit N] [--cursor C] [--all]   (every user's tokens; needs tokens:read)", tokensList},

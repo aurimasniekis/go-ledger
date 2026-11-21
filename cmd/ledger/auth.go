@@ -89,6 +89,9 @@ type apiParts struct {
 	// rates converts for the outlook (FX2, ADR-0046); nil leaves only amounts
 	// already in the reporting currency convertible.
 	rates outlook.Converter
+	// rateCache serves the rates routes (FX2c, ADR-0048); nil answers them
+	// with 503.
+	rateCache *httpapi.RatesDeps
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their

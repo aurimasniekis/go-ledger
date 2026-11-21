@@ -59,6 +59,10 @@ type FilterSpec struct {
 // ListSpec declares an endpoint's filters by field name.
 type ListSpec struct {
 	Filters map[string]FilterSpec
+	// CursorKey checks the item key a cursor carries; nil means an identifier
+	// ([resource.ValidID]). A list whose items have no ID of their own (the
+	// rates, keyed by provider, source, pair and date) names its key form here.
+	CursorKey func(key string) bool
 }
 
 // Filter is one parsed filter. Values has one entry, except for OpEq, where
@@ -170,7 +174,7 @@ func ParseList(r *http.Request, spec ListSpec) (ListQuery, error) {
 		return q.Filters[i].Op < q.Filters[j].Op
 	})
 	if cursor != "" {
-		after, err := decodeCursor(cursor, q.filterHash())
+		after, err := decodeCursor(cursor, q.filterHash(), spec.CursorKey)
 		if err != nil {
 			return ListQuery{}, err
 		}
@@ -213,7 +217,10 @@ func (q ListQuery) Cursor(lastID string) string {
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
-func decodeCursor(s, filterHash string) (string, error) {
+func decodeCursor(s, filterHash string, validKey func(string) bool) (string, error) {
+	if validKey == nil {
+		validKey = resource.ValidID
+	}
 	bad := Validation("cursor", "cursor is not valid; start again from the first page")
 	if len(s) > maxCursorLen {
 		return "", bad
@@ -225,7 +232,7 @@ func decodeCursor(s, filterHash string) (string, error) {
 	var c cursorBody
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil || !resource.ValidID(c.After) {
+	if err := dec.Decode(&c); err != nil || !validKey(c.After) {
 		return "", bad
 	}
 	if c.Filter != filterHash {
