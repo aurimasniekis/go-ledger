@@ -25,7 +25,7 @@ A session lasts until it has been idle for `auth.session.idle_timeout` (30 minut
 `auth.session.reauth_window` (10 minutes by default). Failed password sign-ins are limited per username and per client
 address, 10 and 30 failures per 15 minutes by default.
 
-A browser that has signed in successfully keeps a device cookie for 90 days, at most 20 per user (decision D30). Its failed
+A browser that has signed in successfully keeps a device cookie for 90 days (`auth.sign_in.device_cookie_ttl`, 2160h by default), at most 20 per user (decision D30). Its failed
 attempts count against the cookie instead of the username, so a username locked out by someone else's guesses does not
 lock out the owner's known browsers. The cookie never bypasses the password or the second factor. Changing a user's
 password deletes that user's device cookies.
@@ -67,6 +67,8 @@ holds it. Each one is audited as done by the host.
 
 Things to know:
 
+- The printed link starts with the origin of `auth.oidc.redirect_url`. If that is unset, the output contains the placeholder
+  `<Ledger's address>` in place of the origin: replace it with the address your users open before using the link.
 - The recovery link carries its secret in the URL. Treat it like a password: anyone holding it can sign in as that user
   until it is used or expires. Ledger keeps only its hash. A reverse proxy that logs query strings would keep the link in
   its logs, which is why it is short-lived and single-use.
@@ -79,7 +81,7 @@ Things to know:
 ## API tokens
 
 A token is a bearer credential: `Authorization: Bearer ldgr_…`. It is 43 random characters after the `ldgr_` prefix, shown
-**once** when it is created, and stored only as a SHA-256 hash with a short hint (the prefix and last four characters).
+**once** when it is created, and stored only as a SHA-256 hash with a short hint (the prefix with the first four and the last four characters).
 If the header is present it is the only credential judged: an invalid or revoked token is refused even when a valid session
 cookie is also sent. Ledger never logs the header or the token.
 
@@ -128,7 +130,7 @@ A grant is `resource:action`. `write` implies `read` on the same resource. There
 | --- | --- | --- |
 | `commitments:read`, `commitments:write` | Recurring commitment definitions | read |
 | `audit:read` | The audit log | no (administrator only) |
-| `banking:read` | Bank-sourced text: raw transaction descriptions and counterparty names (decision D29) | no (administrator only) |
+| `banking:read` | Bank-sourced text: raw transaction descriptions and counterparty names (decision D28 5b; administrator only, decision D29, ADR-0035 point 9) | no (administrator only) |
 | `tokens:read`, `tokens:write` | Everyone's tokens: list and revoke. Never a token value. | no (administrator only) |
 | `users:read`, `users:write` | User accounts, roles, disabling and passwords | no (administrator only) |
 
@@ -178,8 +180,9 @@ Treat a root token like a password for the whole instance:
 - **Tokens skip recent authentication and the second factor by design.** Their writes are audited as `token.write_used`
   with `interactive_steps: skipped`. Routes that need recent authentication for a session do not ask a token for it.
 - **A token holding `users:write` can change accounts.** It can set any user's password (`PUT /api/v1/users/{id}/password`)
-  and create users with a password (`POST /api/v1/users`), including administrators. Treat that grant as the power to take over
-  any account, and give it only to tokens you would trust that far.
+  and create users (`POST /api/v1/users`, including administrators), then set a new user's password with a second call
+  (`PUT /api/v1/users/{id}/password`). Treat that grant as the power to take over any account, and give it only to tokens you would
+  trust that far.
 - **The root token of the root account** is the only token that can create tokens through the API. Its power is therefore the
   power to make any other token, bounded by its own grants.
 - **Long-lived tokens** outlive sign-outs, password changes and session timeouts. They end only by revocation, by expiry, by a
