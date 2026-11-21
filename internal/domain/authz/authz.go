@@ -40,6 +40,10 @@ const (
 	ResourceAudit Resource = "audit"
 	// ResourceCommitments is recurring commitment definitions (task C1).
 	ResourceCommitments Resource = "commitments"
+	// ResourceTokens is every user's API tokens: listing and revoking them
+	// (task A4). A user manages their own tokens with a session, whatever
+	// their role; this grant is for administering everyone's.
+	ResourceTokens Resource = "tokens"
 	// ResourceUsers is user accounts: their roles and whether they are disabled.
 	ResourceUsers Resource = "users"
 )
@@ -58,6 +62,7 @@ type ResourceInfo struct {
 var vocabulary = []ResourceInfo{
 	{Name: ResourceAudit, Description: "The audit log of security-relevant and finance-correcting changes.", Actions: []Action{ActionRead}, AdminOnly: true},
 	{Name: ResourceCommitments, Description: "Recurring commitment definitions: kind, amount, schedule, dates, priority and notes.", Actions: []Action{ActionRead, ActionWrite}},
+	{Name: ResourceTokens, Description: "Every user's API tokens: list them and revoke them. Never the tokens themselves.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceUsers, Description: "User accounts, their roles and whether they are disabled.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 }
 

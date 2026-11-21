@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
@@ -60,6 +61,8 @@ type Deps struct {
 	Audit audit.Reader
 	// Auth is sign-in, sessions and passwords.
 	Auth *auth.Service
+	// Tokens is API tokens.
+	Tokens *tokens.Service
 	// Zone is the reporting time zone (D5): it decides "today" for default
 	// effective dates and the materialisation horizon. Now defaults to
 	// time.Now.
@@ -91,6 +94,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerUserPassword(s, d.Auth)
 	registerSessions(s, d.Auth)
 	registerAudit(s, d.Audit)
+	registerTokens(s, d.Tokens)
 	todayFn := newToday(d.Zone, d.Now)
 	registerCommitments(s, d.Commitments, todayFn)
 	registerOccurrences(s, d.Occurrences, todayFn)

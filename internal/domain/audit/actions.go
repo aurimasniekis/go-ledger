@@ -23,9 +23,9 @@ const (
 	OIDCLinked   Action = "oidc.linked"   // Details: provider
 	OIDCUnlinked Action = "oidc.unlinked" // Details: provider
 
-	TokenCreated   Action = "token.created"    // Details: grants, expires_at
-	TokenRevoked   Action = "token.revoked"    //
-	TokenWriteUsed Action = "token.write_used" // Details: method, route (the route pattern, never the URL)
+	TokenCreated   Action = "token.created"    // Details: grants, root, expires_at (never the token)
+	TokenRevoked   Action = "token.revoked"    // the actor is the owner, an administrator or a token with tokens:write
+	TokenWriteUsed Action = "token.write_used" // Details: method, route (the route pattern, never the URL), interactive_steps (skipped)
 
 	MCPToolCalled Action = "mcp.tool_called" // state-changing MCP call. Details: tool, outcome
 
@@ -83,9 +83,11 @@ var Definitions = map[Action][]Field{
 	OIDCLinked:   {f("provider")},
 	OIDCUnlinked: {f("provider")},
 
-	TokenCreated:   {f("grants"), f("expires_at")},
-	TokenRevoked:   nil,
-	TokenWriteUsed: {f("method"), f("route")},
+	TokenCreated: {f("grants"), f("root", "true", "false"), f("expires_at")},
+	TokenRevoked: nil,
+	// interactive_steps records that the request skipped two-factor and
+	// recent re-authentication, which API tokens do by design (ADR-0029).
+	TokenWriteUsed: {f("method"), f("route"), f("interactive_steps", "skipped")},
 
 	MCPToolCalled: {f("tool"), f("outcome", mcpOutcomes...)},
 

@@ -46,6 +46,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runConfig(args[1:], stdout, stderr, config.Options{})
 	case "auth":
 		return runAuth(args[1:], stdout, stderr, opsEnv{Stdin: os.Stdin})
+	case "token":
+		return runToken(args[1:], stdout, stderr, opsEnv{})
 	case "help", "-h", "--help":
 		usage(stdout)
 		return 0
@@ -65,6 +67,7 @@ func usage(w io.Writer) {
 	say(w, "  restore   replace the database with a backup (stop serve first)")
 	say(w, "  config    check or document the configuration (config check, config env)")
 	say(w, "  auth      set a user's password from standard input (auth set-password; stop serve first)")
+	say(w, "  token     create an API token without the web UI, for example the first one (token create; stop serve first)")
 	say(w, "  version   print the build version")
 	say(w, "  help      print this message")
 }

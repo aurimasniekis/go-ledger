@@ -47,8 +47,8 @@ info:
       administrative and never a write. API tokens carry their own grants,
       limited by their owner's current role. `GET /grants` lists the
       vocabulary. `session` means a user signed in with the session
-      cookie, acting on their own session or password whatever their role;
-      API tokens get 403 there. API tokens are not available yet (task A4).
+      cookie, acting on their own session, password or API tokens whatever their role;
+      API tokens get 403 there.
     - **Sessions and CSRF** (ADR-0026). `POST /auth/sign-in` sets the
       `__Host-ledger_session` cookie (Secure, HttpOnly, SameSite=Strict) and returns
       a `csrf_token` (also from `GET /auth/session`). Every state-changing
@@ -60,11 +60,20 @@ info:
       next request with an ended session is 401.
     - **Recent authentication.** Operations marked
       `x-ledger-recent-auth: true` (credential changes, user management;
-      token creation when it arrives) need a password check within the
+      API token creation) need a password check within the
       re-authentication window when called with a session: otherwise 403
       `reauthentication_required`; confirm with
       `POST /auth/reauthenticate`. API tokens are exempt by design (their
       writes are audited as `token.write_used`).
+    - **API tokens** (ADR-0029). Send `Authorization: Bearer ldgr_…`
+      (`ldgr_` and 43 base62 characters). A request with an Authorization
+      header is judged by it alone: a wrong, expired or revoked token is 401
+      even with a valid session cookie. Tokens are created with a session
+      (`POST /auth/tokens`) or on the host (`ledger token create`), shown
+      once, and limited by their owner's current role on every request;
+      revocation applies to the next request. Token requests skip
+      two-factor and re-authentication, and each state-changing one is
+      audited (`token.write_used`, `interactive_steps: skipped`).
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -922,6 +931,167 @@ paths:
                 $ref: "#/components/schemas/Occurrence"
         default:
           $ref: "#/components/responses/Error"
+  /auth/tokens:
+    get:
+      operationId: listMyTokens
+      x-ledger-access: session
+      summary: List your API tokens
+      description: |
+        The signed-in user's API tokens in ID order, including expired and
+        revoked ones (see status). Never includes the tokens themselves, only
+        a hint (prefix, first and last characters).
+      tags: [tokens]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of tokens.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenPage"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createMyToken
+      x-ledger-access: session
+      x-ledger-recent-auth: true
+      summary: Create an API token
+      description: |
+        Creates a token owned by the signed-in user and returns it once, in
+        `secret`; it is never shown again (the response is `Cache-Control:
+        no-store`). Send it as `Authorization: Bearer ldgr_…`.
+
+        Give `grants` (at least one), or `root: true` for a root token, which
+        holds every grant its owner's role holds, including grants added in
+        later versions; the response then carries a `warning`. Grants the
+        caller does not hold, or a root token requested by anyone who does
+        not hold every grant, are 403 `forbidden` (no escalation). An
+        unknown grant is 400. `expires_at` is optional; without it the
+        token never expires.
+
+        Requests made with a token skip two-factor and re-authentication;
+        each state-changing one is audited (`token.write_used`). A token is
+        limited by its owner's current role on every request. API tokens
+        cannot create tokens. Audited (`token.created`, never the token).
+      tags: [tokens]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewApiToken"
+      responses:
+        "201":
+          description: Created. This is the only time the token is shown.
+          headers:
+            Location:
+              description: The new token's URL under /auth/tokens.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedApiToken"
+        default:
+          $ref: "#/components/responses/Error"
+  /auth/tokens/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getMyToken
+      x-ledger-access: session
+      summary: Get one of your API tokens
+      description: Another user's token is 404.
+      tags: [tokens]
+      responses:
+        "200":
+          description: The token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiToken"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: revokeMyToken
+      x-ledger-access: session
+      summary: Revoke one of your API tokens
+      description: |
+        Revokes the token at once: its next request is 401. Revoking a
+        revoked token changes nothing (204). Another user's token is 404.
+        Audited (`token.revoked`).
+      tags: [tokens]
+      responses:
+        "204":
+          description: Revoked.
+        default:
+          $ref: "#/components/responses/Error"
+  /tokens:
+    get:
+      operationId: listTokens
+      x-ledger-access: tokens:read
+      summary: List every user's API tokens
+      description: |
+        All API tokens in ID order, including expired and revoked ones.
+        Administrative. Never includes the tokens themselves.
+      tags: [tokens]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: owner_id
+          in: query
+          description: Only this user's tokens.
+          schema:
+            $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: A page of tokens.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenPage"
+        default:
+          $ref: "#/components/responses/Error"
+  /tokens/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getToken
+      x-ledger-access: tokens:read
+      summary: Get any user's API token
+      tags: [tokens]
+      responses:
+        "200":
+          description: The token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiToken"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: revokeToken
+      x-ledger-access: tokens:write
+      summary: Revoke any user's API token
+      description: |
+        Revokes the token at once: its next request is 401. Revoking a
+        revoked token changes nothing (204). Audited (`token.revoked`).
+      tags: [tokens]
+      responses:
+        "204":
+          description: Revoked.
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: meta
     description: The API description itself.
@@ -937,6 +1107,8 @@ tags:
     description: Sign-in, sessions, re-authentication and your own password.
   - name: occurrences
     description: Dated occurrences generated from commitment definitions.
+  - name: tokens
+    description: API tokens (Authorization Bearer); your own, and everyone's for administrators.
 components:
   parameters:
     Limit:
@@ -1371,6 +1543,99 @@ components:
           type: [string, "null"]
           format: date-time
           description: When the last password check stops counting as recent; null when it already has.
+    ApiToken:
+      type: object
+      description: An API token. Never includes the token itself.
+      required: [id, name, owner_id, root, grants, hint, prefix, last_chars, status, created_at, expires_at, last_used_at, revoked_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        owner_id:
+          $ref: "#/components/schemas/ID"
+        root:
+          type: boolean
+          description: A root token holds every grant its owner's role holds, now and in later versions.
+        grants:
+          type: array
+          description: The token's own grants (empty for a root token). Requests get only those the owner's current role allows.
+          items:
+            $ref: "#/components/schemas/Grant"
+        hint:
+          type: string
+          description: The prefix, first and last four random characters, to recognise the token.
+          examples: ["ldgr_AbCd…wXyZ"]
+        prefix:
+          type: string
+          description: "\"ldgr_\" and the first four random characters."
+        last_chars:
+          type: string
+          description: The last four characters.
+        status:
+          type: string
+          enum: [active, expired, revoked]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: Null when the token never expires.
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+          description: Updated at most once a minute.
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+    ApiTokenPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiToken"
+        next_cursor:
+          type: [string, "null"]
+    NewApiToken:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        grants:
+          type: array
+          description: The grants the token holds; each must be one you hold. Leave empty for a root token.
+          items:
+            $ref: "#/components/schemas/Grant"
+        root:
+          type: boolean
+          default: false
+          description: Ask explicitly for a root token (administrators only).
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: Optional; in the future. Without it the token never expires.
+    CreatedApiToken:
+      type: object
+      required: [secret, token, warning]
+      properties:
+        secret:
+          type: string
+          description: The token. Shown only in this response; Ledger keeps only its hash.
+          pattern: "^ldgr_[0-9A-Za-z]{43}$"
+        token:
+          $ref: "#/components/schemas/ApiToken"
+        warning:
+          type: [string, "null"]
+          description: What a root token can do; null for other tokens.
     ID:
       type: string
       description: A ULID.

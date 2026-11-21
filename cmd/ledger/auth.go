@@ -16,10 +16,12 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
+	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	tokenstore "github.com/aurimasniekis/go-ledger/internal/store/tokens"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
 
@@ -44,6 +46,7 @@ type apiParts struct {
 	users       *userstore.Store
 	commitments *commitmentstore.Store
 	auth        *auth.Service
+	tokens      *tokens.Service
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their
@@ -54,7 +57,8 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, hasher auth.Hasher, now 
 	if err != nil {
 		return apiParts{}, err
 	}
-	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), auth: svc}, nil
+	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), auth: svc,
+		tokens: tokens.NewService(tokenstore.New(db, al), us, tokens.Options{Now: now})}, nil
 }
 
 // recorder records one audit event in a transaction of its own through w,
