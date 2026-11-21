@@ -34,6 +34,8 @@ type createdToken struct {
 		Status     string     `json:"status"`
 		ExpiresAt  *time.Time `json:"expires_at"`
 		LastUsedAt *time.Time `json:"last_used_at"`
+		// ParentTokenID is null for tokens made with a session or on the host.
+		ParentTokenID *string `json:"parent_token_id"`
 	} `json:"token"`
 	Warning *string `json:"warning"`
 }
