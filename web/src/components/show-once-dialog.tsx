@@ -17,6 +17,7 @@ export function ShowOnceDialog({
   warning,
   filename,
   listLabel,
+  returnFocusId,
   onDone,
 }: {
   title: string
@@ -25,6 +26,8 @@ export function ShowOnceDialog({
   warning?: string | null
   filename: string
   listLabel: string
+  /** The element that gets focus after Done. The control that opened the dialog is usually gone by then; without this, focus falls to the page heading. */
+  returnFocusId?: string
   onDone: () => void
 }) {
   const [note, setNote] = useState('')
@@ -46,7 +49,8 @@ export function ShowOnceDialog({
     document.body.appendChild(a)
     a.click()
     a.remove()
-    URL.revokeObjectURL(url)
+    // Revoked on a later tick: some browsers cancel the download if the URL dies during the click.
+    setTimeout(() => URL.revokeObjectURL(url), 0)
     setNote('Download started.')
   }
 
@@ -55,6 +59,14 @@ export function ShowOnceDialog({
       <DialogContent
         title={title}
         description={description}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          const el = (returnFocusId && document.getElementById(returnFocusId)) || document.querySelector<HTMLElement>('h1')
+          if (el) {
+            if (!el.matches('a[href],button,input,select,textarea,[tabindex]')) el.setAttribute('tabindex', '-1')
+            el.focus()
+          }
+        }}
         onEscapeKeyDown={(e) => e.preventDefault()}
         onPointerDownOutside={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}

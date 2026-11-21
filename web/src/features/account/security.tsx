@@ -26,7 +26,7 @@ export function SecurityPage() {
   const [codes, setCodes] = useState<string[] | null>(null)
   return (
     <section className="space-y-8">
-      <h1 className="text-2xl font-semibold">Account security</h1>
+      <h1 id="security-heading" tabIndex={-1} className="text-2xl font-semibold focus:outline-none">Account security</h1>
       {confined && (
         <p role="note" className="rounded-md border border-status-overdue bg-status-overdue-bg p-3 text-sm text-status-overdue">
           This Ledger requires two-factor authentication. Set up an authenticator below to continue; nothing else is
@@ -42,6 +42,7 @@ export function SecurityPage() {
           lines={codes}
           listLabel="Recovery codes"
           filename="ledger-recovery-codes.txt"
+          returnFocusId="security-heading"
           onDone={() => setCodes(null)}
         />
       )}

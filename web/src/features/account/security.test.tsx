@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fail, installApi, none, ok, renderApp, session, signedIn } from '@/test/fake-api'
@@ -43,6 +43,8 @@ describe('two-factor enrolment', () => {
     expect(calls.some((c) => c.path.endsWith('/confirm') && c.headers['X-CSRF-Token'] === 'csrf-abc')).toBe(true)
     await user.click(within(dlg).getByRole('button', { name: 'Done' }))
     expect(document.body.textContent).not.toContain(CODES[0])
+    // The control that started it is gone; focus lands on the page heading, not the body.
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Account security' })).toHaveFocus())
     expect(await screen.findByText(/authenticator app since/)).toBeInTheDocument()
     // The setup key is gone as well.
     expect(screen.queryByLabelText('Setup key')).not.toBeInTheDocument()

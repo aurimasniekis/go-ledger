@@ -18,7 +18,7 @@ export function AdminTokensPage() {
   const mayRevoke = holds(me.data?.grants, 'tokens:write')
   const mayListUsers = holds(me.data?.grants, 'users:read')
   const [owner, setOwner] = useState('')
-  const users = usePagedList<User>(['users'], api('/users'), { limit: '200' })
+  const users = usePagedList<User>(['users'], api('/users'), { limit: '200' }, { enabled: mayListUsers })
   const list = usePagedList<ApiToken>(['all-tokens'], api('/tokens'), { owner_id: owner || undefined })
   const [revoking, setRevoking] = useState<ApiToken | null>(null)
   const names = new Map((users.data ?? []).map((u) => [u.id, u.username]))
