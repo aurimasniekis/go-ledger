@@ -117,6 +117,18 @@ func userError(err error) error {
 	return err
 }
 
+// refuseUnlessRootToken is decision D32: a token principal may create or
+// promote an administrator, re-enable an administrator or set a password only
+// when it is the root token of the root account (authz.Principal.CanCreateTokens,
+// computed per request from current data). Sessions are unaffected (they need
+// recent sign-in instead). It returns nil when p may go on.
+func refuseUnlessRootToken(p authz.Principal, what string) error {
+	if p.Kind == authz.PrincipalToken && !p.CanCreateTokens {
+		return rootTokenRequired(what)
+	}
+	return nil
+}
+
 func actor(r *http.Request) audit.Actor {
 	p, _ := authz.FromContext(r.Context())
 	return audit.ActorOf(p)
@@ -170,6 +182,12 @@ func registerUsers(s *Server, st users.Store) {
 			WriteError(w, r, Validation("role", "role is required"))
 			return
 		}
+		if *in.Role == authz.RoleAdministrator {
+			if err := refuseUnlessRootToken(principal(r), "creating an administrator"); err != nil {
+				WriteError(w, r, err)
+				return
+			}
+		}
 		u, err := st.Create(r.Context(), actor(r), users.New{Username: *in.Username, DisplayName: in.DisplayName, Role: *in.Role})
 		if err != nil {
 			WriteError(w, r, userError(err))
@@ -217,6 +235,10 @@ func registerUsers(s *Server, st users.Store) {
 			return
 		}
 		id := r.PathValue("id")
+		if err := guardAdministratorPatch(r, st, id, expected, p); err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		var u users.User
 		if len(patch) == 0 || len(patch) == 1 && patch.Has("version") {
 			u, err = st.CheckVersion(r.Context(), id, expected)
@@ -237,6 +259,41 @@ func registerUsers(s *Server, st users.Store) {
 		SetVersion(w, u.Version)
 		WriteJSON(w, http.StatusOK, toUserJSON(u))
 	}))
+}
+
+// guardAdministratorPatch applies D32 to PATCH /users/{id}: a token that is not
+// the root token of the root account may not make a user an administrator or
+// re-enable a disabled administrator (which also revives their tokens, D25-2).
+// Demoting or disabling stays open to users:write tokens.
+//
+// The decision is made on a read outside the write transaction, so it is pinned
+// to the version: when the user is no longer at the version the caller expects,
+// the guard answers version_conflict. The store's in-transaction check of the
+// same expected version then guarantees the write applies to the state judged.
+func guardAdministratorPatch(r *http.Request, st users.Store, id string, expected int64, p users.Patch) error {
+	pr := principal(r)
+	if pr.Kind != authz.PrincipalToken || pr.CanCreateTokens {
+		return nil
+	}
+	promotes := p.Role != nil && *p.Role == authz.RoleAdministrator
+	enables := p.Disabled != nil && !*p.Disabled
+	if !promotes && !enables {
+		return nil
+	}
+	before, err := st.Get(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	if before.Version != expected {
+		return VersionConflict(before.Version, toUserJSON(before))
+	}
+	if promotes && before.Role != authz.RoleAdministrator {
+		return rootTokenRequired("making a user an administrator")
+	}
+	if enables && before.Disabled && before.Role == authz.RoleAdministrator {
+		return rootTokenRequired("re-enabling an administrator")
+	}
+	return nil
 }
 
 func parseUserPatch(p MergePatch) (users.Patch, error) {

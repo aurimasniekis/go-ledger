@@ -182,3 +182,29 @@ with at most one user) and every user is created by the bootstrap commands, the 
 provisioning, none of which run the clock backwards on purpose. After a restore the root account follows the restored
 data. Ledger does not pin the root account in a settings row (that would need a migration and a way to change it); an
 operator who suspects a clock step at bootstrap should check the first users' `created_at` before relying on D25-1.
+
+## Amendment: only the root token escalates accounts (A4g; operator decision D32)
+
+A token holding `users:write` could create an administrator and set its password, or reset any password, which made
+that grant a full account takeover. Decision D32 narrows it, using the same principal as D25-1 (a root token owned by
+the root account, `authz.Principal.CanCreateTokens`, computed on every request from current data).
+
+1. With an API token, these need the root token of the root account; any other token gets 403 with the stable code
+   `root_token_required`, before anything is written or audited:
+   - `POST /users` with `role: administrator`;
+   - `PATCH /users/{id}` that makes a non-administrator an administrator;
+   - `PATCH /users/{id}` that re-enables a disabled administrator (this also revives their unrevoked tokens, D25-2, so it
+     is the same escalation); enabling a disabled user together with a promotion is covered by the promotion rule;
+   - `PUT /users/{id}/password`, for any user including the token owner.
+2. Still open to a `users:write` token: creating non-administrators, profile edits, demoting and disabling users,
+   re-enabling non-administrators. These cannot raise anyone to administrator.
+3. Sessions are unchanged: an administrator's session needs recent sign-in (`reauthentication_required`).
+4. Routes checked for the same escalation: second-factor routes (enrol, confirm, recovery codes, disable) and OIDC
+   link/unlink act only on the caller's own account and are session-only, so no token can reach them; there is no
+   administrator reset of another user's second factor. Token creation is D25-1; revoking a token cannot escalate.
+   OIDC provisioning and the bootstrap/host commands run as the host, not as a token.
+5. Concurrency: the PATCH check reads the target just before the write, outside the write transaction, so it is pinned
+   by the version. When the target is no longer at the version the caller sent, the check answers `version_conflict`
+   (409) instead of judging; the store's in-transaction check of the same version then guarantees the write applies to
+   the state the check judged. A concurrent demotion, disabling or promotion therefore cannot be raced into a
+   re-promotion or re-enable by a non-root token.
