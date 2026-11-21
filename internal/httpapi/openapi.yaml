@@ -1411,7 +1411,7 @@ components:
         override (ADR-0031). Only evidence in the occurrence's currency is
         counted; other currencies are listed in unconverted_currencies and
         never converted or summed.
-      required: [status, derived_status, timing, paid_amount, outstanding_amount, unconverted_currencies, evidence_count, grace_until, within_grace, override]
+      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, unconverted_currencies, evidence_count, grace_until, within_grace, override]
       properties:
         status:
           $ref: "#/components/schemas/PaymentStatus"
@@ -1427,7 +1427,13 @@ components:
           description: The sum of the evidence in the occurrence's currency (zero when none).
           $ref: "#/components/schemas/Money"
         outstanding_amount:
-          description: The amount less paid_amount, never below zero; zero when paid.
+          description: >-
+            The amount less paid_amount, never below zero; zero when paid. Under an
+            applied "unpaid" override it is the full amount (the evidence is declared
+            not to settle the occurrence), so it is never zero while the status is not paid.
+          $ref: "#/components/schemas/Money"
+        overpaid_amount:
+          description: paid_amount less the amount when positive, else zero. Informational; it does not change the status.
           $ref: "#/components/schemas/Money"
         unconverted_currencies:
           type: array

@@ -148,9 +148,13 @@ type State struct {
 	// (for partially_paid it describes the unpaid remainder); empty when paid.
 	Timing Status
 	// Paid sums the evidence in the occurrence's currency. Outstanding is the
-	// amount less Paid, never below zero; zero when the status is paid.
+	// amount less Paid, never below zero, and zero when the status is paid;
+	// under an applied "unpaid" override it is the full amount, because the
+	// evidence is declared not to settle the occurrence. Overpaid is Paid less
+	// the amount when positive (zero otherwise); it is informational only.
 	Paid        money.Money
 	Outstanding money.Money
+	Overpaid    money.Money
 	// Unconverted lists the currencies of evidence that is not in the
 	// occurrence's currency: it is not counted and never converted.
 	Unconverted   []money.Currency
@@ -183,8 +187,12 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 	}
 	slices.SortFunc(other, func(a, b money.Currency) int { return strings.Compare(a.Code(), b.Code()) })
 	timing := TimingOf(o.DueDate, today)
-	st := State{Paid: paid, Unconverted: other, EvidenceCount: len(f.Evidence), Override: f.Override}
+	zero, _ := money.Zero(cur, o.Amount.Amount().Scale())
+	st := State{Paid: paid, Overpaid: zero, Unconverted: other, EvidenceCount: len(f.Evidence), Override: f.Override}
 	c, _ := paid.Cmp(o.Amount)
+	if c > 0 {
+		st.Overpaid, _ = paid.Sub(o.Amount)
+	}
 	switch {
 	case c >= 0:
 		st.Derived = StatusPaid
@@ -209,9 +217,15 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 		return st
 	}
 	st.Timing = timing
-	st.Outstanding, _ = o.Amount.Sub(paid)
-	if st.Outstanding.Sign() < 0 {
-		st.Outstanding, _ = money.Zero(cur, o.Amount.Amount().Scale())
+	if st.Override != nil && st.Override.Status == OverrideUnpaid && st.OverrideApplied {
+		// The user declared the evidence does not settle it: never report
+		// nothing outstanding while the status is not paid.
+		st.Outstanding = o.Amount
+	} else {
+		st.Outstanding, _ = o.Amount.Sub(paid)
+		if st.Outstanding.Sign() < 0 {
+			st.Outstanding = zero
+		}
 	}
 	if timing == StatusOverdue && grace != nil {
 		if until, ok := grace(o); ok {

@@ -69,7 +69,9 @@ func TestDerive(t *testing.T) {
 		{name: "paid override without evidence has no effect", facts: payments.Facts{Override: ov(payments.OverridePaid)}, today: "2026-03-20",
 			status: "overdue", derived: "overdue", timing: "overdue", paid: "0.00 EUR", outstanding: "50.00 EUR"},
 		{name: "unpaid override over full evidence", facts: payments.Facts{Evidence: []payments.Evidence{ev("50.00", "EUR")}, Override: ov(payments.OverrideUnpaid)}, today: "2026-03-15",
-			status: "due", derived: "paid", timing: "due", paid: "50.00 EUR", outstanding: "0.00 EUR", applied: true},
+			status: "due", derived: "paid", timing: "due", paid: "50.00 EUR", outstanding: "50.00 EUR", applied: true},
+		{name: "unpaid override over full evidence when overdue", facts: payments.Facts{Evidence: []payments.Evidence{ev("50.00", "EUR")}, Override: ov(payments.OverrideUnpaid)}, today: "2026-03-20",
+			status: "overdue", derived: "paid", timing: "overdue", paid: "50.00 EUR", outstanding: "50.00 EUR", applied: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -90,6 +92,29 @@ func TestDerive(t *testing.T) {
 				t.Errorf("evidence count = %d", st.EvidenceCount)
 			}
 		})
+	}
+}
+
+// TestDeriveOutstandingAndOverpaid: outstanding is never zero while the status
+// is not paid, and an overpayment is visible without changing the status.
+func TestDeriveOutstandingAndOverpaid(t *testing.T) {
+	st := payments.Derive(occ, payments.Facts{Evidence: []payments.Evidence{ev("50.00", "EUR"), ev("9.995", "EUR")}}, d("2026-03-20"), nil)
+	if st.Status != payments.StatusPaid || st.Overpaid.String() != "9.995 EUR" || st.Outstanding.Sign() != 0 {
+		t.Errorf("overpaid: status=%s overpaid=%s outstanding=%s", st.Status, st.Overpaid, st.Outstanding)
+	}
+	for _, f := range []payments.Facts{
+		{},
+		{Evidence: []payments.Evidence{ev("50.00", "EUR")}, Override: ov(payments.OverrideUnpaid)},
+		{Evidence: []payments.Evidence{ev("60.00", "EUR")}, Override: ov(payments.OverrideUnpaid)},
+		{Evidence: []payments.Evidence{ev("20.00", "EUR")}},
+	} {
+		st := payments.Derive(occ, f, d("2026-03-20"), nil)
+		if st.Status != payments.StatusPaid && st.Outstanding.Sign() <= 0 {
+			t.Errorf("status %s with outstanding %s", st.Status, st.Outstanding)
+		}
+	}
+	if st := payments.Derive(occ, payments.Facts{Evidence: []payments.Evidence{ev("20.00", "EUR")}}, d("2026-03-20"), nil); st.Overpaid.Sign() != 0 {
+		t.Errorf("overpaid = %s", st.Overpaid)
 	}
 }
 

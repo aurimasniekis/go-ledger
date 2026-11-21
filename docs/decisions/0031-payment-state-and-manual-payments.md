@@ -55,7 +55,9 @@ for both and builds neither.
      accepting less. It is refused (409 `payment_evidence_required`) when the occurrence has no evidence at all, and
      it has no effect (`override.applied` false) if its evidence is later deleted, so **no occurrence is ever paid
      without evidence**.
-   - `unpaid` says the evidence does not settle the occurrence (a transfer bounced): the status follows the dates.
+   - `unpaid` says the evidence does not settle the occurrence (a transfer bounced): the status follows the dates,
+     and `outstanding_amount` is the **full occurrence amount** (not amount less evidence), so it is never zero
+     while the status is not paid. `paid_amount` still shows the evidence.
    - Other values (waived, skipped) were not added: D7 lists the statuses, and a status that removes an obligation
      needs an operator decision.
 7. **Proposed: undo restores the previous state exactly.** `occurrence_status_overrides` is a history: setting an
@@ -100,7 +102,8 @@ for both and builds neither.
   `paid`/`unpaid` and the evidence requirement for `paid` (point 6); undo as a walk back through the override
   history (point 7); payment-state changes increasing the occurrence version (point 8); manual payments in the
   occurrence's currency only, not after today, never edited (point 3); the commitments grants (point 9); no amounts,
-  notes or reasons in the audit log (point 10). Duplicate manual payments are not detected: two identical records
+  notes or reasons in the audit log (point 10). Overpayments are visible as `overpaid_amount` (paid less the amount when positive, else zero; informational, the
+  status stays paid); duplicates are still not detected or prevented. Duplicate manual payments are not detected: two identical records
   both count and both are listed. How duplicate payments are handled is still an open question for the operator.
 - **For X1:** add the allocation table (one row per transaction and occurrence, allocated amount and currency,
   `ON DELETE RESTRICT` to the occurrence), its confirmed-allocation query to `EvidenceSources` and its expression to
