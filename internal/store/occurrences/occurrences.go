@@ -28,18 +28,29 @@ import (
 // DefaultEvidence lists the payment evidence that makes an occurrence paid
 // and so immutable: each entry is a SQL boolean expression over the
 // occurrence aliased "o". Any evidence counts, so a partially paid occurrence
-// (D7) is immutable too. Task C3 (ADR-0031) adds manual payment records; task
-// X1 adds confirmed bank-transaction allocations here and to
-// internal/store/payments EvidenceSources. Evidence tables must refer to
-// commitment_occurrences(id) with ON DELETE RESTRICT, so the database also
-// refuses to drop a paid occurrence.
+// (D7) is immutable too. Task C3 (ADR-0031) adds manual payment records, and
+// a deleted one no longer counts: an occurrence whose payments were all
+// deleted is editable again. Task X1 adds confirmed bank-transaction
+// allocations here and to internal/store/payments EvidenceSources. Evidence
+// tables must refer to commitment_occurrences(id) with ON DELETE RESTRICT, so
+// the database also refuses to drop a paid occurrence.
 var DefaultEvidence = []string{
-	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id)",
+	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id AND mp.deleted_at IS NULL)",
 	// Payment matches (X1, ADR-0035): a confirmed match keeps its occurrence
 	// even while its transaction does not count (no longer reported), and a
 	// reversed one is payment history that is kept too. Suggestions and
 	// rejections do not: they are dropped with the occurrence.
 	"EXISTS (SELECT 1 FROM payment_matches pm WHERE pm.occurrence_id = o.id AND pm.state IN ('confirmed', 'reversed'))",
+}
+
+// DefaultReferences lists what a delete of an occurrence must not touch: every
+// row that refers to it with ON DELETE RESTRICT. It is [DefaultEvidence] plus
+// the manual payments that were soft-deleted (D26-3a), which stay as history
+// and keep their occurrence from being removed, though they do not make it
+// paid. Deleting a referenced occurrence would fail on the foreign key.
+var DefaultReferences = []string{
+	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id)",
+	DefaultEvidence[1],
 }
 
 // Options configures a [Store].
@@ -49,6 +60,9 @@ type Options struct {
 	NewID func() string
 	// Evidence replaces [DefaultEvidence] (tests use it to stand in for C3).
 	Evidence []string
+	// References replaces [DefaultReferences]. When Evidence is replaced and
+	// References is not, References is Evidence.
+	References []string
 }
 
 // Store reads and writes occurrences on a [store.DB].
@@ -56,7 +70,8 @@ type Store struct {
 	db    *store.DB
 	now   func() time.Time
 	newID func() string
-	paid  string // SQL boolean expression over alias o
+	paid  string // SQL boolean expression over alias o: counting evidence exists
+	refd  string // SQL boolean expression over alias o: a row refers to it
 }
 
 var _ occurrences.Reader = (*Store)(nil)
@@ -73,11 +88,20 @@ func New(db *store.DB, opts Options) *Store {
 	if ev == nil {
 		ev = DefaultEvidence
 	}
-	paid := "0"
-	if len(ev) > 0 {
-		paid = "(" + strings.Join(ev, " OR ") + ")"
+	refs := opts.References
+	if refs == nil {
+		refs = DefaultReferences
+		if opts.Evidence != nil {
+			refs = opts.Evidence
+		}
 	}
-	return &Store{db: db, now: opts.Now, newID: opts.NewID, paid: paid}
+	join := func(parts []string) string {
+		if len(parts) == 0 {
+			return "0"
+		}
+		return "(" + strings.Join(parts, " OR ") + ")"
+	}
+	return &Store{db: db, now: opts.Now, newID: opts.NewID, paid: join(ev), refd: join(refs)}
 }
 
 type querier interface {
@@ -122,9 +146,18 @@ func (s *Store) setHorizon(ctx context.Context, tx *sql.Tx, commitmentID string,
 	return err
 }
 
-func (s *Store) insert(ctx context.Context, tx *sql.Tx, commitmentID string, p occurrences.Planned, now time.Time) (bool, error) {
+// insert stores a planned occurrence. A month that already has one is left
+// alone (generation is idempotent), except that with revive a cancelled
+// occurrence of the month (D31) is revived with the planned date and amount:
+// an edit that schedules the month again must not leave it empty.
+func (s *Store) insert(ctx context.Context, tx *sql.Tx, commitmentID string, p occurrences.Planned, now time.Time, revive bool) (bool, error) {
+	onConflict := " ON CONFLICT (commitment_id, month) DO NOTHING"
+	if revive {
+		onConflict = " ON CONFLICT (commitment_id, month) DO UPDATE SET due_date = excluded.due_date, amount = excluded.amount, currency = excluded.currency," +
+			" updated_at = excluded.updated_at, version = version + 1, cancelled_at = NULL, cancelled_reason = NULL WHERE commitment_occurrences.cancelled_at IS NOT NULL"
+	}
 	res, err := tx.ExecContext(ctx, "INSERT INTO commitment_occurrences (id, commitment_id, month, due_date, amount, currency, created_at, updated_at)"+
-		" VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (commitment_id, month) DO NOTHING",
+		" VALUES (?, ?, ?, ?, ?, ?, ?, ?)"+onConflict,
 		s.newID(), commitmentID, p.Month.String(), sqlvalue.Date{Date: p.DueDate}, sqlvalue.Amount{Decimal: p.Amount.Amount()},
 		sqlvalue.Currency{Currency: p.Amount.Currency()}, store.Timestamp{Time: now}, store.Timestamp{Time: now})
 	if err != nil {
@@ -158,7 +191,7 @@ func (s *Store) MaterialiseTx(ctx context.Context, tx *sql.Tx, commitmentID stri
 	}
 	now := s.now().UTC()
 	for _, p := range occurrences.Generate(t, from, through) {
-		if _, err := s.insert(ctx, tx, commitmentID, p, now); err != nil {
+		if _, err := s.insert(ctx, tx, commitmentID, p, now, false); err != nil {
 			return fmt.Errorf("occurrences: materialise: %w", err)
 		}
 	}
@@ -200,9 +233,9 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 	// occurrences due before the effective date (history, which the plan would
 	// leave alone). Those due on or after it are left to the plan, which
 	// rewrites them in place or removes them.
-	var outOfRange, keptOverride int
+	var outOfRange, keptOverride, cancelled int
 	if old.Start != next.Start || !sameEnd(old.End, next.End) {
-		if outOfRange, keptOverride, err = s.removeOutOfRange(ctx, tx, commitmentID, next, effective); err != nil {
+		if outOfRange, cancelled, keptOverride, err = s.removeOutOfRange(ctx, tx, commitmentID, next, effective); err != nil {
 			return occurrences.Plan{}, err
 		}
 	}
@@ -243,11 +276,23 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 	plan.Remove = kept
 	plan.OutOfRange, plan.KeptOverride = outOfRange, keptOverride
 	now := s.now().UTC()
+	// Remove deletes what nothing refers to and cancels what only deleted
+	// payments refer to (D31); the plan then lists only the deleted ones, so
+	// the audit counts each occurrence once.
+	removed := plan.Remove[:0:0]
 	for _, id := range plan.Remove {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE id = ? AND NOT "+s.paid, id); err != nil {
+		gone, err := s.removeOrCancel(ctx, tx, id, occurrences.CancelTermsChange, now)
+		if err != nil {
 			return occurrences.Plan{}, fmt.Errorf("occurrences: remove: %w", err)
 		}
+		switch gone {
+		case goneDeleted:
+			removed = append(removed, id)
+		case goneCancelled:
+			cancelled++
+		}
 	}
+	plan.Remove, plan.CancelledReferenced = removed, cancelled
 	for _, u := range plan.Update {
 		if _, err := tx.ExecContext(ctx, "UPDATE commitment_occurrences AS o SET due_date = ?, amount = ?, currency = ?, updated_at = ?, version = version + 1"+
 			" WHERE id = ? AND NOT "+s.paid,
@@ -258,7 +303,7 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 	}
 	created := plan.Create[:0:0]
 	for _, p := range plan.Create {
-		ok, err := s.insert(ctx, tx, commitmentID, p, now)
+		ok, err := s.insert(ctx, tx, commitmentID, p, now, true)
 		if err != nil {
 			return occurrences.Plan{}, fmt.Errorf("occurrences: create: %w", err)
 		}
@@ -284,14 +329,53 @@ func sameEnd(a, b *calendar.Date) bool {
 	return *a == *b
 }
 
-// removeOutOfRange deletes the unpaid occurrences due before the start date or
+// gone is what removeOrCancel did to an occurrence.
+type gone int
+
+const (
+	goneNothing   gone = iota // paid, or already cancelled: left alone
+	goneDeleted               // no row referred to it: deleted
+	goneCancelled             // only deleted payments referred to it: cancelled (D31)
+)
+
+// removeOrCancel is the one way an occurrence goes away (D31). An occurrence
+// with live payment evidence is never touched. One that rows still refer to
+// (soft-deleted manual payments, kept as history) cannot be deleted, so it is
+// cancelled with reason and its open match suggestions are dropped. Anything
+// else is deleted.
+func (s *Store) removeOrCancel(ctx context.Context, tx *sql.Tx, id, reason string, now time.Time) (gone, error) {
+	var paid, refd, cancelled bool
+	err := tx.QueryRowContext(ctx, "SELECT "+s.paid+", "+s.refd+", o.cancelled_at IS NOT NULL FROM commitment_occurrences AS o WHERE o.id = ?", id).Scan(&paid, &refd, &cancelled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return goneNothing, nil
+	}
+	if err != nil {
+		return goneNothing, err
+	}
+	switch {
+	case paid || cancelled:
+		return goneNothing, nil
+	case !refd:
+		_, err = tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE o.id = ? AND NOT "+s.refd, id)
+		return goneDeleted, err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM payment_matches WHERE occurrence_id = ? AND state IN ('suggested', 'rejected')", id); err != nil {
+		return goneNothing, err
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE commitment_occurrences SET cancelled_at = ?, cancelled_reason = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+		store.Timestamp{Time: now}, reason, store.Timestamp{Time: now}, id)
+	return goneCancelled, err
+}
+
+// removeOutOfRange removes the unpaid occurrences due before the start date or
 // after the end date (D23 2b) and before the effective date: later ones are
-// rewritten or removed by the edit plan. Occurrences with
-// payment evidence stay, and so do those with a status override of any state:
-// the override is the user's record and would cascade away with the row. It
-// returns how many it deleted and how many it kept for an override.
-func (s *Store) removeOutOfRange(ctx context.Context, tx *sql.Tx, commitmentID string, t occurrences.Terms, effective calendar.Date) (removed, keptOverride int, err error) {
-	where := " FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT " + s.paid + " AND due_date < ? AND (due_date < ?"
+// rewritten or removed by the edit plan. Occurrences with live payment
+// evidence stay, and so do those with a status override of any state: the
+// override is the user's record and would cascade away with the row. One that
+// only deleted payments refer to is cancelled (D31). It returns how many it
+// deleted, how many it cancelled and how many it kept for an override.
+func (s *Store) removeOutOfRange(ctx context.Context, tx *sql.Tx, commitmentID string, t occurrences.Terms, effective calendar.Date) (removed, cancelled, keptOverride int, err error) {
+	where := " FROM commitment_occurrences AS o WHERE commitment_id = ? AND cancelled_at IS NULL AND NOT " + s.paid + " AND due_date < ? AND (due_date < ?"
 	args := []any{commitmentID, sqlvalue.Date{Date: effective}, sqlvalue.Date{Date: t.Start}}
 	if t.End != nil {
 		where += " OR due_date > ?"
@@ -300,30 +384,82 @@ func (s *Store) removeOutOfRange(ctx context.Context, tx *sql.Tx, commitmentID s
 	where += ")"
 	const hasOverride = " AND EXISTS (SELECT 1 FROM occurrence_status_overrides so WHERE so.occurrence_id = o.id)"
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*)"+where+hasOverride, args...).Scan(&keptOverride); err != nil {
-		return 0, 0, fmt.Errorf("occurrences: count kept overrides: %w", err)
+		return 0, 0, 0, fmt.Errorf("occurrences: count kept overrides: %w", err)
 	}
-	res, err := tx.ExecContext(ctx, "DELETE"+where+" AND NOT EXISTS (SELECT 1 FROM occurrence_status_overrides so WHERE so.occurrence_id = o.id)", args...)
+	ids, err := s.ids(ctx, tx, "SELECT o.id"+where+" AND NOT EXISTS (SELECT 1 FROM occurrence_status_overrides so WHERE so.occurrence_id = o.id)", args...)
 	if err != nil {
-		return 0, 0, fmt.Errorf("occurrences: remove out of range: %w", err)
+		return 0, 0, 0, fmt.Errorf("occurrences: find out of range: %w", err)
 	}
-	n, err := res.RowsAffected()
-	return int(n), keptOverride, err
+	now := s.now().UTC()
+	for _, id := range ids {
+		g, err := s.removeOrCancel(ctx, tx, id, occurrences.CancelOutOfRange, now)
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("occurrences: remove out of range: %w", err)
+		}
+		switch g {
+		case goneDeleted:
+			removed++
+		case goneCancelled:
+			cancelled++
+		}
+	}
+	return removed, cancelled, keptOverride, nil
 }
 
-// RemoveUnpaidTx deletes the commitment's occurrences that no payment
-// evidence refers to, before the commitment itself is deleted. Paid ones stay
-// and their foreign key then refuses the delete.
-// It returns how many it deleted.
-func (s *Store) RemoveUnpaidTx(ctx context.Context, tx *sql.Tx, commitmentID string) (int, error) {
-	res, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT "+s.paid, commitmentID)
+func (s *Store) ids(ctx context.Context, q querier, query string, args ...any) ([]string, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	n, err := res.RowsAffected()
-	return int(n), err
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
-const columns = "o.id, o.commitment_id, o.month, o.due_date, o.amount, o.currency, o.version, o.created_at, o.updated_at"
+// PaidTx reports whether any of the commitment's occurrences has live payment
+// evidence: payment history that blocks deleting the commitment.
+func (s *Store) PaidTx(ctx context.Context, tx *sql.Tx, commitmentID string) (bool, error) {
+	var paid bool
+	err := tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM commitment_occurrences AS o WHERE o.commitment_id = ? AND o.cancelled_at IS NULL AND "+s.paid+")", commitmentID).Scan(&paid)
+	return paid, err
+}
+
+// RemoveUnpaidTx is what a commitment delete does to the commitment's
+// occurrences (D31): it deletes those nothing refers to and cancels those only
+// deleted payments refer to, so the caller can then delete the commitment, or
+// keep its row when kept is true (cancelled occurrences refer to it). The
+// caller refuses the delete first when [Store.PaidTx] says payment evidence
+// exists. It returns how many it deleted and how many it cancelled.
+func (s *Store) RemoveUnpaidTx(ctx context.Context, tx *sql.Tx, commitmentID string) (removed, cancelled int, kept bool, err error) {
+	ids, err := s.ids(ctx, tx, "SELECT id FROM commitment_occurrences WHERE commitment_id = ? AND cancelled_at IS NULL", commitmentID)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	now := s.now().UTC()
+	for _, id := range ids {
+		g, err := s.removeOrCancel(ctx, tx, id, occurrences.CancelCommitmentDelete, now)
+		if err != nil {
+			return 0, 0, false, err
+		}
+		switch g {
+		case goneDeleted:
+			removed++
+		case goneCancelled:
+			cancelled++
+		}
+	}
+	err = tx.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM commitment_occurrences WHERE commitment_id = ?)", commitmentID).Scan(&kept)
+	return removed, cancelled, kept, err
+}
+
+const columns = "o.id, o.commitment_id, o.month, o.due_date, o.amount, o.currency, o.version, o.created_at, o.updated_at, o.cancelled_at, o.cancelled_reason"
 
 func scan(row interface{ Scan(...any) error }, extra ...any) (occurrences.Occurrence, error) {
 	var o occurrences.Occurrence
@@ -332,7 +468,8 @@ func scan(row interface{ Scan(...any) error }, extra ...any) (occurrences.Occurr
 	var amount sqlvalue.Amount
 	var currency sqlvalue.Currency
 	var created, updated store.Timestamp
-	dst := append([]any{&o.ID, &o.CommitmentID, &month, &due, &amount, &currency, &o.Version, &created, &updated}, extra...)
+	var cancelledAt, cancelledReason sql.NullString
+	dst := append([]any{&o.ID, &o.CommitmentID, &month, &due, &amount, &currency, &o.Version, &created, &updated, &cancelledAt, &cancelledReason}, extra...)
 	if err := row.Scan(dst...); err != nil {
 		return occurrences.Occurrence{}, err
 	}
@@ -345,12 +482,19 @@ func scan(row interface{ Scan(...any) error }, extra ...any) (occurrences.Occurr
 		return occurrences.Occurrence{}, err
 	}
 	o.Month, o.DueDate, o.Amount, o.CreatedAt, o.UpdatedAt = m, due.Date, money, created.Time, updated.Time
+	if cancelledAt.Valid {
+		var ts store.Timestamp
+		if err := ts.Scan(cancelledAt.String); err != nil {
+			return occurrences.Occurrence{}, err
+		}
+		o.CancelledAt, o.CancelledReason = &ts.Time, cancelledReason.String
+	}
 	return o, nil
 }
 
 func (s *Store) existing(ctx context.Context, q querier, commitmentID string, from, to calendar.YearMonth) ([]occurrences.Existing, error) {
 	rows, err := q.QueryContext(ctx, "SELECT "+columns+", "+s.paid+" FROM commitment_occurrences AS o"+
-		" WHERE o.commitment_id = ? AND o.month >= ? AND o.month <= ? ORDER BY o.month", commitmentID, from.String(), to.String())
+		" WHERE o.commitment_id = ? AND o.cancelled_at IS NULL AND o.month >= ? AND o.month <= ? ORDER BY o.month", commitmentID, from.String(), to.String())
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +521,7 @@ func (s *Store) ExistingTx(ctx context.Context, tx *sql.Tx, commitmentID string,
 func (s *Store) MaterialiseAllTx(ctx context.Context, tx *sql.Tx, month calendar.YearMonth) error {
 	rows, err := tx.QueryContext(ctx, "SELECT c.id, c.amount, c.currency, c.schedule, c.start_date, c.end_date FROM commitments c"+
 		" LEFT JOIN commitment_occurrence_horizons h ON h.commitment_id = c.id"+
-		" WHERE h.generated_through IS NULL OR h.generated_through < ? ORDER BY c.id", month.String())
+		" WHERE c.deleted_at IS NULL AND (h.generated_through IS NULL OR h.generated_through < ?) ORDER BY c.id", month.String())
 	if err != nil {
 		return err
 	}
@@ -470,13 +614,16 @@ func needsMaterialising(ctx context.Context, q querier, month calendar.YearMonth
 	var n int
 	err := q.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM commitments c"+
 		" LEFT JOIN commitment_occurrence_horizons h ON h.commitment_id = c.id"+
-		" WHERE h.generated_through IS NULL OR h.generated_through < ?)", month.String()).Scan(&n)
+		" WHERE c.deleted_at IS NULL AND (h.generated_through IS NULL OR h.generated_through < ?))", month.String()).Scan(&n)
 	return n != 0, err
 }
 
 func listMonth(ctx context.Context, tx *sql.Tx, f occurrences.ListFilter) ([]occurrences.Occurrence, error) {
 	where := []string{"o.month = ?"}
 	vals := []any{f.Month.String()}
+	if !f.IncludeCancelled {
+		where = append(where, "o.cancelled_at IS NULL")
+	}
 	if len(f.CommitmentIDs) > 0 {
 		where = append(where, "o.commitment_id IN (?"+strings.Repeat(", ?", len(f.CommitmentIDs)-1)+")")
 		for _, id := range f.CommitmentIDs {

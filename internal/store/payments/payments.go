@@ -36,7 +36,7 @@ import (
 // internal/store/occurrences DefaultEvidence; TestEvidenceSourcesMatchDefaultEvidence
 // checks the two agree.
 var EvidenceSources = []string{
-	"SELECT occurrence_id AS occurrence_id, '" + string(payments.EvidenceManual) + "' AS kind, id AS id, amount AS amount, currency AS currency, paid_on AS evidence_date FROM manual_payments",
+	"SELECT occurrence_id AS occurrence_id, '" + string(payments.EvidenceManual) + "' AS kind, id AS id, amount AS amount, currency AS currency, paid_on AS evidence_date FROM manual_payments WHERE deleted_at IS NULL",
 	// Confirmed payment matches (X1, ADR-0035) on a countable transaction:
 	// booked, still reported and not superseded (ADR-0020 point 7).
 	"SELECT m.occurrence_id AS occurrence_id, '" + string(payments.EvidenceBankTransaction) + "' AS kind, m.id AS id, m.amount AS amount, m.currency AS currency," +
@@ -202,7 +202,7 @@ func (s *Store) Manual(ctx context.Context, occurrenceID string) ([]payments.Man
 		if _, err := occstore.GetTx(ctx, tx, occurrenceID); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT "+manualColumns+" FROM manual_payments WHERE occurrence_id = ? ORDER BY paid_on, id", occurrenceID)
+		rows, err := tx.QueryContext(ctx, "SELECT "+manualColumns+" FROM manual_payments WHERE occurrence_id = ? AND deleted_at IS NULL ORDER BY paid_on, id", occurrenceID)
 		if err != nil {
 			return err
 		}
@@ -220,7 +220,7 @@ func (s *Store) Manual(ctx context.Context, occurrenceID string) ([]payments.Man
 }
 
 func getManual(ctx context.Context, tx *sql.Tx, occurrenceID, id string) (payments.ManualPayment, error) {
-	p, err := scanManual(tx.QueryRowContext(ctx, "SELECT "+manualColumns+" FROM manual_payments WHERE id = ? AND occurrence_id = ?", id, occurrenceID))
+	p, err := scanManual(tx.QueryRowContext(ctx, "SELECT "+manualColumns+" FROM manual_payments WHERE id = ? AND occurrence_id = ? AND deleted_at IS NULL", id, occurrenceID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return payments.ManualPayment{}, resource.ErrNotFound
 	}
@@ -269,6 +269,9 @@ func (s *Store) RecordManual(ctx context.Context, actor audit.Actor, occurrenceI
 		if err != nil {
 			return err
 		}
+		if o.CancelledAt != nil {
+			return occurrences.ErrCancelled
+		}
 		if err := commitments.Validation(in.Validate(o, today)); err != nil {
 			return err
 		}
@@ -294,8 +297,20 @@ func (s *Store) RecordManual(ctx context.Context, actor audit.Actor, occurrenceI
 	return p, ch, nil
 }
 
-// DeleteManual deletes a manual payment that still has version expected and
-// records manual_payment.deleted. The occurrence's status is derived again
+// deletedBy is the actor as stored in manual_payments.deleted_by.
+func deletedBy(a audit.Actor) string {
+	switch {
+	case a.TokenID != "":
+		return "token:" + a.TokenID
+	case a.UserID != "":
+		return "user:" + a.UserID
+	}
+	return string(a.Kind)
+}
+
+// DeleteManual soft-deletes a manual payment that still has version expected:
+// the row is kept, marked deleted, excluded from evidence and lists, and
+// manual_payment.deleted is recorded with its amount and currency. The occurrence's status is derived again
 // from what evidence remains.
 func (s *Store) DeleteManual(ctx context.Context, actor audit.Actor, occurrenceID, id string, expected int64) (payments.Change, error) {
 	var ch payments.Change
@@ -311,10 +326,12 @@ func (s *Store) DeleteManual(ctx context.Context, actor audit.Actor, occurrenceI
 		if p.Version != expected {
 			return &resource.VersionConflictError{Expected: expected, Current: p.Version}
 		}
-		if err := store.DeleteVersioned(ctx, tx, "manual_payments", id, expected); err != nil {
+		now := s.now().UTC()
+		// Soft delete (D26-3a): the row stays, marked, and stops counting.
+		if _, err := store.UpdateVersioned(ctx, tx, "manual_payments", "deleted_at = ?, deleted_by = ?, updated_at = ?", id, expected,
+			store.Timestamp{Time: now}, deletedBy(actor), store.Timestamp{Time: now}); err != nil {
 			return err
 		}
-		now := s.now().UTC()
 		if err := s.bump(ctx, tx, o.ID, o.Version, now); err != nil {
 			return err
 		}
@@ -351,6 +368,9 @@ func (s *Store) SetOverride(ctx context.Context, actor audit.Actor, occurrenceID
 		o, err := occurrenceAt(ctx, tx, occurrenceID, expected)
 		if err != nil {
 			return err
+		}
+		if o.CancelledAt != nil {
+			return occurrences.ErrCancelled
 		}
 		facts, err := factsTx(ctx, tx, []string{o.ID})
 		if err != nil {

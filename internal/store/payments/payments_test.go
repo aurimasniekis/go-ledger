@@ -434,3 +434,136 @@ func TestConcurrentOverridesOneWins(t *testing.T) {
 		t.Errorf("%d writers won", wins)
 	}
 }
+
+// TestDeleteManualKeepsTheRow: deleting is a soft delete (D26-3a). The row
+// stays, marked, out of the evidence, the lists and the totals, and the audit
+// event carries the amount; the occurrence stays protected from removal.
+func TestDeleteManualKeepsTheRow(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	c, o := f.commitment(t, "50.00", "2026-03")
+	p1, _ := f.record(t, o.ID, "20.00", "2026-03-12")
+	p2, _ := f.record(t, o.ID, "30.00", "2026-03-15")
+	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, p2.ID, p2.Version+1); !errors.As(err, new(*resource.VersionConflictError)) {
+		t.Fatalf("stale delete: %v", err)
+	}
+	ch, err := f.ps.DeleteManual(ctx, alice, o.ID, p2.ID, p2.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := payments.Derive(ch.Occurrence, ch.Facts, today, nil)
+	if st.Paid.String() != "20.00 EUR" || st.EvidenceCount != 1 || st.Derived != payments.StatusPartiallyPaid {
+		t.Errorf("totals still count the deleted payment: %+v", st)
+	}
+	list, err := f.ps.Manual(ctx, o.ID)
+	if err != nil || len(list) != 1 || list[0].ID != p1.ID {
+		t.Errorf("list: %+v %v", list, err)
+	}
+	if _, err := f.ps.GetManual(ctx, o.ID, p2.ID); !errors.Is(err, resource.ErrNotFound) {
+		t.Errorf("get deleted: %v", err)
+	}
+	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, p2.ID, p2.Version); !errors.Is(err, resource.ErrNotFound) {
+		t.Errorf("second delete: %v", err)
+	}
+	var at, by sql.NullString
+	var amount string
+	if err := f.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT amount, deleted_at, deleted_by FROM manual_payments WHERE id = ?", p2.ID).Scan(&amount, &at, &by)
+	}); err != nil {
+		t.Fatalf("the row is gone: %v", err)
+	}
+	if amount != "30.00" || !at.Valid || by.String != "user:"+alice.UserID {
+		t.Errorf("row: %q %v %v", amount, at, by)
+	}
+	last := f.rec.events[len(f.rec.events)-1]
+	if last.Action != audit.ManualPaymentDeleted || last.Details["amount"] != "30.00" || last.Details["currency"] != "EUR" {
+		t.Errorf("audit: %+v", last)
+	}
+	// An override and its undo keep working after a delete.
+	set, err := f.ps.SetOverride(ctx, alice, o.ID, ch.Occurrence.Version, payments.OverridePaid, "creditor accepted less")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ps.UndoOverride(ctx, alice, o.ID, set.Occurrence.Version); err != nil {
+		t.Fatalf("undo after a delete: %v", err)
+	}
+	// With every payment deleted, nothing is live evidence: a commitment delete
+	// cancels the occurrence (D31) and keeps its history instead of failing.
+	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, p1.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	cur := f.occurrence(t, c.ID, "2026-03")
+	got, err := f.cs.Get(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := f.state(t, cur); st.EvidenceCount != 0 || st.OverrideApplied {
+		t.Errorf("deleted payments still evidence: %+v", st)
+	}
+	if err := f.cs.Delete(ctx, alice, c.ID, got.Version); err != nil {
+		t.Fatalf("commitment delete after deleting every payment: %v (occurrence v%d)", err, cur.Version)
+	}
+	kept, err := f.cs.Occurrences().Get(ctx, o.ID)
+	if err != nil || kept.CancelledAt == nil || kept.CancelledReason != occurrences.CancelCommitmentDelete {
+		t.Errorf("occurrence after the commitment delete: %+v, %v", kept, err)
+	}
+	if _, err := f.cs.Get(ctx, c.ID); !errors.Is(err, resource.ErrNotFound) {
+		t.Errorf("deleted commitment: %v", err)
+	}
+}
+
+// TestPaidOverrideNeedsAnyEvidenceWhateverItsCurrency: ADR-0031 point 6
+// (decision D26-4a). Manual payments are always in the occurrence's currency,
+// so the other-currency evidence is inserted directly, as a bank allocation
+// would be.
+func TestPaidOverrideNeedsAnyEvidenceWhateverItsCurrency(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	_, o := f.commitment(t, "50.00", "2026-03")
+	if _, err := f.ps.SetOverride(ctx, alice, o.ID, o.Version, payments.OverridePaid, "settled"); !errors.Is(err, payments.ErrNoEvidence) {
+		t.Fatalf("no evidence: %v", err)
+	}
+	if err := f.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO manual_payments (id, occurrence_id, amount, currency, paid_on, created_at, updated_at) VALUES ('01JZ0000000000000000000900', ?, '60.00', 'USD', '2026-03-10', '2026-03-10T00:00:00.000000000Z', '2026-03-10T00:00:00.000000000Z')", o.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := f.ps.SetOverride(ctx, alice, o.ID, o.Version, payments.OverridePaid, "settled in dollars")
+	if err != nil {
+		t.Fatalf("paid override with other-currency evidence: %v", err)
+	}
+	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || st.Paid.String() != "0.00 EUR" || !st.OverrideApplied {
+		t.Errorf("state: %+v", st)
+	}
+}
+
+// TestManualPaymentTriggers: the database itself keeps a deleted payment
+// deleted, deleted with both marks, and never removed (D26-3a).
+func TestManualPaymentTriggers(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	_, o := f.commitment(t, "50.00", "2026-03")
+	live, _ := f.record(t, o.ID, "20.00", "2026-03-12")
+	gone, _ := f.record(t, o.ID, "30.00", "2026-03-15")
+	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, gone.ID, gone.Version); err != nil {
+		t.Fatal(err)
+	}
+	stamp := "2026-03-20T00:00:00.000000000Z"
+	for _, c := range []struct{ name, stmt string }{
+		{"undelete", "UPDATE manual_payments SET deleted_at = NULL, deleted_by = NULL WHERE id = '" + gone.ID + "'"},
+		{"redate a deleted payment", "UPDATE manual_payments SET deleted_at = '" + stamp + "' WHERE id = '" + gone.ID + "'"},
+		{"mark without an actor", "UPDATE manual_payments SET deleted_at = '" + stamp + "' WHERE id = '" + live.ID + "'"},
+		{"actor without a mark", "UPDATE manual_payments SET deleted_by = 'system' WHERE id = '" + live.ID + "'"},
+		{"hard delete a live payment", "DELETE FROM manual_payments WHERE id = '" + live.ID + "'"},
+		{"hard delete a deleted payment", "DELETE FROM manual_payments WHERE id = '" + gone.ID + "'"},
+	} {
+		err := f.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, c.stmt)
+			return err
+		})
+		if err == nil {
+			t.Errorf("%s: accepted", c.name)
+		}
+	}
+}

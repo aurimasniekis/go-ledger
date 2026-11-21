@@ -223,10 +223,14 @@ func UpdatedEvent(actor audit.Actor, id string, fields []string, at time.Time) a
 }
 
 // DeletedEvent is the audit event for deleting a commitment; unpaid counts
-// the unpaid occurrences (possibly overdue obligations) deleted with it.
-func DeletedEvent(actor audit.Actor, c Commitment, unpaid int, at time.Time) audit.Event {
+// the unpaid occurrences (possibly overdue obligations) deleted with it,
+// cancelled those cancelled instead because deleted payments still refer to
+// them (D31). archived is true when the row was kept (marked deleted) for
+// those.
+func DeletedEvent(actor audit.Actor, c Commitment, unpaid, cancelled int, archived bool, at time.Time) audit.Event {
 	return audit.Event{Action: audit.CommitmentDeleted, Actor: actor, TargetType: TargetType, TargetID: c.ID, At: at,
-		Details: map[string]string{"kind": string(c.Kind), "unpaid_occurrences_removed": strconv.Itoa(unpaid)}}
+		Details: map[string]string{"kind": string(c.Kind), "unpaid_occurrences_removed": strconv.Itoa(unpaid),
+			"cancelled_referenced": strconv.Itoa(cancelled), "archived": strconv.FormatBool(archived)}}
 }
 
 // MinStartDate is the earliest start_date accepted: occurrences are

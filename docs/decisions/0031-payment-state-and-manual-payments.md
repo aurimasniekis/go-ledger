@@ -1,6 +1,6 @@
 # ADR-0031: Payment state, manual payments and status overrides
 
-Status: Proposed (2026-11-21). Points 3, 4 (the meaning of "due"), 6, 7, 8, 9 and 10 are implementation choices that
+Status: Proposed (2026-11-21), with decisions D26-3a, D26-4a and D26-5a accepted (see "Accepted decisions"). Points 3, 4 (the meaning of "due"), 6, 7, 8, 9 and 10 are implementation choices that
 no operator decision covers. They are marked "proposed" and listed for the operator under Consequences.
 
 ## Context
@@ -34,14 +34,23 @@ for both and builds neither.
    `internal/store/occurrences.DefaultEvidence` the matching "is paid" expression that C2's regeneration and the
    commitment delete use. X1 adds one entry to each; `TestEvidenceSourcesMatchDefaultEvidence` fails when they drift.
    Any evidence makes an occurrence immutable (partially paid ones included, as ADR-0027 point 8 requires) and blocks
-   deleting its commitment (`commitments.ErrInUse`, 409), because the evidence tables refer to occurrences with
+   deleting its commitment (`commitments.ErrInUse`, 409; a deleted payment is not evidence), because the evidence tables refer to occurrences with
    `ON DELETE RESTRICT`.
 3. **Proposed: manual payment records** (`manual_payments`, migration 0014) hold an exact positive amount with its
    currency, the date paid and an optional note. They are user data, separate from bank facts and from match links.
    The amount must be in the occurrence's currency (refused with 400 otherwise, never converted), and `paid_on` must
    not be after today in the reporting zone (a planned payment is not a payment; DF1 deferrals cover plans).
    Records are not edited: a mistake is deleted (with the record's `If-Match`) and recorded again, so the history
-   in the audit log stays simple. Recording needs no version, like every create (ADR-0011).
+   in the audit log stays simple. Recording needs no version, like every create (ADR-0011). **Accepted (D26-3a):**
+   deleting is a soft delete: migration 0019 adds `deleted_at` and `deleted_by` to `manual_payments`, the row is kept,
+   it leaves the evidence, the lists and the totals (queries filter on `deleted_at IS NULL`), a second delete or a read
+   of it is 404, and the delete still needs the payment's `If-Match`. A deleted payment no longer makes the occurrence
+   paid (`DefaultEvidence` filters `deleted_at IS NULL`, so terms edits apply again), but the row still refers to it
+   (`DefaultReferences`; a trigger refuses a hard delete), so the occurrence cannot be deleted. **Accepted (D31):** where
+   a removal is intended (a D23 date correction, the plan's Remove, a commitment delete) such an occurrence is
+   **cancelled** instead (ADR-0027 point 13): it keeps the deleted payment and its audit history, but leaves the totals,
+   the monthly view, the overdue counts and the outlook, and takes no new payment, match or status override
+   (409 `occurrence_cancelled`).
 4. **Timing.** Overdue counts from the original due date: an occurrence is overdue from the day after `due_date`,
    whatever grace exists. **Proposed:** upcoming means due after today and **due means due today** (in the reporting
    zone). A wider "due soon" window would need a length nobody has decided. A partially paid occurrence also carries
@@ -82,8 +91,19 @@ for both and builds neither.
     `manual_payment.recorded` and `manual_payment.deleted` (payment_id, currency),
     `occurrence.status_overridden` (status, previous: none/paid/unpaid) and
     `occurrence.status_override_undone` (undone, restored). **Proposed:** amounts, notes and reasons are not copied into
-    the audit log (ADR-0025 keeps details to short fixed values); they stay in their own tables. The existing
+    the audit log (ADR-0025 keeps details to short fixed values); they stay in their own tables. **Accepted (D26-3a):**
+    `manual_payment.deleted` also carries the deleted payment's `amount`. The existing
     `correction.recorded` / `correction.reversed` actions are left for X1's match corrections.
+
+## Accepted decisions (operator, D26, 2026-11-21)
+
+- **3a:** deleting a manual payment is a soft delete, audited with its amount (point 3 and point 10).
+- **4a:** a "paid" override is allowed when any evidence exists, whatever its currency (point 6). The code does this:
+  `SetOverride` checks only that evidence is not empty, and `TestPaidOverrideNeedsAnyEvidenceWhateverItsCurrency` and the
+  derive test "paid override with other-currency evidence" cover it.
+- **D31 (2026-11-21):** occurrences whose only payments were deleted are cancelled, not kept as obligations and not
+  blocking a commitment delete (point 3; ADR-0027 point 13).
+- **5a:** an overpayment shows `overpaid_amount` and triggers no action (informational; it does not change the status).
 
 ## Why
 

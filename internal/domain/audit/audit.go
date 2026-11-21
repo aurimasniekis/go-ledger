@@ -73,10 +73,11 @@ const (
 )
 
 // Payment-state actions (task C3, ADR-0031). The target is the occurrence.
-// Details never carry amounts, notes or override reasons.
+// Details never carry notes or override reasons, nor amounts, except the
+// amount of a deleted manual payment (decision D26-3a).
 const (
 	ManualPaymentRecorded          Action = "manual_payment.recorded"           // Details: payment_id, currency
-	ManualPaymentDeleted           Action = "manual_payment.deleted"            // Details: payment_id, currency
+	ManualPaymentDeleted           Action = "manual_payment.deleted"            // Details: payment_id, amount, currency
 	OccurrenceStatusOverridden     Action = "occurrence.status_overridden"      // Details: status, previous (none, paid, unpaid)
 	OccurrenceStatusOverrideUndone Action = "occurrence.status_override_undone" // Details: undone, restored (none, paid, unpaid)
 )

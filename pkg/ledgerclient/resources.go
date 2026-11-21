@@ -170,6 +170,8 @@ type OccurrenceFilter struct {
 	ListOptions
 	Month         string
 	CommitmentIDs []string
+	// IncludeCancelled also lists cancelled occurrences, which are left out by default.
+	IncludeCancelled bool
 }
 
 func (f OccurrenceFilter) query() url.Values {
@@ -177,6 +179,9 @@ func (f OccurrenceFilter) query() url.Values {
 	f.apply(q)
 	setIf(q, "month", f.Month)
 	addAll(q, "commitment_id", f.CommitmentIDs)
+	if f.IncludeCancelled {
+		q.Set("include_cancelled", "true")
+	}
 	return q
 }
 

@@ -420,6 +420,9 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 		if err != nil {
 			return err
 		}
+		if o.CancelledAt != nil {
+			return occurrences.ErrCancelled
+		}
 		if err := matches.CheckTarget(t, o, n.Amount); err != nil {
 			return err
 		}

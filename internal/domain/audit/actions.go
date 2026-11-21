@@ -133,12 +133,12 @@ var Definitions = map[Action][]Field{
 
 	CommitmentCreated: {f("kind"), f("currency")},
 	CommitmentUpdated: {f("fields")},
-	CommitmentDeleted: {f("kind"), f("unpaid_occurrences_removed")},
+	CommitmentDeleted: {f("kind"), f("unpaid_occurrences_removed"), f("cancelled_referenced"), f("archived")},
 
-	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history"), f("removed_out_of_range"), f("kept_override")},
+	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history"), f("removed_out_of_range"), f("kept_override"), f("cancelled_referenced")},
 
 	ManualPaymentRecorded:          {f("payment_id"), f("currency")},
-	ManualPaymentDeleted:           {f("payment_id"), f("currency")},
+	ManualPaymentDeleted:           {f("payment_id"), f("amount"), f("currency")},
 	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
 	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
 
