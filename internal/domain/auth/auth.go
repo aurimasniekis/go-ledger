@@ -49,6 +49,9 @@ type Config struct {
 	// client address ([AddressKey]).
 	AccountLimit Limit
 	AddressLimit Limit
+	// DeviceCookieTTL is how long a device cookie keeps a browser known
+	// (decision D23-1b, [DeviceCookie]).
+	DeviceCookieTTL time.Duration
 	// Require2FA confines every signed-in user without TOTP enabled to
 	// enrolment (auth.require_2fa, ADR-0030).
 	Require2FA bool
@@ -64,7 +67,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{Policy: PasswordPolicy{MinBytes: DefaultMinPasswordBytes}, IdleTimeout: DefaultIdleTimeout,
 		AbsoluteTimeout: DefaultAbsoluteTimeout, ReauthWindow: DefaultReauthWindow,
-		AccountLimit: DefaultAccountLimit, AddressLimit: DefaultAddressLimit}
+		AccountLimit: DefaultAccountLimit, AddressLimit: DefaultAddressLimit, DeviceCookieTTL: DefaultDeviceCookieTTL}
 }
 
 // Validate checks the policy is usable.
@@ -78,6 +81,8 @@ func (c Config) Validate() error {
 		return errors.New("auth: the idle timeout must not exceed the absolute timeout")
 	case c.AccountLimit.Max < 1 || c.AddressLimit.Max < 1 || c.AccountLimit.Window <= 0 || c.AddressLimit.Window <= 0:
 		return errors.New("auth: sign-in limits need a positive count and window")
+	case c.DeviceCookieTTL <= 0:
+		return errors.New("auth: the device cookie lifetime must be positive")
 	case c.PasswordSignInDisabled && !c.OIDC.Enabled:
 		return errors.New("auth: password sign-in can only be disabled when OIDC sign-in is enabled")
 	}
@@ -143,6 +148,7 @@ type Credential struct {
 type Store interface {
 	TwoFactorStore
 	OIDCStore
+	DeviceStore
 	// CredentialByUsername and CredentialByUser return resource.ErrNotFound
 	// for an unknown account.
 	CredentialByUsername(ctx context.Context, username string) (Credential, error)
@@ -152,8 +158,8 @@ type Store interface {
 	// itself does not change.
 	ReplaceHash(ctx context.Context, userID, old, hash string) error
 	// SetPassword stores hash for userID and deletes every session of the user
-	// except keep (may be empty), then writes events(ended) in the same
-	// transaction. resource.ErrNotFound for an unknown user.
+	// except keep (may be empty) and every device cookie of the user, then
+	// writes events(ended) in the same transaction. resource.ErrNotFound for an unknown user.
 	SetPassword(ctx context.Context, userID, hash, keep string, at time.Time, events func(ended int) []audit.Event) (ended int, err error)
 	CreateSession(ctx context.Context, s Session, events ...audit.Event) error
 	// SessionByTokenHash returns resource.ErrNotFound for no such session.
@@ -269,6 +275,8 @@ type SignInInput struct {
 	// Address is the client address, UserAgent its User-Agent header.
 	Address   string
 	UserAgent string
+	// DeviceToken is the browser's device cookie, if any ([DeviceCookie]).
+	DeviceToken string
 }
 
 // Issued is a new session with its secrets. The secrets exist only here and
@@ -280,6 +288,11 @@ type Issued struct {
 	Token        string
 	CSRFToken    string
 	SecondFactor *SecondFactorChallenge
+	// DeviceToken is the browser's new device cookie, set by a complete
+	// password sign-in, and DeviceExpiresAt its expiry. Empty when none
+	// could be issued (the presented one, if any, then stays valid).
+	DeviceToken     string
+	DeviceExpiresAt time.Time
 }
 
 // normalizeUsername lower-cases a submitted username (usernames are lower
@@ -295,6 +308,16 @@ func normalizeUsername(u string) (name string, valid bool) {
 }
 
 func accountKey(username string) string { return "user:" + username }
+
+// signInEvent is audit.SignIn, marked device=known when the attempt came
+// from a known browser and so counted against its device cookie.
+func signInEvent(actor audit.Actor, ok bool, method, reason string, at time.Time, device bool) audit.Event {
+	ev := audit.SignIn(actor, ok, method, reason, at)
+	if device {
+		ev.Details["device"] = "known"
+	}
+	return ev
+}
 
 // attempt is a password check reserved in both limiters. It must end with
 // failed or succeeded; done releases it otherwise (an error before the
@@ -405,6 +428,12 @@ func (s *Service) rehash(ctx context.Context, c Credential, pw string) {
 // username). For a user with TOTP enabled, a right password returns a
 // second-factor challenge instead of a session; the password step is then
 // not audited as a sign-in (the second step is).
+//
+// A valid device cookie of the account (in.DeviceToken) makes the attempt
+// count against that cookie instead of the username: a known browser is
+// exempt from the per-username lockout (decision D23-1b), never from the
+// per-address limit, the password or the second factor. A complete sign-in
+// issues a new device cookie in place of the presented one.
 func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 	if s.cfg.PasswordSignInDisabled {
 		return Issued{}, ErrPasswordSignInDisabled
@@ -421,8 +450,15 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 		return Issued{}, err
 	}
 	now := s.now().UTC()
+	device, isKnown, err := s.knownDevice(ctx, in.DeviceToken, cred.UserID, known, now)
+	if err != nil {
+		return Issued{}, err
+	}
+	if isKnown {
+		accKey = deviceKey(device.ID)
+	}
 	at, err := s.begin(accKey, addrKey, func() error {
-		return s.rec.Record(ctx, audit.SignIn(actorFor(cred, known), false, "password", "locked_out", now))
+		return s.rec.Record(ctx, signInEvent(actorFor(cred, known), false, "password", "locked_out", now, isKnown))
 	})
 	if err != nil {
 		return Issued{}, err
@@ -438,7 +474,7 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 		if ok && cred.Disabled {
 			reason = "account_disabled"
 		}
-		if err := s.rec.Record(ctx, audit.SignIn(actorFor(cred, known), false, "password", reason, now)); err != nil {
+		if err := s.rec.Record(ctx, signInEvent(actorFor(cred, known), false, "password", reason, now, isKnown)); err != nil {
 			return Issued{}, err
 		}
 		return Issued{}, ErrInvalidCredentials
@@ -453,11 +489,17 @@ func (s *Service) SignIn(ctx context.Context, in SignInInput) (Issued, error) {
 	if st.Enabled() {
 		at.passed()
 		exp := now.Add(ChallengeTTL)
-		tok := s.challenges.add(now, &challenge{userID: cred.UserID, accKey: accKey, expires: exp, userAgent: in.UserAgent, method: SessionMethodPassword})
+		tok := s.challenges.add(now, &challenge{userID: cred.UserID, accKey: accKey, expires: exp, userAgent: in.UserAgent, method: SessionMethodPassword,
+			deviceID: device.ID, knownDevice: isKnown})
 		return Issued{SecondFactor: &SecondFactorChallenge{Token: tok, ExpiresAt: exp, Methods: []string{MethodTOTP, MethodRecoveryCode}}}, nil
 	}
 	at.succeeded()
-	return s.startSession(ctx, cred.UserID, SessionMethodPassword, in.Address, in.UserAgent, now, now, audit.SignIn(actorFor(cred, true), true, "password", "", now))
+	iss, err := s.startSession(ctx, cred.UserID, SessionMethodPassword, in.Address, in.UserAgent, now, now, signInEvent(actorFor(cred, true), true, "password", "", now, isKnown))
+	if err != nil {
+		return Issued{}, err
+	}
+	s.issueDevice(ctx, &iss, cred.UserID, device.ID, now)
+	return iss, nil
 }
 
 // startSession creates a session for userID, started by method, and records
@@ -565,8 +607,10 @@ func (s *Service) Recent(p authz.Principal) bool {
 
 // Reauthenticate checks the password of p's user again and, when it matches,
 // marks the session as recently authenticated. Failures count towards the
-// same limits as sign-in and return [ErrInvalidCredentials].
-func (s *Service) Reauthenticate(ctx context.Context, p authz.Principal, password, address string) (time.Time, error) {
+// same limits as sign-in and return [ErrInvalidCredentials]; with a valid
+// device cookie of p's user (deviceToken), they count against the cookie
+// instead of the username, as for sign-in (decision D23-1b).
+func (s *Service) Reauthenticate(ctx context.Context, p authz.Principal, password, address, deviceToken string) (time.Time, error) {
 	if s.cfg.PasswordSignInDisabled {
 		return time.Time{}, ErrPasswordSignInDisabled
 	}
@@ -586,8 +630,22 @@ func (s *Service) Reauthenticate(ctx context.Context, p authz.Principal, passwor
 	}
 	now := s.now().UTC()
 	accKey, addrKey := accountKey(cred.Username), AddressKey(address)
+	device, isKnown, err := s.knownDevice(ctx, deviceToken, cred.UserID, true, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if isKnown {
+		accKey = deviceKey(device.ID)
+	}
+	failure := func(reason string) map[string]string {
+		d := map[string]string{"method": "password", "reason": reason}
+		if isKnown {
+			d["device"] = "known"
+		}
+		return d
+	}
 	at, err := s.begin(accKey, addrKey, func() error {
-		return s.rec.Record(ctx, ev(audit.ReauthenticationFailed, map[string]string{"method": "password", "reason": "locked_out"}, now))
+		return s.rec.Record(ctx, ev(audit.ReauthenticationFailed, failure("locked_out"), now))
 	})
 	if err != nil {
 		return time.Time{}, err
@@ -599,7 +657,7 @@ func (s *Service) Reauthenticate(ctx context.Context, p authz.Principal, passwor
 	}
 	if !ok || cred.Disabled {
 		at.failed()
-		if err := s.rec.Record(ctx, ev(audit.ReauthenticationFailed, map[string]string{"method": "password", "reason": "invalid_credentials"}, now)); err != nil {
+		if err := s.rec.Record(ctx, ev(audit.ReauthenticationFailed, failure("invalid_credentials"), now)); err != nil {
 			return time.Time{}, err
 		}
 		return time.Time{}, ErrInvalidCredentials

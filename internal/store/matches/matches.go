@@ -1,5 +1,5 @@
 // Package matches persists payment matches (task X1, ADR-0035) in the tables
-// of migration 0016_payment_matches and implements [matches.Store].
+// of migration 0017_payment_matches and implements [matches.Store].
 //
 // Every write runs in one transaction that re-checks the match rules against
 // the stored data (the single writer connection serialises writers, so the

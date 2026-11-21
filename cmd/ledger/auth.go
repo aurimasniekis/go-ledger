@@ -41,6 +41,7 @@ func authConfig(c config.Auth) auth.Config {
 		ReauthWindow:    c.Session.ReauthWindow,
 		AccountLimit:    auth.Limit{Max: c.SignIn.AccountMaxFailures, Window: c.SignIn.Window},
 		AddressLimit:    auth.Limit{Max: c.SignIn.AddressMaxFailures, Window: c.SignIn.Window},
+		DeviceCookieTTL: c.SignIn.DeviceCookieTTL,
 		Require2FA:      c.Require2FA,
 		// Linking an identity never disables passwords: only this setting does.
 		PasswordSignInDisabled: !c.Password.Enabled,

@@ -1,8 +1,8 @@
 -- Fixture: a database at schema version 15 (the version 14 contents plus the
--- single sign-on tables of migration 0015), holding every row of the version
--- 14 fixture plus one OIDC link and one recovery sign-in. Upgrading it must
--- apply migration 0016 (payment matches) and keep every row. All identifiers
--- are synthetic.
+-- single-sign-on tables of migration 0015), holding every row of the version
+-- 14 fixture and one OIDC link of the owner. Upgrading it must apply
+-- migration 0016 (device cookies) and keep every row. All identifiers are
+-- synthetic.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
     name       TEXT NOT NULL CHECK (name <> ''),
@@ -594,6 +594,23 @@ CREATE INDEX occurrence_status_overrides_occurrence ON occurrence_status_overrid
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (14, 'payment_state', '90d35392cfc52b69987b18ffbbd27cbf333a65aad9af0a0e76fc61e811c235b7', '2026-01-17T03:04:05.000000000Z');
 
+-- Single sign-on (A6, ADR-0033).
+--
+-- oidc_links ties a user account to one identity at the configured OpenID
+-- Connect provider, keyed by the stable (issuer, subject) pair, never by email
+-- address. An account has at most one link and an identity belongs to at most
+-- one account. The subject is compared exactly as the provider sends it.
+-- email is the address the provider last reported, kept for display only.
+-- Changing the configured issuer leaves existing links unusable, by design.
+--
+-- recovery_sign_ins holds at most one one-time sign-in per user, issued from
+-- the host (break-glass, decision D16). Only the SHA-256 hash of its token is
+-- stored; the row is deleted when it is used.
+--
+-- sessions.method records how a session started (password, oidc or recovery):
+-- an OIDC session is not confined to two-factor enrolment while Ledger trusts
+-- the provider's authentication (decision D16). Existing sessions were all
+-- password sessions.
 CREATE TABLE oidc_links (
     id           TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     user_id      TEXT NOT NULL UNIQUE REFERENCES users (id),
@@ -614,6 +631,6 @@ CREATE TABLE recovery_sign_ins (
 
 ALTER TABLE sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'password' CHECK (method IN ('password', 'oidc', 'recovery'));
 
+INSERT INTO oidc_links (id, user_id, issuer, subject, email, created_at, last_used_at) VALUES ('01JZ0000000000000000000150', '01JZ0000000000000000000030', 'https://idp.example.com', 'subject-0001', 'owner@example.com', '2026-01-18T03:04:05.000000000Z', NULL);
+
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (15, 'oidc', '8116d65cca9164158de661cf7a9daab1c83b6dab1bc3b6eede9d7c65a28045a4', '2026-01-18T03:04:05.000000000Z');
-INSERT INTO oidc_links (id, user_id, issuer, subject, email, created_at, last_used_at) VALUES ('01JZ0000000000000000000110', '01JZ0000000000000000000030', 'https://issuer.example.com', 'synthetic-subject-1', 'owner@example.com', '2026-01-18T03:04:05.000000000Z', NULL);
-INSERT INTO recovery_sign_ins (user_id, token_hash, created_at, expires_at) VALUES ('01JZ0000000000000000000031', '0000000000000000000000000000000000000000000000000000000000000002', '2026-01-18T03:04:05.000000000Z', '2026-01-18T03:14:05.000000000Z');
