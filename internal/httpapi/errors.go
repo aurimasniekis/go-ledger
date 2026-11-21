@@ -39,12 +39,21 @@ const (
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.
 type ErrorBody struct {
-	Code      Code   `json:"code"`
-	Message   string `json:"message"`
-	Field     string `json:"field,omitempty"`
-	RequestID string `json:"request_id"`
+	Code    Code   `json:"code"`
+	Message string `json:"message"`
+	Field   string `json:"field,omitempty"`
+	// Errors lists every invalid field of a validation error that found more
+	// than one problem (Field and Message repeat the first). Absent otherwise.
+	Errors    []FieldDetail `json:"errors,omitempty"`
+	RequestID string        `json:"request_id"`
 	// Reconciliation is present on a version conflict (409) only.
 	Reconciliation *Reconciliation `json:"reconciliation,omitempty"`
+}
+
+// FieldDetail is one invalid field of a validation error.
+type FieldDetail struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
 }
 
 // Reconciliation tells a client whose write lost an optimistic-concurrency
@@ -65,6 +74,9 @@ type Error struct {
 	Code    Code
 	Message string
 	Field   string
+	// Errors are every invalid field when a validation found several; see
+	// [ValidationFields].
+	Errors []FieldDetail
 	// Reconciliation is sent with a version conflict; see [VersionConflict].
 	Reconciliation *Reconciliation
 	// Cause is logged, never sent.
@@ -83,6 +95,17 @@ func (e *Error) Unwrap() error { return e.Cause }
 // Validation is a 400 about the named field ("" for the request as a whole).
 func Validation(field, message string) *Error {
 	return &Error{Status: http.StatusBadRequest, Code: CodeValidation, Message: message, Field: field}
+}
+
+// ValidationFields is a 400 listing every invalid field. Field and Message
+// are the first entry's; Errors carries all of them when there are several.
+// It panics on an empty list.
+func ValidationFields(fields []FieldDetail) *Error {
+	e := Validation(fields[0].Field, fields[0].Message)
+	if len(fields) > 1 {
+		e.Errors = fields
+	}
+	return e
 }
 
 func Unauthenticated(message string) *Error {
@@ -175,6 +198,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		Message:   redact.Default().Text(apiErr.Message),
 		Field:     apiErr.Field,
 		RequestID: logging.RequestID(r.Context()),
+	}
+	for _, fd := range apiErr.Errors {
+		body.Errors = append(body.Errors, FieldDetail{Field: fd.Field, Message: redact.Default().Text(fd.Message)})
 	}
 	if rc := apiErr.Reconciliation; rc != nil {
 		body.Reconciliation = rc

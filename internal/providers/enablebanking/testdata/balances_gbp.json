@@ -1,0 +1,12 @@
+{
+  "balances": [
+    {
+      "name": "Closing booked",
+      "balance_amount": {
+        "currency": "GBP",
+        "amount": "0.00"
+      },
+      "balance_type": "CLBD"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "aspsps": [
+    {
+      "name": "Example Bank",
+      "country": "FI",
+      "logo": "https://bank.example/logo/",
+      "psu_types": [
+        "personal",
+        "business"
+      ],
+      "auth_methods": [
+        {
+          "name": "redirect",
+          "approach": "REDIRECT",
+          "hidden_method": false,
+          "psu_type": "personal"
+        }
+      ],
+      "maximum_consent_validity": 15552000,
+      "beta": false,
+      "bic": "EXAMPLEX",
+      "required_psu_headers": [
+        "Psu-Ip-Address"
+      ]
+    },
+    {
+      "name": "Other Example Bank",
+      "country": "FI",
+      "logo": "https://other.example/logo/",
+      "psu_types": [
+        "personal"
+      ],
+      "auth_methods": [],
+      "maximum_consent_validity": 7776000,
+      "beta": true
+    }
+  ]
+}

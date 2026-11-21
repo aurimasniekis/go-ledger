@@ -1,8 +1,8 @@
 -- Fixture: a database at schema version 8 (the version 7 contents plus the
--- audit log), holding the users, settings, outbox, bank data and rates of the
--- version 7 fixture and two audit entries. Upgrading it must apply migration
--- 0009 (passwords and sessions) and keep every audit entry; the append-only
--- triggers must survive. All identifiers are synthetic.
+-- append-only audit log), holding the users, settings, outbox, bank and rate
+-- data of the version 7 fixture and two audit entries. Upgrading it must apply
+-- migration 0009 (commitment definitions) and keep every audit entry.
+-- All identifiers are synthetic.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
     name       TEXT NOT NULL CHECK (name <> ''),
@@ -370,13 +370,7 @@ INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (7, '
 INSERT INTO fx_rates (provider, source, base_currency, quote_currency, rate, rate_date, first_retrieved_at, retrieved_at, confirmed_through, previous_rate, revised_at) VALUES ('fake', '', 'EUR', 'USD', '1.0842', '2026-01-09', '2026-01-10T07:00:00.000000000Z', '2026-01-11T07:00:00.000000000Z', '2026-01-10', NULL, NULL);
 INSERT INTO fx_rates (provider, source, base_currency, quote_currency, rate, rate_date, first_retrieved_at, retrieved_at, confirmed_through, previous_rate, revised_at) VALUES ('fake', 'ecb', 'EUR', 'GBP', '0.8571', '2026-01-09', '2026-01-11T07:00:00.000000000Z', '2026-01-11T07:00:00.000000000Z', '2026-01-09', '0.8569', '2026-01-11T07:00:00.000000000Z');
 
--- Audit log (A5, ADR-0025). Append-only: one row per audited event, never
--- rewritten or deleted (triggers refuse both). There is no free-form payload:
--- details is a small JSON object of the fields the action declares
--- (internal/domain/audit), validated before insert, and no column holds a
--- request body. Actor and target IDs are plain text, not foreign keys, because
--- the actor can be the system or nobody, and tokens arrive in a later
--- migration; users are disabled, never deleted, so IDs stay meaningful.
+-- Audit log (migration 0008, A5).
 CREATE TABLE audit_log (
     seq            INTEGER PRIMARY KEY AUTOINCREMENT,
     id             TEXT NOT NULL UNIQUE CHECK (length(id) = 26),
@@ -411,5 +405,5 @@ BEGIN
 END;
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (8, 'audit_log', 'f0d3774ff897e1e85e2d9dcf1f74bdb80165cc70e67f935d30746af42e1a1a52', '2026-01-12T03:04:05.000000000Z');
-INSERT INTO audit_log (id, action, actor_kind, actor_user_id, actor_token_id, target_type, target_id, occurred_at, details) VALUES ('01KEW0Y5E8ZP4M7Q2R3S4T5V6W', 'user.created', 'system', '', '', 'user', '01JZ0000000000000000000030', '2026-01-12T04:00:00.000000000Z', '{"role":"administrator","username":"owner"}');
-INSERT INTO audit_log (id, action, actor_kind, actor_user_id, actor_token_id, target_type, target_id, occurred_at, details) VALUES ('01KEW0Y5E8ZP4M7Q2R3S4T5V6X', 'user.updated', 'user', '01JZ0000000000000000000030', '', 'user', '01JZ0000000000000000000030', '2026-01-12T04:01:00.000000000Z', '{"fields":"display_name"}');
+INSERT INTO audit_log (id, action, actor_kind, actor_user_id, actor_token_id, target_type, target_id, occurred_at, details) VALUES ('01JZ0000000000000000000040', 'user.created', 'system', '', '', 'user', '01JZ0000000000000000000030', '2026-01-12T03:04:05.000000000Z', '{"username":"owner","role":"administrator"}');
+INSERT INTO audit_log (id, action, actor_kind, actor_user_id, actor_token_id, target_type, target_id, occurred_at, details) VALUES ('01JZ0000000000000000000041', 'auth.signin_failed', 'anonymous', '', '', 'user', '', '2026-01-12T04:00:00.000000000Z', '{"method":"password","reason":"invalid_credentials"}');

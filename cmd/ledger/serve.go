@@ -77,7 +77,8 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 
 	// Everything that is logged or returned in an error from here on passes
 	// through the redactor, which knows the configured secrets.
-	redact.Default().Add(cfg.KEK.Value)
+	eb := cfg.Banking.EnableBanking
+	redact.Default().Add(cfg.KEK.Value, eb.App.PrivateKey, eb.Developer.PrivateKey, eb.App.AppID, eb.Developer.AppID)
 	log, err := logging.New(stderr, cfg.Log.Level, cfg.Log.Format, redact.Default())
 	if err != nil {
 		say(stderr, "ledger: "+err.Error())
@@ -94,6 +95,20 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	}
 	for _, n := range res.UnknownEnv {
 		log.Warn("unknown LEDGER_ variable is ignored; check the spelling", "variable", n)
+	}
+
+	// Banking-data providers (ADR-0023). The keys are parsed now so a bad key
+	// stops startup; nothing connects to Enable Banking until a connection is
+	// made or refreshed. The connection API (B4) and the scheduler (B6) use
+	// these providers.
+	bankProviders, err := bankingProviders(cfg.Banking.EnableBanking)
+	if err != nil {
+		log.Error("invalid Enable Banking configuration", "error", err.Error())
+		return 1
+	}
+	for _, p := range bankProviders {
+		c := p.Capabilities()
+		log.Info("Enable Banking application configured", "application", c.Application, "mode", string(c.Mode), "environment", string(c.Environment), "account_access", string(c.AccountAccess()))
 	}
 
 	// Open the database first: a store or zone problem must stop startup
@@ -271,9 +286,10 @@ type auditLog interface {
 // buildAPI).
 func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts) {
 	httpapi.RegisterAPI(srv, httpapi.Deps{
-		Users: parts.users,
-		Audit: al,
-		Auth:  parts.auth,
+		Users:       parts.users,
+		Commitments: parts.commitments,
+		Audit:       al,
+		Auth:        parts.auth,
 	})
 }
 

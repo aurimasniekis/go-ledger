@@ -24,6 +24,8 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0020: Bank import engine](0020-bank-import-engine.md)
 - [ADR-0021: Users, roles and the grant vocabulary](0021-users-roles-and-grants.md)
 - [ADR-0022: Currency-rate cache and conversion service](0022-rate-cache-and-conversion.md)
+- [ADR-0023: Enable Banking adapter](0023-enable-banking-adapter.md)
+- [ADR-0024: Recurring commitment definitions](0024-commitment-definitions.md)
 - [ADR-0025: Audit log](0025-audit-log.md)
 - [ADR-0026: Passwords, sign-in, sessions, CSRF and recent authentication](0026-passwords-sign-in-and-sessions.md)
 

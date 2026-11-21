@@ -17,7 +17,7 @@ outbound timeouts only).
 
 1. **Hashing.** Argon2id from `golang.org/x/crypto/argon2` with the second recommended option of RFC 9106 section 4:
    t=3, p=4, m=64 MiB, a 128-bit random salt and a 256-bit tag, stored as a PHC string
-   (`$argon2id$v=19$m=65536,t=3,p=4$salt$tag`) in `user_passwords` (migration `0009_auth_sessions`). The
+   (`$argon2id$v=19$m=65536,t=3,p=4$salt$tag`) in `user_passwords` (migration `0010_auth_sessions`). The
    parameters travel with each hash: a hash made with other parameters still verifies and is replaced at the next
    successful sign-in. Parameters read from a stored hash are bounded (at most 4 GiB, t at most 64) and the string must
    re-encode exactly, so a corrupted row cannot cause unbounded work. At most two hashes run at once in `ledger serve`
@@ -109,5 +109,5 @@ outbound timeouts only).
   decide whether a password change revokes API tokens (it does not today).
 - A6 (OIDC) sessions must go through the same `sessions` table so CSRF, timeouts and termination apply unchanged.
 - The UI screens (sign-in, sessions list, re-authentication prompt, password change) are A7.
-- Migration number: written as `0009` on top of `work` (migrations must be contiguous); the pending C1 migration
-  and this one are renumbered at merge, and the fixture `0008_audit_log` covers the previous version.
+- Migration number: `0010`, after the commitment definitions (`0009_commitments`, ADR-0024); the fixture
+  `0009_commitments` covers the previous version.

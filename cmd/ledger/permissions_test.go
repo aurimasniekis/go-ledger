@@ -48,6 +48,12 @@ var permissionMatrix = map[string]string{
 	"DELETE /api/v1/auth/sessions/{id}": "session",
 	"POST /api/v1/auth/reauthenticate":  "session",
 	"PUT /api/v1/auth/password":         "session+recent",
+
+	"GET /api/v1/commitments":         "commitments:read",
+	"POST /api/v1/commitments":        "commitments:write",
+	"GET /api/v1/commitments/{id}":    "commitments:read",
+	"PATCH /api/v1/commitments/{id}":  "commitments:write",
+	"DELETE /api/v1/commitments/{id}": "commitments:write",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
@@ -248,8 +254,10 @@ func TestPermissionMatrix(t *testing.T) {
 			allows: func(g authz.Grant) bool { return g.Action == authz.ActionRead && !adminOnly[g.Resource] }},
 		{name: "administrator's users:read token", hdr: static(map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "users:read"}), valid: true, readOnly: true,
 			allows: func(g authz.Grant) bool { return g == authz.G(authz.ResourceUsers, authz.ActionRead) }},
+		// The owner's read-only role does not allow users:write (nor users:read),
+		// so the token holds no effective grant at all.
 		{name: "read-only user's users:write token", hdr: static(map[string]string{"X-Test-User": f.ids["bob"], "X-Test-Token-Grants": "users:write"}), valid: true, readOnly: true,
-			allows: func(g authz.Grant) bool { return g.Action == authz.ActionRead && !adminOnly[g.Resource] }},
+			allows: func(authz.Grant) bool { return false }},
 	}
 	n := 0
 	for _, r := range f.srv.APIRoutes(httpapi.APIPrefix) {

@@ -1,0 +1,5 @@
+{
+  "message": "ASPSP error SECRET-ECHO",
+  "code": 500,
+  "error": "ASPSP_ERROR"
+}

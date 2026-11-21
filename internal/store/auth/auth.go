@@ -1,5 +1,5 @@
 // Package auth persists passwords and sign-in sessions (task A2, ADR-0026)
-// in the tables of migration 0009_auth_sessions. It implements [auth.Store];
+// in the tables of migration 0010_auth_sessions. It implements [auth.Store];
 // writes record their audit events in the same transaction through a
 // [store.AuditWriter].
 package auth

@@ -14,6 +14,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
+	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
@@ -48,7 +49,8 @@ func yamlToJSON(doc []byte) ([]byte, error) {
 // requests; TestOpenAPIContract registers the routes with zero Deps and never
 // calls them.
 type Deps struct {
-	Users users.Store
+	Users       users.Store
+	Commitments commitments.Store
 	// Audit reads the audit log.
 	Audit audit.Reader
 	// Auth is sign-in, sessions and passwords.
@@ -79,6 +81,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerUserPassword(s, d.Auth)
 	registerSessions(s, d.Auth)
 	registerAudit(s, d.Audit)
+	registerCommitments(s, d.Commitments)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {

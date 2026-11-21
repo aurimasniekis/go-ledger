@@ -1,0 +1,23 @@
+{
+  "account_id": {
+    "other": {
+      "identification": "SYNTHETIC-BBAN-0002",
+      "scheme_name": "BBAN"
+    }
+  },
+  "all_account_ids": [
+    {
+      "identification": "SYNTHETIC-BBAN-0002",
+      "scheme_name": "BBAN"
+    }
+  ],
+  "name": "Synthetic Holder",
+  "product": "Savings",
+  "currency": "GBP",
+  "cash_account_type": "SVGS",
+  "uid": "{{uid}}",
+  "identification_hash": "synthetic-hash-gbp",
+  "identification_hashes": [
+    "synthetic-hash-gbp"
+  ]
+}

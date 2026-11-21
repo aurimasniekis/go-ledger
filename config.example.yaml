@@ -136,6 +136,91 @@ events:
     # Environment: LEDGER_EVENTS_PULSE_NAME  Flag: --events.pulse.name
     name: "ledger"
 
+banking:
+
+  enable_banking:
+
+    # Enable Banking API base URL. Sandbox and production applications use the
+    # same host; the environment belongs to the application.
+    # Environment: LEDGER_BANKING_ENABLE_BANKING_BASE_URL  Flag: --banking.enable_banking.base_url
+    base_url: "https://api.enablebanking.com"
+
+    app:
+
+      # Configure the Enable Banking application for this mode. app mode means
+      # an unrestricted production application (signed contract with Enable
+      # Banking). developer mode means a restricted production application
+      # that reaches only the accounts linked to it in the Enable Banking
+      # Control Panel. Neither mode is the sandbox.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_ENABLED  Flag: --banking.enable_banking.app.enabled
+      enabled: false
+
+      # Ledger's name for this application, recorded on every connection made
+      # with it: 1 to 64 lower-case letters, digits, '-' or '_'. Empty means
+      # enablebanking-app or enablebanking-developer. Changing it orphans
+      # existing connections.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_NAME  Flag: --banking.enable_banking.app.name
+      name: ""
+
+      # Application id from the Enable Banking Control Panel (a UUID, sent as
+      # the JWT kid). Required when the application is enabled. Never logged.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_APP_ID  Flag: --banking.enable_banking.app.app_id
+      app_id: ""
+
+      # Environment the application was registered in at Enable Banking.
+      # sandbox is for testing with simulated banks; it is not a mode.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_ENVIRONMENT  Flag: --banking.enable_banking.app.environment  Allowed: production, sandbox
+      environment: "production"
+
+      # Secret banking.enable_banking.app.private_key: PEM-encoded RSA private key
+      # of the application (in .env, one double-quoted line with \n for line
+      # breaks). Secret: environment only, never in the YAML file and never a
+      # flag. Set this or private_key_file.
+
+      # Path of the PEM-encoded RSA private key file of the application.
+      # Alternative to the private_key variable. Only the path is
+      # configuration; the key is never logged.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_PRIVATE_KEY_FILE  Flag: --banking.enable_banking.app.private_key_file
+      private_key_file: ""
+
+    developer:
+
+      # Configure the Enable Banking application for this mode. app mode means
+      # an unrestricted production application (signed contract with Enable
+      # Banking). developer mode means a restricted production application
+      # that reaches only the accounts linked to it in the Enable Banking
+      # Control Panel. Neither mode is the sandbox.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_ENABLED  Flag: --banking.enable_banking.developer.enabled
+      enabled: false
+
+      # Ledger's name for this application, recorded on every connection made
+      # with it: 1 to 64 lower-case letters, digits, '-' or '_'. Empty means
+      # enablebanking-app or enablebanking-developer. Changing it orphans
+      # existing connections.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_NAME  Flag: --banking.enable_banking.developer.name
+      name: ""
+
+      # Application id from the Enable Banking Control Panel (a UUID, sent as
+      # the JWT kid). Required when the application is enabled. Never logged.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_APP_ID  Flag: --banking.enable_banking.developer.app_id
+      app_id: ""
+
+      # Environment the application was registered in at Enable Banking.
+      # sandbox is for testing with simulated banks; it is not a mode.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_ENVIRONMENT  Flag: --banking.enable_banking.developer.environment  Allowed: production, sandbox
+      environment: "production"
+
+      # Secret banking.enable_banking.developer.private_key: PEM-encoded RSA
+      # private key of the application (in .env, one double-quoted line with \n
+      # for line breaks). Secret: environment only, never in the YAML file and
+      # never a flag. Set this or private_key_file.
+
+      # Path of the PEM-encoded RSA private key file of the application.
+      # Alternative to the private_key variable. Only the path is
+      # configuration; the key is never logged.
+      # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_PRIVATE_KEY_FILE  Flag: --banking.enable_banking.developer.private_key_file
+      private_key_file: ""
+
 auth:
 
   password:

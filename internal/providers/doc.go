@@ -9,5 +9,6 @@
 // A banking adapter implements internal/domain/banking.Provider, maps provider
 // data to that package's normalized model and classifies every failure with
 // its error taxonomy (ADR-0013). Tests use the fake in
-// internal/domain/banking/bankingtest instead of an adapter.
+// internal/domain/banking/bankingtest instead of an adapter. The Enable
+// Banking adapter is internal/providers/enablebanking (ADR-0023).
 package providers

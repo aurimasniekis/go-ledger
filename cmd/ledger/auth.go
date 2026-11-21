@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
+	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
 
@@ -40,8 +41,9 @@ func authConfig(c config.Auth) auth.Config {
 
 // apiParts are the stores and services behind the Management API.
 type apiParts struct {
-	users *userstore.Store
-	auth  *auth.Service
+	users       *userstore.Store
+	commitments *commitmentstore.Store
+	auth        *auth.Service
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their
@@ -52,7 +54,7 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, hasher auth.Hasher, now 
 	if err != nil {
 		return apiParts{}, err
 	}
-	return apiParts{users: us, auth: svc}, nil
+	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), auth: svc}, nil
 }
 
 // recorder records one audit event in a transaction of its own through w,

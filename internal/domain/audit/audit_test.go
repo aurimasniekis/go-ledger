@@ -100,7 +100,7 @@ func TestActionNamesAreStable(t *testing.T) {
 		got = append(got, string(a))
 	}
 	slices.Sort(got)
-	want := "auth.password_changed auth.reauthenticated auth.reauthentication_failed auth.session_ended auth.signin_failed auth.signin_succeeded correction.recorded correction.reversed mcp.tool_called oidc.linked oidc.unlinked settings.reporting_timezone_changed token.created token.revoked token.write_used two_factor.disabled two_factor.enabled two_factor.recovery_codes_regenerated user.created user.disabled user.enabled user.role_changed user.updated"
+	want := "auth.password_changed auth.reauthenticated auth.reauthentication_failed auth.session_ended auth.signin_failed auth.signin_succeeded commitment.created commitment.deleted commitment.updated correction.recorded correction.reversed mcp.tool_called oidc.linked oidc.unlinked settings.reporting_timezone_changed token.created token.revoked token.write_used two_factor.disabled two_factor.enabled two_factor.recovery_codes_regenerated user.created user.disabled user.enabled user.role_changed user.updated"
 	if strings.Join(got, " ") != want {
 		t.Errorf("action names changed (they are public); got\n%s\nwant\n%s", strings.Join(got, " "), want)
 	}

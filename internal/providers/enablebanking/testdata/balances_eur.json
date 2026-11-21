@@ -1,0 +1,38 @@
+{
+  "balances": [
+    {
+      "name": "Closing booked",
+      "balance_amount": {
+        "currency": "EUR",
+        "amount": "1250.40"
+      },
+      "balance_type": "CLBD",
+      "reference_date": "2026-10-31"
+    },
+    {
+      "name": "Interim available",
+      "balance_amount": {
+        "currency": "EUR",
+        "amount": "1180.40"
+      },
+      "balance_type": "ITAV",
+      "last_change_date_time": "2026-10-31T21:00:00Z"
+    },
+    {
+      "name": "Expected",
+      "balance_amount": {
+        "currency": "EUR",
+        "amount": "1176.00"
+      },
+      "balance_type": "XPCD"
+    },
+    {
+      "name": "Broken figure",
+      "balance_amount": {
+        "currency": "",
+        "amount": "0"
+      },
+      "balance_type": "INFO"
+    }
+  ]
+}

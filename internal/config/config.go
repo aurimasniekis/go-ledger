@@ -31,6 +31,7 @@ type Config struct {
 	Reporting Reporting `cfg:"reporting"`
 	KEK       KEK       `cfg:"kek"`
 	Events    Events    `cfg:"events"`
+	Banking   Banking   `cfg:"banking"`
 	Auth      Auth      `cfg:"auth"`
 }
 
@@ -107,6 +108,42 @@ type Pulse struct {
 	CredsFile string `cfg:"creds_file" desc:"Path of the Pulse .creds file (user JWT and key seed). Required when events.pulse.enabled is true. Only the path is configuration: the file is read by the Pulse client, never copied, and its path and content are never logged."`
 	CAFile    string `cfg:"ca_file" desc:"Optional PEM file with an extra CA to trust for the Pulse server, added to the system roots. Certificate verification is never disabled."`
 	Name      string `cfg:"name" default:"ledger" desc:"Connection name shown on the Pulse server."`
+}
+
+// Banking configures banking-data providers.
+type Banking struct {
+	EnableBanking EnableBanking `cfg:"enable_banking"`
+}
+
+// EnableBanking configures Enable Banking applications (ADR-0023). There is
+// one slot per mode (decision D10), and each bank connection records which
+// application and mode it was made with.
+type EnableBanking struct {
+	BaseURL   string           `cfg:"base_url" default:"https://api.enablebanking.com" desc:"Enable Banking API base URL. Sandbox and production applications use the same host; the environment belongs to the application."`
+	App       EnableBankingApp `cfg:"app"`
+	Developer EnableBankingApp `cfg:"developer"`
+}
+
+// EnableBankingApp configures one Enable Banking application. The slot's
+// key (app or developer) is its mode.
+type EnableBankingApp struct {
+	Enabled        bool   `cfg:"enabled" default:"false" desc:"Configure the Enable Banking application for this mode. app mode means an unrestricted production application (signed contract with Enable Banking). developer mode means a restricted production application that reaches only the accounts linked to it in the Enable Banking Control Panel. Neither mode is the sandbox."`
+	Name           string `cfg:"name" desc:"Ledger's name for this application, recorded on every connection made with it: 1 to 64 lower-case letters, digits, '-' or '_'. Empty means enablebanking-app or enablebanking-developer. Changing it orphans existing connections."`
+	AppID          string `cfg:"app_id" desc:"Application id from the Enable Banking Control Panel (a UUID, sent as the JWT kid). Required when the application is enabled. Never logged."`
+	Environment    string `cfg:"environment" default:"production" enum:"production,sandbox" desc:"Environment the application was registered in at Enable Banking. sandbox is for testing with simulated banks; it is not a mode."`
+	PrivateKey     string `cfg:"private_key" secret:"true" desc:"PEM-encoded RSA private key of the application (in .env, one double-quoted line with \\n for line breaks). Secret: environment only, never in the YAML file and never a flag. Set this or private_key_file."`
+	PrivateKeyFile string `cfg:"private_key_file" desc:"Path of the PEM-encoded RSA private key file of the application. Alternative to the private_key variable. Only the path is configuration; the key is never logged."`
+}
+
+// Slots returns the Enable Banking application slots with their mode names.
+func (e EnableBanking) Slots() []struct {
+	Mode string
+	App  EnableBankingApp
+} {
+	return []struct {
+		Mode string
+		App  EnableBankingApp
+	}{{"app", e.App}, {"developer", e.Developer}}
 }
 
 // KEK configures the key-encryption key that protects stored credentials. It
