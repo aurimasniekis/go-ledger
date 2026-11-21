@@ -437,7 +437,9 @@ func (s *Store) finish(ctx context.Context, tx *sql.Tx, e entry, actor audit.Act
 	if err != nil {
 		return matches.Change{}, err
 	}
-	if err := s.audit.WriteAudit(ctx, tx, matches.AuditEvent(e.action, actor, m, from, at)); err != nil {
+	ev := matches.AuditEvent(e.action, actor, m, from, at)
+	ev.Details["via"] = string(storedVia(actor)) // the same provenance the history entry stores
+	if err := s.audit.WriteAudit(ctx, tx, ev); err != nil {
 		return matches.Change{}, err
 	}
 	ch, err := paymentstore.ChangeTx(ctx, tx, s.zone, o.ID)
@@ -792,7 +794,8 @@ func (s *Store) Reverse(ctx context.Context, actor audit.Actor, id string, expec
 //
 //  1. the confirmation is the match's latest change (no correction since);
 //  2. it is the person's latest match decision (no match event by them on any
-//     match since): the undo notice is replaced by their next change (D37);
+//     match since, compared by time and then insertion order, which a reused
+//     rowid cannot defeat): the undo notice is replaced by their next change (D37);
 //  3. nothing else changed the occurrence since: its version is still the one
 //     the confirmation left (another match, a manual payment or its deletion,
 //     a status override, a terms change, a cancellation).
@@ -817,24 +820,32 @@ func (s *Store) Unconfirm(ctx context.Context, actor audit.Actor, id string, exp
 		}
 		// The latest entry, in the order entries were written.
 		var lastRow int64
+		var lastAt string
 		var lastAction string
 		var lastOccurrenceVersion sql.Null[int64]
-		if err := tx.QueryRowContext(ctx, "SELECT rowid, action, occurrence_version FROM payment_match_events WHERE match_id = ? ORDER BY rowid DESC LIMIT 1", m.ID).
-			Scan(&lastRow, &lastAction, &lastOccurrenceVersion); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT rowid, at, action, occurrence_version FROM payment_match_events WHERE match_id = ? ORDER BY rowid DESC LIMIT 1", m.ID).
+			Scan(&lastRow, &lastAt, &lastAction, &lastOccurrenceVersion); err != nil {
 			return err
 		}
 		// The entry before it: the suggestion as it was (nil when the match
 		// was created confirmed).
 		var before *entryState
-		var beforeReason sql.Null[string]
 		var beforeState string
-		switch err := tx.QueryRowContext(ctx, "SELECT state, reason FROM payment_match_events WHERE match_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT 1", m.ID, lastRow).
-			Scan(&beforeState, &beforeReason); {
+		switch err := tx.QueryRowContext(ctx, "SELECT state FROM payment_match_events WHERE match_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT 1", m.ID, lastRow).
+			Scan(&beforeState); {
 		case errors.Is(err, sql.ErrNoRows):
 		case err != nil:
 			return err
 		default:
 			before = &entryState{state: matches.State(beforeState)}
+			// The suggestion's reason is the newest one not written by a
+			// decision: confirmations and earlier undos carry the person's
+			// text, not the engine's.
+			var beforeReason sql.Null[string]
+			if err := tx.QueryRowContext(ctx, "SELECT reason FROM payment_match_events WHERE match_id = ? AND rowid < ? AND action NOT IN (?, ?) ORDER BY rowid DESC LIMIT 1",
+				m.ID, lastRow, string(matches.ActionConfirmed), string(matches.ActionUnconfirmed)).Scan(&beforeReason); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
 			if beforeReason.Valid {
 				r := beforeReason.V
 				before.reason = &r
@@ -855,7 +866,7 @@ func (s *Store) Unconfirm(ctx context.Context, actor audit.Actor, id string, exp
 		}
 		// 2. It is the person's latest match decision.
 		var later int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_match_events WHERE actor_user = ? AND rowid > ?", actor.UserID, lastRow).Scan(&later); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_match_events WHERE actor_user = ? AND (at > ? OR (at = ? AND rowid > ?))", actor.UserID, lastAt, lastAt, lastRow).Scan(&later); err != nil {
 			return err
 		}
 		if later > 0 {

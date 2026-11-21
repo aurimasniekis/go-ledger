@@ -2,6 +2,7 @@ package matches_test
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -130,6 +131,45 @@ func TestUnconfirmRestoresTheSuggestion(t *testing.T) {
 	}
 }
 
+// TestUnconfirmTwiceRestoresTheSuggestionsReason: confirm, unconfirm,
+// confirm, unconfirm leaves the engine's reason, not the first undo's text.
+func TestUnconfirmTwiceRestoresTheSuggestionsReason(t *testing.T) {
+	f := newFixture(t)
+	s, _ := f.suggestion()
+	want := *s.Reason
+	c := f.confirmAs(alice, s)
+	ch, err := f.ms.Unconfirm(f.ctx, alice, c.ID, c.Version, reason("first undo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = f.confirmAs(alice, ch.Match)
+	ch, err = f.ms.Unconfirm(f.ctx, alice, c.ID, c.Version, reason("second undo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch.Match.Reason == nil || *ch.Match.Reason != want {
+		t.Errorf("reason %v, want %q", ch.Match.Reason, want)
+	}
+}
+
+// TestUnconfirmedHistoryIsDeletableOnlyWithTheSuggestion: after an unconfirm
+// the match is a suggestion again, so history_kept no longer protects it
+// (ADR-0045 limitations); while confirmed it does.
+func TestUnconfirmedHistoryKeptOnlyWhileDecided(t *testing.T) {
+	f := newFixture(t)
+	s, _ := f.suggestion()
+	c := f.confirmAs(alice, s)
+	if err := f.exec("DELETE FROM payment_match_events WHERE match_id = ?", c.ID); err == nil || !strings.Contains(err.Error(), "never deleted") {
+		t.Fatalf("confirmed history deleted: %v", err)
+	}
+	if _, err := f.ms.Unconfirm(f.ctx, alice, c.ID, c.Version, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.exec("DELETE FROM payment_match_events WHERE match_id = ?", c.ID); err != nil {
+		t.Fatalf("history of a suggestion again: %v", err)
+	}
+}
+
 // TestUnconfirmOnlyByTheDecider: another person, their token, automation, a
 // confirmation automation made, and a match created confirmed are refused.
 func TestUnconfirmOnlyByTheDecider(t *testing.T) {
@@ -248,6 +288,22 @@ func TestUnconfirmWindow(t *testing.T) {
 		if after := f.state(o); !sameState(before, after) {
 			t.Errorf("state not restored: before %+v after %+v", before, after)
 		}
+	})
+	t.Run("a later decision with an earlier rowid still closes it", func(t *testing.T) {
+		f := newFixture(t)
+		s, _ := f.suggestion()
+		c := f.confirmAs(alice, s)
+		rent := f.occurrence(f.commitment("800.00", "EUR", 2).ID, "2026-10")
+		other, err := f.ms.Create(f.ctx, alice, matches.New{TransactionID: f.tx("RENT 2026-10").ID, OccurrenceID: rent.ID, Amount: money.MustParse("800.00", "EUR"),
+			Origin: matches.OriginUser, State: matches.StateConfirmed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Rowids are not a safe order across matches (deletions free and
+		// reuse them): give the later entry the lowest rowid.
+		f.mustExec("DROP TRIGGER payment_match_events_append_only")
+		f.mustExec("UPDATE payment_match_events SET rowid = -1, at = '2099-01-01T00:00:00.000000000Z' WHERE match_id = ?", other.Match.ID)
+		closed(t, f, c)
 	})
 	t.Run("confirmed before provenance was recorded", func(t *testing.T) {
 		f := newFixture(t)

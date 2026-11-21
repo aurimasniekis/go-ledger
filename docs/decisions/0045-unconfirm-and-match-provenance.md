@@ -1,7 +1,7 @@
 # ADR-0045: Unconfirm a payment match, and the provenance of match events
 
-Status: Proposed (task X4c, 2026-11-21). Decisions D33, D37, D41 3a and D42 1a/3a are the operator's; the window rules
-in point 2 are this ADR's reading of them, listed for the operator under Consequences.
+Status: Accepted (task X4c, 2026-11-21). Decisions D33, D37, D41 3a and D42 1a/3a are the operator's; the window rules
+in point 2 are this ADR's reading of them, accepted as written with no time limit by the operator's decision D44.
 
 ## Context
 
@@ -72,7 +72,7 @@ ADR-0043 point 5 undid a confirmation by unmatching, which is final; ADR-0035 ha
 
 ## Consequences
 
-- **Proposed for the operator:** the window conditions of point 2 (latest match change, the person's latest match
+- **Accepted by the operator (D44):** the window conditions of point 2 (latest match change, the person's latest match
   decision, occurrence untouched); refusing unconfirm for matches created confirmed; marking the MCP tool a write.
 - **Limitations:**
   - The server cannot see a dismissal, so the window can stay open after the notice was dismissed; the UI decides whether
@@ -80,6 +80,11 @@ ADR-0043 point 5 undid a confirmation by unmatching, which is final; ADR-0035 ha
     does not close the window (one on the same occurrence does, through its version).
   - `via = mcp` from `ledger mcp stdio` rests on a header the client asserts, like the tool name in the audit log; it is
     the same person either way. Rows written before migration 0023 have no provenance (`via` null).
+  - The "person's latest decision" check compares history entries by time, then insertion order. Entries of a
+    suggested or rejected match can be deleted when its occurrence is regenerated; a later decision lost that way no
+    longer closes the window (the occurrence-version check still covers the same occurrence).
+  - After an unconfirm the match is a suggestion again, so the history_kept trigger no longer protects its confirmed
+    and unconfirmed entries (the same open decision as for rejected matches).
   - If an occurrence with an unconfirmed suggestion is later regenerated away, the suggestion and its history go with it
     (as for every suggestion, ADR-0035); the audit log keeps the decisions.
   - The UI (task X4d) still undoes a confirmation by unmatching until it switches to this route.
