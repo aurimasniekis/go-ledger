@@ -25,6 +25,11 @@ const (
 	// CSRFHeader carries the session's CSRF token on every state-changing
 	// request made with the session cookie.
 	CSRFHeader = "X-CSRF-Token"
+	// DeviceCookie marks a browser that completed a password sign-in (decision
+	// D23-1b): its failed sign-ins count against the cookie instead of the
+	// username. Same attributes as the session cookie, expiring with
+	// auth.sign_in.device_cookie_ttl; it outlives sign-out.
+	DeviceCookie = "__Host-ledger_device"
 )
 
 // Paths of the sign-in and session routes.
@@ -201,6 +206,23 @@ func setSessionCookie(w http.ResponseWriter, token string, expires time.Time, ma
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 }
 
+func deviceToken(r *http.Request) string {
+	c, err := r.Cookie(DeviceCookie)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
+func setDeviceCookie(w http.ResponseWriter, token string, expires time.Time, maxAge time.Duration) {
+	http.SetCookie(w, &http.Cookie{Name: DeviceCookie, Value: token, Path: "/", Expires: expires.UTC(), MaxAge: max(1, int(maxAge/time.Second)),
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+}
+
+func clearDeviceCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: DeviceCookie, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+}
+
 func clearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 }
@@ -290,13 +312,18 @@ func registerSessions(s *Server, svc *auth.Service) {
 	}
 	started := func(w http.ResponseWriter, r *http.Request, iss auth.Issued) {
 		setSessionCookie(w, iss.Token, iss.Session.ExpiresAt, iss.Session.ExpiresAt.Sub(iss.Session.CreatedAt))
+		if iss.DeviceToken != "" {
+			setDeviceCookie(w, iss.DeviceToken, iss.DeviceExpiresAt, iss.DeviceExpiresAt.Sub(iss.Session.CreatedAt))
+		}
 		current(w, r, iss.Session, iss.Token, http.StatusOK)
 	}
 
 	// Sign-in. Every failure is the same 401 invalid_credentials, after the
 	// same work; a blocked account or address is 429 with Retry-After. A
 	// cross-origin browser request is refused (login CSRF). A user with TOTP
-	// enabled gets 202 and a challenge for the second step, no session.
+	// enabled gets 202 and a challenge for the second step, no session. The
+	// device cookie, when the browser has one, chooses which failure count
+	// applies (decision D23-1b); a complete sign-in replaces it.
 	s.HandleAPI("POST "+AuthPath+"/sign-in", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := crossOrigin.Check(r); err != nil {
 			WriteError(w, r, csrfFailed())
@@ -319,7 +346,7 @@ func registerSessions(s *Server, svc *auth.Service) {
 			return
 		}
 		iss, err := svc.SignIn(r.Context(), auth.SignInInput{Username: *in.Username, Password: *in.Password,
-			Address: s.ClientAddress(r), UserAgent: r.UserAgent()})
+			Address: s.ClientAddress(r), UserAgent: r.UserAgent(), DeviceToken: deviceToken(r)})
 		if err != nil {
 			noStore(w)
 			WriteError(w, r, authError(w, err, http.StatusUnauthorized))
@@ -432,7 +459,7 @@ func registerSessions(s *Server, svc *auth.Service) {
 			WriteError(w, r, err)
 			return
 		}
-		at, err := svc.Reauthenticate(r.Context(), principal(r), pw, s.ClientAddress(r))
+		at, err := svc.Reauthenticate(r.Context(), principal(r), pw, s.ClientAddress(r), deviceToken(r))
 		if err != nil {
 			noStore(w)
 			WriteError(w, r, authError(w, err, http.StatusForbidden))
@@ -443,7 +470,8 @@ func registerSessions(s *Server, svc *auth.Service) {
 		WriteJSON(w, http.StatusOK, map[string]time.Time{"authenticated_at": at.UTC(), "recent_auth_until": until})
 	}))
 
-	// Changing one's own password ends every other session of the user.
+	// Changing one's own password ends every other session of the user and
+	// revokes the user's device cookies, this browser's included.
 	s.HandleAPI("PUT "+AuthPath+"/password", SessionOnly().WithRecentAuth(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pw, err := passwordBody(r)
 		if err != nil {
@@ -456,6 +484,7 @@ func registerSessions(s *Server, svc *auth.Service) {
 			WriteError(w, r, authError(w, err, http.StatusForbidden))
 			return
 		}
+		clearDeviceCookie(w)
 		WriteJSON(w, http.StatusOK, passwordSetJSON{SessionsEnded: n})
 	}))
 }

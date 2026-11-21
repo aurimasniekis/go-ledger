@@ -37,6 +37,11 @@ import (
 // checks the two agree.
 var EvidenceSources = []string{
 	"SELECT occurrence_id AS occurrence_id, '" + string(payments.EvidenceManual) + "' AS kind, id AS id, amount AS amount, currency AS currency, paid_on AS evidence_date FROM manual_payments",
+	// Confirmed payment matches (X1, ADR-0035) on a countable transaction:
+	// booked, still reported and not superseded (ADR-0020 point 7).
+	"SELECT m.occurrence_id AS occurrence_id, '" + string(payments.EvidenceBankTransaction) + "' AS kind, m.id AS id, m.amount AS amount, m.currency AS currency," +
+		" coalesce(t.booking_date, t.value_date, t.transaction_date) AS evidence_date FROM payment_matches m JOIN bank_transactions t ON t.id = m.transaction_id" +
+		" WHERE m.state = 'confirmed' AND t.booking_status = 'booked' AND t.no_longer_reported_at IS NULL AND t.superseded_by IS NULL",
 }
 
 // Store implements [payments.Store] on a [store.DB].
@@ -165,6 +170,18 @@ func overridesTx(ctx context.Context, tx *sql.Tx, chunk []string, args []any, ou
 		out[o.OccurrenceID] = f
 	}
 	return rows.Err()
+}
+
+// FactsTx reads the facts of each listed occurrence inside tx (for other
+// stores that write payment evidence, such as payment matches).
+func FactsTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]payments.Facts, error) {
+	return factsTx(ctx, tx, ids)
+}
+
+// ChangeTx reads the occurrence and its facts after a payment-state write
+// inside tx.
+func ChangeTx(ctx context.Context, tx *sql.Tx, id string) (payments.Change, error) {
+	return change(ctx, tx, id)
 }
 
 // Facts returns the facts of each listed occurrence.

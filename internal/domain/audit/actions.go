@@ -6,15 +6,15 @@ import "time"
 // are read by the audit API and by people. Each is registered in [Definitions]
 // with the detail fields it may carry.
 const (
-	SignInSucceeded Action = "auth.signin_succeeded" // Details: method, recovery_codes_remaining (method recovery_code)
-	SignInFailed    Action = "auth.signin_failed"    // Details: method, reason
+	SignInSucceeded Action = "auth.signin_succeeded" // Details: method, recovery_codes_remaining (method recovery_code), device (known)
+	SignInFailed    Action = "auth.signin_failed"    // Details: method, reason, device (known)
 
 	// Sessions and credentials (A2, ADR-0026). The target of a session event
 	// is the session; of a password or re-authentication event, the user.
 	SessionEnded           Action = "auth.session_ended"           // Details: reason (signed_out, terminated)
 	PasswordChanged        Action = "auth.password_changed"        // Details: by (self, administrator, host), sessions_ended
 	Reauthenticated        Action = "auth.reauthenticated"         // Details: method
-	ReauthenticationFailed Action = "auth.reauthentication_failed" // Details: method, reason
+	ReauthenticationFailed Action = "auth.reauthentication_failed" // Details: method, reason, device (known)
 	// A one-time recovery sign-in issued from the host (break-glass, A6,
 	// ADR-0033); its use is auth.signin_succeeded with method
 	// recovery_sign_in. The target is the user.
@@ -39,6 +39,16 @@ const (
 	CorrectionReversed Action = "correction.reversed" // Details: kind
 
 	ReportingTimezoneChanged Action = "settings.reporting_timezone_changed" // Details: from, to
+
+	// Payment matches (X1, ADR-0035). The target is the match. Details:
+	// occurrence_id, transaction_id, origin, from (the state before; none
+	// for a new match), currency. Never the amount, a reason or bank text.
+	PaymentMatchSuggested Action = "payment_match.suggested"
+	PaymentMatchConfirmed Action = "payment_match.confirmed"
+	PaymentMatchRejected  Action = "payment_match.rejected"
+	PaymentMatchUnmatched Action = "payment_match.unmatched"
+	PaymentMatchCorrected Action = "payment_match.corrected"
+	PaymentMatchReversed  Action = "payment_match.reversed"
 )
 
 // Fixed value sets for detail fields that are not identifiers.
@@ -59,7 +69,13 @@ var (
 	correctionKinds   = []string{"match", "unmatch", "payment_status", "categorisation", "other"}
 	overrideStatuses  = []string{"paid", "unpaid"}
 	overrideOrNone    = []string{"none", "paid", "unpaid"}
+	matchOrigins      = []string{"auto_rule", "model_suggestion", "user"}
+	matchFromStates   = []string{"none", "suggested", "confirmed", "rejected", "reversed"}
 )
+
+func matchFields() []Field {
+	return []Field{f("occurrence_id"), f("transaction_id"), f("origin", matchOrigins...), f("from", matchFromStates...), f("currency")}
+}
 
 // Field declares one allowed detail field. Enum, when set, lists the only
 // accepted values.
@@ -79,13 +95,15 @@ var Definitions = map[Action][]Field{
 	UserDisabled:    nil,
 	UserEnabled:     nil,
 
-	SignInSucceeded: {f("method", signInMethods...), f("recovery_codes_remaining")},
-	SignInFailed:    {f("method", signInMethods...), f("reason", signInReasons...)},
+	// device=known: the attempt came from a browser with a valid device
+	// cookie and counted against it, not the username (decision D23-1b).
+	SignInSucceeded: {f("method", signInMethods...), f("recovery_codes_remaining"), f("device", "known")},
+	SignInFailed:    {f("method", signInMethods...), f("reason", signInReasons...), f("device", "known")},
 
 	SessionEnded:           {f("reason", sessionEndReasons...)},
 	PasswordChanged:        {f("by", passwordChangedBy...), f("sessions_ended")},
 	Reauthenticated:        {f("method", signInMethods...)},
-	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...)},
+	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...), f("device", "known")},
 	RecoverySignInIssued:   {f("by", "host"), f("expires_at")},
 
 	// verified_with: the current second factor the user proved for the change
@@ -122,6 +140,13 @@ var Definitions = map[Action][]Field{
 	ManualPaymentDeleted:           {f("payment_id"), f("currency")},
 	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
 	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
+
+	PaymentMatchSuggested: matchFields(),
+	PaymentMatchConfirmed: matchFields(),
+	PaymentMatchRejected:  matchFields(),
+	PaymentMatchUnmatched: matchFields(),
+	PaymentMatchCorrected: matchFields(),
+	PaymentMatchReversed:  matchFields(),
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

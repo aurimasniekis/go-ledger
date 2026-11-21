@@ -316,6 +316,99 @@ func (c *Client) UndoStatusOverride(ctx context.Context, occurrenceID string, ve
 	return &o, nil
 }
 
+// PaymentMatchFilter filters ListPaymentMatches; each list matches any of
+// its values.
+type PaymentMatchFilter struct {
+	ListOptions
+	TransactionIDs []string
+	OccurrenceIDs  []string
+	States         []string
+	Origins        []string
+}
+
+func (f PaymentMatchFilter) query() url.Values {
+	q := url.Values{}
+	f.apply(q)
+	addAll(q, "transaction_id", f.TransactionIDs)
+	addAll(q, "occurrence_id", f.OccurrenceIDs)
+	addAll(q, "state", f.States)
+	addAll(q, "origin", f.Origins)
+	return q
+}
+
+// ListPaymentMatches returns one page of payment matches, oldest first, each
+// with its bank transaction and history.
+func (c *Client) ListPaymentMatches(ctx context.Context, f PaymentMatchFilter) (Page[PaymentMatch], error) {
+	var p Page[PaymentMatch]
+	err := c.do(ctx, request{op: opListMatches, query: f.query()}, &p)
+	return p, err
+}
+
+// AllPaymentMatches walks every payment match matching f (its Cursor is
+// ignored).
+func (c *Client) AllPaymentMatches(ctx context.Context, f PaymentMatchFilter) iter.Seq2[PaymentMatch, error] {
+	return Walk(ctx, func(ctx context.Context, cur string) (Page[PaymentMatch], error) {
+		f.Cursor = cur
+		return c.ListPaymentMatches(ctx, f)
+	})
+}
+
+// CreatePaymentMatch records the user's confirmed match of part or all of a
+// booked bank transaction to an occurrence.
+func (c *Client) CreatePaymentMatch(ctx context.Context, in NewPaymentMatch) (*PaymentMatch, error) {
+	var m PaymentMatch
+	if err := c.do(ctx, request{op: opCreateMatch, body: in}, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// GetPaymentMatch returns one payment match.
+func (c *Client) GetPaymentMatch(ctx context.Context, id string) (*PaymentMatch, error) {
+	var m PaymentMatch
+	if err := c.do(ctx, request{op: opGetMatch, pathID: id}, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (c *Client) matchAction(ctx context.Context, op operation, id string, version int64, body any) (*PaymentMatch, error) {
+	var m PaymentMatch
+	if err := c.do(ctx, request{op: op, pathID: id, version: version, body: body}, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// ConfirmPaymentMatch confirms a suggested match whose current version is
+// version.
+func (c *Client) ConfirmPaymentMatch(ctx context.Context, id string, version int64, d MatchDecision) (*PaymentMatch, error) {
+	return c.matchAction(ctx, opConfirmMatch, id, version, d)
+}
+
+// RejectPaymentMatch rejects a suggested match.
+func (c *Client) RejectPaymentMatch(ctx context.Context, id string, version int64, reason *string) (*PaymentMatch, error) {
+	return c.matchAction(ctx, opRejectMatch, id, version, MatchDecision{Reason: reason})
+}
+
+// UnmatchPaymentMatch undoes a confirmed match: the transaction does not pay
+// the occurrence.
+func (c *Client) UnmatchPaymentMatch(ctx context.Context, id string, version int64, reason *string) (*PaymentMatch, error) {
+	return c.matchAction(ctx, opUnmatchMatch, id, version, MatchDecision{Reason: reason})
+}
+
+// CorrectPaymentMatch changes the allocated amount of a suggested or
+// confirmed match.
+func (c *Client) CorrectPaymentMatch(ctx context.Context, id string, version int64, in MatchCorrection) (*PaymentMatch, error) {
+	return c.matchAction(ctx, opCorrectMatch, id, version, in)
+}
+
+// ReversePaymentMatch marks a confirmed match reversed (the payment was
+// reversed); the occurrence reopens.
+func (c *Client) ReversePaymentMatch(ctx context.Context, id string, version int64, reason *string) (*PaymentMatch, error) {
+	return c.matchAction(ctx, opReverseMatch, id, version, MatchDecision{Reason: reason})
+}
+
 // TokenFilter filters ListTokens (every user's tokens; needs tokens:read).
 type TokenFilter struct {
 	ListOptions

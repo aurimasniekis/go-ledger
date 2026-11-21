@@ -38,6 +38,11 @@ type Resource string
 const (
 	// ResourceAudit is the audit log. It is only ever read through the API.
 	ResourceAudit Resource = "audit"
+	// ResourceBanking is the bank-sourced text of transactions: descriptions
+	// and counterparty names (decision D13 treats counterparty names as
+	// sensitive). Other APIs that show it are redacted without this grant
+	// (ADR-0035 point 9).
+	ResourceBanking Resource = "banking"
 	// ResourceCommitments is recurring commitment definitions (task C1).
 	ResourceCommitments Resource = "commitments"
 	// ResourceTokens is every user's API tokens: listing and revoking them
@@ -61,6 +66,7 @@ type ResourceInfo struct {
 
 var vocabulary = []ResourceInfo{
 	{Name: ResourceAudit, Description: "The audit log of security-relevant and finance-correcting changes.", Actions: []Action{ActionRead}, AdminOnly: true},
+	{Name: ResourceBanking, Description: "Bank-sourced transaction text: raw descriptions and counterparty names.", Actions: []Action{ActionRead}, AdminOnly: true},
 	{Name: ResourceCommitments, Description: "Recurring commitment definitions: kind, amount, schedule, dates, priority and notes.", Actions: []Action{ActionRead, ActionWrite}},
 	{Name: ResourceTokens, Description: "Every user's API tokens: list them and revoke them. Never the tokens themselves.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceUsers, Description: "User accounts, their roles and whether they are disabled.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},

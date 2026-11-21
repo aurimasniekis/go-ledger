@@ -58,6 +58,16 @@ info:
       end after an idle and an absolute timeout, on sign-out, when ended from
       another session, and (other sessions) when the password changes; the
       next request with an ended session is 401.
+    - **Known browsers** (ADR-0026 amendment, decision D23-1b). A complete
+      password sign-in also sets the `__Host-ledger_device` cookie (same
+      attributes, expiring after `auth.sign_in.device_cookie_ttl`). While
+      it is valid for the submitted account, that browser's failed sign-ins
+      and re-authentications count against the cookie instead of the
+      username, so a username locked out by someone else does not lock out
+      the owner's known browsers. The per-address limit, the password and
+      the second factor always apply. The cookie is replaced at each
+      sign-in, outlives sign-out, and every device cookie of a user is
+      revoked when the user's password is set.
     - **Recent authentication.** Operations marked
       `x-ledger-recent-auth: true` (credential changes, user management;
       API token creation) need a password check within the
@@ -684,7 +694,8 @@ paths:
       description: |
         Sets the user's password (minimum length in bytes, no composition
         rules) and ends every session of that user, except the caller's own
-        current session when they set their own password. Audited
+        current session when they set their own password, and revokes every
+        device cookie of that user. Audited
         (auth.password_changed with by and sessions_ended); the password is
         never recorded.
       tags: [users]
@@ -716,6 +727,11 @@ paths:
         disabled account) is the same 401 `invalid_credentials` after the
         same work. Too many failures for the username or from the client
         address within the window are 429 `rate_limited` with Retry-After.
+        A browser sending a valid `__Host-ledger_device` cookie of the
+        account counts its failures against that cookie instead of the
+        username (it is not blocked by failures from other browsers); a
+        forged, expired, replaced or other user's cookie changes nothing. A
+        complete sign-in sets a new device cookie in place of the old one.
         A browser request from another origin is 403 `csrf_failed`. Success
         and failure are audited; a failure never records the username.
         When `auth.password.enabled` is false, every request is 403
@@ -747,7 +763,7 @@ paths:
           description: Signed in.
           headers:
             Set-Cookie:
-              description: The session cookie.
+              description: The session cookie and a new device cookie (`__Host-ledger_device`).
               schema:
                 type: string
           content:
@@ -773,10 +789,13 @@ paths:
         challenge from `POST /auth/sign-in` and exactly one of `code`
         (from the authenticator; accepted within one 30-second step either
         side, and only once) or `recovery_code` (consumed by its use). On
-        success the session starts exactly as after a password-only sign-in.
+        success the session starts exactly as after a password-only sign-in,
+        with a new device cookie.
         A wrong, malformed or reused code is 401 `invalid_second_factor` and
         counts towards the same per-username and per-address limits as a
-        wrong password (429 `rate_limited` with Retry-After); a challenge
+        wrong password (429 `rate_limited` with Retry-After; the device
+        cookie's limit instead of the username's when the password step came
+        from a known browser); a challenge
         takes at most five wrong codes. An unknown, expired or used-up
         challenge is 401 `unauthenticated`: sign in again. A browser
         request from another origin is 403 `csrf_failed`. Audited
@@ -808,7 +827,7 @@ paths:
           description: Signed in.
           headers:
             Set-Cookie:
-              description: The session cookie.
+              description: The session cookie and a new device cookie (`__Host-ledger_device`).
               schema:
                 type: string
           content:
@@ -909,7 +928,9 @@ paths:
         Checks the signed-in user's password again; when it matches, the
         session counts as recently authenticated until recent_auth_until. A
         wrong password is 403 `invalid_credentials` (the session stays
-        valid) and counts towards the sign-in limits (429 with Retry-After).
+        valid) and counts towards the sign-in limits (429 with Retry-After;
+        with a valid device cookie, against the cookie instead of the
+        username).
         403 `password_sign_in_disabled` when `auth.password.enabled` is
         false: use `POST /auth/oidc/reauthenticate`. Audited
         (auth.reauthenticated, auth.reauthentication_failed).
@@ -948,7 +969,8 @@ paths:
       description: |
         Sets the signed-in user's password (minimum length in bytes, no
         composition rules) and ends every other session of the user; the
-        current session stays. Audited (auth.password_changed, by self).
+        current session stays. Revokes every device cookie of the user and
+        clears this browser's. Audited (auth.password_changed, by self).
       tags: [auth]
       requestBody:
         required: true
@@ -1902,6 +1924,363 @@ paths:
                 $ref: "#/components/schemas/Occurrence"
         default:
           $ref: "#/components/responses/Error"
+  /payment-matches:
+    get:
+      operationId: listPaymentMatches
+      x-ledger-access: commitments:read
+      summary: List payment matches
+      description: |
+        Matches between bank transactions and occurrences (ADR-0035), ordered
+        by ID (creation order), each with the bank fact it refers to and its
+        history. Filter by transaction_id, occurrence_id, state or origin
+        (repeat a filter for any of several values).
+      tags: [payment-matches]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: transaction_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: occurrence_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: state
+          in: query
+          schema:
+            $ref: "#/components/schemas/MatchState"
+        - name: origin
+          in: query
+          schema:
+            $ref: "#/components/schemas/MatchOrigin"
+      responses:
+        "200":
+          description: One page of matches.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PaymentMatch"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createPaymentMatch
+      x-ledger-access: commitments:write
+      summary: Match a bank transaction to an occurrence
+      description: |
+        Records the user's decision that amount of the bank transaction pays
+        the occurrence: a confirmed match with origin user. One transaction
+        can pay several occurrences and an occurrence can be paid in parts
+        (decision D8 a). The transaction must be outgoing (409
+        transaction_not_debit) and booked, still reported and not superseded
+        (409 transaction_not_countable: a pending transaction can only be
+        suggested). The amount must be in the currency of both the
+        transaction and the occurrence (400 on amount.currency; nothing is
+        converted). Confirmed allocations of one transaction never exceed its
+        amount (409 transaction_over_allocated), a pair has at most one open
+        match (409 duplicate_match), and the occurrence's payment evidence
+        (manual payments included) never exceeds its amount unless
+        allow_overpayment is true (409 occurrence_overpaid). The occurrence's
+        status is derived again and its version increases. Audited as
+        payment_match.confirmed. Suggestions are created by the matching
+        engine (task X2), not through this operation.
+      tags: [payment-matches]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [transaction_id, occurrence_id, amount]
+              properties:
+                transaction_id:
+                  $ref: "#/components/schemas/ID"
+                occurrence_id:
+                  $ref: "#/components/schemas/ID"
+                amount:
+                  $ref: "#/components/schemas/PositiveMoney"
+                allow_overpayment:
+                  type: boolean
+                  default: false
+                  description: Allow the occurrence's payment evidence to exceed its amount; the excess shows as overpaid_amount.
+                reason:
+                  $ref: "#/components/schemas/MatchReason"
+      responses:
+        "201":
+          description: The confirmed match.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              description: The new match's URL.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
+  /payment-matches/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getPaymentMatch
+      x-ledger-access: commitments:read
+      summary: Get a payment match
+      tags: [payment-matches]
+      responses:
+        "200":
+          description: The match with its bank fact and history.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
+  /payment-matches/{id}/confirm:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: confirmPaymentMatch
+      x-ledger-access: commitments:write
+      summary: Confirm a suggested match
+      description: |
+        Confirms a suggestion (any origin; a model suggestion is only ever
+        confirmed this way). The same checks as creating a match apply,
+        including transaction_not_countable for a pending transaction.
+        Requires the match's version in If-Match or the body. Audited as
+        payment_match.confirmed.
+      tags: [payment-matches]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                allow_overpayment:
+                  type: boolean
+                  default: false
+                  description: Allow the occurrence's payment evidence to exceed its amount; the excess shows as overpaid_amount.
+                reason:
+                  $ref: "#/components/schemas/MatchReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The match after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
+  /payment-matches/{id}/reject:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: rejectPaymentMatch
+      x-ledger-access: commitments:write
+      summary: Reject a suggested match
+      description: |
+        Records that the transaction does not pay the occurrence. The match
+        stays listed as rejected (final); the pair can be suggested again.
+        Audited as payment_match.rejected.
+      tags: [payment-matches]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  $ref: "#/components/schemas/MatchReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The match after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
+  /payment-matches/{id}/unmatch:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: unmatchPaymentMatch
+      x-ledger-access: commitments:write
+      summary: Undo a confirmed match
+      description: |
+        The match was wrong: the transaction does not pay the occurrence. The
+        match becomes rejected (final), stops being payment evidence, and the
+        occurrence's status is derived again; its version increases. Audited as
+        payment_match.unmatched.
+      tags: [payment-matches]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  $ref: "#/components/schemas/MatchReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The match after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
+  /payment-matches/{id}/correct:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: correctPaymentMatch
+      x-ledger-access: commitments:write
+      summary: Correct the allocated amount
+      description: |
+        Changes the amount of a suggested or confirmed match. A confirmed match
+        is checked again with the new amount (transaction_over_allocated,
+        occurrence_overpaid). The history keeps every amount. Audited as
+        payment_match.corrected (never the amount).
+      tags: [payment-matches]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [amount]
+              properties:
+                amount:
+                  $ref: "#/components/schemas/PositiveMoney"
+                allow_overpayment:
+                  type: boolean
+                  default: false
+                  description: Allow the occurrence's payment evidence to exceed its amount; the excess shows as overpaid_amount.
+                reason:
+                  $ref: "#/components/schemas/MatchReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The match after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
+  /payment-matches/{id}/reverse:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: reversePaymentMatch
+      x-ledger-access: commitments:write
+      summary: Reverse a confirmed match
+      description: |
+        The match was right but the payment was reversed (bounced, refunded or
+        returned): the match becomes reversed (final) and the occurrence
+        reopens with the status it would have without it (decision D8 a). The
+        occurrence keeps the reversed match as payment history. Audited as
+        payment_match.reversed.
+      tags: [payment-matches]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  $ref: "#/components/schemas/MatchReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The match after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: meta
     description: The API description itself.
@@ -1917,6 +2296,8 @@ tags:
     description: Sign-in, sessions, re-authentication and your own password.
   - name: occurrences
     description: Dated occurrences generated from commitment definitions, their payment state, manual payments and status overrides.
+  - name: payment-matches
+    description: Links between bank transactions and occurrences (allocations), with suggestions, confirmations, corrections, unmatching and reversal.
   - name: tokens
     description: API tokens (Authorization Bearer); your own, and everyone's for administrators.
 components:
@@ -2158,7 +2539,7 @@ components:
         (ADR-0027). Paid occurrences (any payment evidence) never change;
         unpaid ones due on or after an edit's effective date follow the edit
         (version increases, id stays). The version also increases with every
-        payment-state change (manual payment, override), so the ETag covers
+        payment-state change (manual payment, override, payment match), so the ETag covers
         the payment state (ADR-0031).
       required: [id, commitment_id, month, due_date, amount, version, created_at, updated_at, payment]
       properties:
@@ -2379,6 +2760,180 @@ components:
           type: [string, "null"]
           minLength: 1
           maxLength: 2000
+    MatchOrigin:
+      type: string
+      enum: [auto_rule, model_suggestion, user]
+      description: |
+        Who proposed the match: the matching engine's rules (task X2), an
+        optional model (suggestions only, never confirmed by its origin), or
+        the user.
+    MatchState:
+      type: string
+      enum: [suggested, confirmed, rejected, reversed]
+      description: |
+        suggested awaits a decision and is never payment evidence. confirmed
+        is payment evidence while its transaction is countable. rejected (a
+        rejected suggestion or an undone match) and reversed (the payment was
+        reversed) are final.
+    MatchReason:
+      type: [string, "null"]
+      minLength: 1
+      maxLength: 500
+      description: Optional reason for the change, kept with the match and its history (not in the audit log).
+    MatchActor:
+      type: object
+      required: [kind, user_id]
+      properties:
+        kind:
+          type: string
+          enum: [user, token, system]
+        user_id:
+          type: [string, "null"]
+    PaymentMatch:
+      type: object
+      description: |
+        A link between a bank transaction and an occurrence with the amount
+        of the transaction allocated to it (ADR-0035). The bank fact
+        (transaction, source "bank"), who proposed the match (origin), the
+        decision (state, decided_by, decided_at) and whether it is payment
+        evidence now (counts_as_evidence) are separate fields.
+      required: [id, occurrence_id, transaction_id, amount, origin, state, counts_as_evidence, needs_review, bank_text_redacted, created_by, decided_by, decided_at, reason, transaction, history, version, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        occurrence_id:
+          $ref: "#/components/schemas/ID"
+        transaction_id:
+          $ref: "#/components/schemas/ID"
+        amount:
+          description: The allocated amount, in the currency of both the transaction and the occurrence.
+          $ref: "#/components/schemas/PositiveMoney"
+        origin:
+          $ref: "#/components/schemas/MatchOrigin"
+        state:
+          $ref: "#/components/schemas/MatchState"
+        counts_as_evidence:
+          type: boolean
+          description: True when confirmed and the transaction is booked, still reported and not superseded.
+        needs_review:
+          type: boolean
+          description: |
+            True for a suggested or confirmed match whose transaction can no
+            longer back it: the provider stopped reporting it (a pending
+            transaction too), it was superseded, or it is neither booked nor
+            a still-reported pending one. Such a match stays listed and is
+            never deleted.
+        bank_text_redacted:
+          type: boolean
+          description: |
+            True when the caller lacks the banking:read grant, so
+            transaction.description and transaction.counterparty are null.
+            Everything else about the match stays visible under
+            commitments:read.
+        occurrence_version:
+          type: integer
+          format: int64
+          description: |
+            The occurrence's new version. Present on the responses of create
+            and of the confirm, reject, unmatch, correct and reverse actions;
+            absent on reads.
+        created_by:
+          $ref: "#/components/schemas/MatchActor"
+        decided_by:
+          description: Who made the latest decision; null while suggested.
+          oneOf:
+            - $ref: "#/components/schemas/MatchActor"
+            - type: "null"
+        decided_at:
+          type: [string, "null"]
+          format: date-time
+        reason:
+          description: The reason given with the latest change, if any.
+          type: [string, "null"]
+        transaction:
+          $ref: "#/components/schemas/MatchedBankTransaction"
+        history:
+          type: array
+          description: Every change, oldest first, with the state and amount after it.
+          items:
+            type: object
+            required: [action, state, amount, by, reason, at]
+            properties:
+              action:
+                type: string
+                enum: [suggested, confirmed, rejected, unmatched, corrected, reversed]
+              state:
+                $ref: "#/components/schemas/MatchState"
+              amount:
+                $ref: "#/components/schemas/PositiveMoney"
+              by:
+                $ref: "#/components/schemas/MatchActor"
+              reason:
+                type: [string, "null"]
+              at:
+                type: string
+                format: date-time
+        version:
+          $ref: "#/components/schemas/Version"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MatchedBankTransaction:
+      type: object
+      description: The bank fact a match refers to, as the provider reported it (ADR-0013). Never written by Ledger.
+      required: [source, id, account_id, provider, booking_status, amount, date, booking_date, value_date, description, counterparty, no_longer_reported_at, superseded_by, countable]
+      properties:
+        source:
+          type: string
+          enum: [bank]
+        id:
+          $ref: "#/components/schemas/ID"
+        account_id:
+          $ref: "#/components/schemas/ID"
+        provider:
+          type: string
+        booking_status:
+          type: string
+          enum: [booked, pending, cancelled, other]
+        amount:
+          description: The signed source amount; a payment is negative.
+          $ref: "#/components/schemas/Money"
+        date:
+          description: The booking date, else the value date, else the transaction date.
+          $ref: "#/components/schemas/Date"
+        booking_date:
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        value_date:
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        description:
+          description: |
+            The bank's raw description. Bank text: null (redacted, not
+            omitted) unless the caller holds banking:read.
+          type: [string, "null"]
+        counterparty:
+          description: |
+            The counterparty name the bank reported. Bank text: null
+            (redacted, not omitted) unless the caller holds banking:read.
+          type: [string, "null"]
+        no_longer_reported_at:
+          description: When the provider stopped reporting it (never deleted, decision D8); null while reported.
+          type: [string, "null"]
+          format: date-time
+        superseded_by:
+          description: The booked transaction a pending one became, when known.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        countable:
+          type: boolean
+          description: Booked, still reported and not superseded.
     Role:
       type: string
       enum: [administrator, read-only]
@@ -2881,6 +3436,13 @@ components:
             - pending_terms_change
             - two_factor_enrollment_required
             - invalid_second_factor
+            - payment_evidence_required
+            - transaction_not_countable
+            - transaction_not_debit
+            - transaction_over_allocated
+            - occurrence_overpaid
+            - duplicate_match
+            - invalid_match_state
             - password_sign_in_disabled
         message:
           type: string

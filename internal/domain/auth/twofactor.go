@@ -438,6 +438,10 @@ type challenge struct {
 	method string
 	// authAt is when the first step's authentication happened (see startSession).
 	authAt time.Time
+	// deviceID is the device cookie the password step came with, when
+	// knownDevice; accKey is then that cookie's key (decision D23-1b).
+	deviceID    string
+	knownDevice bool
 }
 
 // challenges holds pending second steps in memory: a restart discards them
@@ -528,7 +532,9 @@ type SecondFactorInput struct {
 // CompleteSignIn checks the second factor of a sign-in challenge and starts
 // the session. A wrong, malformed or replayed code is [ErrInvalidSecondFactor]
 // and counts towards the same per-username and per-address limits as
-// passwords (429 while blocked); a challenge takes at most
+// passwords (429 while blocked; the device cookie's limit instead of the
+// username's when the password step came from a known browser, and a
+// complete password sign-in issues a new device cookie); a challenge takes at most
 // [ChallengeMaxFailures] wrong codes. An unknown, expired or used-up
 // challenge is [ErrInvalidChallenge]. A recovery code is consumed by its use.
 // Success and failure are audited (method totp or recovery_code).
@@ -547,7 +553,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, in SecondFactorInput) (Iss
 	}
 	actor := audit.Actor{Kind: audit.ActorUser, UserID: ch.userID}
 	at, err := s.begin(ch.accKey, AddressKey(in.Address), func() error {
-		return s.rec.Record(ctx, audit.SignIn(actor, false, method, "locked_out", now))
+		return s.rec.Record(ctx, signInEvent(actor, false, method, "locked_out", now, ch.knownDevice))
 	})
 	if err != nil {
 		return Issued{}, err
@@ -576,7 +582,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, in SecondFactorInput) (Iss
 	if !ok {
 		at.failed()
 		s.challenges.fail(in.Challenge)
-		if err := s.rec.Record(ctx, audit.SignIn(actor, false, method, "invalid_second_factor", now)); err != nil {
+		if err := s.rec.Record(ctx, signInEvent(actor, false, method, "invalid_second_factor", now, ch.knownDevice)); err != nil {
 			return Issued{}, err
 		}
 		return Issued{}, ErrInvalidSecondFactor
@@ -586,7 +592,7 @@ func (s *Service) CompleteSignIn(ctx context.Context, in SecondFactorInput) (Iss
 		return Issued{}, ErrInvalidChallenge
 	}
 	at.succeeded()
-	ev := audit.SignIn(actor, true, method, "", now)
+	ev := signInEvent(actor, true, method, "", now, ch.knownDevice)
 	if method == MethodRecoveryCode {
 		ev.Details["recovery_codes_remaining"] = strconv.Itoa(remaining)
 	}
@@ -594,7 +600,14 @@ func (s *Service) CompleteSignIn(ctx context.Context, in SecondFactorInput) (Iss
 	if authAt.IsZero() { // a password first step: the second factor completes the check
 		authAt = now
 	}
-	return s.startSession(ctx, ch.userID, ch.method, in.Address, ch.userAgent, now, authAt, ev)
+	iss, err := s.startSession(ctx, ch.userID, ch.method, in.Address, ch.userAgent, now, authAt, ev)
+	if err != nil {
+		return Issued{}, err
+	}
+	if ch.method == SessionMethodPassword { // only password sign-ins make a browser known
+		s.issueDevice(ctx, &iss, ch.userID, ch.deviceID, now)
+	}
+	return iss, nil
 }
 
 // checkSecondFactor verifies a TOTP code (recording its step as used) or a

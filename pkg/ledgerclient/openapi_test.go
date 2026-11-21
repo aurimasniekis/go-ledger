@@ -253,6 +253,22 @@ func TestTypesMatchSchemas(t *testing.T) {
 		{"Reconciliation", reflect.TypeFor[Reconciliation](), ref("Reconciliation"), false},
 		{"NewUser", reflect.TypeFor[NewUser](), body("/users", "post"), true},
 		{"NewCommitment", reflect.TypeFor[NewCommitment](), body("/commitments", "post"), true},
+		{"PaymentMatch", reflect.TypeFor[PaymentMatch](), ref("PaymentMatch"), false},
+		{"MatchedBankTransaction", reflect.TypeFor[MatchedBankTransaction](), ref("MatchedBankTransaction"), false},
+		{"MatchActor", reflect.TypeFor[MatchActor](), ref("MatchActor"), false},
+		{"MatchEvent", reflect.TypeFor[MatchEvent](), get(ref("PaymentMatch"), "properties", "history", "items").(node), false},
+		{"NewPaymentMatch", reflect.TypeFor[NewPaymentMatch](), body("/payment-matches", "post"), true},
+	}
+	// Match action bodies also allow "version"; the client sends it as If-Match.
+	for path, typ := range map[string]reflect.Type{
+		"/payment-matches/{id}/confirm": reflect.TypeFor[MatchDecision](),
+		"/payment-matches/{id}/correct": reflect.TypeFor[MatchCorrection](),
+	} {
+		mp, _ := schemaProps(doc, body(path, "post"))
+		delete(mp, "version")
+		if !slices.Equal(keys(mp), keys(jsonTags(typ))) {
+			t.Errorf("%s: members %v, openapi.yaml has %v (minus version)", typ.Name(), keys(jsonTags(typ)), keys(mp))
+		}
 	}
 	for _, c := range cases {
 		props, required := schemaProps(doc, c.schema)
@@ -301,6 +317,8 @@ func TestEnumsMatchSchemas(t *testing.T) {
 	check("AuditActorKind", ActorUser, ActorToken, ActorSystem, ActorAnonymous)
 	check("PaymentStatus", PaymentPaid, PaymentPartiallyPaid, PaymentUpcoming, PaymentDue, PaymentOverdue)
 	check("OverrideStatus", OverridePaid, OverrideUnpaid)
+	check("MatchState", MatchSuggested, MatchConfirmed, MatchRejected, MatchReversed)
+	check("MatchOrigin", OriginAutoRule, OriginModel, OriginUser)
 	var ts []string
 	for _, v := range get(doc, "components", "schemas", "ApiToken", "properties", "status", "enum").([]any) {
 		ts = append(ts, v.(string))

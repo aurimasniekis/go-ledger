@@ -36,6 +36,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0032: Go client and CLI management commands](0032-go-client-and-cli-management-commands.md)
 - [ADR-0033: Optional OIDC single sign-on, password disablement and break-glass](0033-oidc-single-sign-on.md)
 - [ADR-0034: The monthly view](0034-monthly-view.md)
+- [ADR-0035: Payment matches, manual matching, corrections and reversal](0035-payment-matches-and-corrections.md)
 - [ADR-0036: Auth and account UI](0036-auth-and-account-ui.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.
