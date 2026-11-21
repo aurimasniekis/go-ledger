@@ -76,6 +76,18 @@ func TestLongLabelValuesAreCut(t *testing.T) {
 	}
 }
 
+func TestBankFreshnessGauge(t *testing.T) {
+	a := NewApp("v1")
+	a.SetBankFreshness(map[string]int{"fresh": 2, "stale": 1})
+	a.SetBankFreshness(map[string]int{"fresh": 1, "stale": 0})
+	out := render(t, a.Registry)
+	for _, want := range []string{"ledger_bank_accounts{freshness=\"fresh\"} 1\n", "ledger_bank_accounts{freshness=\"stale\"} 0\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestAppMetricsAndJobs(t *testing.T) {
 	a := NewApp("v1.2.3")
 	a.JobDone("rate-refresh", true, time.Second)

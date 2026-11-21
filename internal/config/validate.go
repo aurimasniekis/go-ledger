@@ -129,6 +129,14 @@ func (c *Config) validate(sources map[string]string) []Problem {
 			bad("reporting.timezone", err.Error())
 		}
 	}
+	for _, d := range []struct {
+		key string
+		val time.Duration
+	}{{"banking.refresh.interval", c.Banking.Refresh.Interval}, {"banking.refresh.max_backoff", c.Banking.Refresh.MaxBackoff}} {
+		if d.val < time.Minute {
+			bad(d.key, "must be at least 1m")
+		}
+	}
 	c.Events.Pulse.validate(bad)
 	c.Banking.EnableBanking.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {

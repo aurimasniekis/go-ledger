@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const testEBAppID = "0f6c3c1e-1b2a-4c3d-9e8f-123456789abc"
@@ -17,6 +18,20 @@ func TestEnableBankingDisabledByDefault(t *testing.T) {
 		eb.App.Environment != "production" || eb.Developer.AppName("developer") != "enablebanking-developer" {
 		t.Fatalf("defaults %+v", eb)
 	}
+}
+
+func TestBankRefreshDefaultsAndValidation(t *testing.T) {
+	res, err := load(t, okEnv(nil), nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := res.Config.Banking.Refresh; !r.Enabled || r.Interval != 6*time.Hour || r.MaxBackoff != 6*time.Hour {
+		t.Fatalf("defaults %+v", r)
+	}
+	_, err = load(t, okEnv(env{"LEDGER_BANKING_REFRESH_INTERVAL": "10s", "LEDGER_BANKING_REFRESH_MAX_BACKOFF": "0s"}), nil, nil, "")
+	got := problems(t, err)
+	wantProblem(t, got, "banking.refresh.interval")
+	wantProblem(t, got, "banking.refresh.max_backoff")
 }
 
 func TestEnableBankingEnabledRequiresIDAndKey(t *testing.T) {

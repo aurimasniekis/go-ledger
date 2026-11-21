@@ -84,6 +84,15 @@ type Pulse struct {
 // Banking configures banking-data providers.
 type Banking struct {
 	EnableBanking EnableBanking `cfg:"enable_banking"`
+	Refresh       BankRefresh   `cfg:"refresh"`
+}
+
+// BankRefresh configures the background refresh scheduler (ADR-0028). The
+// defaults are proposals, not operator decisions.
+type BankRefresh struct {
+	Enabled    bool          `cfg:"enabled" default:"true" desc:"Refresh active bank connections in the background. When false, connections are only refreshed on request. Retries of one read, the 24 hour staleness threshold and the provider's daily fetch budget are not configurable."`
+	Interval   time.Duration `cfg:"interval" default:"6h" desc:"Time between successful background refreshes of a connection. Banks commonly allow about four background fetches a day; the scheduler also keeps to the provider's daily budget whatever this is set to."`
+	MaxBackoff time.Duration `cfg:"max_backoff" default:"6h" desc:"Longest wait after failed refreshes. The wait starts at 15 minutes and doubles per consecutive failure. A rate limit waits at least 6 hours, or the provider's Retry-After (at most 24 hours)."`
 }
 
 // EnableBanking configures Enable Banking applications (ADR-0023). There is

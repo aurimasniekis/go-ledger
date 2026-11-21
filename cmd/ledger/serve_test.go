@@ -35,6 +35,52 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
+// The background refresh scheduler starts with the server and stops with it
+// before the database closes (B6); it can be switched off.
+func TestServeRunsAndStopsTheRefreshScheduler(t *testing.T) {
+	for _, tc := range []struct {
+		enabled, want string
+	}{{"true", "background bank refresh is enabled"}, {"false", "background bank refresh is disabled"}} {
+		t.Run(tc.enabled, func(t *testing.T) {
+			env := map[string]string{
+				"LEDGER_KEK_VALUE":               cmdSentinel,
+				"LEDGER_DATABASE_PATH":           filepath.Join(t.TempDir(), "ledger.db"),
+				"LEDGER_REPORTING_TIMEZONE":      "UTC",
+				"LEDGER_BANKING_REFRESH_ENABLED": tc.enabled,
+			}
+			var errOut syncBuffer
+			addrc := make(chan net.Addr, 1)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan int, 1)
+			go func() {
+				done <- runServe(ctx, []string{"--http.listen=127.0.0.1:0", "--http.management_listen="}, &errOut,
+					serveEnv{Options: testOpts(env, nil), Listening: func(a net.Addr) { addrc <- a },
+						UI: fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}})
+			}()
+			select {
+			case <-addrc:
+			case code := <-done:
+				t.Fatalf("exited %d: %s", code, errOut.String())
+			case <-time.After(5 * time.Second):
+				t.Fatal("server did not start")
+			}
+			cancel()
+			select {
+			case code := <-done:
+				if code != 0 {
+					t.Fatalf("exit %d: %s", code, errOut.String())
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("server did not stop")
+			}
+			if !strings.Contains(errOut.String(), tc.want) {
+				t.Fatalf("log lacks %q:\n%s", tc.want, errOut.String())
+			}
+		})
+	}
+}
+
 func TestServeWithPulseEnabledStartsEvenWhenPulseIsUnreachable(t *testing.T) {
 	env := map[string]string{
 		"LEDGER_KEK_VALUE":               cmdSentinel,

@@ -220,3 +220,24 @@ banking:
       # configuration; the key is never logged.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_PRIVATE_KEY_FILE  Flag: --banking.enable_banking.developer.private_key_file
       private_key_file: ""
+
+  refresh:
+
+    # Refresh active bank connections in the background. When false,
+    # connections are only refreshed on request. Retries of one read, the 24
+    # hour staleness threshold and the provider's daily fetch budget are not
+    # configurable.
+    # Environment: LEDGER_BANKING_REFRESH_ENABLED  Flag: --banking.refresh.enabled
+    enabled: true
+
+    # Time between successful background refreshes of a connection. Banks
+    # commonly allow about four background fetches a day; the scheduler also
+    # keeps to the provider's daily budget whatever this is set to.
+    # Environment: LEDGER_BANKING_REFRESH_INTERVAL  Flag: --banking.refresh.interval
+    interval: "6h"
+
+    # Longest wait after failed refreshes. The wait starts at 15 minutes and
+    # doubles per consecutive failure. A rate limit waits at least 6 hours, or
+    # the provider's Retry-After (at most 24 hours).
+    # Environment: LEDGER_BANKING_REFRESH_MAX_BACKOFF  Flag: --banking.refresh.max_backoff
+    max_backoff: "6h"

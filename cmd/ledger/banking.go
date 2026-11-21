@@ -8,6 +8,15 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/providers/enablebanking"
 )
 
+// providerMap indexes providers by application name, as connections record it.
+func providerMap(ps []*enablebanking.Provider) map[string]banking.Provider {
+	m := make(map[string]banking.Provider, len(ps))
+	for _, p := range ps {
+		m[p.Capabilities().Application] = p
+	}
+	return m
+}
+
 // bankingProviders builds the configured Enable Banking applications, one per
 // enabled mode slot (decision D10, ADR-0023). It parses the private keys, so
 // a bad key stops startup; it makes no network call. Errors name the
