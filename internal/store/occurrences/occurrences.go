@@ -28,18 +28,29 @@ import (
 // DefaultEvidence lists the payment evidence that makes an occurrence paid
 // and so immutable: each entry is a SQL boolean expression over the
 // occurrence aliased "o". Any evidence counts, so a partially paid occurrence
-// (D7) is immutable too. Task C3 (ADR-0031) adds manual payment records; task
-// X1 adds confirmed bank-transaction allocations here and to
-// internal/store/payments EvidenceSources. Evidence tables must refer to
-// commitment_occurrences(id) with ON DELETE RESTRICT, so the database also
-// refuses to drop a paid occurrence.
+// (D7) is immutable too. Task C3 (ADR-0031) adds manual payment records, and
+// a deleted one no longer counts: an occurrence whose payments were all
+// deleted is editable again. Task X1 adds confirmed bank-transaction
+// allocations here and to internal/store/payments EvidenceSources. Evidence
+// tables must refer to commitment_occurrences(id) with ON DELETE RESTRICT, so
+// the database also refuses to drop a paid occurrence.
 var DefaultEvidence = []string{
-	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id)",
+	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id AND mp.deleted_at IS NULL)",
 	// Payment matches (X1, ADR-0035): a confirmed match keeps its occurrence
 	// even while its transaction does not count (no longer reported), and a
 	// reversed one is payment history that is kept too. Suggestions and
 	// rejections do not: they are dropped with the occurrence.
 	"EXISTS (SELECT 1 FROM payment_matches pm WHERE pm.occurrence_id = o.id AND pm.state IN ('confirmed', 'reversed'))",
+}
+
+// DefaultReferences lists what a delete of an occurrence must not touch: every
+// row that refers to it with ON DELETE RESTRICT. It is [DefaultEvidence] plus
+// the manual payments that were soft-deleted (D26-3a), which stay as history
+// and keep their occurrence from being removed, though they do not make it
+// paid. Deleting a referenced occurrence would fail on the foreign key.
+var DefaultReferences = []string{
+	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id)",
+	DefaultEvidence[1],
 }
 
 // Options configures a [Store].
@@ -49,6 +60,9 @@ type Options struct {
 	NewID func() string
 	// Evidence replaces [DefaultEvidence] (tests use it to stand in for C3).
 	Evidence []string
+	// References replaces [DefaultReferences]. When Evidence is replaced and
+	// References is not, References is Evidence.
+	References []string
 }
 
 // Store reads and writes occurrences on a [store.DB].
@@ -56,7 +70,8 @@ type Store struct {
 	db    *store.DB
 	now   func() time.Time
 	newID func() string
-	paid  string // SQL boolean expression over alias o
+	paid  string // SQL boolean expression over alias o: counting evidence exists
+	refd  string // SQL boolean expression over alias o: a row refers to it
 }
 
 var _ occurrences.Reader = (*Store)(nil)
@@ -73,11 +88,20 @@ func New(db *store.DB, opts Options) *Store {
 	if ev == nil {
 		ev = DefaultEvidence
 	}
-	paid := "0"
-	if len(ev) > 0 {
-		paid = "(" + strings.Join(ev, " OR ") + ")"
+	refs := opts.References
+	if refs == nil {
+		refs = DefaultReferences
+		if opts.Evidence != nil {
+			refs = opts.Evidence
+		}
 	}
-	return &Store{db: db, now: opts.Now, newID: opts.NewID, paid: paid}
+	join := func(parts []string) string {
+		if len(parts) == 0 {
+			return "0"
+		}
+		return "(" + strings.Join(parts, " OR ") + ")"
+	}
+	return &Store{db: db, now: opts.Now, newID: opts.NewID, paid: join(ev), refd: join(refs)}
 }
 
 type querier interface {
@@ -199,7 +223,7 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 	plan := occurrences.PlanEdit(existing, through, next, effective)
 	now := s.now().UTC()
 	for _, id := range plan.Remove {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE id = ? AND NOT "+s.paid, id); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE id = ? AND NOT "+s.refd, id); err != nil {
 			return occurrences.Plan{}, fmt.Errorf("occurrences: remove: %w", err)
 		}
 	}
@@ -227,11 +251,12 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 }
 
 // RemoveUnpaidTx deletes the commitment's occurrences that no payment
-// evidence refers to, before the commitment itself is deleted. Paid ones stay
-// and their foreign key then refuses the delete.
+// evidence refers to, deleted payments included, before the commitment itself
+// is deleted. Referenced ones stay and their foreign key then refuses the
+// delete.
 // It returns how many it deleted.
 func (s *Store) RemoveUnpaidTx(ctx context.Context, tx *sql.Tx, commitmentID string) (int, error) {
-	res, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT "+s.paid, commitmentID)
+	res, err := tx.ExecContext(ctx, "DELETE FROM commitment_occurrences AS o WHERE commitment_id = ? AND NOT "+s.refd, commitmentID)
 	if err != nil {
 		return 0, err
 	}

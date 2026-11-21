@@ -4,8 +4,8 @@
 -- filters on deleted_at IS NULL). deleted_by is the actor that deleted it
 -- ("user:<id>", "token:<id>" or "system"). The row still refers to its
 -- occurrence with ON DELETE RESTRICT, so the occurrence keeps its payment
--- history and C2's regeneration and removal paths still treat it as paid
--- (DefaultEvidence is unchanged on purpose). Existing rows are not deleted.
+-- history and cannot be removed with it, but it does not make the occurrence
+-- paid: terms edits still apply. Existing rows are not deleted.
 ALTER TABLE manual_payments ADD COLUMN deleted_at TEXT CHECK (deleted_at IS NULL OR (length(deleted_at) = 30 AND deleted_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z'));
 ALTER TABLE manual_payments ADD COLUMN deleted_by TEXT CHECK (deleted_by IS NULL OR length(deleted_by) BETWEEN 1 AND 100);
 

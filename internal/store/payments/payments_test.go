@@ -479,16 +479,19 @@ func TestDeleteManualKeepsTheRow(t *testing.T) {
 	if last.Action != audit.ManualPaymentDeleted || last.Details["amount"] != "30.00" || last.Details["currency"] != "EUR" {
 		t.Errorf("audit: %+v", last)
 	}
-	// Undo and the occurrence version keep working after a delete.
-	if _, err := f.ps.SetOverride(ctx, alice, o.ID, ch.Occurrence.Version, payments.OverridePaid, "creditor accepted less"); err != nil {
+	// An override and its undo keep working after a delete.
+	set, err := f.ps.SetOverride(ctx, alice, o.ID, ch.Occurrence.Version, payments.OverridePaid, "creditor accepted less")
+	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.ps.UndoOverride(ctx, alice, o.ID, set.Occurrence.Version); err != nil {
+		t.Fatalf("undo after a delete: %v", err)
+	}
 	// Even with every payment deleted, the occurrence is still protected.
-	cur := f.occurrence(t, c.ID, "2026-03")
 	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, p1.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	cur = f.occurrence(t, c.ID, "2026-03")
+	cur := f.occurrence(t, c.ID, "2026-03")
 	got, err := f.cs.Get(ctx, c.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -524,5 +527,35 @@ func TestPaidOverrideNeedsAnyEvidenceWhateverItsCurrency(t *testing.T) {
 	}
 	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || st.Paid.String() != "0.00 EUR" || !st.OverrideApplied {
 		t.Errorf("state: %+v", st)
+	}
+}
+
+// TestManualPaymentTriggers: the database itself keeps a deleted payment
+// deleted, deleted with both marks, and never removed (D26-3a).
+func TestManualPaymentTriggers(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	_, o := f.commitment(t, "50.00", "2026-03")
+	live, _ := f.record(t, o.ID, "20.00", "2026-03-12")
+	gone, _ := f.record(t, o.ID, "30.00", "2026-03-15")
+	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, gone.ID, gone.Version); err != nil {
+		t.Fatal(err)
+	}
+	stamp := "2026-03-20T00:00:00.000000000Z"
+	for _, c := range []struct{ name, stmt string }{
+		{"undelete", "UPDATE manual_payments SET deleted_at = NULL, deleted_by = NULL WHERE id = '" + gone.ID + "'"},
+		{"redate a deleted payment", "UPDATE manual_payments SET deleted_at = '" + stamp + "' WHERE id = '" + gone.ID + "'"},
+		{"mark without an actor", "UPDATE manual_payments SET deleted_at = '" + stamp + "' WHERE id = '" + live.ID + "'"},
+		{"actor without a mark", "UPDATE manual_payments SET deleted_by = 'system' WHERE id = '" + live.ID + "'"},
+		{"hard delete a live payment", "DELETE FROM manual_payments WHERE id = '" + live.ID + "'"},
+		{"hard delete a deleted payment", "DELETE FROM manual_payments WHERE id = '" + gone.ID + "'"},
+	} {
+		err := f.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, c.stmt)
+			return err
+		})
+		if err == nil {
+			t.Errorf("%s: accepted", c.name)
+		}
 	}
 }
