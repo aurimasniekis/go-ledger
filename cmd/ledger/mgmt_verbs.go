@@ -255,7 +255,7 @@ func commitmentsGet(m *mgmt, _ context.Context, args []string) int {
 func commitmentsCreate(m *mgmt, _ context.Context, args []string) int {
 	fs := m.flags("commitments create")
 	var in ledgerclient.NewCommitment
-	var endDate, prio, notes string
+	var endDate, prio, notes, tolerance string
 	var interval, month int
 	fs.StringVar(&in.Name, "name", "", "")
 	fs.StringVar(&in.Kind, "kind", "", "")
@@ -269,10 +269,15 @@ func commitmentsCreate(m *mgmt, _ context.Context, args []string) int {
 	fs.StringVar(&endDate, "end-date", "", "")
 	fs.StringVar(&prio, "priority", "", "")
 	fs.StringVar(&notes, "notes", "", "")
+	fs.StringVar(&tolerance, "match-tolerance", "", "")
 	if _, rc := m.parse(fs, args, false); rc != 0 {
 		return max(rc, 0)
 	}
 	in.Schedule.Version = 1
+	if tolerance != "" {
+		// In the commitment's currency: amounts are never converted.
+		in.MatchTolerance = &ledgerclient.Money{Amount: tolerance, Currency: in.Amount.Currency}
+	}
 	if in.Schedule.Frequency == ledgerclient.FrequencyMonthly && interval == 0 {
 		interval = 1 // every month, the documented meaning of 1
 	}
@@ -304,9 +309,9 @@ func commitmentsCreate(m *mgmt, _ context.Context, args []string) int {
 func commitmentsUpdate(m *mgmt, _ context.Context, args []string) int {
 	fs := m.flags("commitments update")
 	var version int64
-	var name, kind, amount, currency, frequency, startDate, endDate, prio, notes, effective string
+	var name, kind, amount, currency, frequency, startDate, endDate, prio, notes, effective, tolerance string
 	var interval, month, day int
-	var clrEnd, clrPrio, clrNotes bool
+	var clrEnd, clrPrio, clrNotes, clrTolerance bool
 	fs.Int64Var(&version, "version", 0, "")
 	fs.StringVar(&effective, "effective-from", "", "")
 	fs.StringVar(&name, "name", "", "")
@@ -324,12 +329,14 @@ func commitmentsUpdate(m *mgmt, _ context.Context, args []string) int {
 	fs.BoolVar(&clrPrio, "clear-priority", false, "")
 	fs.StringVar(&notes, "notes", "", "")
 	fs.BoolVar(&clrNotes, "clear-notes", false, "")
+	fs.StringVar(&tolerance, "match-tolerance", "", "")
+	fs.BoolVar(&clrTolerance, "clear-match-tolerance", false, "")
 	id, rc := m.parse(fs, args, true)
 	if rc != 0 {
 		return max(rc, 0)
 	}
 	seen := visited(fs)
-	for flagName, clr := range map[string]bool{"end-date": clrEnd, "priority": clrPrio, "notes": clrNotes} {
+	for flagName, clr := range map[string]bool{"end-date": clrEnd, "priority": clrPrio, "notes": clrNotes, "match-tolerance": clrTolerance} {
 		if seen[flagName] && clr {
 			say(m.stderr, fmt.Sprintf("commitments update: --%s and --clear-%s cannot be combined", flagName, flagName))
 			return 2
@@ -388,13 +395,40 @@ func commitmentsUpdate(m *mgmt, _ context.Context, args []string) int {
 		}
 		patch["schedule"] = sc
 	}
-	if len(patch) == 0 {
+	if clrTolerance {
+		patch["match_tolerance"] = nil
+	}
+	if len(patch) == 0 && !seen["match-tolerance"] {
 		say(m.stderr, "commitments update: nothing to change")
 		return 2
 	}
 	return m.call(func(ctx context.Context, c *ledgerclient.Client) error {
+		var current *ledgerclient.Commitment
+		get := func() (*ledgerclient.Commitment, error) {
+			if current == nil {
+				cm, err := c.GetCommitment(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+				current = cm
+			}
+			return current, nil
+		}
+		if seen["match-tolerance"] {
+			// The whole object, in the commitment's currency (the new one when
+			// --currency is given too).
+			cur := currency
+			if !seen["currency"] {
+				cm, err := get()
+				if err != nil {
+					return err
+				}
+				cur = cm.Amount.Currency
+			}
+			patch["match_tolerance"] = ledgerclient.MergePatch{"amount": tolerance, "currency": cur}
+		}
 		v, err := m.resolveVersion(version, func() (int64, error) {
-			cm, err := c.GetCommitment(ctx, id)
+			cm, err := get()
 			if err != nil {
 				return 0, err
 			}

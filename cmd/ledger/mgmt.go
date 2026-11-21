@@ -21,7 +21,7 @@ import (
 )
 
 // The management commands (ledger me, grants, users, commitments, occurrences,
-// tokens, audit) talk to a running server through the public Management API with an
+// matching, tokens, audit) talk to a running server through the public Management API with an
 // API token, using pkg/ledgerclient. They never open the database and have no
 // other way in (ADR-0032): what a token may do is exactly what the server's
 // grants allow.
@@ -90,8 +90,8 @@ var mgmtVerbs = map[string]map[string]verb{
 	"commitments": {
 		"list":   {"list [--kind K]... [--priority P]... [--currency C]... [--limit N] [--cursor C] [--all]", commitmentsList},
 		"get":    {"get <id>", commitmentsGet},
-		"create": {"create --name N --kind K --amount 12.50 --currency EUR --frequency monthly|annual [--interval N] [--month M] --day D --start-date YYYY-MM-DD [--end-date D] [--priority P] [--notes T]", commitmentsCreate},
-		"update": {"update <id> [--version N] [--effective-from D] [--name N] [--kind K] [--amount A] [--currency C] [--frequency F] [--interval N] [--month M] [--day D] [--start-date D] [--end-date D | --clear-end-date] [--priority P | --clear-priority] [--notes T | --clear-notes]", commitmentsUpdate},
+		"create": {"create --name N --kind K --amount 12.50 --currency EUR --frequency monthly|annual [--interval N] [--month M] --day D --start-date YYYY-MM-DD [--end-date D] [--priority P] [--notes T] [--match-tolerance 0.50]", commitmentsCreate},
+		"update": {"update <id> [--version N] [--effective-from D] [--name N] [--kind K] [--amount A] [--currency C] [--frequency F] [--interval N] [--month M] [--day D] [--start-date D] [--end-date D | --clear-end-date] [--priority P | --clear-priority] [--notes T | --clear-notes] [--match-tolerance A | --clear-match-tolerance]", commitmentsUpdate},
 		"delete": {"delete <id> [--version N]", commitmentsDelete},
 	},
 	"occurrences": {
@@ -103,6 +103,9 @@ var mgmtVerbs = map[string]map[string]verb{
 		"delete-payment": {"delete-payment <id> <payment-id> [--version N]   (--version is the payment's)", occurrencesDeletePayment},
 		"override":       {"override <id> --status paid|unpaid --reason T [--version N]", occurrencesOverride},
 		"undo-override":  {"undo-override <id> [--version N]", occurrencesUndoOverride},
+	},
+	"matching": {
+		"run": {"run   (run the automatic payment matching once; needs commitments:write)", matchingRun},
 	},
 	"tokens": {
 		"list":   {"list [--owner-id ID] [--limit N] [--cursor C] [--all]   (every user's tokens; needs tokens:read)", tokensList},

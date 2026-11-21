@@ -63,7 +63,7 @@ func (s *Store) Occurrences() *occstore.Store { return s.occ }
 
 const table = "commitments"
 
-const columns = "id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, version, created_at, updated_at"
+const columns = "id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, match_tolerance_amount, match_tolerance_currency, version, created_at, updated_at"
 
 type querier interface {
 	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
@@ -76,8 +76,10 @@ func scan(row interface{ Scan(...any) error }) (commitments.Commitment, error) {
 	var currency sqlvalue.Currency
 	var start sqlvalue.Date
 	var end, priority, notes sql.NullString
+	var tolAmount sql.Null[sqlvalue.Amount]
+	var tolCurrency sql.Null[sqlvalue.Currency]
 	var created, updated store.Timestamp
-	if err := row.Scan(&c.ID, &c.Name, &kind, &amount, &currency, &schedule, &start, &end, &priority, &notes, &c.Version, &created, &updated); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &kind, &amount, &currency, &schedule, &start, &end, &priority, &notes, &tolAmount, &tolCurrency, &c.Version, &created, &updated); err != nil {
 		return commitments.Commitment{}, err
 	}
 	m, err := sqlvalue.Money(amount, currency)
@@ -103,6 +105,13 @@ func scan(row interface{ Scan(...any) error }) (commitments.Commitment, error) {
 	if notes.Valid {
 		c.Notes = &notes.String
 	}
+	if tolAmount.Valid {
+		t, err := sqlvalue.Money(tolAmount.V, tolCurrency.V)
+		if err != nil {
+			return commitments.Commitment{}, err
+		}
+		c.MatchTolerance = &t
+	}
 	c.CreatedAt, c.UpdatedAt = created.Time, updated.Time
 	return c, nil
 }
@@ -116,13 +125,17 @@ func get(ctx context.Context, q querier, id string) (commitments.Commitment, err
 }
 
 // args returns the column values of f in the order name, kind, amount,
-// currency, schedule, start_date, end_date, priority, notes.
+// currency, schedule, start_date, end_date, priority, notes,
+// match_tolerance_amount, match_tolerance_currency.
 func args(f commitments.Fields) ([]any, error) {
 	schedule, err := json.Marshal(f.Schedule)
 	if err != nil {
 		return nil, err
 	}
-	var end, priority any
+	var end, priority, tolAmount, tolCurrency any
+	if t := f.MatchTolerance; t != nil {
+		tolAmount, tolCurrency = sqlvalue.Amount{Decimal: t.Amount()}, sqlvalue.Currency{Currency: t.Currency()}
+	}
 	if f.EndDate != nil {
 		end = sqlvalue.Date{Date: *f.EndDate}
 	}
@@ -130,7 +143,7 @@ func args(f commitments.Fields) ([]any, error) {
 		priority = string(*f.Priority)
 	}
 	return []any{f.Name, string(f.Kind), sqlvalue.Amount{Decimal: f.Amount.Amount()}, sqlvalue.Currency{Currency: f.Amount.Currency()},
-		string(schedule), sqlvalue.Date{Date: f.StartDate}, end, priority, f.Notes}, nil
+		string(schedule), sqlvalue.Date{Date: f.StartDate}, end, priority, f.Notes, tolAmount, tolCurrency}, nil
 }
 
 // Create validates f, inserts it at version 1 and records commitment.created.
@@ -147,8 +160,8 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, f commitments.Fie
 	err = s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		all := append([]any{c.ID}, vals...)
 		all = append(all, store.Timestamp{Time: now}, store.Timestamp{Time: now})
-		if _, err := tx.ExecContext(ctx, "INSERT INTO "+table+" (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, created_at, updated_at)"+
-			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", all...); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO "+table+" (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes,"+
+			" match_tolerance_amount, match_tolerance_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", all...); err != nil {
 			return err
 		}
 		return s.audit.WriteAudit(ctx, tx, commitments.CreatedEvent(actor, c, now))
@@ -247,7 +260,7 @@ func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expect
 			return nil
 		}
 		now := s.now().UTC()
-		set := "name = ?, kind = ?, amount = ?, currency = ?, schedule = ?, start_date = ?, end_date = ?, priority = ?, notes = ?, updated_at = ?"
+		set := "name = ?, kind = ?, amount = ?, currency = ?, schedule = ?, start_date = ?, end_date = ?, priority = ?, notes = ?, match_tolerance_amount = ?, match_tolerance_currency = ?, updated_at = ?"
 		if _, err := store.UpdateVersioned(ctx, tx, table, set, id, expected, append(vals, store.Timestamp{Time: now})...); err != nil {
 			return err
 		}

@@ -110,6 +110,12 @@ type Options struct {
 	// marked interrupted. It must exceed the longest refresh. Zero means
 	// banking.DefaultRunLease.
 	RunLease time.Duration
+	// AfterRefresh, when set, is called after every refresh that stored
+	// something (outcome succeeded or partial), from any trigger, once the
+	// connection's lock is released: the automatic payment matching (task
+	// X2, ADR-0037) runs from here. It must be idempotent; it is not called
+	// when ctx has ended.
+	AfterRefresh func(ctx context.Context, res Result)
 }
 
 // Engine refreshes connections. It is safe for concurrent use; one
@@ -215,7 +221,17 @@ func (e *Engine) Refresh(ctx context.Context, id banking.ConnectionID, p banking
 	if !e.lock(id) {
 		return Result{}, ErrRefreshInProgress
 	}
-	defer e.unlock(id)
+	res, err := e.refreshLocked(ctx, id, conn, caps, p)
+	e.unlock(id)
+	if hook := e.opts.AfterRefresh; hook != nil && ctx.Err() == nil &&
+		(res.Run.Outcome == banking.RefreshSucceeded || res.Run.Outcome == banking.RefreshPartial) {
+		hook(ctx, res)
+	}
+	return res, err
+}
+
+// refreshLocked runs a refresh while the caller holds the connection's lock.
+func (e *Engine) refreshLocked(ctx context.Context, id banking.ConnectionID, conn banking.Connection, caps banking.Capabilities, p banking.Provider) (Result, error) {
 
 	start := time.Now()
 	run, err := e.facts.StartRefresh(ctx, id, e.now(), e.opts.RunLease)

@@ -270,6 +270,7 @@ func TestTypesMatchSchemas(t *testing.T) {
 		{"MatchActor", reflect.TypeFor[MatchActor](), ref("MatchActor"), false},
 		{"MatchEvent", reflect.TypeFor[MatchEvent](), get(ref("PaymentMatch"), "properties", "history", "items").(node), false},
 		{"NewPaymentMatch", reflect.TypeFor[NewPaymentMatch](), body("/payment-matches", "post"), true},
+		{"PaymentMatchingRun", reflect.TypeFor[PaymentMatchingRun](), ref("PaymentMatchingRun"), false},
 	}
 	// Match action bodies also allow "version"; the client sends it as If-Match.
 	for path, typ := range map[string]reflect.Type{

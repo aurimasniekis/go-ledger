@@ -387,16 +387,23 @@ func automationGuard(t *testing.T, sys audit.Actor) {
 	})
 	t.Run("confirm a partial suggestion alone", func(t *testing.T) {
 		f, rent, o, _ := setup(t)
-		s, _ := create(f, rent, o, "300.00", matches.OriginModel, matches.StateSuggested)
+		s, _ := create(f, rent, o, "300.00", matches.OriginAutoRule, matches.StateSuggested)
 		if _, err := f.ms.Confirm(f.ctx, sys, s.Match.ID, s.Match.Version, false, nil); !errors.Is(err, matches.ErrAutoNotOneToOne) {
 			t.Errorf("partial: %v", err)
 		}
 	})
 	t.Run("confirm an exact suggestion", func(t *testing.T) {
 		f, rent, o, _ := setup(t)
-		s, _ := create(f, rent, o, "800.00", matches.OriginModel, matches.StateSuggested)
+		s, _ := create(f, rent, o, "800.00", matches.OriginAutoRule, matches.StateSuggested)
 		if ch, err := f.ms.Confirm(f.ctx, sys, s.Match.ID, s.Match.Version, false, nil); err != nil || ch.Match.State != matches.StateConfirmed {
 			t.Errorf("1:1 confirm: %+v %v", ch.Match, err)
+		}
+	})
+	t.Run("confirm an exact model suggestion (D9)", func(t *testing.T) {
+		f, rent, o, _ := setup(t)
+		s, _ := create(f, rent, o, "800.00", matches.OriginModel, matches.StateSuggested)
+		if _, err := f.ms.Confirm(f.ctx, sys, s.Match.ID, s.Match.Version, false, nil); !errors.Is(err, matches.ErrAutoModel) {
+			t.Errorf("model confirm: %v", err)
 		}
 	})
 	t.Run("correct (b)", func(t *testing.T) {

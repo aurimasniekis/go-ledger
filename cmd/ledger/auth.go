@@ -16,6 +16,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/automatch"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -57,8 +58,12 @@ type apiParts struct {
 	commitments *commitmentstore.Store
 	payments    *paymentstore.Store
 	matches     *matchstore.Store
-	auth        *auth.Service
-	tokens      *tokens.Service
+	// matching is the automatic payment matching (ADR-0037); registerAPI
+	// builds one when ledger serve has not.
+	matching *automatch.Engine
+	db       *store.DB
+	auth     *auth.Service
+	tokens   *tokens.Service
 	// oidc is single sign-on, set by ledger serve when it is configured.
 	oidc *httpapi.OIDCDeps
 }
@@ -78,7 +83,7 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.
 		return apiParts{}, err
 	}
 	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil),
-		matches: matchstore.New(db, al, now, nil), auth: svc,
+		matches: matchstore.New(db, al, now, nil), auth: svc, db: db,
 		tokens: tokens.NewService(tokenstore.New(db, al), us, tokens.Options{Now: now})}, nil
 }
 

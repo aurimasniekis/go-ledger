@@ -320,6 +320,10 @@ var (
 	// token) made or corrected (decision D33). Automation may only drop its
 	// own suggestions.
 	ErrActorUndo = errors.New("automation cannot unmatch or reverse a match, or reject one a user or token touched")
+	// ErrAutoModel refuses a confirmation of a model suggestion by automation:
+	// model output is only ever a suggestion, which a person confirms
+	// (decision D9).
+	ErrAutoModel = errors.New("automation cannot confirm a model suggestion; only a user or a token can")
 	// ErrDuplicate refuses a second open (suggested or confirmed) match of
 	// the same transaction and occurrence.
 	ErrDuplicate = errors.New("the transaction and the occurrence already have an open match")
