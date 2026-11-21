@@ -381,6 +381,38 @@ func TestSlowRateProviderIsBoundedAndExcludesTheCurrencies(t *testing.T) {
 	}
 }
 
+// After the deadline a currency whose rate is already cached still converts:
+// only the currency that needed the provider is excluded as timed out.
+func TestAfterTheDeadlineCachedRatesStillConvert(t *testing.T) {
+	e := newEnv(t)
+	e.seedRate(t, "GBP/USD", "1.2500", "2026-11-13", t0.Add(-2*time.Hour))
+	prov := fxtest.NewProvider("frankfurter", "ECB")
+	prov.Hold()
+	svc, err := fx.NewService(e.cache, prov, fx.Options{Now: func() time.Time { return t0 }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := e.service(t, false)
+	s.Rates, s.ConvertTimeout = svc, 100*time.Millisecond
+	o, err := s.Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("USD")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := o.Converted
+	if c == nil || len(c.Excluded) != 1 || c.Excluded[0].Currency.Code() != "EUR" || c.Excluded[0].Reason != outlook.ReasonConversionTimedOut {
+		t.Fatalf("excluded %+v", c)
+	}
+	var gbp bool
+	for _, u := range c.Included {
+		if u.Currency.Code() == "GBP" && u.Rate != nil && u.Rate.Value.String() == "1.2500" && u.FromCache {
+			gbp = true
+		}
+	}
+	if !gbp {
+		t.Errorf("GBP was not converted from its cached rate: included %+v", c.Included)
+	}
+}
+
 func TestWithoutARateServiceOnlyTheReportingCurrencyIsCounted(t *testing.T) {
 	e := newEnv(t)
 	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("EUR")})

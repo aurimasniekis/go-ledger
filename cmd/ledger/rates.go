@@ -28,7 +28,7 @@ func buildRates(cfg config.Rates, reporting moneypkg.Currency, db *store.DB, now
 	opts := fx.Options{
 		Freshness: fx.Freshness{RefreshAfter: cfg.RefreshInterval, StaleAfter: cfg.StaleAfter},
 		Now:       now, Log: log,
-		ProviderName: frankfurter.Name, Source: cfg.Source,
+		ProviderName: frankfurter.Name, Source: frankfurter.NormalizeSource(cfg.Source),
 	}
 	var provider fx.Provider
 	if cfg.Enabled {

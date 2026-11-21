@@ -69,6 +69,14 @@ type Converter interface {
 	Convert(ctx context.Context, from money.Money, to money.Currency) (fx.Conversion, error)
 }
 
+// CachedConverter is a Converter that can also convert from its cache alone,
+// without waiting for a provider; *fx.Service implements it. The outlook uses
+// it for the currencies still to convert after its conversion deadline, so a
+// slow provider costs only the currencies that really needed it.
+type CachedConverter interface {
+	ConvertCached(ctx context.Context, from money.Money, to money.Currency) (fx.Conversion, error)
+}
+
 // Service builds outlooks. Banks and Rates may be nil: without Banks no
 // balance is known, without Rates only amounts already in the reporting
 // currency can be converted (every other currency is excluded and flagged).
@@ -675,6 +683,16 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 		if !timedOut {
 			c, err = s.conversion(ctx, figures[0], to)
 			timedOut = err != nil && ctx.Err() != nil && parent.Err() == nil
+		}
+		if timedOut {
+			// Out of time for a provider answer: a rate already cached still
+			// converts (its age and staleness are judged as usual). Only a
+			// currency with no usable cached rate is excluded as timed out.
+			if cc, ok := s.Rates.(CachedConverter); ok {
+				if cached, cerr := cc.ConvertCached(parent, figures[0], to); cerr == nil && cached.Acceptable() {
+					c, err, timedOut = cached, nil, false
+				}
+			}
 		}
 		switch {
 		case timedOut:

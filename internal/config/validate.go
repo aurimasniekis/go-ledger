@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
-	"github.com/aurimasniekis/go-ledger/internal/domain/fx"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
+	"github.com/aurimasniekis/go-ledger/internal/providers/frankfurter"
 )
 
 // resolveSecretFiles reads a secret named by a *_file key into its value field.
@@ -177,7 +177,7 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	c.Banking.EnableBanking.validate(bad)
 	c.Banking.validateRedirect(bad)
 	// Sources are cached apart, so one source has one spelling: ECB, not ecb.
-	c.Rates.Source = fx.NormalizeSource(c.Rates.Source)
+	c.Rates.Source = frankfurter.NormalizeSource(c.Rates.Source)
 	c.Rates.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {
 		ps = append(ps, Problem{Key: "kek", Msg: "required: set " + EnvName("kek.value") + " or " + EnvName("kek.file")})

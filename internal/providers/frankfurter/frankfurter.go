@@ -69,6 +69,18 @@ type Client struct {
 
 var _ fx.Provider = (*Client)(nil)
 
+// NormalizeSource returns the canonical form of a Frankfurter source key:
+// upper case (ECB, not ecb), except the special key "blended", which is
+// lower case. Sources are cached apart, so one spelling must always give
+// one key.
+func NormalizeSource(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.EqualFold(s, "blended") {
+		return "blended"
+	}
+	return strings.ToUpper(s)
+}
+
 // New returns a Client.
 func New(o Options) (*Client, error) {
 	if o.BaseURL == "" {
@@ -81,7 +93,7 @@ func New(o Options) (*Client, error) {
 	if o.Source == "" {
 		o.Source = DefaultSource
 	}
-	o.Source = fx.NormalizeSource(o.Source)
+	o.Source = NormalizeSource(o.Source)
 	if !sourcePattern.MatchString(o.Source) {
 		return nil, errors.New("frankfurter: source must be a provider key such as ECB, or \"blended\" (letters, digits, '_', '.', '-', at most 32)")
 	}
