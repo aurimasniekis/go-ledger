@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 
 test('the shell loads and deep links work', async ({ page }) => {
   // The overview needs a session now (A7): a signed-out visitor lands on sign-in.

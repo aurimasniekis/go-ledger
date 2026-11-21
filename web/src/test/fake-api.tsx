@@ -71,7 +71,7 @@ export const sess = (over: Partial<Session> = {}): Session => ({
   address: '192.0.2.1',
   ...over,
 })
-export const ALL_GRANTS = ['audit:read', 'banking:read', 'commitments:read', 'commitments:write', 'tokens:read', 'tokens:write', 'users:read', 'users:write']
+export const ALL_GRANTS = ['audit:read', 'banking:read', 'commitments:read', 'commitments:write', 'connections:read', 'connections:write', 'tokens:read', 'tokens:write', 'users:read', 'users:write']
 export const admin = (grants = ALL_GRANTS): Principal => ({
   kind: 'user',
   user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA',
@@ -82,6 +82,7 @@ export const admin = (grants = ALL_GRANTS): Principal => ({
 export const vocab: GrantVocabulary = {
   resources: [
     { name: 'commitments', description: 'Recurring commitments', actions: ['read', 'write'], admin_only: false },
+    { name: 'connections', description: 'Bank connections', actions: ['read', 'write'], admin_only: true },
     { name: 'users', description: 'Users and roles', actions: ['read', 'write'], admin_only: true },
     { name: 'tokens', description: 'API tokens of every user', actions: ['read', 'write'], admin_only: true },
     { name: 'audit', description: 'The audit log', actions: ['read'], admin_only: true },

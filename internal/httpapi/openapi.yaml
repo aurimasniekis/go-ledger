@@ -2399,6 +2399,356 @@ paths:
                 $ref: "#/components/schemas/PaymentMatch"
         default:
           $ref: "#/components/responses/Error"
+  /bank-applications:
+    get:
+      operationId: listBankApplications
+      x-ledger-access: connections:read
+      summary: List the configured provider applications
+      description: |
+        The banking-data provider applications this deployment is configured
+        with, each with its mode (app or developer, as the provider documents
+        them; neither is the sandbox), its environment, what accounts a
+        connection can reach (account_access: all, or linked_only for a
+        developer-mode application) and its capabilities. Credentials are
+        never shown.
+      tags: [bank-connections]
+      responses:
+        "200":
+          description: The applications.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BankApplication"
+        default:
+          $ref: "#/components/responses/Error"
+  /bank-applications/{application}/institutions:
+    parameters:
+      - name: application
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: listBankInstitutions
+      x-ledger-access: connections:read
+      summary: List the banks an application offers in a country
+      description: |
+        Asks the provider which banks it offers for a country. A read: nothing
+        is changed. Provider failures are reported with their kind
+        (bank_unavailable and bank_rate_limited can be retried later; Retry-After
+        says when, if the provider said).
+      tags: [bank-connections]
+      parameters:
+        - name: country
+          in: query
+          required: true
+          description: ISO 3166-1 alpha-2 code in capitals.
+          schema:
+            type: string
+            pattern: "^[A-Z]{2}$"
+      responses:
+        "200":
+          description: The institutions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BankInstitution"
+        default:
+          $ref: "#/components/responses/Error"
+  /bank-connections:
+    get:
+      operationId: listBankConnections
+      x-ledger-access: connections:read
+      summary: List bank connections with their accounts and freshness
+      description: |
+        Every bank connection, oldest first, each with its accounts, the
+        freshness of each account (when it last refreshed successfully and
+        when it last tried), the latest balances Ledger holds (a balance is
+        absent, never zero, when the bank reported none), the latest refresh run
+        and, when background refresh is on, the schedule. Provider session
+        references, authorisation codes, account handles and full account
+        numbers are never returned.
+      tags: [bank-connections]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of connections.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BankConnection"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: startBankConnection
+      x-ledger-access: connections:write
+      summary: Start connecting a bank
+      description: |
+        Records a pending connection and asks the provider to begin consent.
+        Send the user to authorization_url; the bank sends them back to
+        banking.redirect_url, whose page calls completeBankConnection. The call
+        is never retried by Ledger. If the provider refuses, the connection stays
+        visible with status failed. 409 bank_connect_unavailable means
+        banking.redirect_url is not configured. Audited as
+        bank_connection.started.
+      tags: [bank-connections]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [application, institution_id, country]
+              properties:
+                application:
+                  type: string
+                  maxLength: 64
+                institution_id:
+                  type: string
+                  maxLength: 256
+                country:
+                  type: string
+                  pattern: "^[A-Z]{2}$"
+                psu_type:
+                  type: string
+                  enum: [personal, business]
+                  default: personal
+                valid_for_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 3650
+                  description: Consent length asked for; the bank may grant less. Default is the longest allowed.
+      responses:
+        "201":
+          description: The pending connection and where to send the user.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankConsentStart"
+        default:
+          $ref: "#/components/responses/Error"
+  /bank-connections/complete:
+    post:
+      operationId: completeBankConnection
+      x-ledger-access: connections:write
+      summary: Finish a consent with what the bank's redirect returned
+      description: |
+        Called by the consent callback page with the state and code (or error)
+        the bank returned. The state works once: a replay is 409
+        consent_not_found; so is a state older than banking.consent_ttl, or one
+        started by another user (it stays valid for them). The state is claimed
+        before the bank is called, so of two completions only one reaches it. A
+        refused or failed first consent leaves the
+        connection failed; a failed reconnect leaves a connection that needed
+        reconnecting still needing it. The code is never stored or logged. Audited
+        as bank_connection.connected.
+      tags: [bank-connections]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [state]
+              properties:
+                state:
+                  type: string
+                  maxLength: 256
+                code:
+                  type: string
+                  maxLength: 4096
+                error:
+                  type: string
+                  maxLength: 256
+                  description: The provider's error code when the user cancelled or the bank refused. Send it instead of code.
+      responses:
+        "200":
+          description: The connection, now active.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankConnection"
+        default:
+          $ref: "#/components/responses/Error"
+  /bank-connections/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getBankConnection
+      x-ledger-access: connections:read
+      summary: Get a bank connection
+      tags: [bank-connections]
+      responses:
+        "200":
+          description: The connection.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankConnection"
+        default:
+          $ref: "#/components/responses/Error"
+  /bank-connections/{id}/reconnect:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: reconnectBankConnection
+      x-ledger-access: connections:write
+      summary: Start a new consent for an existing connection
+      description: |
+        For a connection whose consent ended or was withdrawn (status
+        reconnect_required), or to renew one early. The connection keeps its
+        status and data until the new consent completes, so a cancelled reconnect
+        loses nothing. 409 connection_not_active while the first consent is still
+        pending. Audited as bank_connection.reconnect_started.
+      tags: [bank-connections]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                valid_for_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 3650
+      responses:
+        "200":
+          description: The connection and where to send the user.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankConsentStart"
+        default:
+          $ref: "#/components/responses/Error"
+  /bank-connections/{id}/refresh:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: refreshBankConnection
+      x-ledger-access: connections:write
+      summary: Refresh a connection now
+      description: |
+        Runs a refresh through the same engine as the background scheduler, so
+        one connection is never refreshed twice at once (409 refresh_in_progress,
+        with Retry-After: show it and try again shortly). The call answers 200
+        with the connection even when the refresh failed: the last_refresh_run
+        says how it ended and its error.kind tells what to do (reconnect_required:
+        reconnect; retryable or rate_limited: try again later; permanent:
+        retrying will not help). The wait is bounded below the server's write
+        timeout; a refresh that is still going at the bound is not cancelled: the
+        answer is 200 with refresh_running true and the run goes on, so poll the
+        connection until refresh_running is false. A failed refresh never changes stored balances or
+        transactions. 409 connection_not_active for a connection that is pending,
+        disconnected, failed or needs a new consent. Audited as
+        bank_connection.refresh_requested.
+      tags: [bank-connections]
+      responses:
+        "200":
+          description: The connection after the refresh.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankConnection"
+        default:
+          $ref: "#/components/responses/Error"
+  /bank-connections/{id}/disconnect:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: disconnectBankConnection
+      x-ledger-access: connections:write
+      summary: Disconnect a bank
+      description: |
+        Ends the provider session and marks the connection disconnected. Accounts,
+        balances and transactions stay as history. A session the provider no
+        longer knows counts as ended; if the provider cannot be reached nothing
+        changes and the error says so. Requires the connection's version in
+        If-Match or the body. Audited as bank_connection.disconnected.
+      tags: [bank-connections]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The disconnected connection.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BankConnection"
+        default:
+          $ref: "#/components/responses/Error"
   /mcp:
     post:
       operationId: postMCP
@@ -2517,6 +2867,8 @@ tags:
     description: Sign-in, sessions, re-authentication and your own password.
   - name: occurrences
     description: Dated occurrences generated from commitment definitions, their payment state, manual payments and status overrides.
+  - name: bank-connections
+    description: Connecting banks, consent, reconnecting, refreshing on request, and each account's freshness.
   - name: payment-matches
     description: Links between bank transactions and occurrences (allocations), with suggestions, confirmations, corrections, unmatching and reversal.
   - name: tokens
@@ -3710,6 +4062,174 @@ components:
       format: int64
       minimum: 1
       description: Optimistic-concurrency version; incremented by every change.
+    BankApplication:
+      type: object
+      required: [provider, name, mode, environment, account_access, capabilities]
+      properties:
+        provider: {type: string}
+        name: {type: string, description: The operator's name for the application; connections record it.}
+        mode: {type: string, enum: [app, developer], description: "The provider's mode terminology, not production versus sandbox."}
+        environment: {type: string, enum: [production, sandbox]}
+        account_access:
+          type: string
+          enum: [all, linked_only]
+          description: all reaches every account the user consents to; linked_only only accounts linked to the application at the provider.
+        capabilities:
+          type: object
+          required: [balance_types, pending_transactions, max_consent_validity_days, max_history_days, background_fetches_per_day]
+          description: Zero means not known, never none.
+          properties:
+            balance_types:
+              type: array
+              items: {type: string, enum: [booked, available, expected, other]}
+            pending_transactions: {type: boolean}
+            max_consent_validity_days: {type: integer}
+            max_history_days: {type: integer}
+            background_fetches_per_day: {type: integer}
+    BankInstitution:
+      type: object
+      required: [id, name, country, max_consent_validity_days]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        country: {type: string}
+        max_consent_validity_days: {type: integer}
+    BankError:
+      type: object
+      required: [kind, code]
+      description: Why a refresh or an account's last attempt failed. No payload.
+      properties:
+        kind:
+          type: string
+          enum: [reconnect_required, rate_limited, retryable, permanent, canceled]
+          description: reconnect_required needs a new consent; rate_limited and retryable can be retried later; permanent cannot be fixed by retrying.
+        code: {type: string, description: The provider's error code; may be empty.}
+    BankFreshness:
+      type: object
+      required: [state, stale, last_success_at, last_attempt_at, last_error, notice_code]
+      properties:
+        state:
+          type: string
+          enum: [fresh, stale, failed, reconnect_required, disconnected, never_refreshed]
+        stale: {type: boolean}
+        last_success_at: {type: [string, "null"], format: date-time}
+        last_attempt_at: {type: [string, "null"], format: date-time}
+        last_error:
+          oneOf:
+            - $ref: "#/components/schemas/BankError"
+            - type: "null"
+        notice_code:
+          type: [string, "null"]
+          description: A note about the last refresh, such as transactions_rejected.
+    BankAccount:
+      type: object
+      required: [id, name, product, currency, identifier_hint, no_longer_reported, transactions_through, freshness, balances]
+      properties:
+        id: {$ref: "#/components/schemas/ID"}
+        name: {type: string}
+        product: {type: string}
+        currency: {type: string, description: ISO 4217, or XXX when the bank reports the account in several currencies.}
+        identifier_hint:
+          type: [string, "null"]
+          description: The last four characters of the account number; never the whole number.
+        no_longer_reported: {type: boolean}
+        transactions_through: {type: [string, "null"], format: date}
+        freshness: {$ref: "#/components/schemas/BankFreshness"}
+        balances:
+          type: array
+          description: The latest balance of each type the bank reported, with when Ledger obtained it. Empty when none was ever reported.
+          items:
+            type: object
+            required: [type, amount, reference_date, obtained_at]
+            properties:
+              type: {type: string, enum: [booked, available, expected, other]}
+              amount: {$ref: "#/components/schemas/Money"}
+              reference_date: {type: [string, "null"], format: date}
+              obtained_at: {type: string, format: date-time}
+    BankConnection:
+      type: object
+      required: [id, provider, application, mode, environment, account_access, institution, status, needs_reconnect, freshness, consent_granted_at, consent_valid_until, consent_expires_soon, last_error, accounts, last_refresh_run, refresh_running, schedule, as_of, version, created_at, updated_at]
+      properties:
+        id: {$ref: "#/components/schemas/ID"}
+        provider: {type: string}
+        application: {type: string}
+        mode: {type: string, enum: [app, developer]}
+        environment: {type: string, enum: [production, sandbox]}
+        account_access: {type: string, enum: [all, linked_only]}
+        institution:
+          type: object
+          required: [id, name, country]
+          properties:
+            id: {type: string}
+            name: {type: string}
+            country: {type: string}
+        status:
+          type: string
+          enum: [pending, active, reconnect_required, failed, disconnected]
+        needs_reconnect:
+          type: boolean
+          description: True only when a new consent is the way forward (status reconnect_required). Never true for a retryable failure.
+        freshness:
+          type: string
+          enum: [fresh, stale, failed, reconnect_required, disconnected, never_refreshed]
+          description: The worst freshness among the connection's accounts, or the connection's own state when it has none.
+        consent_granted_at: {type: [string, "null"], format: date-time}
+        consent_valid_until: {type: [string, "null"], format: date-time}
+        consent_expires_soon: {type: boolean, description: An active consent ends within 14 days.}
+        previous_session_end_failed: {type: boolean, description: "Only in the answer of completeBankConnection, and only when true: the reconnect replaced a provider session that could not be ended, so it may still be live at the bank (audited as bank_connection.session_end_failed)."}
+        last_error:
+          oneOf:
+            - $ref: "#/components/schemas/BankError"
+            - type: "null"
+        accounts:
+          type: array
+          items: {$ref: "#/components/schemas/BankAccount"}
+        last_refresh_run:
+          oneOf:
+            - $ref: "#/components/schemas/BankRefreshRun"
+            - type: "null"
+        refresh_running:
+          type: boolean
+          description: True while a refresh is still going on in the background (the last run is running, or a refresh just requested outlived the wait). Poll the connection until it is false.
+        schedule:
+          description: The background scheduler's view; null when background refresh is off or has not seen the connection yet.
+          oneOf:
+            - type: object
+              required: [state, next_attempt_at, consecutive_failures]
+              properties:
+                state:
+                  type: string
+                  enum: [waiting, due, running, backoff, rate_limited, budget_exhausted, not_active, no_provider]
+                next_attempt_at: {type: [string, "null"], format: date-time}
+                consecutive_failures: {type: integer}
+            - type: "null"
+        as_of: {type: string, format: date-time, description: When the freshness was computed.}
+        version: {$ref: "#/components/schemas/Version"}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    BankRefreshRun:
+      type: object
+      required: [id, started_at, finished_at, outcome, error, accounts_failed, transactions_inserted, transactions_rejected]
+      properties:
+        id: {type: string}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: [string, "null"], format: date-time}
+        outcome: {type: string, enum: [running, succeeded, partial, failed, interrupted]}
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/BankError"
+            - type: "null"
+        accounts_failed: {type: integer}
+        transactions_inserted: {type: integer}
+        transactions_rejected: {type: integer}
+    BankConsentStart:
+      type: object
+      required: [connection, authorization_url]
+      properties:
+        connection: {$ref: "#/components/schemas/BankConnection"}
+        authorization_url:
+          type: string
+          description: The bank's or provider's page to send the user to. Open it in the browser; it is not an API call.
     Error:
       type: object
       required: [code, message, request_id]
@@ -3743,6 +4263,14 @@ components:
             - transaction_not_countable
             - transaction_not_debit
             - transaction_over_allocated
+            - bank_reconnect_required
+            - bank_unavailable
+            - bank_rate_limited
+            - bank_request_rejected
+            - connection_not_active
+            - refresh_in_progress
+            - consent_not_found
+            - bank_connect_unavailable
             - occurrence_overpaid
             - duplicate_match
             - invalid_match_state

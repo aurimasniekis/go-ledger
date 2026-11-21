@@ -50,6 +50,19 @@ const (
 	PaymentMatchCorrected Action = "payment_match.corrected"
 	PaymentMatchReversed  Action = "payment_match.reversed"
 
+	// Bank connections (B4, ADR-0040). The target is the connection. Details:
+	// provider and application (names only: never a session, code, account or
+	// institution), reconnect (true when the consent renewed an existing
+	// connection) and, for a refresh on request, the run's outcome.
+	BankConnectionStarted          Action = "bank_connection.started"
+	BankConnectionReconnectStarted Action = "bank_connection.reconnect_started"
+	BankConnectionConnected        Action = "bank_connection.connected"
+	BankConnectionDisconnected     Action = "bank_connection.disconnected"
+	BankRefreshRequested           Action = "bank_connection.refresh_requested"
+	// A reconnect replaced the provider session and the old one could not be
+	// ended (it may still be live at the bank). Details: provider,
+	// application and the error kind, never a session reference.
+	BankSessionEndFailed Action = "bank_connection.session_end_failed"
 	// A person asked for an automatic matching run through the API (X2,
 	// ADR-0039). The matches it wrote are audited one by one as
 	// payment_match.* with the system as actor. The target is the run
@@ -77,6 +90,7 @@ var (
 	correctionKinds   = []string{"match", "unmatch", "payment_status", "categorisation", "other"}
 	overrideStatuses  = []string{"paid", "unpaid"}
 	overrideOrNone    = []string{"none", "paid", "unpaid"}
+	refreshOutcomes   = []string{"running", "succeeded", "partial", "failed", "interrupted"}
 	matchOrigins      = []string{"auto_rule", "model_suggestion", "user"}
 	matchFromStates   = []string{"none", "suggested", "confirmed", "rejected", "reversed"}
 )
@@ -157,7 +171,13 @@ var Definitions = map[Action][]Field{
 	PaymentMatchCorrected: matchFields(),
 	PaymentMatchReversed:  matchFields(),
 
-	PaymentMatchingRun: {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
+	BankConnectionStarted:          {f("provider"), f("application")},
+	BankConnectionReconnectStarted: {f("provider"), f("application")},
+	BankConnectionConnected:        {f("provider"), f("application"), f("reconnect", "true", "false")},
+	BankConnectionDisconnected:     {f("provider"), f("application")},
+	BankRefreshRequested:           {f("provider"), f("application"), f("outcome", refreshOutcomes...)},
+	BankSessionEndFailed:           {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled")},
+	PaymentMatchingRun:             {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

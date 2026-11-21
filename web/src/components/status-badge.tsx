@@ -8,6 +8,11 @@ import {
   History,
   LoaderCircle,
   Ban,
+  BadgeCheck,
+  CircleHelp,
+  CloudOff,
+  KeyRound,
+  Link2Off,
   CircleSlash,
   OctagonX,
   SaveOff,
@@ -63,8 +68,8 @@ export const COMMITMENT_STATUSES = {
 
 // Data state: how trustworthy or complete the data behind a row is. A separate
 // axis: a data state never replaces a commitment status, and a row may show both.
-// Pending-save was added with C4; disconnected and save-failed with U1. Reserved for later work (X4, B4), not yet
-// implemented: bank-pending, needs-review. See docs/design-system.md.
+// Pending-save was added with C4; disconnected and save-failed with U1; the bank connection states with B4. Reserved for
+// later work (X4), not yet implemented: bank-pending, needs-review. See docs/design-system.md.
 export const DATA_STATES = {
   stale: { label: 'Stale', Icon: History, tier: 'default', color: 'stale' },
   error: { label: 'Error', Icon: OctagonX, tier: 'strong', color: 'error' },
@@ -74,6 +79,14 @@ export const DATA_STATES = {
   disconnected: { label: 'Disconnected', Icon: Unplug, tier: 'default', color: 'stale' },
   // A change the server did not accept: it was not saved and the earlier value stands.
   save_failed: { label: 'Not saved', Icon: SaveOff, tier: 'strong', color: 'error' },
+  // Bank connections (B4). reconnect and temporary are the two failures people confuse: reconnect needs the
+  // user to approve access again and retrying cannot help (strong); temporary can be retried and the consent is fine (default).
+  reconnect: { label: 'Reconnect needed', Icon: Link2Off, tier: 'strong', color: 'error' },
+  temporary: { label: 'Temporary problem', Icon: CloudOff, tier: 'default', color: 'stale' },
+  never_fetched: { label: 'Not fetched yet', Icon: CircleHelp, tier: 'quiet', color: 'stale' },
+  awaiting: { label: 'Waiting for the bank', Icon: KeyRound, tier: 'default', color: 'stale' },
+  // Up to date is a settled, neutral note: it takes no status hue, so a green tick never reads as "paid".
+  fresh: { label: 'Up to date', Icon: BadgeCheck, tier: 'quiet', color: 'none' },
 } satisfies Record<string, Entry>
 
 export const STATUSES = { ...COMMITMENT_STATUSES, ...DATA_STATES }

@@ -19,6 +19,8 @@ import { MyTokensPage } from '@/features/tokens/my-tokens'
 import { AdminTokensPage } from '@/features/tokens/admin-tokens'
 import { UsersPage } from '@/features/admin/users'
 import { RolesPage } from '@/features/admin/roles'
+import { ConnectionsPage } from '@/features/banking/connections-page'
+import { ConsentCallbackPage } from '@/features/banking/callback-page'
 
 export interface RouterContext {
   queryClient: QueryClient
@@ -81,12 +83,30 @@ const monthRoute = createRoute({
   },
 })
 
+// Bank connections (B4). The callback is where a bank sends the user back after consent: its address carries a
+// single-use state and code, which the page uses once and removes from the address.
+const connectionsRoute = createRoute({ getParentRoute: () => appRoute, path: '/connections', component: ConnectionsPage })
+const connectionsCallbackRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/connections/callback',
+  validateSearch: (s: Record<string, unknown>): { state?: string; code?: string; error?: string } => ({
+    state: typeof s.state === 'string' ? s.state : undefined,
+    code: typeof s.code === 'string' ? s.code : undefined,
+    error: typeof s.error === 'string' ? s.error : undefined,
+  }),
+  component: function ConsentCallback() {
+    return <ConsentCallbackPage redirect={connectionsCallbackRoute.useSearch()} />
+  },
+})
+
 const routeTree = rootRoute.addChildren([
   signInRoute,
   designRoute,
   appRoute.addChildren([
     indexRoute,
     monthRoute,
+    connectionsRoute,
+    connectionsCallbackRoute,
     child('/account/security', SecurityPage),
     child('/account/sessions', SessionsPage),
     child('/account/tokens', MyTokensPage),

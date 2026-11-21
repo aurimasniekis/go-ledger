@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
+	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/health"
@@ -223,6 +224,27 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	} else {
 		log.Info("MCP endpoint disabled")
 	}
+	// Bank connections (B4, ADR-0040) and the background refresh (B6, ADR-0028)
+	// share one engine, so one connection is never refreshed twice at once.
+	facts := bankfacts.New(db, nil).WithAudit(auditLog)
+	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(ctx context.Context, _ bankimport.Result) {
+		// A failed run is retried after the next refresh, or on request.
+		if _, err := parts.matching.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
+		}
+	}})
+	var sched *bankimport.Scheduler
+	if cfg.Banking.Refresh.Enabled {
+		sched = bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
+			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff, StaleAfter: cfg.Banking.StaleAfter,
+		})
+	}
+	connSvc := &bankconnect.Service{Facts: facts, Providers: providerMap(bankProviders), Engine: engine, Audit: auditLog, RedirectURL: cfg.Banking.RedirectURL,
+		ConsentTTL: cfg.Banking.ConsentTTL, StaleAfter: cfg.Banking.StaleAfter, Log: log, RefreshTimeout: refreshTimeout(cfg.HTTP.WriteTimeout)}
+	if sched != nil {
+		connSvc.Schedule = sched.Status
+	}
+	parts.banking = connSvc
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
@@ -277,17 +299,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// connection is never refreshed twice at once. It stops with rctx and is
 	// waited for before the database closes.
 	var refreshDone chan struct{}
-	facts := bankfacts.New(db, nil)
-	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(ctx context.Context, _ bankimport.Result) {
-		// A failed run is retried after the next refresh, or on request.
-		if _, err := parts.matching.Run(ctx); err != nil && ctx.Err() == nil {
-			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
-		}
-	}})
-	if cfg.Banking.Refresh.Enabled {
-		sched := bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
-			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff,
-		})
+	if sched != nil {
 		refreshDone = make(chan struct{})
 		go func() { defer close(refreshDone); sched.Run(rctx) }()
 		log.Info("background bank refresh is enabled", "interval", cfg.Banking.Refresh.Interval.String(), "applications", len(bankProviders))
@@ -341,6 +353,17 @@ type auditLog interface {
 // buildAPI). Changes record their audit entries in the same transaction
 // through al (ADR-0025). zone is the reporting time zone; now defaults to
 // time.Now.
+// refreshTimeout bounds a refresh on request below the HTTP write timeout
+// (Go does not cancel a request when its response deadline passes, so an
+// unbounded run would finish with nobody to answer); 5 seconds are left to
+// write the answer.
+func refreshTimeout(write time.Duration) time.Duration {
+	if write <= 0 {
+		return 0
+	}
+	return max(write-5*time.Second, time.Second)
+}
+
 func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar.Zone, now func() time.Time) {
 	// The reporting zone dates commitment creation (D38 1a, ADR-0042).
 	parts.payments = parts.payments.WithZone(zone)
@@ -355,6 +378,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Occurrences: parts.commitments.Occurrences(),
 		Payments:    parts.payments,
 		Matches:     parts.matches,
+		Banking:     parts.banking,
 		Matching:    matching,
 		Audit:       al,
 		Auth:        parts.auth,

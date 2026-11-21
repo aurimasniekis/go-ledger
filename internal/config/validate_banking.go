@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -53,6 +54,35 @@ func (e EnableBanking) validate(bad func(key, msg string)) {
 	secure := err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http" && isLoopbackHost(u.Hostname()))
 	if !secure {
 		bad("banking.enable_banking.base_url", "must be an https URL (plain http only for a loopback test server)")
+	}
+}
+
+// BankRedirectPath is the path of the page that finishes a bank consent; the
+// path of banking.redirect_url must be exactly this.
+const BankRedirectPath = "/connections/callback"
+
+// validateRedirect checks banking.redirect_url when it is set: an absolute
+// https URL (http only on loopback) with no query or fragment, ending in
+// [BankRedirectPath].
+func (b Banking) validateRedirect(bad func(key, msg string)) {
+	if b.ConsentTTL < time.Minute || b.ConsentTTL > 24*time.Hour {
+		bad("banking.consent_ttl", "must be between 1 minute and 24 hours")
+	}
+	if b.StaleAfter < time.Minute || b.StaleAfter > 30*24*time.Hour {
+		bad("banking.stale_after", "must be between 1 minute and 30 days")
+	}
+	if b.RedirectURL == "" {
+		return
+	}
+	u, err := url.Parse(b.RedirectURL)
+	secure := err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http" && isLoopbackHost(u.Hostname()))
+	switch {
+	case !secure:
+		bad("banking.redirect_url", "must be an absolute https URL (plain http only on loopback)")
+	case u.RawQuery != "" || u.Fragment != "" || u.User != nil:
+		bad("banking.redirect_url", "must have no query, fragment or user information")
+	case u.Path != BankRedirectPath:
+		bad("banking.redirect_url", "must end in "+BankRedirectPath)
 	}
 }
 

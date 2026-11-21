@@ -146,6 +146,28 @@ events:
 
 banking:
 
+  # Where a bank sends you back after you approve access: Ledger's external
+  # address followed by /connections/callback, for example
+  # https://ledger.example.com/connections/callback. The same URL must be
+  # registered with the banking provider. https only (plain http only on
+  # loopback). Empty means connecting a bank (and reconnecting) is switched
+  # off; refreshing and disconnecting existing connections still work.
+  # Environment: LEDGER_BANKING_REDIRECT_URL  Flag: --banking.redirect_url
+  redirect_url: ""
+
+  # How long a started bank consent may wait for the bank's redirect. After it
+  # a completion is refused (409 consent_not_found) and a connection that
+  # never connected becomes failed (consent_expired). Between 1 minute and 24
+  # hours.
+  # Environment: LEDGER_BANKING_CONSENT_TTL  Flag: --banking.consent_ttl
+  consent_ttl: "1h"
+
+  # How old the last successful refresh of a bank account may be before its
+  # data is shown as stale (and the background scheduler refreshes it).
+  # Between 1 minute and 30 days.
+  # Environment: LEDGER_BANKING_STALE_AFTER  Flag: --banking.stale_after
+  stale_after: "24h"
+
   enable_banking:
 
     # Enable Banking API base URL. Sandbox and production applications use the
@@ -232,9 +254,8 @@ banking:
   refresh:
 
     # Refresh active bank connections in the background. When false,
-    # connections are only refreshed on request. Retries of one read, the 24
-    # hour staleness threshold and the provider's daily fetch budget are not
-    # configurable.
+    # connections are only refreshed on request. Retries of one read and the
+    # provider's daily fetch budget are not configurable.
     # Environment: LEDGER_BANKING_REFRESH_ENABLED  Flag: --banking.refresh.enabled
     enabled: true
 

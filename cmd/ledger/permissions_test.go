@@ -18,6 +18,10 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
+	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking/bankingtest"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -25,6 +29,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	matchstore "github.com/aurimasniekis/go-ledger/internal/store/matches"
 	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
@@ -103,7 +108,17 @@ var permissionMatrix = map[string]string{
 	"POST /api/v1/payment-matches/{id}/unmatch": "commitments:write",
 	"POST /api/v1/payment-matches/{id}/correct": "commitments:write",
 	"POST /api/v1/payment-matches/{id}/reverse": "commitments:write",
-	"POST /api/v1/payment-matching/runs":        "commitments:write",
+
+	"GET /api/v1/bank-applications":                            "connections:read",
+	"GET /api/v1/bank-applications/{application}/institutions": "connections:read",
+	"GET /api/v1/bank-connections":                             "connections:read",
+	"POST /api/v1/bank-connections":                            "connections:write",
+	"POST /api/v1/bank-connections/complete":                   "connections:write",
+	"GET /api/v1/bank-connections/{id}":                        "connections:read",
+	"POST /api/v1/bank-connections/{id}/reconnect":             "connections:write",
+	"POST /api/v1/bank-connections/{id}/refresh":               "connections:write",
+	"POST /api/v1/bank-connections/{id}/disconnect":            "connections:write",
+	"POST /api/v1/payment-matching/runs":                       "commitments:write",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
@@ -136,6 +151,25 @@ type apiFixture struct {
 	daveSession map[string]string
 	// db is the fixture's database (for importing bank facts in tests).
 	db *store.DB
+	// bank is the fake banking provider behind the bank connection routes.
+	bank *bankingtest.Provider
+	// devBank is the developer-mode application beside it.
+	devBank *bankingtest.Provider
+}
+
+// addAdmin creates one more administrator with the fixture password, for the
+// tests that need a second person.
+func (f *apiFixture) addAdmin(t *testing.T, name string) {
+	t.Helper()
+	ctx := context.Background()
+	u, err := f.users.Create(ctx, audit.System, users.New{Username: name, Role: authz.RoleAdministrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.auth.SetPassword(ctx, authz.Principal{}, true, u.ID, testPassword, auth.ByHost); err != nil {
+		t.Fatal(err)
+	}
+	f.ids[name] = u.ID
 }
 
 // signIn signs name in with the fixture password and returns the headers of
@@ -183,6 +217,15 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	parts.commitments = commitmentstore.New(db, al, clock, nil)
 	parts.payments = paymentstore.New(db, al, clock, nil)
 	parts.matches = matchstore.New(db, al, clock, nil)
+	// Bank connections run against the in-memory fake provider (B4): no live
+	// bank is ever contacted.
+	f.bank = bankingtest.New(bankingtest.Options{Mode: banking.ModeApp, Now: clock}, bankingtest.Standard())
+	// A developer-mode application too (D10: modes coexist per connection): it
+	// sees only the accounts linked to it.
+	f.devBank = bankingtest.New(bankingtest.Options{Mode: banking.ModeDeveloper, Now: clock}, bankingtest.Standard())
+	facts := bankfacts.New(db, nil).WithAudit(al)
+	parts.banking = &bankconnect.Service{Facts: facts, Providers: map[string]banking.Provider{f.bank.Capabilities().Application: f.bank, f.devBank.Capabilities().Application: f.devBank},
+		Engine: bankimport.New(facts, bankimport.Options{Now: clock, Sleep: func(context.Context, time.Duration) error { return nil }}), Audit: al, RedirectURL: "https://ledger.example/connections/callback", Now: clock}
 	f.db = db
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")

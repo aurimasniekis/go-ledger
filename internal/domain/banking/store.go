@@ -165,11 +165,6 @@ type FactStore interface {
 	// ActivateConnection records a completed consent: status active, the
 	// session and its validity. It also serves re-authorisation.
 	ActivateConnection(ctx context.Context, id ConnectionID, s Session, at time.Time) (Connection, error)
-	// BeginReconnect records the consent state of a re-authorisation of an
-	// existing connection. The status stays as it is until
-	// ActivateConnection, so a failed reconnect leaves the connection
-	// reconnect-required, with its data visible as stale.
-	BeginReconnect(ctx context.Context, id ConnectionID, consentState string, at time.Time) (Connection, error)
 	// SetConnectionStatus records a status change and, for a failure, the
 	// error kind and provider code of cause (nil clears them).
 	SetConnectionStatus(ctx context.Context, id ConnectionID, status ConnectionStatus, cause error, at time.Time) (Connection, error)
