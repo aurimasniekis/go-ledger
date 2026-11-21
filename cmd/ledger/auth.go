@@ -20,6 +20,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/automatch"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	moneypkg "github.com/aurimasniekis/go-ledger/internal/domain/money"
+	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -82,6 +83,9 @@ type apiParts struct {
 	// reportingCurrency is reporting.currency: the default currency of the
 	// outlook's converted aggregate (ADR-0044); zero for none.
 	reportingCurrency moneypkg.Currency
+	// rates converts for the outlook (FX2, ADR-0046); nil leaves only amounts
+	// already in the reporting currency convertible.
+	rates outlook.Converter
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their

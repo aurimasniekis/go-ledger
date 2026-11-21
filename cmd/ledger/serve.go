@@ -251,6 +251,16 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		// Validated with the configuration.
 		parts.reportingCurrency, _ = moneypkg.ParseCurrency(cfg.Reporting.Currency)
 	}
+	// Exchange rates (FX2, ADR-0046): the service always exists (it serves the
+	// cache); the refresh job exists when rates.enabled and a reporting
+	// currency is set.
+	rateSvc, rateJob, err := buildRates(cfg.Rates, parts.reportingCurrency, db, time.Now, log)
+	if err != nil {
+		log.Error("invalid exchange-rate settings", "error", err.Error())
+		_ = ln.Close()
+		return 1
+	}
+	parts.rates = rateSvc
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
@@ -312,6 +322,19 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	} else {
 		log.Info("background bank refresh is disabled; connections are refreshed on request only")
 	}
+	// Daily exchange-rate refresh (FX2). It only adds to the cache, stops with
+	// rctx and is waited for before the database closes.
+	var ratesDone chan struct{}
+	switch {
+	case rateJob != nil:
+		ratesDone = make(chan struct{})
+		go func() { defer close(ratesDone); _ = rateJob.Run(rctx) }()
+		log.Info("background exchange-rate refresh is enabled", "provider", rateSvc.ProviderName(), "source", rateSvc.Source(), "quote", cfg.Reporting.Currency, "interval", cfg.Rates.RefreshInterval.String())
+	case cfg.Rates.Enabled:
+		log.Warn("exchange rates are enabled but reporting.currency is not set: rates are fetched when a request asks for a converted total, not in the background")
+	default:
+		log.Info("exchange rates are disabled; only cached rates are used")
+	}
 	var pulseDone chan struct{}
 	if cfg.Events.Pulse.Enabled {
 		dial := env.PulseDial
@@ -357,6 +380,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	wcancel()
 	if refreshDone != nil {
 		<-refreshDone
+	}
+	if ratesDone != nil {
+		<-ratesDone
 	}
 	if pulseDone != nil {
 		<-pulseDone
@@ -419,10 +445,11 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Tokens:      parts.tokens,
 		OIDC:        parts.oidc,
 		MCP:         parts.mcp,
-		// The outlook (ADR-0044) reads stored bank facts. No rate service is
-		// wired until the rate provider adapter (FX2) exists: only amounts
-		// already in the reporting currency convert, the rest are excluded
-		// and flagged.
+		// The outlook (ADR-0044) reads stored bank facts. Rates is the cached
+		// rate service (FX2, ADR-0046); without one only amounts already in
+		// the reporting currency convert and the rest are excluded and
+		// flagged.
+		Rates:             parts.rates,
 		Banks:             banks,
 		BankStaleAfter:    parts.bankStaleAfter,
 		ReportingCurrency: parts.reportingCurrency,

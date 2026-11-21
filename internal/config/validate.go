@@ -175,6 +175,7 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	c.Events.Pulse.validate(bad)
 	c.Banking.EnableBanking.validate(bad)
 	c.Banking.validateRedirect(bad)
+	c.Rates.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {
 		ps = append(ps, Problem{Key: "kek", Msg: "required: set " + EnvName("kek.value") + " or " + EnvName("kek.file")})
 	}
