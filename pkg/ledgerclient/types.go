@@ -222,17 +222,19 @@ type MatchActor struct {
 // provider reported it. Source is always "bank"; Amount is signed (a payment
 // is negative).
 type MatchedBankTransaction struct {
-	Source             string  `json:"source"`
-	ID                 string  `json:"id"`
-	AccountID          string  `json:"account_id"`
-	Provider           string  `json:"provider"`
-	BookingStatus      string  `json:"booking_status"`
-	Amount             Money   `json:"amount"`
-	Date               string  `json:"date"`
-	BookingDate        *string `json:"booking_date"`
-	ValueDate          *string `json:"value_date"`
-	Description        string  `json:"description"`
-	Counterparty       string  `json:"counterparty"`
+	Source        string  `json:"source"`
+	ID            string  `json:"id"`
+	AccountID     string  `json:"account_id"`
+	Provider      string  `json:"provider"`
+	BookingStatus string  `json:"booking_status"`
+	Amount        Money   `json:"amount"`
+	Date          string  `json:"date"`
+	BookingDate   *string `json:"booking_date"`
+	ValueDate     *string `json:"value_date"`
+	// Description and Counterparty are the bank's text: nil (redacted)
+	// unless the caller holds banking:read; see PaymentMatch.BankTextRedacted.
+	Description        *string `json:"description"`
+	Counterparty       *string `json:"counterparty"`
 	NoLongerReportedAt *string `json:"no_longer_reported_at"`
 	SupersededBy       *string `json:"superseded_by"`
 	Countable          bool    `json:"countable"`
@@ -260,6 +262,7 @@ type PaymentMatch struct {
 	State            string                 `json:"state"`
 	CountsAsEvidence bool                   `json:"counts_as_evidence"`
 	NeedsReview      bool                   `json:"needs_review"`
+	BankTextRedacted bool                   `json:"bank_text_redacted"`
 	CreatedBy        MatchActor             `json:"created_by"`
 	DecidedBy        *MatchActor            `json:"decided_by"`
 	DecidedAt        *string                `json:"decided_at"`

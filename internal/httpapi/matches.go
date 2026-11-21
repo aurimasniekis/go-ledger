@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
@@ -18,6 +19,10 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
+
+// grantBankingRead lets a caller see the bank's own text (descriptions,
+// counterparty names) in match responses.
+var grantBankingRead = authz.G(authz.ResourceBanking, authz.ActionRead)
 
 // PaymentMatchesPath is the payment match collection (task X1, ADR-0035).
 const PaymentMatchesPath = APIPrefix + "/payment-matches"
@@ -59,8 +64,8 @@ type bankTransactionJSON struct {
 	Date               calendar.Date          `json:"date"`
 	BookingDate        *calendar.Date         `json:"booking_date"`
 	ValueDate          *calendar.Date         `json:"value_date"`
-	Description        string                 `json:"description"`
-	Counterparty       string                 `json:"counterparty"`
+	Description        *string                `json:"description"`
+	Counterparty       *string                `json:"counterparty"`
 	NoLongerReportedAt *time.Time             `json:"no_longer_reported_at"`
 	SupersededBy       *banking.TransactionID `json:"superseded_by"`
 	Countable          bool                   `json:"countable"`
@@ -80,6 +85,9 @@ type matchEventJSON struct {
 // decision (state, decided_by, decided_at) and whether it is payment evidence
 // now (counts_as_evidence).
 type paymentMatchJSON struct {
+	// BankTextRedacted is true when the caller lacks banking:read and the
+	// transaction's description and counterparty are null.
+	BankTextRedacted bool                `json:"bank_text_redacted"`
 	ID               string              `json:"id"`
 	OccurrenceID     string              `json:"occurrence_id"`
 	TransactionID    string              `json:"transaction_id"`
@@ -109,11 +117,15 @@ func datePtr(d calendar.Date) *calendar.Date {
 	return &d
 }
 
-func toPaymentMatchJSON(m matches.Match) paymentMatchJSON {
+// toPaymentMatchJSON converts a match. Without bankText (the banking:read
+// grant) the bank's description and counterparty are null.
+func toPaymentMatchJSON(m matches.Match, bankText bool) paymentMatchJSON {
 	t := m.Transaction
 	tj := bankTransactionJSON{Source: "bank", ID: t.ID, AccountID: t.AccountID, Provider: t.Provider, BookingStatus: t.Status, Amount: t.Amount,
-		Date: t.Date, BookingDate: datePtr(t.BookingDate), ValueDate: datePtr(t.ValueDate), Description: t.Description, Counterparty: t.Counterparty,
-		Countable: t.Countable()}
+		Date: t.Date, BookingDate: datePtr(t.BookingDate), ValueDate: datePtr(t.ValueDate), Countable: t.Countable()}
+	if bankText {
+		tj.Description, tj.Counterparty = &t.Description, &t.Counterparty
+	}
 	if !t.NoLongerReportedAt.IsZero() {
 		at := t.NoLongerReportedAt
 		tj.NoLongerReportedAt = &at
@@ -122,7 +134,7 @@ func toPaymentMatchJSON(m matches.Match) paymentMatchJSON {
 		s := t.SupersededBy
 		tj.SupersededBy = &s
 	}
-	out := paymentMatchJSON{ID: m.ID, OccurrenceID: m.OccurrenceID, TransactionID: string(m.TransactionID), Amount: m.Amount, Origin: m.Origin, State: m.State,
+	out := paymentMatchJSON{BankTextRedacted: !bankText, ID: m.ID, OccurrenceID: m.OccurrenceID, TransactionID: string(m.TransactionID), Amount: m.Amount, Origin: m.Origin, State: m.State,
 		CountsAsEvidence: m.CountsAsEvidence(), NeedsReview: m.NeedsReview(),
 		CreatedBy: toDeciderJSON(m.CreatedBy), DecidedAt: m.DecidedAt, Reason: m.Reason, Transaction: tj,
 		History: make([]matchEventJSON, len(m.History)), Version: m.Version, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
@@ -292,13 +304,18 @@ func decodeMatchBody(doc map[string]json.RawMessage, allowed, required []string)
 // (ADR-0031 point 9), so they need the commitments grants.
 func registerMatches(s *Server, st matches.Store) {
 	item := PaymentMatchesPath + "/{id}"
-	writeMatch := func(w http.ResponseWriter, status int, m matches.Match) {
-		SetVersion(w, m.Version)
-		WriteJSON(w, status, toPaymentMatchJSON(m))
+	// Bank text (descriptions, counterparty names) needs banking:read.
+	bankText := func(r *http.Request) bool {
+		p, _ := authz.FromContext(r.Context())
+		return p.Allows(grantBankingRead)
 	}
-	writeChange := func(w http.ResponseWriter, status int, ch matches.Change) {
+	writeMatch := func(w http.ResponseWriter, r *http.Request, status int, m matches.Match) {
+		SetVersion(w, m.Version)
+		WriteJSON(w, status, toPaymentMatchJSON(m, bankText(r)))
+	}
+	writeChange := func(w http.ResponseWriter, r *http.Request, status int, ch matches.Change) {
 		SetVersion(w, ch.Match.Version)
-		out := toPaymentMatchJSON(ch.Match)
+		out := toPaymentMatchJSON(ch.Match, bankText(r))
 		v := ch.Result.Occurrence.Version
 		out.OccurrenceVersion = &v
 		WriteJSON(w, status, out)
@@ -324,7 +341,7 @@ func registerMatches(s *Server, st matches.Store) {
 		}
 		out := make([]paymentMatchJSON, len(items))
 		for i, m := range items {
-			out[i] = toPaymentMatchJSON(m)
+			out[i] = toPaymentMatchJSON(m, bankText(r))
 		}
 		WriteJSON(w, http.StatusOK, NewPage(out, q, func(m paymentMatchJSON) string { return m.ID }))
 	}))
@@ -347,7 +364,7 @@ func registerMatches(s *Server, st matches.Store) {
 			return
 		}
 		w.Header().Set("Location", PaymentMatchesPath+"/"+ch.Match.ID)
-		writeChange(w, http.StatusCreated, ch)
+		writeChange(w, r, http.StatusCreated, ch)
 	}))
 
 	s.HandleAPI("GET "+item, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -356,7 +373,7 @@ func registerMatches(s *Server, st matches.Store) {
 			WriteError(w, r, err)
 			return
 		}
-		writeMatch(w, http.StatusOK, m)
+		writeMatch(w, r, http.StatusOK, m)
 	}))
 
 	// action registers POST /payment-matches/{id}/<name>: decode the body,
@@ -384,14 +401,14 @@ func registerMatches(s *Server, st matches.Store) {
 				var vc *resource.VersionConflictError
 				if errors.As(err, &vc) {
 					if m, gerr := st.Get(r.Context(), id); gerr == nil {
-						WriteError(w, r, VersionConflict(m.Version, toPaymentMatchJSON(m)))
+						WriteError(w, r, VersionConflict(m.Version, toPaymentMatchJSON(m, bankText(r))))
 						return
 					}
 				}
 				WriteError(w, r, matchError(err))
 				return
 			}
-			writeChange(w, http.StatusOK, ch)
+			writeChange(w, r, http.StatusOK, ch)
 		}))
 	}
 	action("confirm", []string{"allow_overpayment"}, nil, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {

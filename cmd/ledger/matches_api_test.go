@@ -273,7 +273,7 @@ func TestPaymentMatchAPI(t *testing.T) {
 		}
 	})
 	bank.refresh(t)
-	rec = f.do("GET", base, "", reader)
+	rec = f.do("GET", base, "", admin)
 	if got := decodeMatch(t, rec.Body.Bytes()); got.Transaction.Description != "RENT OCTOBER" || got.Transaction.ID != string(rentTx.ID) || got.Version != 2 || got.State != "confirmed" {
 		t.Fatalf("after re-import: %s", rec.Body.String())
 	}
@@ -304,6 +304,50 @@ func TestPaymentMatchAPI(t *testing.T) {
 	}
 	if o := f.getOccurrence(t, sep); o.Payment.Status != "overdue" {
 		t.Errorf("September after unmatch: %+v", o.Payment)
+	}
+
+	// Bank text needs banking:read: an administrator sees it; a read-only user
+	// and a token without the grant get null and bank_text_redacted.
+	type textJSON struct {
+		Redacted    bool `json:"bank_text_redacted"`
+		Transaction struct {
+			Description  *string `json:"description"`
+			Counterparty *string `json:"counterparty"`
+		} `json:"transaction"`
+	}
+	for name, c := range map[string]struct {
+		hdr      map[string]string
+		redacted bool
+	}{
+		"administrator":           {admin, false},
+		"read-only user":          {reader, true},
+		"commitments:read token":  {map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "commitments:read"}, true},
+		"with banking:read token": {map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "commitments:read,banking:read"}, false},
+	} {
+		for _, path := range []string{"/api/v1/payment-matches/" + m.ID, "/api/v1/payment-matches?occurrence_id=" + oct} {
+			rec := f.do("GET", path, "", c.hdr)
+			if rec.Code != 200 {
+				t.Fatalf("%s %s: %d %s", name, path, rec.Code, rec.Body.String())
+			}
+			var one textJSON
+			if strings.Contains(path, "?") {
+				var page struct {
+					Items []textJSON `json:"items"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || len(page.Items) == 0 {
+					t.Fatalf("%s list: %v %s", name, err, rec.Body.String())
+				}
+				one = page.Items[0]
+			} else if err := json.Unmarshal(rec.Body.Bytes(), &one); err != nil {
+				t.Fatal(err)
+			}
+			if one.Redacted != c.redacted || (one.Transaction.Description == nil) != c.redacted || (one.Transaction.Counterparty == nil) != c.redacted {
+				t.Errorf("%s %s: %+v", name, path, one)
+			}
+			if c.redacted && strings.Contains(rec.Body.String(), "RENT") {
+				t.Errorf("%s %s leaks bank text: %s", name, path, rec.Body.String())
+			}
+		}
 	}
 
 	// The audit trail names each change, never an amount, reason or bank text.

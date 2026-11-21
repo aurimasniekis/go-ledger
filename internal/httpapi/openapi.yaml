@@ -2295,7 +2295,7 @@ components:
         (transaction, source "bank"), who proposed the match (origin), the
         decision (state, decided_by, decided_at) and whether it is payment
         evidence now (counts_as_evidence) are separate fields.
-      required: [id, occurrence_id, transaction_id, amount, origin, state, counts_as_evidence, needs_review, created_by, decided_by, decided_at, reason, transaction, history, version, created_at, updated_at]
+      required: [id, occurrence_id, transaction_id, amount, origin, state, counts_as_evidence, needs_review, bank_text_redacted, created_by, decided_by, decided_at, reason, transaction, history, version, created_at, updated_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -2321,6 +2321,13 @@ components:
             transaction too), it was superseded, or it is neither booked nor
             a still-reported pending one. Such a match stays listed and is
             never deleted.
+        bank_text_redacted:
+          type: boolean
+          description: |
+            True when the caller lacks the banking:read grant, so
+            transaction.description and transaction.counterparty are null.
+            Everything else about the match stays visible under
+            commitments:read.
         occurrence_version:
           type: integer
           format: int64
@@ -2404,9 +2411,15 @@ components:
             - $ref: "#/components/schemas/Date"
             - type: "null"
         description:
-          type: string
+          description: |
+            The bank's raw description. Bank text: null (redacted, not
+            omitted) unless the caller holds banking:read.
+          type: [string, "null"]
         counterparty:
-          type: string
+          description: |
+            The counterparty name the bank reported. Bank text: null
+            (redacted, not omitted) unless the caller holds banking:read.
+          type: [string, "null"]
         no_longer_reported_at:
           description: When the provider stopped reporting it (never deleted, decision D8); null while reported.
           type: [string, "null"]

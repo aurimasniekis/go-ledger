@@ -1,7 +1,8 @@
 # ADR-0035: Payment matches, manual matching, corrections and reversal
 
-Status: Proposed (2026-11-21). Points 4, 5, 6, 7, 9 and 11 are implementation choices no operator decision
-covers; they are marked "proposed" and listed under Consequences.
+Status: Points 1 to 4, 6 and 7 Accepted as proposed (operator, 2026-11-21, decision D28), and the bank-text rule of
+point 9 decided by the operator (D28 5b). The other "proposed" marks (points 5, 9 apart from bank text, 11) stay until
+the operator decides them.
 
 ## Context
 
@@ -44,7 +45,7 @@ so that a confirmed link becomes payment evidence for the derived payment state 
    ADR-0020 point 7) is payment evidence of kind `bank_transaction` through `EvidenceSources`; its date is the
    transaction's booking (else value, else transaction) date. Suggested, rejected and reversed matches never are.
    Evidence in another currency cannot arise (point 2), so nothing is converted.
-4. **Proposed: what keeps an occurrence.** `DefaultEvidence` treats an occurrence with a **confirmed or reversed**
+4. **Accepted (operator, 2026-11-21): what keeps an occurrence.** `DefaultEvidence` treats an occurrence with a **confirmed or reversed**
    match as paid for C2: it is kept, and its commitment cannot be deleted (409 `in_use`), even while the
    transaction is not countable. A reversed match is payment history worth keeping. Suggestions and rejections
    do not pin an occurrence: a trigger deletes them (with their history) when C2 regenerates or deletes the
@@ -64,10 +65,10 @@ so that a confirmed link becomes payment evidence for the derived payment state 
    - `rejected` and `reversed` are final. After either, the same pair can be matched or suggested again as a new
      row, so the history of both decisions stays.
    - Every action takes an optional reason (1 to 500 characters), kept on the match and in its history.
-6. **Proposed: pending transactions.** A user cannot confirm a pending transaction either: the match is refused
+6. **Accepted (operator, 2026-11-21): pending transactions.** A user cannot confirm a pending transaction either: the match is refused
    with 409 `transaction_not_countable` until the transaction is booked (D8 says pending only suggests). The
    database trigger enforces the same.
-7. **Proposed: transactions that stop counting.** A confirmed match on a transaction the provider no longer
+7. **Accepted (operator, 2026-11-21): transactions that stop counting.** A confirmed match on a transaction the provider no longer
    reports stays confirmed and listed, with `counts_as_evidence` false, `needs_review` true and
    `transaction.no_longer_reported_at` set; the occurrence's derived status no longer counts it, and counts it
    again when the provider reports the transaction again. A suggestion on a pending transaction that B2 marks
@@ -77,11 +78,18 @@ so that a confirmed link becomes payment evidence for the derived payment state 
    corrections and its decisions survive every refresh: tests re-import through the real engine and the fake
    provider with a rewritten description, a transaction that disappears and returns, and a database reload. A
    connection whose bank facts have matches cannot be purged (`banking.ErrPurgeBlocked`).
-9. **Proposed: API and grants.** `GET`/`POST /payment-matches` (filters `transaction_id`, `occurrence_id`, `state`,
+9. **API and grants** (bank text: accepted, operator 2026-11-21, D28 5b). `GET`/`POST /payment-matches` (filters `transaction_id`, `occurrence_id`, `state`,
    `origin`), `GET /payment-matches/{id}`, and `POST /payment-matches/{id}/confirm|reject|unmatch|correct|reverse`.
    Each action needs the match's version in `If-Match` or the body's `version` (ADR-0011/0015); a stale one is 409
    `version_conflict` with the current match. Every change also increases the occurrence's version (ADR-0031
    point 8). Like manual payments (ADR-0031 point 9), matches use `commitments:read` and `commitments:write`.
+   **Bank text needs `banking:read`.** The new grant `banking:read` (resource `banking`, read only, administrative)
+   covers the bank's own text. Without it the match responses carry `transaction.description` and
+   `transaction.counterparty` as `null` (redacted, not omitted) and `bank_text_redacted: true`; every other field
+   stays visible under `commitments:read`. Built-in roles: `administrator` holds it (all grants); `read-only` does not,
+   because the grant is administrative and counterparty names are sensitive (D13); a token needs it explicitly and is
+   still limited by its owner's role. Create and action responses and 409 version-conflict bodies are redacted the
+   same way. Each response now also carries `occurrence_version`.
    The response keeps four things apart: `transaction` (the bank fact, `source: "bank"`), `origin` (who proposed
    it), `state` with `decided_by`/`decided_at` (the decision) and `counts_as_evidence` (whether it pays now),
    plus `history`. New error codes: `transaction_not_countable`, `transaction_not_debit`,
