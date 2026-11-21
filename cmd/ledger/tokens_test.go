@@ -412,6 +412,11 @@ func TestTokenCreateCommandBootstrapsAFreshDatabase(t *testing.T) {
 	if code, stdout, stderr := run("create", "--create", "administrator", "--root", "--expires", "2001-01-01T00:00:00Z", "ghost"); code != 2 || stdout != "" || !strings.Contains(stderr, "in the future") {
 		t.Fatalf("past expiry: %d %q %s", code, stdout, stderr)
 	}
+	// An expiry past UTC year 9999 is refused before the user is created too:
+	// 9999-12-31T23:59:59-01:00 is 10000-01-01 in UTC.
+	if code, stdout, stderr := run("create", "--create", "administrator", "--root", "--expires", "9999-12-31T23:59:59-01:00", "ghost"); code != 2 || stdout != "" || !strings.Contains(stderr, "before the year 10000") {
+		t.Fatalf("year 10000 expiry: %d %q %s", code, stdout, stderr)
+	}
 
 	// Bootstrap: a fresh database, an administrator created on the way, a root token printed once.
 	code, stdout, stderr := run("create", "--create", "administrator", "--root", "admin")

@@ -90,11 +90,17 @@ info:
     identifier: Apache-2.0
 servers:
   - url: /api/v1
+# Every operation needs a bearer API token or a session cookie, unless it
+# says `security: []` (x-ledger-access: public).
+security:
+  - bearerAuth: []
+  - sessionCookie: []
 paths:
   /openapi.json:
     get:
       operationId: getOpenAPIJSON
       x-ledger-access: public
+      security: []
       summary: This document as JSON
       tags: [meta]
       responses:
@@ -110,6 +116,7 @@ paths:
     get:
       operationId: getOpenAPIYAML
       x-ledger-access: public
+      security: []
       summary: This document as YAML
       tags: [meta]
       responses:
@@ -699,6 +706,7 @@ paths:
     post:
       operationId: signIn
       x-ledger-access: public
+      security: []
       summary: Sign in with a username and password
       description: |
         Starts a session: sets the `__Host-ledger_session` cookie (Secure, HttpOnly,
@@ -754,6 +762,7 @@ paths:
     post:
       operationId: signInSecondFactor
       x-ledger-access: public
+      security: []
       summary: Complete a sign-in with a TOTP code or a recovery code
       description: |
         The second step of a sign-in for a user with TOTP enabled. Send the
