@@ -34,14 +34,15 @@ func matchingRun(m *mgmt, _ context.Context, args []string) int {
 }
 
 // newMatcher builds the automatic payment-matching engine (task X2,
-// ADR-0039) on the match store. Today is the current date in the reporting
-// zone; a run requested through the API is audited through al. now defaults to
-// time.Now.
+// ADR-0039) on the match store. The engine's store always derives payment facts
+// in the reporting zone, whatever the caller passed: WithZone copies, so ms is
+// left as it was. Today is the current date in the reporting zone; a run
+// requested through the API is audited through al. now defaults to time.Now.
 func newMatcher(db *store.DB, al store.AuditWriter, ms *matchstore.Store, zone calendar.Zone, now func() time.Time, log *slog.Logger) *automatch.Engine {
 	if now == nil {
 		now = time.Now
 	}
-	return automatch.New(ms, automatch.Options{
+	return automatch.New(ms.WithZone(zone), automatch.Options{
 		Today:    func() (calendar.Date, error) { return zone.Today(now()) },
 		Now:      now,
 		Log:      log,
