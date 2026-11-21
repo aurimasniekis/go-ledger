@@ -2,11 +2,15 @@ import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge, type Status } from '@/components/status-badge'
 import { DisconnectedState, EmptyState, FailedState, LoadingState } from '@/components/state-panels'
+import { Amount, DateText } from '@/components/formatted'
 import { isNetworkError } from '@/lib/connection'
 import type { ReactNode, Ref } from 'react'
 import { ProvenanceMarker, provenanceOf } from './provenance'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from './month'
 import type { MonthItem, MonthSummary, MonthTotals, PaymentStatus } from './types'
+
+export const OFFLINE_NOTE_ID = 'record-offline-note'
+export const REFRESH_OFFLINE_ID = 'refresh-offline-note'
 
 /**
  * How old fetched data may get before the view calls it stale. A placeholder:
@@ -30,11 +34,15 @@ export interface MonthBoardProps {
   /** The record-payment form, shown in place under the row with this id (the row that opened it). */
   formFor?: string | null
   form?: ReactNode
+  /** True while the browser reports no network: recording a payment cannot be saved then. */
+  offline?: boolean
+  /** The Undo notice, placed right under the month navigation so it reads as part of the page, not of the title. */
+  notice?: ReactNode
   /** Receives the page title (h1) so focus can fall back to it. */
   titleRef?: Ref<HTMLHeadingElement>
 }
 
-const money = (m: { amount: string; currency: string }) => `${m.amount} ${m.currency}`
+const money = (m: { amount: string; currency: string }) => <Amount amount={m.amount} currency={m.currency} />
 
 export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
   const label = monthLabel(p.month)
@@ -46,7 +54,7 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           <span className="sr-only">Previous month, {monthLabel(shiftMonth(p.month, -1))}</span>
           <span aria-hidden className="hidden sm:inline">Previous</span>
         </Button>
-        <h1 id="month-title" ref={titleRef} tabIndex={-1} className="w-48 max-w-full text-center text-xl font-semibold focus:outline-none">
+        <h1 id="month-title" ref={titleRef} tabIndex={-1} className="max-w-full grow basis-32 text-center text-xl font-semibold focus:outline-none sm:w-48 sm:grow-0 sm:basis-auto">
           {label}
         </h1>
         <Button variant="outline" size="sm" onClick={() => p.onMonthChange(shiftMonth(p.month, 1))}>
@@ -55,6 +63,8 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           <ChevronRight aria-hidden className="size-4" />
         </Button>
       </div>
+
+      {p.notice}
 
       {p.status === 'pending' && <LoadingState label={label} />}
       {p.status === 'error' && !p.data && (
@@ -78,7 +88,7 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           ) : (
             <>
               {p.data.items.length > 0 && <Totals totals={p.data.totals} />}
-              <Occurrences items={p.data.items} onRecord={p.onRecord} formFor={p.formFor} form={p.form} />
+              <Occurrences items={p.data.items} onRecord={p.onRecord} offline={p.offline} formFor={p.formFor} form={p.form} />
             </>
           )}
         </>
@@ -92,21 +102,29 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
   const { data } = p
   const fetchedAge = ageLabel(p.dataUpdatedAt, p.now)
   const failedRefresh = p.status === 'error'
-  const stale = failedRefresh || p.now - p.dataUpdatedAt > STALE_AFTER_MS
+  const stale = !failedRefresh && p.now - p.dataUpdatedAt > STALE_AFTER_MS
   return (
     <section aria-label="Data freshness" className="space-y-2 rounded-md border border-border bg-surface p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        {failedRefresh ? (
+        {p.offline ? (
+          <StatusBadge status="disconnected" label="Offline" />
+        ) : failedRefresh ? (
           <StatusBadge status="error" label="Refresh failed" />
         ) : stale ? (
           <StatusBadge status="stale" label={`Stale, fetched ${fetchedAge}`} />
         ) : null}
         <span>
-          Statuses as of <time dateTime={data.as_of}>{data.as_of}</time> (reporting time zone); fetched{' '}
+          Statuses as of <DateText value={data.as_of} /> (reporting time zone); fetched{' '}
           <time dateTime={new Date(p.dataUpdatedAt).toISOString()}>{fetchedAge}</time>.
         </span>
         {p.isFetching && <span role="status">Refreshing…</span>}
-        <Button variant="ghost" size="sm" onClick={p.onRetry} disabled={p.isFetching}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={p.onRetry}
+          disabled={p.isFetching || p.offline}
+          aria-describedby={p.offline ? REFRESH_OFFLINE_ID : undefined}
+        >
           <RefreshCw aria-hidden className="size-4" />
           Refresh
         </Button>
@@ -117,16 +135,31 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
           {fetchedAge}; it may be out of date.
         </p>
       )}
+      {p.offline && (
+        <p id={REFRESH_OFFLINE_ID} className="text-muted-foreground">
+          Refresh is unavailable while you are offline; the data shown is what was last fetched.
+        </p>
+      )}
       <p className="text-muted-foreground">
-        {data.freshness.occurrences_changed_at
-          ? `Occurrences last changed ${utcStamp(data.freshness.occurrences_changed_at)}. `
-          : ''}
-        {data.freshness.bank.available ? '' : 'Bank data age: not available, so none is shown.'}
+        {data.freshness.occurrences_changed_at ? (
+          <>
+            Occurrences last changed{' '}
+            <time dateTime={data.freshness.occurrences_changed_at} className="whitespace-nowrap">
+              {utcStamp(data.freshness.occurrences_changed_at)}
+            </time>
+            .{' '}
+          </>
+        ) : (
+          ''
+        )}
+        {data.freshness.bank.available ? '' : 'No bank data connected yet.'}
       </p>
     </section>
   )
 }
 
+/** A money amount in a totals list: one line, never broken, whatever the width. */
+const AMOUNT = 'mb-1 whitespace-nowrap font-mono sm:mb-0 sm:text-right'
 const hasOverdue = (t: MonthTotals) => !isZeroAmount(t.overdue.amount)
 
 function Totals({ totals }: { totals: MonthTotals[] }) {
@@ -144,19 +177,20 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
         {totals.map((t) => (
           <li key={t.currency} className="min-w-0 rounded-md border border-border bg-surface p-3">
             <h3 className="font-semibold">{t.currency}</h3>
-            <dl className="mt-1 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-0.5 text-sm [overflow-wrap:anywhere]">
-              <dt>Due</dt>
-              <dd className="text-right font-mono">{t.due.amount}</dd>
+            {/* Below sm each label sits over its amount; from sm up label and amount share a row. Only labels wrap: an amount never breaks. */}
+            <dl className="mt-1 grid grid-cols-1 gap-x-4 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-0.5">
+              <dt>Scheduled this month</dt>
+              <dd data-total-amount className={AMOUNT}>{money(t.due)}</dd>
               <dt>Paid</dt>
-              <dd className="text-right font-mono">{t.paid.amount}</dd>
+              <dd data-total-amount className={AMOUNT}>{money(t.paid)}</dd>
               <dt>Outstanding</dt>
-              <dd className="text-right font-mono">{t.outstanding.amount}</dd>
+              <dd data-total-amount className={AMOUNT}>{money(t.outstanding)}</dd>
               <dt className={hasOverdue(t) ? 'font-semibold' : undefined}>Overdue (past original due date)</dt>
-              <dd className={hasOverdue(t) ? 'text-right font-mono font-semibold text-status-overdue' : 'text-right font-mono'}>
-                {t.overdue.amount}
+              <dd data-total-amount className={hasOverdue(t) ? AMOUNT + ' font-semibold text-status-overdue' : AMOUNT}>
+                {money(t.overdue)}
               </dd>
               {t.overdue_count > 0 && (
-                <dd className="col-span-2 text-right text-xs text-muted-foreground">
+                <dd className="text-xs text-muted-foreground sm:col-span-2 sm:text-right">
                   {t.overdue_count} overdue {t.overdue_count === 1 ? 'occurrence' : 'occurrences'}
                 </dd>
               )}
@@ -179,16 +213,18 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
 function Occurrences({
   items,
   onRecord,
+  offline,
   formFor,
   form,
 }: {
   items: MonthItem[]
   onRecord: (i: MonthItem) => void
+  offline?: boolean
   formFor?: string | null
   form?: ReactNode
 }) {
   const rows = items.map((i) => (
-    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} form={i.id === formFor ? form : null} />
+    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} offline={offline} form={i.id === formFor ? form : null} />
   ))
   // The row that opened the form left the list (paid elsewhere): its place stays, in the same list under the
   // same key, so the open form keeps what was typed and can say so.
@@ -236,7 +272,7 @@ function statusOf(i: MonthItem): Status {
   return i.payment.status
 }
 
-function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; onRecord: (i: MonthItem) => void; form?: ReactNode }) {
+function OccurrenceRow({ item: i, onRecord, offline, form }: { item: MonthItem | null; onRecord: (i: MonthItem) => void; offline?: boolean; form?: ReactNode }) {
   // No item: the occurrence the open form came from has left the list. Same component, same key, so the form stays mounted.
   if (!i) {
     return (
@@ -254,14 +290,14 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
   return (
     <li className="space-y-2 rounded-md border border-border bg-surface p-3">
       <div className="space-y-1">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <p className="font-medium break-words">{i.commitment_name || i.commitment_id}</p>
           <p className="text-sm text-muted-foreground">
-            Original due date <time dateTime={i.due_date}>{i.due_date}</time>
+            Original due date <DateText value={i.due_date} />
           </p>
         </div>
-        <p className="font-mono">{money(i.amount)}</p>
+        <p className="shrink-0 whitespace-nowrap font-mono">{money(i.amount)}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={statusOf(i)} />
@@ -276,6 +312,8 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
             size="sm"
             className="ml-auto h-auto min-h-8 whitespace-normal py-1 text-foreground underline underline-offset-4"
             onClick={() => onRecord(i)}
+            disabled={offline}
+            aria-describedby={offline ? OFFLINE_NOTE_ID : undefined}
             aria-label={`Record payment for ${i.commitment_name || i.commitment_id}, due ${i.due_date}`}
           >
             Record payment
@@ -285,9 +323,9 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
       {p.timing === 'overdue' && p.grace_until && (
         <p className="text-sm">
           {p.within_grace ? (
-            <>Overdue since the original due date; within documented grace until <time dateTime={p.grace_until}>{p.grace_until}</time>.</>
+            <>Overdue since the original due date; within documented grace until <DateText value={p.grace_until} />.</>
           ) : (
-            <>Overdue; documented grace ended <time dateTime={p.grace_until}>{p.grace_until}</time>.</>
+            <>Overdue; documented grace ended <DateText value={p.grace_until} />.</>
           )}
         </p>
       )}

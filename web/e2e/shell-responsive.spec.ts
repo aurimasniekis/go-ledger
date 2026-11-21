@@ -39,6 +39,55 @@ const insideViewport = async (page: Page, selector: ReturnType<Page['locator']>)
   expect(box.x + box.width).toBeLessThanOrEqual(width)
 }
 
+// Each total amount is one line, never broken inside the number (the totals list once broke "1436.67" into "1436." / "67").
+async function amountsOnOneLine(page: Page) {
+  await expect(page.getByRole('heading', { name: 'Recorded commitments, by currency' })).toBeVisible()
+  const amounts = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'EUR' }) }).locator('dd[data-total-amount]')
+  const count = await amounts.count()
+  expect(count).toBeGreaterThanOrEqual(4)
+  for (let n = 0; n < count; n++) {
+    const dd = amounts.nth(n)
+    // The visible text only: the screen-reader copy is visually hidden and positioned apart.
+    const lines = await dd.locator('[data-amount]').evaluate((el) => {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size
+    })
+    expect(lines, 'amount on one line: ' + (await dd.textContent())).toBe(1)
+    await insideViewport(page, dd)
+  }
+}
+
+// An ISO date is one line too: it must not break at a hyphen ("2026-11-" / "05"), in rows, the freshness line or the notice.
+async function datesOnOneLine(page: Page) {
+  const times = page.locator('time')
+  await expect(times.first()).toBeVisible()
+  const count = await times.count()
+  expect(count).toBeGreaterThanOrEqual(3)
+  for (let n = 0; n < count; n++) {
+    const t = times.nth(n)
+    const text = (await t.textContent()) ?? ''
+    if (!/^\d{4}-\d{2}-\d{2}/.test(text)) continue
+    const lines = await t.evaluate((el) => {
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size
+    })
+    expect(lines, 'date on one line: ' + text).toBe(1)
+  }
+}
+
+// One extra phone width (375), kept separate so the browser is launched for as few extra pages as possible.
+test.describe('375 CSS px wide', () => {
+  test.use({ viewport: { width: 375, height: 667 } })
+  test('each total amount stays on one line', async ({ page }) => {
+    await signedIn(page)
+    await page.goto('/month?month=2026-11')
+    await amountsOnOneLine(page)
+    await datesOnOneLine(page)
+  })
+})
+
 const sizes = [
   { name: '320 CSS px wide', viewport: { width: 320, height: 640 }, textScale: false },
   { name: '200% page zoom (1280 px at 200% is 640 CSS px)', viewport: { width: 640, height: 360 }, textScale: false },
@@ -95,6 +144,8 @@ for (const s of sizes) {
       await page.goto('/month?month=2026-11')
       await zoomText(page)
       await expect(page.getByRole('heading', { name: 'Occurrences' })).toBeVisible()
+      await amountsOnOneLine(page)
+      await datesOnOneLine(page)
       await insideViewport(page, page.getByRole('heading', { name: 'Occurrences' }))
       for (const row of await page.getByRole('listitem').all()) await insideViewport(page, row)
       await noOverflow(page)
