@@ -255,6 +255,37 @@ func TestTokenCreatedTokensAreContained(t *testing.T) {
 	}
 	grand := mint(forever.Secret, `{"name":"mid","root":true}`)
 	leaf := mint(grand.Secret, `{"name":"leaf","grants":["commitments:read"]}`)
+	// parent_token_id: null for tokens made with a session, the creating token's ID otherwise.
+	parentOf := func(name string, c createdToken, want string) {
+		t.Helper()
+		got := c.Token.ParentTokenID
+		switch {
+		case want == "" && got != nil:
+			t.Errorf("%s: parent_token_id = %q, want null", name, *got)
+		case want != "" && (got == nil || *got != want):
+			t.Errorf("%s: parent_token_id = %v, want %q", name, got, want)
+		}
+	}
+	parentOf("parent", parent, "")
+	parentOf("forever", forever, "")
+	parentOf("child", child, parent.Token.ID)
+	parentOf("late", late, parent.Token.ID)
+	parentOf("early", early, parent.Token.ID)
+	parentOf("grandchild", grandchild, child.Token.ID)
+	parentOf("grand", grand, forever.Token.ID)
+	parentOf("leaf", leaf, grand.Token.ID)
+	// Once through GET: the stored value, not only the 201 body.
+	w := e.req("GET", "/api/v1/auth/tokens/"+grandchild.Token.ID, "", alice, nil)
+	var got struct {
+		ID            string  `json:"id"`
+		ParentTokenID *string `json:"parent_token_id"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &got) != nil {
+		t.Fatalf("get grandchild: %d %s", w.Code, w.Body.String())
+	}
+	if got.ParentTokenID == nil || *got.ParentTokenID != child.Token.ID {
+		t.Errorf("GET grandchild parent_token_id = %v, want %q", got.ParentTokenID, child.Token.ID)
+	}
 
 	for name, secret := range map[string]string{"child": child.Secret, "grandchild": grandchild.Secret, "late": late.Secret, "early": early.Secret, "leaf": leaf.Secret} {
 		if w := e.req("GET", "/api/v1/commitments", "", nil, bearer(secret)); w.Code != 200 {

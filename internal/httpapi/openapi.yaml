@@ -1697,9 +1697,10 @@ paths:
         Audited (`token.revoked`).
 
         Cascades: every token created through this one, directly or through
-        other tokens, is revoked at once too, and audited as `token.revoked`
-        with `cascaded_from` naming this token. Tokens with no recorded
-        parent are not affected.
+        other tokens, that is not already revoked is revoked at once too, and
+        audited as `token.revoked` with `cascaded_from` naming this token.
+        Descendants that are already revoked are left alone. Tokens without a
+        parent (made with a session or on the host) are never reached.
       tags: [tokens]
       responses:
         "204":
@@ -1762,9 +1763,10 @@ paths:
         revoked token changes nothing (204). Audited (`token.revoked`).
 
         Cascades: every token created through this one, directly or through
-        other tokens, is revoked at once too, and audited as `token.revoked`
-        with `cascaded_from` naming this token. Tokens with no recorded
-        parent are not affected.
+        other tokens, that is not already revoked is revoked at once too, and
+        audited as `token.revoked` with `cascaded_from` naming this token.
+        Descendants that are already revoked are left alone. Tokens without a
+        parent (made with a session or on the host) are never reached.
       tags: [tokens]
       responses:
         "204":
