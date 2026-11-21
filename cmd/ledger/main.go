@@ -46,6 +46,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runConfig(args[1:], stdout, stderr, config.Options{})
 	case "auth":
 		return runAuth(args[1:], stdout, stderr, opsEnv{Stdin: os.Stdin})
+	case "me", "grants", "users", "commitments", "occurrences", "audit":
+		return runMgmt(args, stdout, stderr, mgmtEnv{})
 	case "help", "-h", "--help":
 		usage(stdout)
 		return 0
@@ -65,6 +67,8 @@ func usage(w io.Writer) {
 	say(w, "  restore   replace the database with a backup (stop serve first)")
 	say(w, "  config    check or document the configuration (config check, config env)")
 	say(w, "  auth      set a user's password from standard input (auth set-password; stop serve first)")
+	say(w, "  me, grants, users, commitments, occurrences, audit")
+	say(w, "            manage a running server through its API with a token (ledger <command> help)")
 	say(w, "  version   print the build version")
 	say(w, "  help      print this message")
 }

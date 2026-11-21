@@ -31,4 +31,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0027: Commitment occurrences](0027-commitment-occurrences.md)
 - [ADR-0028: Background refresh scheduler](0028-background-refresh-scheduler.md)
 
+- [ADR-0029: Go client and CLI management commands](0029-go-client-and-cli-management-commands.md)
+
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.
