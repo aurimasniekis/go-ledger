@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { expect, test } from './fixtures'
 
 // The shell at 320 CSS px and at 200% zoom (WCAG 1.4.10 reflow, 1.4.4 resize text). The API is stubbed in the browser,
 // so these run offline against the real embedded UI without a seeded database.

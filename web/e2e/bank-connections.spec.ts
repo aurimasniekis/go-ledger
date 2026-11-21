@@ -1,4 +1,5 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import type { Page, Route } from '@playwright/test'
+import { expect, test } from './fixtures'
 
 // Bank connection UI end to end (B4): the real built UI in a real browser against a stateful fake of the bank
 // connection API that behaves like the fake provider (internal/domain/banking/bankingtest): consent redirect with a
