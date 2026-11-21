@@ -34,6 +34,57 @@ type Actor struct {
 	UserID string
 	// TokenID is set for token actors.
 	TokenID string
+	// Via is how the actor reached the server, when the caller knows it
+	// (decision D42 3a); empty means the default of [Actor.Channel].
+	Via Via
+}
+
+// Via is the provenance of a change: how its actor reached the server. A
+// token acts as its owner whether it calls the Management API directly or
+// through the MCP server (decision D33); Via keeps the two apart.
+type Via string
+
+// Provenances.
+const (
+	ViaSession Via = "session" // a signed-in browser session
+	ViaToken   Via = "token"   // an API token calling the Management API directly
+	ViaMCP     Via = "mcp"     // an API token calling through the MCP server
+	ViaSystem  Via = "system"  // the server itself or a host CLI command
+)
+
+// Vias lists the provenances.
+func Vias() []Via { return []Via{ViaSession, ViaToken, ViaMCP, ViaSystem} }
+
+// Channel is how the actor reached the server: Via when set, otherwise what
+// the kind implies (a user a session, a token the API, the system itself).
+// Empty for an anonymous actor.
+func (a Actor) Channel() Via {
+	if a.Via != "" {
+		return a.Via
+	}
+	switch a.Kind {
+	case ActorUser:
+		return ViaSession
+	case ActorToken:
+		return ViaToken
+	case ActorSystem:
+		return ViaSystem
+	}
+	return ""
+}
+
+// viaFits reports whether a provenance fits an actor kind: a session is a
+// user's, the API and MCP a token's, system the system's.
+func viaFits(v Via, k ActorKind) bool {
+	switch v {
+	case ViaSession:
+		return k == ActorUser
+	case ViaToken, ViaMCP:
+		return k == ActorToken
+	case ViaSystem:
+		return k == ActorSystem
+	}
+	return false
 }
 
 // System is the actor of changes made by the server or a host CLI command.
