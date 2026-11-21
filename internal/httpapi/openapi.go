@@ -92,8 +92,11 @@ type Deps struct {
 	// ReportingCurrency is that aggregate's default currency (zero: none
 	// unless a request asks). BankStaleAfter is the bank-data staleness
 	// threshold (zero: banking.DefaultStaleAfter).
-	Banks             outlook.Banks
-	Rates             outlook.Converter
+	Banks outlook.Banks
+	Rates outlook.Converter
+	// ConvertTimeout bounds the outlook's conversion phase (see
+	// [outlook.Service.ConvertTimeout]); zero means unbounded.
+	ConvertTimeout    time.Duration
 	ReportingCurrency money.Currency
 	BankStaleAfter    time.Duration
 	// Zone is the reporting time zone (D5): it decides "today" for default
@@ -139,7 +142,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerMatching(s, d.Matching)
 	registerOutlook(s, outlook.Service{
 		Months:      monthview.Service{Occurrences: d.Occurrences, Payments: d.Payments, Grace: d.Grace},
-		Commitments: d.Commitments, Banks: d.Banks, Rates: d.Rates, Today: todayFn, Now: d.Now, BankStaleAfter: d.BankStaleAfter, Zone: d.Zone,
+		Commitments: d.Commitments, Banks: d.Banks, Rates: d.Rates, ConvertTimeout: d.ConvertTimeout, Today: todayFn, Now: d.Now, BankStaleAfter: d.BankStaleAfter, Zone: d.Zone,
 	}, d.ReportingCurrency, d.Now)
 	registerMCP(s, d.MCP)
 }

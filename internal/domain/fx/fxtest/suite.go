@@ -117,7 +117,10 @@ func flightWaiters() int {
 	buf = buf[:runtime.Stack(buf, true)]
 	n := 0
 	for _, g := range strings.Split(string(buf), "\n\n") {
-		if strings.Contains(g, "[select") && strings.Contains(g, "fx.(*Service).fetch(") {
+		if strings.Contains(g, "[select") && strings.Contains(g, "fx.(*Service).fetch(") &&
+			// The leader, held inside the provider, also selects (on its gate
+			// and context); it is not a waiter.
+			!strings.Contains(g, "fxtest.(*Provider).answer(") {
 			n++
 		}
 	}

@@ -49,6 +49,11 @@ type Outcome struct {
 	Err error
 	// Wait is how long until the next cycle.
 	Wait time.Duration
+	// Backoff is true when the failure was transient (the provider did not
+	// answer, rate limited, or the currencies could not be listed), so Wait
+	// is a shortened retry. A permanent failure of one currency sets Err
+	// but not Backoff: retrying sooner would fail the same way.
+	Backoff bool
 }
 
 // Run refreshes immediately and then repeats until ctx ends. It returns
@@ -72,7 +77,7 @@ func (j *RefreshJob) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if out.Err != nil {
+		if out.Backoff {
 			failures++
 		} else {
 			failures = 0
@@ -98,7 +103,7 @@ func (j *RefreshJob) Cycle(ctx context.Context, failures int) Outcome {
 	var out Outcome
 	currencies, err := j.Currencies(ctx)
 	if err != nil {
-		out.Err = err
+		out.Err, out.Backoff = err, true
 		out.Wait = j.backoff(failures, 0)
 		if ctx.Err() == nil {
 			j.log().Warn("exchange-rate refresh could not list the currencies in use; cached rates stay in use", "error", err.Error(), "retry_in", out.Wait.String())
@@ -107,6 +112,7 @@ func (j *RefreshJob) Cycle(ctx context.Context, failures int) Outcome {
 	}
 	seen := map[money.Currency]bool{j.Target: true}
 	var retryAfter time.Duration
+	transient := false
 	for _, c := range currencies {
 		if c.IsZero() || seen[c] {
 			continue
@@ -137,13 +143,15 @@ func (j *RefreshJob) Cycle(ctx context.Context, failures int) Outcome {
 		}
 		// Unavailable, rate limited or paused: the provider is not
 		// answering, so asking for more currencies would only add load.
+		transient = true
 		if pe != nil {
 			retryAfter = pe.RetryAfter
 		}
 		break
 	}
 	out.Wait = j.Interval
-	if out.Err != nil {
+	if transient {
+		out.Backoff = true
 		out.Wait = j.backoff(failures, retryAfter)
 	}
 	if out.Err == nil {

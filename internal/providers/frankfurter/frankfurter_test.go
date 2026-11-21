@@ -126,6 +126,16 @@ func TestLatestParsesExactRatesAndSendsTheRoute(t *testing.T) {
 	}
 }
 
+func TestSourceKeyCaseIsNormalised(t *testing.T) {
+	s := newServer(t, body([]byte("{}")))
+	for in, want := range map[string]string{"ecb": "ECB", "Blended": frankfurter.Blended} {
+		c := client(t, s, func(o *frankfurter.Options) { o.Source = in })
+		if c.Source() != want {
+			t.Errorf("%q -> %q, want %q", in, c.Source(), want)
+		}
+	}
+}
+
 func TestOnDateAndSources(t *testing.T) {
 	ctx := context.Background()
 	usd, eur := money.MustParseCurrency("USD"), cur("EUR")

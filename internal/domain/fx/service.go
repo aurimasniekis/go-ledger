@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -181,6 +182,18 @@ type flight struct {
 	err  error
 }
 
+// NormalizeSource returns the canonical form of a Frankfurter source key:
+// upper case (ECB, not ecb), except the special key "blended", which is
+// lower case. Sources are cached apart, so one spelling must always give
+// one key.
+func NormalizeSource(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.EqualFold(s, "blended") {
+		return "blended"
+	}
+	return strings.ToUpper(s)
+}
+
 // NewService returns a Service. provider may be nil (cache only).
 func NewService(cache Cache, provider Provider, opts Options) (*Service, error) {
 	if cache == nil {
@@ -190,6 +203,7 @@ func NewService(cache Cache, provider Provider, opts Options) (*Service, error) 
 	if provider != nil {
 		s.name, s.source = provider.Name(), provider.Source()
 	}
+	s.source = NormalizeSource(s.source)
 	if !validProviderName(s.name) {
 		return nil, errors.New("fx: provider name must be lower-case letters, digits and underscores")
 	}

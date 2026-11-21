@@ -32,7 +32,7 @@ Frankfurter's v1 routes answer with a `Deprecation` header pointing at v2, so th
    says) is documented, rather than a blend whose composition can change. The operator may choose `blended`.
 4. **Failures** are classified for the service: 429 is `rate_limited` with `Retry-After` (seconds or HTTP date, capped
    at 24 h; the service pauses calls for it); network errors, timeouts, 408 and 5xx are `unavailable` (the service
-   pauses for a short, bounded time); other statuses (an unsupported currency is 422) and unusable answers are
+   pauses for a short, bounded time; a `Retry-After` on a 5xx is honoured by the refresh job's wait, not by request-path conversion, which serves the cache); other statuses (an unsupported currency is 422) and unusable answers are
    `permanent`. The error carries the provider name, operation, kind and a short code only: never the URL, a body or a
    transport message. A caller's own cancellation stays visible as `context.Canceled`.
 5. **Quota and cache terms.** Frankfurter needs no key and publishes no quota. The adapter is deliberately gentle: one

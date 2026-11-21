@@ -87,6 +87,12 @@ type Service struct {
 	// Zone is the reporting zone. A balance with no reference date is dated
 	// by the day it was obtained in this zone; zero means UTC.
 	Zone calendar.Zone
+	// ConvertTimeout bounds the whole conversion phase of one build: the
+	// rate lookups (which may call the rate provider) of every currency
+	// together. A currency not converted in time is excluded with
+	// [ReasonConversionTimedOut] and the outlook is still returned. Zero
+	// means no bound beyond the caller's context.
+	ConvertTimeout time.Duration
 }
 
 // Request says what to build.
@@ -291,6 +297,11 @@ type Exclusion struct {
 // ReasonConversionFailed marks a conversion the rate service refused with an
 // error (for example an invalid pair): the currency is excluded.
 const ReasonConversionFailed = "conversion_failed"
+
+// ReasonConversionTimedOut marks a currency left unconverted because the
+// conversion phase ran out of time ([Service.ConvertTimeout]); its rate
+// may exist but was not obtained in time.
+const ReasonConversionTimedOut = "conversion_timed_out"
 
 // Build returns the outlook for r.
 func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
@@ -640,6 +651,12 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 	}
 	out := Converted{Currency: to, StillDue: zero, Overdue: zero, Included: []RateUse{}, Excluded: []Exclusion{}}
 	var balance *money.Money
+	parent := ctx
+	if s.ConvertTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.ConvertTimeout)
+		defer cancel()
+	}
 	for _, l := range lines {
 		figures := []money.Money{l.StillDue, l.Overdue}
 		if balances && l.Balance != nil {
@@ -651,8 +668,17 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 		// One rate per currency, taken once: every figure of the line is
 		// converted with it, so the reported provenance is the rate used
 		// for all of them even if a refresh lands meanwhile.
-		c, err := s.conversion(ctx, figures[0], to)
+		var c fx.Conversion
+		var err error
+		// The reporting currency itself needs no rate, so it always converts.
+		timedOut := l.Currency != to && ctx.Err() != nil && parent.Err() == nil
+		if !timedOut {
+			c, err = s.conversion(ctx, figures[0], to)
+			timedOut = err != nil && ctx.Err() != nil && parent.Err() == nil
+		}
 		switch {
+		case timedOut:
+			excl = &Exclusion{Currency: l.Currency, Status: fx.StatusMissing, Reason: ReasonConversionTimedOut}
 		case err != nil:
 			excl = &Exclusion{Currency: l.Currency, Status: fx.StatusMissing, Reason: ReasonConversionFailed}
 		case !c.Acceptable():

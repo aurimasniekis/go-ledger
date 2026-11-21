@@ -247,6 +247,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	}
 	parts.banking = connSvc
 	parts.facts, parts.bankStaleAfter = facts, cfg.Banking.StaleAfter
+	parts.convertTimeout = refreshTimeout(cfg.HTTP.WriteTimeout)
 	if cfg.Reporting.Currency != "" {
 		// Validated with the configuration.
 		parts.reportingCurrency, _ = moneypkg.ParseCurrency(cfg.Reporting.Currency)
@@ -450,6 +451,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		// the reporting currency convert and the rest are excluded and
 		// flagged.
 		Rates:             parts.rates,
+		ConvertTimeout:    parts.convertTimeout,
 		Banks:             banks,
 		BankStaleAfter:    parts.bankStaleAfter,
 		ReportingCurrency: parts.reportingCurrency,
