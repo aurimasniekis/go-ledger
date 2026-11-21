@@ -133,7 +133,7 @@ var Definitions = map[Action][]Field{
 	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history")},
 
 	ManualPaymentRecorded:          {f("payment_id"), f("currency")},
-	ManualPaymentDeleted:           {f("payment_id"), f("currency")},
+	ManualPaymentDeleted:           {f("payment_id"), f("amount"), f("currency")},
 	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
 	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
 

@@ -335,10 +335,12 @@ func RecordedEvent(actor audit.Actor, p ManualPayment, at time.Time) audit.Event
 		Details: map[string]string{"payment_id": p.ID, "currency": p.Amount.Currency().Code()}}
 }
 
-// DeletedEvent is the audit event for deleting a manual payment.
+// DeletedEvent is the audit event for deleting a manual payment. Unlike the
+// recording it carries the amount (decision D26-3a), because the row is kept
+// but no longer listed.
 func DeletedEvent(actor audit.Actor, p ManualPayment, at time.Time) audit.Event {
 	return audit.Event{Action: audit.ManualPaymentDeleted, Actor: actor, TargetType: TargetType, TargetID: p.OccurrenceID, At: at,
-		Details: map[string]string{"payment_id": p.ID, "currency": p.Amount.Currency().Code()}}
+		Details: map[string]string{"payment_id": p.ID, "amount": p.Amount.Amount().String(), "currency": p.Amount.Currency().Code()}}
 }
 
 // OverriddenEvent is the audit event for setting a manual status override:

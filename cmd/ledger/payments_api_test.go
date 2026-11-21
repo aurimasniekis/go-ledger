@@ -243,6 +243,13 @@ func TestPaymentStateAPI(t *testing.T) {
 		}
 	}
 	for _, l := range auditLines(t, f.log.String()) {
+		if l["action"] == "manual_payment.deleted" {
+			// A delete records the deleted payment's amount (D26-3a).
+			if l["detail_amount"] != "4.00" {
+				t.Errorf("delete audit line amount = %v: %v", l["detail_amount"], l)
+			}
+			continue
+		}
 		for k, v := range l {
 			if s := fmt.Sprint(v); strings.Contains(s, "4.00") || strings.Contains(s, "6.00") {
 				t.Errorf("audit line carries an amount in %s: %v", k, l)

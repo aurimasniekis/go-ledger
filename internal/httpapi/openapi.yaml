@@ -1755,11 +1755,12 @@ paths:
       x-ledger-access: commitments:write
       summary: Delete a manual payment
       description: |
-        Removes the payment record; the occurrence's status is derived
+        Soft-deletes the payment record (the row is kept, marked deleted, and
+        no longer counts or lists); the occurrence's status is derived
         again from the evidence that remains and its version increases. A
         "paid" override stays recorded but has no effect without evidence
         (override.applied is false). Requires the payment's version in
-        If-Match. Audited as manual_payment.deleted.
+        If-Match. Audited as manual_payment.deleted, with its amount.
       tags: [occurrences]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
