@@ -37,6 +37,9 @@ Last updated: 2026-11-20.
   - Defaults (one step of skew, ten recovery codes, 10m enrolment, 5m and five wrong codes per challenge) are proposed, not operator decisions.
   - Follow-ups: A7 enrolment, second-step and required-2FA gate screens; whether re-authentication should also ask for a second factor; an administrator reset route for other users; KEK rotation.
 
+- **A7 Auth and account UI** (ADR-0036): sign-in (two-step with 2FA), re-authentication prompt that repeats the action, 2FA enrolment (key and otpauth link, no QR code), recovery codes shown once with copy and download, regenerate and disable, required-2FA gate, sessions list and end, own API tokens (grants picker limited to the user's grants, root warning, token shown once and never reopenable, revoke), users, roles and all-tokens admin screens, password change. CSRF header on writes; `errors[]` mapped to fields. Minimal shell to be absorbed by U1.
+  - Follow-ups: U1 takes over the shell, `RequireSession` and `QueryState`; a QR encoder (needs an ADR note); sign-in e2e needs a seeded database; TanStack Form with the first substantial form.
+
 ## Next (first wave)
 
 - **F2 Configuration system**: YAML, environment and `.env` configuration, `.env.example`.
