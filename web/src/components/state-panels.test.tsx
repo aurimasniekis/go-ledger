@@ -1,3 +1,4 @@
+import { NetworkError } from '@/lib/api'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -58,11 +59,11 @@ describe('state panels', () => {
 describe('QueryState', () => {
   const base = { isFetching: false, dataUpdatedAt: Date.UTC(2026, 10, 21, 9, 0), refetch: vi.fn() }
   it('is disconnected, not failed, when the request never reached the server and nothing has loaded', () => {
-    render(<QueryState label="sessions" query={{ ...base, data: undefined, error: new TypeError('Failed to fetch'), isError: true, isPending: false }}>{() => null}</QueryState>)
+    render(<QueryState label="sessions" query={{ ...base, data: undefined, error: new NetworkError(), isError: true, isPending: false }}>{() => null}</QueryState>)
     expect(screen.getByRole('alert')).toHaveTextContent('Cannot reach the server')
   })
   it('keeps earlier data and marks it disconnected when a refresh fails offline', () => {
-    render(<QueryState label="sessions" query={{ ...base, data: ['x'], error: new TypeError('Failed to fetch'), isError: true, isPending: false }}>{(d) => <p>{d[0]}</p>}</QueryState>)
+    render(<QueryState label="sessions" query={{ ...base, data: ['x'], error: new NetworkError(), isError: true, isPending: false }}>{(d) => <p>{d[0]}</p>}</QueryState>)
     expect(screen.getByText('x')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Disconnected')
   })

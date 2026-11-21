@@ -108,7 +108,17 @@ export function AccountMenu() {
         className="absolute inset-x-2 top-full z-30 mt-1 space-y-3 sm:left-auto sm:w-64 rounded-md border border-border bg-surface-raised p-2 shadow-md"
       >
         {!confined && (
-          <nav aria-label="Account" className="space-y-3">
+          <nav
+            aria-label="Account"
+            className="space-y-3"
+            onClick={(e) => {
+              // A link to the page already shown changes nothing, so the menu would stay open: close it and keep focus on its button.
+              const a = (e.target as Element).closest('a')
+              if (!a) return
+              setOpenAt(null)
+              if (new URL(a.href, window.location.href).pathname === pathname) button.current?.focus()
+            }}
+          >
             <Group label="Your account">
               <li><Link to="/account/security" className={link}>Security</Link></li>
               <li><Link to="/account/sessions" className={link}>Sessions</Link></li>

@@ -1,13 +1,19 @@
+import { QueryClient } from '@tanstack/react-query'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setCsrfToken } from '@/lib/api'
+import { monthKey } from './api'
+import { makeQueryClient } from '@/lib/query'
 import { installApi, renderApp, signedIn, type Reply, type Req } from '@/test/fake-api'
 import { item, summary } from './fixtures'
 
 const json = (status: number, body: unknown): Reply => ({ status, json: body })
 let calls: Req[]
+let client: QueryClient
+const qc = () => client
 beforeEach(() => {
+  client = makeQueryClient()
   calls = installApi({
     ...signedIn(),
     'GET /api/v1/occurrences/summary': (r) => json(200, summary([item('a')], { month: r.query.get('month') ?? '2026-11' })),
@@ -22,7 +28,7 @@ afterEach(() => {
 
 describe('the Undo notice across months (proposal in the U1 pull request)', () => {
   const record = async () => {
-    renderApp('/month?month=2026-11')
+    renderApp('/month?month=2026-11', client)
     await userEvent.click(await screen.findByRole('button', { name: 'Record a payment' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Save payment' }))
     return screen.findByText(/^Saved:/)
@@ -42,6 +48,9 @@ describe('the Undo notice across months (proposal in the U1 pull request)', () =
     await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
     expect(await screen.findByText(/Payment removed/)).toBeInTheDocument()
     expect(calls.some((c) => c.method === 'DELETE')).toBe(true)
+    // Undo acts on its own month (November), not the one on screen (December).
+    expect(qc().getQueryState(monthKey('2026-11'))?.isInvalidated).toBe(true)
+    expect(qc().getQueryState(monthKey('2026-12'))?.isInvalidated).toBe(false)
     // November is not on screen, so Undo marks it stale; going back to it fetches it again.
     await userEvent.click(screen.getByRole('button', { name: /Previous month/ }))
     await waitFor(() => expect(calls.filter((c) => c.method === 'GET' && c.query.get('month') === '2026-11').length).toBeGreaterThan(before))
