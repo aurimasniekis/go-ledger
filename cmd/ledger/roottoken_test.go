@@ -211,3 +211,88 @@ func TestGoClientCreatesTokensWithTheRootToken(t *testing.T) {
 		t.Fatalf("a non-root token through the client: %v", err)
 	}
 }
+
+// TestTokenCreatedTokensAreContained is the staff reviewer's probe (A4e): a
+// root token expiring in 2030 mints a child with no expiry, then is revoked.
+// The child expires with its parent and is revoked, with its own children,
+// when the parent is; the revocations are audited with cascaded_from.
+func TestTokenCreatedTokensAreContained(t *testing.T) {
+	e := newSignInEnv(t, nil)
+	alice, _ := e.signIn("alice")
+	parent := e.createToken(alice, `{"name":"terraform","root":true,"expires_at":"2030-01-01T00:00:00Z"}`)
+	forever := e.createToken(alice, `{"name":"forever","root":true}`)
+	e.clock.advance(11 * time.Minute)
+
+	mint := func(secret, body string) createdToken {
+		t.Helper()
+		w := e.req("POST", "/api/v1/auth/tokens", body, nil, bearer(secret))
+		if w.Code != 201 {
+			t.Fatalf("mint %s: %d %s", body, w.Code, w.Body.String())
+		}
+		var c createdToken
+		if err := json.Unmarshal(w.Body.Bytes(), &c); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	want := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	child := mint(parent.Secret, `{"name":"child","root":true}`)
+	late := mint(parent.Secret, `{"name":"late","grants":["commitments:read"],"expires_at":"2035-01-01T00:00:00Z"}`)
+	early := mint(parent.Secret, `{"name":"early","grants":["commitments:read"],"expires_at":"2029-01-01T00:00:00Z"}`)
+	if child.Token.ExpiresAt == nil || !child.Token.ExpiresAt.Equal(want) || late.Token.ExpiresAt == nil || !late.Token.ExpiresAt.Equal(want) {
+		t.Fatalf("a child of a parent expiring in 2030 expires at %v / %v, want 2030", child.Token.ExpiresAt, late.Token.ExpiresAt)
+	}
+	if early.Token.ExpiresAt == nil || early.Token.ExpiresAt.Year() != 2029 {
+		t.Fatalf("an earlier requested expiry is kept: %v", early.Token.ExpiresAt)
+	}
+	// A parent that never expires leaves the requested expiry (none) alone.
+	if c := mint(forever.Secret, `{"name":"free","grants":["commitments:read"]}`); c.Token.ExpiresAt != nil {
+		t.Fatalf("child of a token without expiry: %v", c.Token.ExpiresAt)
+	}
+	grand := mint(forever.Secret, `{"name":"mid","root":true}`)
+	leaf := mint(grand.Secret, `{"name":"leaf","grants":["commitments:read"]}`)
+
+	for name, secret := range map[string]string{"child": child.Secret, "late": late.Secret, "early": early.Secret, "leaf": leaf.Secret} {
+		if w := e.req("GET", "/api/v1/commitments", "", nil, bearer(secret)); w.Code != 200 {
+			t.Fatalf("%s before revocation: %d", name, w.Code)
+		}
+	}
+	if w := e.req("DELETE", "/api/v1/auth/tokens/"+parent.Token.ID, "", alice, nil); w.Code != 204 {
+		t.Fatalf("revoke parent: %d %s", w.Code, w.Body.String())
+	}
+	for name, secret := range map[string]string{"parent": parent.Secret, "child": child.Secret, "late": late.Secret, "early": early.Secret} {
+		if w := e.req("POST", "/api/v1/auth/tokens", tokenBody, nil, bearer(secret)); w.Code != 401 {
+			t.Errorf("%s after the parent's revocation creates tokens: %d", name, w.Code)
+		}
+		if w := e.req("GET", "/api/v1/commitments", "", nil, bearer(secret)); w.Code != 401 {
+			t.Errorf("%s after the parent's revocation: %d", name, w.Code)
+		}
+	}
+	// Another lineage is untouched; revoking the middle token revokes its leaf only.
+	if w := e.req("GET", "/api/v1/commitments", "", nil, bearer(leaf.Secret)); w.Code != 200 {
+		t.Fatalf("an unrelated lineage was revoked: %d", w.Code)
+	}
+	if w := e.req("DELETE", "/api/v1/auth/tokens/"+grand.Token.ID, "", alice, nil); w.Code != 204 {
+		t.Fatalf("revoke middle: %d", w.Code)
+	}
+	if w := e.req("GET", "/api/v1/commitments", "", nil, bearer(leaf.Secret)); w.Code != 401 {
+		t.Fatalf("leaf after its parent's revocation: %d", w.Code)
+	}
+	if w := e.req("GET", "/api/v1/commitments", "", nil, bearer(forever.Secret)); w.Code != 200 {
+		t.Fatalf("the grandparent was revoked: %d", w.Code)
+	}
+	cascaded := map[string]string{}
+	for _, ev := range e.auditActions(audit.TokenRevoked) {
+		if from := ev.Details["cascaded_from"]; from != "" {
+			cascaded[ev.TargetID] = from
+		}
+	}
+	for _, c := range []createdToken{child, late, early} {
+		if cascaded[c.Token.ID] != parent.Token.ID {
+			t.Errorf("no token.revoked entry with cascaded_from for %s: %v", c.Token.ID, cascaded)
+		}
+	}
+	if cascaded[leaf.Token.ID] != grand.Token.ID {
+		t.Errorf("leaf cascade entry: %v", cascaded)
+	}
+}

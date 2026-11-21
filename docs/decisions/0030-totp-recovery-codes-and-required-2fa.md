@@ -88,6 +88,13 @@ requirement. There is no UI here (A7).
       (point 7) and a failure counts, so a stolen session cannot guess the code (429 `rate_limited` once blocked,
       first block audited with reason `locked_out`); a TOTP code's step is recorded as used (replay protection, so
       the confirmation's own code cannot also disable it in the same step); a recovery code is consumed.
+    - **Known limit (fail-closed): the recovery code is consumed before the change is written.** The check consumes
+      the code in its own transaction and the change (confirm, regenerate, disable) is a second one. If the second
+      fails (the pending enrolment expired or was replaced in between, or the database failed), the recovery code is
+      spent and nothing changed. This only ever loses one recovery code; it never lets a change through without the
+      factor, and a successful change replaces or deletes every recovery code anyway. Doing both in one transaction
+      would need a recovery-code consumption inside each of three store methods and their ports; the user is
+      told to regenerate codes after a failed change. Accepted for the single-person deployment (A4e).
     - When replacing, the new authenticator's code is checked first, so a mistyped new code uses up no recovery
       code; the current factor is checked before the change is written.
     - The web UI asks for the code in the replacement form and in the turn-off and replace-codes dialogs, with a

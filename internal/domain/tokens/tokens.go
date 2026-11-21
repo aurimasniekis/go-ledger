@@ -77,6 +77,10 @@ type Token struct {
 	DisplayPrefix string
 	LastChars     string
 	CreatedAt     time.Time
+	// ParentTokenID is the root token that created this token through the
+	// API ("" for a token made by a user or the host). Revoking the parent
+	// revokes this token, and ExpiresAt is never later than the parent's.
+	ParentTokenID string
 	// ExpiresAt is nil for a token that never expires (the default).
 	ExpiresAt  *time.Time
 	LastUsedAt *time.Time
@@ -265,11 +269,14 @@ func ValidateName(name string) error {
 // a creating token that is its effective grants: its owner's current role.
 // The owner's current role is applied again on every request.
 func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.Principal, n New) (Issued, error) {
+	var parent Token
+	var err error
 	switch {
 	case creator.UserID == "":
 		return Issued{}, ErrNotUser
 	case creator.Kind == authz.PrincipalToken:
-		if err := s.checkMinter(ctx, creator); err != nil {
+		parent, err = s.checkMinter(ctx, creator)
+		if err != nil {
 			return Issued{}, err
 		}
 	case creator.Kind != authz.PrincipalUser:
@@ -308,15 +315,21 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.P
 		e := n.ExpiresAt.UTC()
 		expires = &e
 	}
+	// Containment (D25-1): a token made by a token never outlives it. A parent
+	// that never expires leaves the requested expiry as it is.
+	if parent.ExpiresAt != nil && (expires == nil || expires.After(*parent.ExpiresAt)) {
+		e := parent.ExpiresAt.UTC()
+		expires = &e
+	}
 	secret, err := s.generate()
 	if err != nil {
 		return Issued{}, err
 	}
 	t := Token{ID: s.newID(), Name: n.Name, OwnerID: creator.UserID, Root: n.Root, Grants: grants, TokenHash: Hash(secret),
-		DisplayPrefix: secret[:len(Prefix)+HintChars], LastChars: secret[len(secret)-HintChars:], CreatedAt: now, ExpiresAt: expires}
+		DisplayPrefix: secret[:len(Prefix)+HintChars], LastChars: secret[len(secret)-HintChars:], CreatedAt: now, ExpiresAt: expires, ParentTokenID: parent.ID}
 	ev := CreatedEvent(actor, t)
-	if creator.Kind == authz.PrincipalToken {
-		ev.Details["parent_token_id"] = creator.TokenID
+	if parent.ID != "" {
+		ev.Details["parent_token_id"] = parent.ID
 	}
 	if err := s.store.Create(ctx, t, ev); err != nil {
 		return Issued{}, err
@@ -324,32 +337,32 @@ func (s *Service) Create(ctx context.Context, actor audit.Actor, creator authz.P
 	return Issued{Token: t, Secret: secret}, nil
 }
 
-// checkMinter verifies, from current data, that the token principal p may
+// checkMinter returns the creating token after verifying, from current data, that the token principal p may
 // create tokens: p.CanCreateTokens is set, and the token still exists, is a
 // root token, and belongs to the root account. Anything else is
 // [ErrTokenCannotCreate].
-func (s *Service) checkMinter(ctx context.Context, p authz.Principal) error {
+func (s *Service) checkMinter(ctx context.Context, p authz.Principal) (Token, error) {
 	if !p.CanCreateTokens || p.TokenID == "" {
-		return ErrTokenCannotCreate
+		return Token{}, ErrTokenCannotCreate
 	}
 	t, err := s.store.Get(ctx, p.TokenID)
 	if errors.Is(err, resource.ErrNotFound) {
-		return ErrTokenCannotCreate
+		return Token{}, ErrTokenCannotCreate
 	}
 	if err != nil {
-		return err
+		return Token{}, err
 	}
 	if !t.Root || t.OwnerID != p.UserID || t.Status(s.Now()) != StatusActive {
-		return ErrTokenCannotCreate
+		return Token{}, ErrTokenCannotCreate
 	}
 	root, err := s.isRootAccount(ctx, t.OwnerID)
 	if err != nil {
-		return err
+		return Token{}, err
 	}
 	if !root {
-		return ErrTokenCannotCreate
+		return Token{}, ErrTokenCannotCreate
 	}
-	return nil
+	return t, nil
 }
 
 // isRootAccount reports whether userID is the root account.

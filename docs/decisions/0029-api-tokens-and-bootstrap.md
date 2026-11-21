@@ -2,7 +2,8 @@
 
 Status: Accepted (2026-11-21). Points 1-7 and 10 at first; point 8 accepted by the operator (decision D24); point 9
 replaced by the operator's decision D25-1 (only a root token of the root account may create tokens), accepted; the
-re-enabling amendment accepted (decision D25-2).
+re-enabling amendment accepted (decision D25-2). Point 9 amended by A4e with containment rules (control defaults
+that follow D25; see the amendment "Token-created tokens are contained").
 
 ## Context
 
@@ -151,3 +152,33 @@ expired.** Disabling is a suspension, not a revocation. Anyone who must also end
 revokes all of the user's tokens) before or after disabling. Ledger does not revoke tokens on disable because that
 would make the suspension irreversible and silently break unattended automation on a temporary disable. The operator
 accepted this note (D25-2); the user documentation (A8) must repeat it.
+
+## Amendment: token-created tokens are contained (A4e; control defaults that follow D25)
+
+The staff review of A4 showed that D25-1 let a leaked root token mint a never-expiring root child that outlived both
+the parent's expiry and the parent's revocation. These rules close that. They are control defaults that follow D25-1,
+not new operator decisions; the operator can replace them.
+
+1. **The parent is stored.** A token created through the API by a root token of the root account stores that token's ID
+   in `api_tokens.parent_token_id` (migration `0018_token_parents`; fixture `0017_payment_matches`). Tokens made by a
+   user session or by the host have none, and so do tokens that existed before the migration (their creator was only in
+   the audit log; no link is invented). The `token.created` audit entry still names `parent_token_id`.
+2. **A child never outlives its parent.** If the parent has an expiry, the child's `expires_at` is the requested one or
+   the parent's, whichever is earlier (a later or missing request is capped, silently, and the response shows the
+   resulting expiry). If the parent never expires, the child's expiry is as requested (none by default).
+3. **Revoking a token revokes its descendants** (children, their children, and so on) in the same transaction, each
+   audited as `token.revoked` with `cascaded_from` naming the revoked token. Already-revoked descendants are left as
+   they are. Creation re-checks the parent in the write transaction, so a parent revoked while a child is being created
+   leaves no child.
+4. Grants are unchanged: a child is bounded by the root account's current role (no escalation), and every request
+   still re-checks the owner. Disabling the root account stops its descendants through their owner, as before.
+
+### Limits of the root-account determination
+
+The root account is the user with the earliest `created_at` (ties by insertion order). `created_at` is the service
+clock at insert. If the clock steps backwards at bootstrap, before a second user is created, the first user could carry
+a later `created_at` than the second and the root account would be the second user. The window is narrow (bootstrap,
+with at most one user) and every user is created by the bootstrap commands, the administrator API or OIDC
+provisioning, none of which run the clock backwards on purpose. After a restore the root account follows the restored
+data. Ledger does not pin the root account in a settings row (that would need a migration and a way to change it); an
+operator who suspects a clock step at bootstrap should check the first users' `created_at` before relying on D25-1.

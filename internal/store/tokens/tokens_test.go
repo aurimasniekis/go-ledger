@@ -234,3 +234,94 @@ func TestTouchBehindAHeldWriteTransactionGivesUpAndNeverMovesBackwards(t *testin
 		t.Fatalf("last use %v, want it kept at +2m", got.LastUsedAt)
 	}
 }
+
+func TestParentRevocationCascades(t *testing.T) {
+	s, _, al, alice, _ := setup(t)
+	ctx := context.Background()
+	mk := func(id, tail, parent string) tokens.Token {
+		tk := token(id, alice, tail)
+		tk.ParentTokenID = parent
+		return tk
+	}
+	p := mk("01JD3Y4C8V9M2Q7W5R6T0XZC01", "x001", "")
+	p.Root, p.Grants = true, nil
+	c1 := mk("01JD3Y4C8V9M2Q7W5R6T0XZC02", "x002", p.ID)
+	c2 := mk("01JD3Y4C8V9M2Q7W5R6T0XZC03", "x003", p.ID)
+	g := mk("01JD3Y4C8V9M2Q7W5R6T0XZC04", "x004", c1.ID)
+	other := mk("01JD3Y4C8V9M2Q7W5R6T0XZC05", "x005", "")
+	for _, tk := range []tokens.Token{p, c1, c2, g, other} {
+		if err := s.Create(ctx, tk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := s.Get(ctx, g.ID); err != nil || got.ParentTokenID != c1.ID {
+		t.Fatalf("parent round trip: %+v %v", got, err)
+	}
+	if got, _ := s.Get(ctx, other.ID); got.ParentTokenID != "" {
+		t.Fatalf("a token without a parent: %+v", got)
+	}
+	// c2 was revoked on its own earlier: the cascade leaves it alone.
+	if _, err := s.Revoke(ctx, c2.ID, "", t0, audit.ForToken(audit.TokenRevoked, audit.System, c2.ID, nil, t0)); err != nil {
+		t.Fatal(err)
+	}
+	at := t0.Add(time.Hour)
+	actor := audit.Actor{Kind: audit.ActorUser, UserID: alice}
+	if ok, err := s.Revoke(ctx, p.ID, alice, at, audit.ForToken(audit.TokenRevoked, actor, p.ID, nil, at)); !ok || err != nil {
+		t.Fatalf("revoke parent: %v %v", ok, err)
+	}
+	for _, tk := range []tokens.Token{p, c1, g} {
+		if got, _ := s.Get(ctx, tk.ID); got.RevokedAt == nil || !got.RevokedAt.Equal(at) {
+			t.Errorf("%s not revoked with the parent: %+v", tk.ID, got)
+		}
+	}
+	if got, _ := s.Get(ctx, c2.ID); got.RevokedAt == nil || !got.RevokedAt.Equal(t0) {
+		t.Errorf("an already revoked child changed: %+v", got)
+	}
+	if got, _ := s.Get(ctx, other.ID); got.RevokedAt != nil {
+		t.Errorf("an unrelated token was revoked: %+v", got)
+	}
+	entries, _ := al.List(ctx, audit.Filter{Actions: []audit.Action{audit.TokenRevoked}, Limit: 20})
+	got := map[string]string{}
+	for _, e := range entries {
+		got[e.TargetID] = e.Details["cascaded_from"]
+		if e.TargetID != c2.ID && e.Actor.UserID != alice {
+			t.Errorf("entry actor: %+v", e)
+		}
+	}
+	if len(entries) != 4 || got[p.ID] != "" || got[c1.ID] != p.ID || got[g.ID] != p.ID {
+		t.Fatalf("revoked entries: %v", got)
+	}
+}
+
+// TestCreateUnderAParentChecksItInTheWriteTransaction: a parent revoked (or a
+// child outliving its parent) at write time leaves no token.
+func TestCreateUnderAParentChecksItInTheWriteTransaction(t *testing.T) {
+	s, _, _, alice, _ := setup(t)
+	ctx := context.Background()
+	exp := t0.Add(24 * time.Hour)
+	p := token("01JD3Y4C8V9M2Q7W5R6T0XZC01", alice, "x001")
+	p.Root, p.Grants, p.ExpiresAt = true, nil, &exp
+	if err := s.Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	child := token("01JD3Y4C8V9M2Q7W5R6T0XZC02", alice, "x002")
+	child.ParentTokenID = p.ID // no expiry: outlives the parent
+	if err := s.Create(ctx, child); !errors.Is(err, tokens.ErrTokenCannotCreate) {
+		t.Fatalf("a child outliving its parent: %v", err)
+	}
+	child.ExpiresAt = &exp
+	if err := s.Create(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Revoke(ctx, p.ID, "", t0); err != nil {
+		t.Fatal(err)
+	}
+	late := token("01JD3Y4C8V9M2Q7W5R6T0XZC03", alice, "x003")
+	late.ParentTokenID, late.ExpiresAt = p.ID, &exp
+	if err := s.Create(ctx, late); !errors.Is(err, tokens.ErrTokenCannotCreate) {
+		t.Fatalf("a child of a revoked parent: %v", err)
+	}
+	if _, err := s.Get(ctx, late.ID); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("the refused child exists: %v", err)
+	}
+}

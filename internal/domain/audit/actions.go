@@ -118,7 +118,8 @@ var Definitions = map[Action][]Field{
 	// parent_token_id: the root token of the root account that created this
 	// token (decision D25); absent for a session or the host.
 	TokenCreated: {f("grants"), f("root", "true", "false"), f("expires_at"), f("parent_token_id")},
-	TokenRevoked: nil,
+	// cascaded_from: the parent token whose revocation revoked this one (D25-1).
+	TokenRevoked: {f("cascaded_from")},
 	// interactive_steps records that the request skipped two-factor and
 	// recent re-authentication, which API tokens do by design (ADR-0029).
 	TokenWriteUsed: {f("method"), f("route"), f("interactive_steps", "skipped")},
