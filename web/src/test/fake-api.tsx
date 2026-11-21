@@ -1,4 +1,5 @@
 import { render } from '@testing-library/react'
+import type { QueryClient } from '@tanstack/react-query'
 import { createMemoryHistory } from '@tanstack/react-router'
 import { vi } from 'vitest'
 import { App } from '@/App'
@@ -45,8 +46,8 @@ export function installApi(routes: Record<string, Handler>) {
   return calls
 }
 
-export function renderApp(path: string) {
-  return render(<App history={createMemoryHistory({ initialEntries: [path] })} />)
+export function renderApp(path: string, client?: QueryClient) {
+  return render(<App history={createMemoryHistory({ initialEntries: [path] })} client={client} />)
 }
 
 const now = '2026-11-21T10:00:00Z'

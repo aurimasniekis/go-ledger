@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
 import { AnnouncerProvider } from '@/components/announcer'
+import { ApiError } from '@/lib/api'
 import { useOptimisticSave } from '@/lib/optimistic-save'
 
 type List = string[]
@@ -99,6 +100,65 @@ describe('useOptimisticSave', () => {
     release()
     await waitFor(() => expect(screen.getByTestId('phase')).toHaveTextContent('saved'))
     expect(server.items).toEqual(['b'])
+  })
+
+  it('two synchronous saves in one tick send one request', async () => {
+    let release!: () => void
+    const server = { items: [] as List, fail: false, gate: new Promise<void>((r) => (release = r)) }
+    let sends = 0
+    const qc = new QueryClient()
+    function Twice() {
+      const s = useOptimisticSave<string, string>({ queryKey: KEY, mutationFn: async (v) => { sends++; await server.gate; return v } })
+      return <button onClick={() => { s.save('b'); s.save('b') }}>twice</button>
+    }
+    render(<QueryClientProvider client={qc}><AnnouncerProvider><Twice /></AnnouncerProvider></QueryClientProvider>)
+    await userEvent.click(screen.getByRole('button', { name: 'twice' }))
+    release()
+    await waitFor(() => expect(sends).toBe(1))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(sends).toBe(1)
+  })
+
+  it('after a version conflict refetches, never resends the stale version, and resends only rebased variables', async () => {
+    type V = { name: string; version: number }
+    const server = { version: 2, sent: [] as V[], fetches: 0 }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    function Edit({ rebase }: { rebase: boolean }) {
+      useQuery({ queryKey: KEY, queryFn: async () => { server.fetches++; return server.version } })
+      const s = useOptimisticSave<V, V>({
+        queryKey: KEY,
+        mutationFn: async (v) => {
+          server.sent.push(v)
+          if (v.version !== server.version) throw new ApiError(409, { code: 'version_conflict', message: 'changed', reconciliation: { current_version: server.version } })
+          return v
+        },
+        rebase: rebase ? (v, c) => ({ ...v, version: c.reconciliation?.current_version ?? v.version }) : undefined,
+      })
+      return (<div><button onClick={() => s.save({ name: 'x', version: 1 })}>save</button><button onClick={s.retry}>retry</button><p data-testid="c">{s.conflict ? 'conflict' : '-'}</p><p data-testid="p">{s.phase}</p></div>)
+    }
+    const view = (rebase: boolean) => render(<QueryClientProvider client={qc}><AnnouncerProvider><Edit rebase={rebase} /></AnnouncerProvider></QueryClientProvider>)
+    const { unmount } = view(false)
+    await waitFor(() => expect(server.fetches).toBe(1))
+    await userEvent.click(screen.getByRole('button', { name: 'save' }))
+    await waitFor(() => expect(screen.getByTestId('c')).toHaveTextContent('conflict'))
+    await waitFor(() => expect(server.fetches).toBe(2)) // refetched after the failure
+    await userEvent.click(screen.getByRole('button', { name: 'retry' }))
+    expect(server.sent).toEqual([{ name: 'x', version: 1 }]) // no stale resend
+    unmount()
+    view(true)
+    await userEvent.click(screen.getByRole('button', { name: 'save' }))
+    await waitFor(() => expect(screen.getByTestId('c')).toHaveTextContent('conflict'))
+    await userEvent.click(screen.getByRole('button', { name: 'retry' }))
+    await waitFor(() => expect(screen.getByTestId('p')).toHaveTextContent('saved'))
+    expect(server.sent.at(-1)).toEqual({ name: 'x', version: 2 })
+  })
+
+  it('invalidates the query after any failure', async () => {
+    const qc = setup({ items: ['a'], fail: true }, false)
+    await waitFor(() => expect(items()).toEqual(['a']))
+    await userEvent.click(screen.getByRole('button', { name: 'add' }))
+    await waitFor(() => expect(screen.getByTestId('phase')).toHaveTextContent('failed'))
+    await waitFor(() => expect(qc.getQueryState(KEY)?.dataUpdateCount).toBeGreaterThan(1))
   })
 
   it('discard returns a failed save to idle', async () => {

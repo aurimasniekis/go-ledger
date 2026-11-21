@@ -4,6 +4,7 @@ import { useOptimisticSave } from '@/lib/optimistic-save'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { ApiError } from '@/lib/api'
+import { monthLabel } from './month'
 import { deletePayment, monthKey, recordPayment } from './api'
 import type { ManualPayment, MonthItem } from './types'
 
@@ -52,7 +53,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
     mutationFn: (v) =>
       gone ? Promise.reject(new Error('This occurrence is no longer unpaid.')) : recordPayment(item.id, { amount: v.amount, currency: item.amount.currency, paid_on: v.paid_on }),
     onSaved: (saved) => p.onSaved(saved, item),
-    messages: { saved: (s) => `Payment recorded: ${s.amount.amount} ${s.amount.currency}. Undo is available above the list.`, failed: (e) => `Payment not saved: ${e.message}` },
+    messages: { saved: (s) => `Payment recorded: ${s.amount.amount} ${s.amount.currency}. Undo is available above the list.`, failed: () => '' },
   })
   const pending = save.phase === 'pending'
   const err = save.error instanceof ApiError ? save.error : null
@@ -179,7 +180,8 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
   const box = useRef<HTMLDivElement>(null)
   const undo = useMutation({
     mutationFn: () => deletePayment(payment),
-    onSuccess: () => qc.invalidateQueries({ queryKey: monthKey(month) }),
+    // Undo acts on the month the payment was recorded in, not the one on screen.
+    onSettled: () => qc.invalidateQueries({ queryKey: monthKey(month) }),
   })
   const name = item.commitment_name || item.commitment_id
   // Keyboard focus follows the change: to this notice when it appears and again
@@ -189,7 +191,7 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
     <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3">
       {undo.isSuccess ? (
         <p>
-          Payment removed. {name} is back as it was before; the view above has been refreshed.{' '}
+          Payment removed. {name} is back as it was before; the {monthLabel(month)} view has been refreshed.{' '}
           <Button variant="ghost" size="sm" onClick={onDone}>
             Dismiss
           </Button>
@@ -197,7 +199,7 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
       ) : (
         <>
           <p>
-            Saved: {payment.amount.amount} {payment.amount.currency} paid on {payment.paid_on} for {name}, due {item.due_date}.
+            Saved: {payment.amount.amount} {payment.amount.currency} paid on {payment.paid_on} for {name}, due {item.due_date}, in {monthLabel(month)}.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => undo.mutate()} disabled={undo.isPending}>

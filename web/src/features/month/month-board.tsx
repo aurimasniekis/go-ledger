@@ -40,7 +40,7 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
   const label = monthLabel(p.month)
   return (
     <div className="space-y-4">
-      <nav aria-label="Month" className="flex flex-wrap items-center gap-2">
+      <div role="group" aria-label="Month" className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => p.onMonthChange(shiftMonth(p.month, -1))}>
           <ChevronLeft aria-hidden className="size-4" />
           <span className="sr-only">Previous month, {monthLabel(shiftMonth(p.month, -1))}</span>
@@ -54,7 +54,7 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           <span className="sr-only">Next month, {monthLabel(shiftMonth(p.month, 1))}</span>
           <ChevronRight aria-hidden className="size-4" />
         </Button>
-      </nav>
+      </div>
 
       {p.status === 'pending' && <LoadingState label={label} />}
       {p.status === 'error' && !p.data && (
