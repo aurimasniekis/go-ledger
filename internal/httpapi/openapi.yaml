@@ -348,9 +348,9 @@ paths:
                 kind:
                   $ref: "#/components/schemas/CommitmentKind"
                 amount:
-                  $ref: "#/components/schemas/PositiveMoney"
+                  $ref: "#/components/schemas/MoneyPatch"
                 schedule:
-                  $ref: "#/components/schemas/Schedule"
+                  $ref: "#/components/schemas/SchedulePatch"
                 start_date:
                   $ref: "#/components/schemas/Date"
                 end_date:
@@ -556,6 +556,11 @@ components:
       description: An exact decimal number as a string, keeping its scale ("12.50"). Never a JSON number.
       pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
       examples: ["12.50"]
+    PositiveDecimal:
+      type: string
+      description: An exact decimal number as a string, greater than zero, keeping its scale ("12.50"). Never a JSON number.
+      pattern: "^([1-9][0-9]*(\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)$"
+      examples: ["12.50"]
     PositiveMoney:
       type: object
       description: An exact amount greater than zero with its currency (ADR-0005). It is never converted.
@@ -563,9 +568,45 @@ components:
       required: [amount, currency]
       properties:
         amount:
-          $ref: "#/components/schemas/Decimal"
+          $ref: "#/components/schemas/PositiveDecimal"
         currency:
           $ref: "#/components/schemas/Currency"
+    MoneyPatch:
+      type: object
+      description: Merge-patch form of PositiveMoney, only in a commitment PATCH body. Members that are sent replace the stored ones; the merged amount is validated as a whole.
+      additionalProperties: false
+      properties:
+        amount:
+          $ref: "#/components/schemas/PositiveDecimal"
+        currency:
+          $ref: "#/components/schemas/Currency"
+    SchedulePatch:
+      type: object
+      description: |
+        Merge-patch form of Schedule, only in a commitment PATCH body. No
+        member is required; a member set to null is removed, which is how a
+        schedule switches between monthly and annual. The merged schedule is
+        validated as a whole against the Schedule schema.
+      additionalProperties: false
+      properties:
+        version:
+          type: integer
+          const: 1
+        frequency:
+          type: string
+          enum: [monthly, annual]
+        interval:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 120
+        month:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 12
+        day:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 31
     Date:
       type: string
       format: date

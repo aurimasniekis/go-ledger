@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
@@ -173,7 +174,7 @@ func ParseSchedule(raw []byte, prefix string) (Schedule, []FieldError) {
 	}
 	sort.Strings(unknown)
 	for _, k := range unknown {
-		errs = append(errs, FieldError{f(k), fmt.Sprintf("%s is not a member of a %s schedule", k, s.Frequency)})
+		errs = append(errs, FieldError{f(k), fmt.Sprintf("%s is not a member of %s %s schedule", k, article(string(s.Frequency)), s.Frequency)})
 	}
 	for _, name := range members {
 		switch name {
@@ -207,3 +208,11 @@ func (s *Schedule) UnmarshalJSON(b []byte) error {
 }
 
 func isNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
+
+// article returns the indefinite article for a frequency name.
+func article(word string) string {
+	if word != "" && strings.ContainsRune("aeiou", rune(word[0])) {
+		return "an"
+	}
+	return "a"
+}
