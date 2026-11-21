@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
@@ -45,6 +46,9 @@ var permissionMatrix = map[string]string{
 	"GET /api/v1/commitments/{id}":    "commitments:read",
 	"PATCH /api/v1/commitments/{id}":  "commitments:write",
 	"DELETE /api/v1/commitments/{id}": "commitments:write",
+
+	"GET /api/v1/occurrences":      "commitments:read",
+	"GET /api/v1/occurrences/{id}": "commitments:read",
 }
 
 // apiFixture is the API as ledger serve registers it, with a test
@@ -55,9 +59,18 @@ type apiFixture struct {
 	users *userstore.Store
 	log   *bytes.Buffer
 	ids   map[string]string // subject name -> user ID
+	// now is the API's clock (zero: the real time); zone the reporting zone.
+	now  time.Time
+	zone calendar.Zone
 }
 
 func newAPIFixture(t *testing.T) *apiFixture {
+	t.Helper()
+	return newAPIFixtureIn(t, calendar.MustLoadZone("UTC"))
+}
+
+// newAPIFixtureIn is [newAPIFixture] with the given reporting time zone.
+func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	t.Helper()
 	ctx := context.Background()
 	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "ledger.db"), store.Options{})
@@ -73,7 +86,7 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	// Audit entries go to the real table and, so these tests can assert on them
 	// line by line, to the log as well.
 	al := teeAudit{AuditLog: store.NewAuditLog(db), lines: store.LogAudit(log)}
-	f := &apiFixture{users: userstore.New(db, al, nil, nil), log: buf, ids: map[string]string{}}
+	f := &apiFixture{users: userstore.New(db, al, nil, nil), log: buf, ids: map[string]string{}, zone: zone}
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {
@@ -100,7 +113,12 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		return p, nil
 	})
 	f.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log, httpapi.WithAuthenticators(authn))
-	registerAPI(f.srv, db, al)
+	registerAPI(f.srv, db, al, zone, func() time.Time {
+		if f.now.IsZero() {
+			return time.Now()
+		}
+		return f.now
+	})
 
 	mk := func(name string, role authz.Role) users.User {
 		u, err := f.users.Create(ctx, audit.System, users.New{Username: name, Role: role})

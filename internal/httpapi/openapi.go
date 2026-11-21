@@ -9,11 +9,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
@@ -50,8 +53,15 @@ func yamlToJSON(doc []byte) ([]byte, error) {
 type Deps struct {
 	Users       users.Store
 	Commitments commitments.Store
+	// Occurrences reads materialised commitment occurrences (ADR-0027).
+	Occurrences occurrences.Reader
 	// Audit reads the audit log.
 	Audit audit.Reader
+	// Zone is the reporting time zone (D5): it decides "today" for default
+	// effective dates and the materialisation horizon. Now defaults to
+	// time.Now.
+	Zone calendar.Zone
+	Now  func() time.Time
 }
 
 // RegisterAPI registers every route of the Management API under [APIPrefix].
@@ -76,7 +86,9 @@ func RegisterAPI(s *Server, d Deps) {
 	registerAuthz(s)
 	registerUsers(s, d.Users)
 	registerAudit(s, d.Audit)
-	registerCommitments(s, d.Commitments)
+	todayFn := newToday(d.Zone, d.Now)
+	registerCommitments(s, d.Commitments, todayFn)
+	registerOccurrences(s, d.Occurrences, todayFn)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {

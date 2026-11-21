@@ -13,9 +13,12 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	occstore "github.com/aurimasniekis/go-ledger/internal/store/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/store/sqlvalue"
 )
 
@@ -25,13 +28,24 @@ type Store struct {
 	audit store.AuditWriter
 	now   func() time.Time
 	newID func() string
+	occ   *occstore.Store
 }
 
 var _ commitments.Store = (*Store)(nil)
 
 // New returns a Store. aw records audit events and is required; now and newID
-// default to time.Now and resource.NewID.
+// default to time.Now and resource.NewID. Its occurrences (ADR-0027) use the
+// default payment evidence; [Store.Occurrences] returns them.
 func New(db *store.DB, aw store.AuditWriter, now func() time.Time, newID func() string) *Store {
+	return NewWithOccurrences(db, aw, now, newID, occstore.New(db, occstore.Options{Now: now, NewID: newID}))
+}
+
+// NewWithOccurrences is [New] with an explicit occurrence store, which edits
+// and deletes keep in step with the definitions in the same transaction.
+func NewWithOccurrences(db *store.DB, aw store.AuditWriter, now func() time.Time, newID func() string, occ *occstore.Store) *Store {
+	if occ == nil {
+		panic("commitments.New: an occurrence store is required")
+	}
 	if aw == nil {
 		panic("commitments.New: an audit writer is required")
 	}
@@ -41,8 +55,11 @@ func New(db *store.DB, aw store.AuditWriter, now func() time.Time, newID func() 
 	if newID == nil {
 		newID = resource.NewID
 	}
-	return &Store{db: db, audit: aw, now: now, newID: newID}
+	return &Store{db: db, audit: aw, now: now, newID: newID, occ: occ}
 }
+
+// Occurrences returns the occurrence store kept in step with this store.
+func (s *Store) Occurrences() *occstore.Store { return s.occ }
 
 const table = "commitments"
 
@@ -202,7 +219,10 @@ func (s *Store) List(ctx context.Context, f commitments.ListFilter) ([]commitmen
 // Update replaces the fields when the commitment still has version expected
 // and records commitment.updated with the names of the changed fields. When
 // nothing changes it writes nothing, keeps the version and records nothing.
-func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expected int64, f commitments.Fields) (commitments.Commitment, error) {
+// When the terms that decide occurrences change (amount, schedule, start or
+// end date), they reach the stored occurrences from effective forward in the
+// same transaction (ADR-0027), recorded as occurrences.regenerated.
+func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expected int64, f commitments.Fields, effective calendar.Date) (commitments.Commitment, error) {
 	if err := commitments.Validation(f.Validate()); err != nil {
 		return commitments.Commitment{}, err
 	}
@@ -232,6 +252,15 @@ func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expect
 		if err := s.audit.WriteAudit(ctx, tx, commitments.UpdatedEvent(actor, id, changed, now)); err != nil {
 			return err
 		}
+		if old, next := occurrences.TermsOf(before.Fields), occurrences.TermsOf(f); !old.Equal(next) {
+			plan, err := s.occ.ApplyTx(ctx, tx, id, old, next, effective)
+			if err != nil {
+				return err
+			}
+			if err := s.audit.WriteAudit(ctx, tx, occurrences.RegeneratedEvent(actor, id, effective, plan, now)); err != nil {
+				return err
+			}
+		}
 		out, err = get(ctx, tx, id)
 		return err
 	})
@@ -239,12 +268,19 @@ func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expect
 }
 
 // Delete removes the commitment when it still has version expected and
-// records commitment.deleted. Rows that refer to it (occurrences, once they
-// exist) block the delete through their foreign keys: that is ErrInUse.
+// records commitment.deleted. Its unpaid occurrences are derived data and go
+// with it; paid occurrences (payment history) block the delete through their
+// foreign keys: that is ErrInUse.
 func (s *Store) Delete(ctx context.Context, actor audit.Actor, id string, expected int64) error {
 	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		before, err := get(ctx, tx, id)
 		if err != nil {
+			return err
+		}
+		if before.Version != expected {
+			return &resource.VersionConflictError{Expected: expected, Current: before.Version}
+		}
+		if err := s.occ.RemoveUnpaidTx(ctx, tx, id); err != nil {
 			return err
 		}
 		if err := store.DeleteVersioned(ctx, tx, table, id, expected); err != nil {

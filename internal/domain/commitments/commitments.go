@@ -247,10 +247,14 @@ type Store interface {
 	List(ctx context.Context, f ListFilter) ([]Commitment, error)
 	// Update replaces the fields when the commitment still has version
 	// expected. It returns a *ValidationError, resource.ErrNotFound or a
-	// *resource.VersionConflictError. Unchanged fields write nothing.
-	Update(ctx context.Context, actor audit.Actor, id string, expected int64, f Fields) (Commitment, error)
-	// Delete removes the commitment when it still has version expected. It
-	// returns resource.ErrNotFound, a *resource.VersionConflictError or
-	// ErrInUse.
+	// *resource.VersionConflictError. Unchanged fields write nothing. When
+	// the amount, schedule, start or end date change, the change reaches the
+	// commitment's occurrences from effective forward (decision D6 edits
+	// option a, ADR-0027): paid occurrences never change.
+	Update(ctx context.Context, actor audit.Actor, id string, expected int64, f Fields, effective calendar.Date) (Commitment, error)
+	// Delete removes the commitment and its unpaid occurrences when it still
+	// has version expected. It returns resource.ErrNotFound, a
+	// *resource.VersionConflictError or ErrInUse (paid occurrences refer to
+	// it).
 	Delete(ctx context.Context, actor audit.Actor, id string, expected int64) error
 }

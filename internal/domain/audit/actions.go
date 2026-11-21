@@ -80,6 +80,8 @@ var Definitions = map[Action][]Field{
 	CommitmentCreated: {f("kind"), f("currency")},
 	CommitmentUpdated: {f("fields")},
 	CommitmentDeleted: {f("kind")},
+
+	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid")},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

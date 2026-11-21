@@ -18,8 +18,8 @@ import (
 // the money and calendar primitives, their SQL encoding, and the bank-fact
 // boundary (ADR-0013) with its fake provider, the import engine (ADR-0020),
 // the Enable Banking adapter (ADR-0023), the rate cache and conversion
-// service (ADR-0022) with its test doubles, and commitment definitions
-// (ADR-0024). Paths are
+// service (ADR-0022) with its test doubles, commitment definitions
+// (ADR-0024) and their occurrences (ADR-0027). Paths are
 // relative to this package's directory.
 var moneyPackages = []string{
 	".",
@@ -31,6 +31,8 @@ var moneyPackages = []string{
 	"../fx/fxtest",
 	"../bankimport",
 	"../commitments",
+	"../occurrences",
+	"../../store/occurrences",
 	"../../providers/enablebanking",
 }
 

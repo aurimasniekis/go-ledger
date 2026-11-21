@@ -27,5 +27,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0023: Enable Banking adapter](0023-enable-banking-adapter.md)
 - [ADR-0024: Recurring commitment definitions](0024-commitment-definitions.md)
 - [ADR-0025: Audit log](0025-audit-log.md)
+- [ADR-0027: Commitment occurrences](0027-commitment-occurrences.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

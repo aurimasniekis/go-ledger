@@ -15,6 +15,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/store"
@@ -172,7 +173,7 @@ func TestAuditedTokenWritesRecordTokenIdentity(t *testing.T) {
 	rec := &failing
 	srv := httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, slog.New(slog.DiscardHandler),
 		httpapi.WithAuthenticators(authn), httpapi.WithAuditRecorder(rec, nil))
-	registerAPI(srv, db, al)
+	registerAPI(srv, db, al, calendar.MustLoadZone("UTC"), nil)
 	*rec = al.Record
 	do := func(method, path, body, who string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))

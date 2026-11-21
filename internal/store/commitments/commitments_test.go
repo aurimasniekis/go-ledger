@@ -54,6 +54,9 @@ func newStore(t *testing.T) (*Store, *store.DB, *recorder) {
 	return New(db, rec, func() time.Time { return t0 }, nil), db, rec
 }
 
+// eff is the effective date passed to updates (ADR-0027).
+var eff = calendar.MustDate(2026, time.March, 4)
+
 func ptr[T any](v T) *T { return &v }
 
 var alice = audit.Actor{Kind: audit.ActorUser, UserID: "01JD3Y4C8V9M2Q7W5R6T0XZBNA"}
@@ -147,45 +150,47 @@ func TestUpdate(t *testing.T) {
 	f.Amount = money.MustParse("14.00", "EUR")
 	f.Schedule = commitments.Monthly(3, 31)
 	f.Priority = ptr(commitments.PriorityImportant)
-	u, err := st.Update(ctx, alice, c.ID, 1, f)
+	u, err := st.Update(ctx, alice, c.ID, 1, f, eff)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if u.Version != 2 || !u.Amount.Identical(f.Amount) || u.Schedule != f.Schedule || *u.Priority != commitments.PriorityImportant || !u.CreatedAt.Equal(t0) {
 		t.Fatalf("updated %+v", u)
 	}
-	if rec.actions() != "commitment.created,commitment.updated" || rec.events[1].Details["fields"] != "amount,priority,schedule" {
+	// The terms changed, so their regeneration is audited too (ADR-0027).
+	if rec.actions() != "commitment.created,commitment.updated,occurrences.regenerated" || rec.events[1].Details["fields"] != "amount,priority,schedule" ||
+		rec.events[2].Details["effective_from"] != "2026-03-04" {
 		t.Fatalf("audit %+v", rec.events)
 	}
 	// Stale version.
 	var vc *resource.VersionConflictError
-	if _, err := st.Update(ctx, alice, c.ID, 1, f); !errors.As(err, &vc) || vc.Current != 2 {
+	if _, err := st.Update(ctx, alice, c.ID, 1, f, eff); !errors.As(err, &vc) || vc.Current != 2 {
 		t.Fatalf("stale: %v", err)
 	}
 	// No change: no write, no version bump, no audit.
-	same, err := st.Update(ctx, alice, c.ID, 2, f)
-	if err != nil || same.Version != 2 || len(rec.events) != 2 {
+	same, err := st.Update(ctx, alice, c.ID, 2, f, eff)
+	if err != nil || same.Version != 2 || len(rec.events) != 3 {
 		t.Fatalf("no-op: %+v %v %v", same, err, rec.events)
 	}
 	// Clearing an optional member.
 	f.Priority = nil
-	if u, err := st.Update(ctx, alice, c.ID, 2, f); err != nil || u.Priority != nil || u.Version != 3 {
+	if u, err := st.Update(ctx, alice, c.ID, 2, f, eff); err != nil || u.Priority != nil || u.Version != 3 {
 		t.Fatalf("clear: %+v %v", u, err)
 	}
 	// Invalid fields are refused before anything is read.
 	f.EndDate = ptr(calendar.MustDate(2020, time.January, 1))
 	var ve *commitments.ValidationError
-	if _, err := st.Update(ctx, alice, c.ID, 3, f); !errors.As(err, &ve) || ve.Errors[0].Field != "end_date" {
+	if _, err := st.Update(ctx, alice, c.ID, 3, f, eff); !errors.As(err, &ve) || ve.Errors[0].Field != "end_date" {
 		t.Fatalf("invalid: %v", err)
 	}
-	if _, err := st.Update(ctx, alice, "01JD3Y4C8V9M2Q7W5R6T0XZBNZ", 1, vps()); !errors.Is(err, resource.ErrNotFound) {
+	if _, err := st.Update(ctx, alice, "01JD3Y4C8V9M2Q7W5R6T0XZBNZ", 1, vps(), eff); !errors.Is(err, resource.ErrNotFound) {
 		t.Fatalf("missing: %v", err)
 	}
 	// A failing audit write rolls the change back.
 	rec.fail = errors.New("audit down")
 	f.EndDate = nil
 	f.Name = "Renamed"
-	if _, err := st.Update(ctx, alice, c.ID, 3, f); err == nil {
+	if _, err := st.Update(ctx, alice, c.ID, 3, f, eff); err == nil {
 		t.Fatal("update succeeded without its audit entry")
 	}
 	if got, _ := st.Get(ctx, c.ID); got.Name != "VPS" || got.Version != 3 {

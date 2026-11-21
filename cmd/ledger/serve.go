@@ -10,9 +10,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/health"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
@@ -162,8 +164,6 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		return 1
 	}
 	_ = ob
-	// TODO(monthly-view task): hand zone to the services that need it (monthly view, recurrence).
-	_ = zone
 
 	ln, err := net.Listen("tcp", cfg.HTTP.Listen)
 	if err != nil {
@@ -185,7 +185,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// status endpoint, never here.
 	ready.Add(health.Func("database", db.Ping))
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil))
-	registerAPI(srv, db, auditLog)
+	registerAPI(srv, db, auditLog, zone.Zone(), nil)
 	// Sign-in sessions and API tokens arrive with their own tasks; until an
 	// authenticator is installed, every non-public API route answers 401.
 	log.Warn("no API authentication method is available yet; API routes other than the API description answer 401")
@@ -279,11 +279,15 @@ type auditLog interface {
 
 // registerAPI registers the Management API with its dependencies. Changes
 // record their audit entries in the same transaction through al (ADR-0025).
-func registerAPI(srv *httpapi.Server, db *store.DB, al auditLog) {
+func registerAPI(srv *httpapi.Server, db *store.DB, al auditLog, zone calendar.Zone, now func() time.Time) {
+	cs := commitmentstore.New(db, al, now, nil)
 	httpapi.RegisterAPI(srv, httpapi.Deps{
 		Users:       users.New(db, al, nil, nil),
-		Commitments: commitmentstore.New(db, al, nil, nil),
+		Commitments: cs,
+		Occurrences: cs.Occurrences(),
 		Audit:       al,
+		Zone:        zone,
+		Now:         now,
 	})
 }
 

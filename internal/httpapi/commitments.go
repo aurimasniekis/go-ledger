@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
+	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
@@ -263,7 +265,44 @@ func decodeAmount(raw json.RawMessage, fail func(member, field, msg string)) mon
 
 func isJSONNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
 
-func registerCommitments(s *Server, st commitments.Store) {
+// today returns the current date in the reporting time zone (decision D5).
+type today func() (calendar.Date, error)
+
+func newToday(zone calendar.Zone, now func() time.Time) today {
+	if now == nil {
+		now = time.Now
+	}
+	return func() (calendar.Date, error) {
+		if zone.IsZero() {
+			return calendar.Date{}, errors.New("httpapi: no reporting time zone configured")
+		}
+		return zone.Today(now())
+	}
+}
+
+// effectiveFrom reads the optional effective_from control member of a
+// commitment patch: the date from which changed terms reach occurrences
+// (decision D6 edits option a). Without it the change applies from today in
+// the reporting zone, so overdue unpaid occurrences keep their terms.
+func effectiveFrom(patch MergePatch, todayFn today) (calendar.Date, error) {
+	t, err := todayFn()
+	if err != nil {
+		return calendar.Date{}, Internal(err)
+	}
+	if !patch.Has("effective_from") {
+		return t, nil
+	}
+	var d calendar.Date
+	if patch.IsNull("effective_from") || patch.Decode("effective_from", &d) != nil || d.IsZero() {
+		return calendar.Date{}, Validation("effective_from", "effective_from must be a date such as 2026-11-01")
+	}
+	if d.YearMonth().Compare(occurrences.HorizonLimit(t)) > 0 {
+		return calendar.Date{}, Validation("effective_from", fmt.Sprintf("effective_from must be within %d months after the current month", occurrences.MaxMonthsAhead))
+	}
+	return d, nil
+}
+
+func registerCommitments(s *Server, st commitments.Store, todayFn today) {
 	s.HandleAPI("GET "+CommitmentsPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q, err := ParseList(r, commitmentsListSpec)
 		if err != nil {
@@ -329,7 +368,7 @@ func registerCommitments(s *Server, st commitments.Store) {
 	// writable members: amount and schedule merge member by member, null
 	// clears end_date, priority or notes. The result is validated as a whole.
 	s.HandleAPI("PATCH "+CommitmentsPath+"/{id}", Requires(grantCommitmentsWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		patch, err := DecodeMergePatch(r, append([]string{"version"}, commitmentMembers...)...)
+		patch, err := DecodeMergePatch(r, append([]string{"version", "effective_from"}, commitmentMembers...)...)
 		if err != nil {
 			WriteError(w, r, err)
 			return
@@ -344,6 +383,12 @@ func registerCommitments(s *Server, st commitments.Store) {
 			bodyVersion = &v
 			delete(patch, "version")
 		}
+		effective, err := effectiveFrom(patch, todayFn)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		delete(patch, "effective_from")
 		expected, err := ExpectedVersion(r, bodyVersion)
 		if err != nil {
 			WriteError(w, r, err)
@@ -383,7 +428,7 @@ func registerCommitments(s *Server, st commitments.Store) {
 			WriteError(w, r, fieldErrors(ferrs))
 			return
 		}
-		c, err := st.Update(r.Context(), actor(r), id, expected, fields)
+		c, err := st.Update(r.Context(), actor(r), id, expected, fields, effective)
 		if err != nil {
 			var vc *resource.VersionConflictError
 			if errors.As(err, &vc) {
@@ -398,9 +443,9 @@ func registerCommitments(s *Server, st commitments.Store) {
 		SetVersion(w, c.Version)
 		WriteJSON(w, http.StatusOK, toCommitmentJSON(c))
 	}))
-	// DELETE removes a definition and needs If-Match. Occurrences and payment
-	// history do not exist yet (tasks C2, C3); once they do, a commitment
-	// they refer to answers 409 conflict instead of losing that history.
+	// DELETE removes a definition and its unpaid occurrences and needs
+	// If-Match. A commitment with paid occurrences (payment history, task C3)
+	// answers 409 conflict instead of losing that history.
 	s.HandleAPI("DELETE "+CommitmentsPath+"/{id}", Requires(grantCommitmentsWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		expected, err := ExpectedVersion(r, nil)
 		if err != nil {
