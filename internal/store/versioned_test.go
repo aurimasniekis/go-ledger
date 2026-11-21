@@ -129,18 +129,19 @@ func TestIDCheckMatchesValidID(t *testing.T) {
 // have no version column, each with the reason. A new table either follows the
 // versioned convention or is added here with its reason.
 var unversionedTables = map[string]string{
-	"schema_migrations":      "the migration runner's own ledger",
-	"settings":               "instance bookkeeping written by the server (reporting zone), not edited through the API",
-	"bank_accounts":          "provider-owned bank facts (ADR-0013), written only by the import path and never edited through the API",
-	"bank_balance_snapshots": "provider-owned bank facts (ADR-0013), append-only, never edited through the API",
-	"bank_transactions":      "provider-owned bank facts (ADR-0013), written only by the import path and never edited through the API",
-	"outbox":                 "append-only event queue owned by the server (ADR-0012); rows are never edited through the API",
-	"fx_rates":               "provider-reported currency rates (ADR-0022), written only by the rate service and never edited through the API",
-	"bank_refresh_runs":      "refresh history written only by the import engine (ADR-0020); finished runs are immutable, never edited through the API",
-	"audit_log":              "append-only audit log (ADR-0025); triggers refuse any update or delete, so entries are never edited through the API",
-	"bank_account_sync":      "per-account refresh bookkeeping written only by the import engine (ADR-0020), never edited through the API",
-	"user_passwords":         "credential hashes (ADR-0026), keyed by user and written only by password changes; never read or edited as an API object",
-	"sessions":               "server-side sign-in sessions (ADR-0026), created by sign-in and deleted when they end; never edited through the API",
+	"schema_migrations":              "the migration runner's own ledger",
+	"settings":                       "instance bookkeeping written by the server (reporting zone), not edited through the API",
+	"bank_accounts":                  "provider-owned bank facts (ADR-0013), written only by the import path and never edited through the API",
+	"bank_balance_snapshots":         "provider-owned bank facts (ADR-0013), append-only, never edited through the API",
+	"bank_transactions":              "provider-owned bank facts (ADR-0013), written only by the import path and never edited through the API",
+	"outbox":                         "append-only event queue owned by the server (ADR-0012); rows are never edited through the API",
+	"fx_rates":                       "provider-reported currency rates (ADR-0022), written only by the rate service and never edited through the API",
+	"bank_refresh_runs":              "refresh history written only by the import engine (ADR-0020); finished runs are immutable, never edited through the API",
+	"audit_log":                      "append-only audit log (ADR-0025); triggers refuse any update or delete, so entries are never edited through the API",
+	"bank_account_sync":              "per-account refresh bookkeeping written only by the import engine (ADR-0020), never edited through the API",
+	"user_passwords":                 "credential hashes (ADR-0026), keyed by user and written only by password changes; never read or edited as an API object",
+	"sessions":                       "server-side sign-in sessions (ADR-0026), created by sign-in and deleted when they end; never edited through the API",
+	"commitment_occurrence_horizons": "materialisation bookkeeping written only by the occurrence generator (ADR-0027), never edited through the API",
 }
 
 // versionProblems checks the optimistic-concurrency convention: every table

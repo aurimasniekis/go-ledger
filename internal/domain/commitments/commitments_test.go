@@ -117,6 +117,16 @@ func TestValidateFields(t *testing.T) {
 	if got := fieldsOf(bad.Validate()); got != "amount.currency" {
 		t.Errorf("fields %q", got)
 	}
+	// start_date is bounded below so a first read cannot materialise millennia.
+	bad = valid()
+	bad.StartDate = calendar.MustDate(1899, time.December, 31)
+	if got := fieldsOf(bad.Validate()); got != "start_date" {
+		t.Errorf("1899 start: %q", got)
+	}
+	bad.StartDate = MinStartDate
+	if errs := bad.Validate(); len(errs) != 0 {
+		t.Errorf("1900-01-01 start: %v", errs)
+	}
 	// The amount keeps its scale: 12.5 and 12.50 are both accepted as written.
 	bad = valid()
 	bad.Amount = money.MustParse("12.5", "JPY")
@@ -140,7 +150,7 @@ func TestChangedFieldsAndEvents(t *testing.T) {
 	actor := audit.Actor{Kind: audit.ActorUser, UserID: "01JD3Y4C8V9M2Q7W5R6T0XZBNA"}
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	c := Commitment{ID: "01JD3Y4C8V9M2Q7W5R6T0XZBNB", Fields: b}
-	for _, e := range []audit.Event{CreatedEvent(actor, c, at), UpdatedEvent(actor, c.ID, ChangedFields(a, b), at), DeletedEvent(actor, c, at)} {
+	for _, e := range []audit.Event{CreatedEvent(actor, c, at), UpdatedEvent(actor, c.ID, ChangedFields(a, b), at), DeletedEvent(actor, c, 0, at)} {
 		if e.TargetType != "commitment" || e.TargetID != c.ID || e.Actor != actor || !e.At.Equal(at) {
 			t.Errorf("event %+v", e)
 		}

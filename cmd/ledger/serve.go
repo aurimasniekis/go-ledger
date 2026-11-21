@@ -10,11 +10,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
+	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/health"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
@@ -163,8 +165,6 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		return 1
 	}
 	_ = ob
-	// TODO(monthly-view task): hand zone to the services that need it (monthly view, recurrence).
-	_ = zone
 
 	ln, err := net.Listen("tcp", cfg.HTTP.Listen)
 	if err != nil {
@@ -195,7 +195,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// (task A4) add theirs.
 	srv := httpapi.New(cfg.HTTP, log, httpapi.WithMetrics(app), httpapi.WithUI(web.Handler(ui)), httpapi.WithAuditRecorder(auditLog, nil),
 		httpapi.WithAuthenticators(httpapi.NewSessionAuth(parts.auth)), httpapi.WithRecentAuth(parts.auth.Recent))
-	registerAPI(srv, auditLog, parts)
+	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
 	// management listener (loopback by default), or on the main one when
@@ -305,13 +305,18 @@ type auditLog interface {
 }
 
 // registerAPI registers the Management API with its dependencies (see
-// buildAPI).
-func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts) {
+// buildAPI). Changes record their audit entries in the same transaction
+// through al (ADR-0025). zone is the reporting time zone; now defaults to
+// time.Now.
+func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar.Zone, now func() time.Time) {
 	httpapi.RegisterAPI(srv, httpapi.Deps{
 		Users:       parts.users,
 		Commitments: parts.commitments,
+		Occurrences: parts.commitments.Occurrences(),
 		Audit:       al,
 		Auth:        parts.auth,
+		Zone:        zone,
+		Now:         now,
 	})
 }
 
