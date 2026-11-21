@@ -1,5 +1,5 @@
 // Package fxrates persists the currency-rate cache (FX1, ADR-0022) in the
-// fx_rates table of migration 0006_fx_rates. It implements [fx.Cache].
+// fx_rates table of migration 0007_fx_rates. It implements [fx.Cache].
 package fxrates
 
 import (

@@ -879,6 +879,92 @@ func TestBookedRowLinksAnAlreadyUnreportedHold(t *testing.T) {
 	})
 }
 
+func TestLateLinkIsBoundedByDate(t *testing.T) {
+	const ref = "fake-ref-bound-0001"
+	pend := func(day int, month time.Month) banking.Transaction {
+		return banking.Transaction{EntryReference: ref, Status: banking.StatusPending, ProviderStatus: "PDNG",
+			Amount: money.MustParse("-40.00", "EUR"), TransactionDate: calendar.MustDate(2026, month, day), Description: "HOLD"}
+	}
+	book := func(day int, month time.Month) banking.Transaction {
+		return banking.Transaction{EntryReference: ref, Status: banking.StatusBooked, ProviderStatus: "BOOK",
+			Amount: money.MustParse("-47.50", "EUR"), BookingDate: calendar.MustDate(2026, month, day), Description: "PAID"}
+	}
+	for _, tc := range []struct {
+		name         string
+		hold, booked banking.Transaction
+		want         int
+	}{
+		{"booking within the bound", pend(1, time.October), book(20, time.October), 1},
+		{"hold older than the bound", pend(1, time.March), book(30, time.October), 0},
+		{"booking dated before its hold", pend(25, time.October), book(6, time.October), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEngineEnv(t, banking.ModeApp)
+			e.mustRefresh()
+			eur := e.eurAccount(e.conn)
+			window := func(txs ...banking.Transaction) banking.WindowResult {
+				t.Helper()
+				keyed, err := banking.KeyTransactions(txs)
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, err := e.facts.ImportTransactionWindow(e.ctx, eur.ID, banking.TransactionWindow{
+					From: tc.hold.TransactionDate, To: tc.hold.TransactionDate, Transactions: keyed,
+				}, e.clock.now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return res
+			}
+			window(tc.hold)
+			window() // the hold stops being reported
+			keyed, err := banking.KeyTransactions([]banking.Transaction{tc.booked})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := e.facts.ImportTransactionWindow(e.ctx, eur.ID, banking.TransactionWindow{
+				From: calendar.MustDate(2026, time.October, 6), To: calendar.MustDate(2026, time.October, 31), Transactions: keyed,
+			}, e.clock.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Superseded != tc.want {
+				t.Errorf("superseded %d, want %d", res.Superseded, tc.want)
+			}
+		})
+	}
+}
+
+func TestLateLinkNeedsExactlyOneHold(t *testing.T) {
+	const ref = "fake-ref-two-holds"
+	e := newEngineEnv(t, banking.ModeApp)
+	e.mustRefresh()
+	eur := e.eurAccount(e.conn)
+	day := calendar.MustDate(2026, time.October, 10)
+	hold := func(amount string) banking.Transaction {
+		return banking.Transaction{EntryReference: ref, Status: banking.StatusPending, ProviderStatus: "PDNG",
+			Amount: money.MustParse(amount, "EUR"), TransactionDate: day, Description: "HOLD"}
+	}
+	window := func(txs ...banking.Transaction) banking.WindowResult {
+		keyed, err := banking.KeyTransactions(txs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := e.facts.ImportTransactionWindow(e.ctx, eur.ID, banking.TransactionWindow{From: day, To: day, Transactions: keyed}, e.clock.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	window(hold("-10.00"), hold("-20.00"))
+	window()
+	res := window(banking.Transaction{EntryReference: ref, Status: banking.StatusBooked, ProviderStatus: "BOOK",
+		Amount: money.MustParse("-30.00", "EUR"), BookingDate: day, Description: "PAID"})
+	if res.Superseded != 0 {
+		t.Errorf("two holds were linked to one booking: %d", res.Superseded)
+	}
+}
+
 func TestRefreshNeedsTheConnectionsProvider(t *testing.T) {
 	e := newEngineEnv(t, banking.ModeApp)
 	other := bankingtest.New(bankingtest.Options{Mode: banking.ModeDeveloper, Now: e.clock.Now}, bankingtest.Standard())

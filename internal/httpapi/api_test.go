@@ -25,7 +25,7 @@ func apiServer(t *testing.T, opts ...Option) *Server {
 		t.Fatal(err)
 	}
 	s := New(testConfig(), log, opts...)
-	RegisterAPI(s)
+	RegisterAPI(s, Deps{})
 	return s
 }
 
@@ -174,8 +174,8 @@ func TestUnmatchedAPIRequestsGetTheEnvelope(t *testing.T) {
 	app := metrics.NewApp("test")
 	ui := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("shell")) })
 	s := apiServer(t, WithMetrics(app), WithUI(ui))
-	s.Handle("DELETE /api/v1/things/{id}", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
-	s.Handle("PATCH /api/v1/things/{id}", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	s.HandleAPI("DELETE /api/v1/things/{id}", Public(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	s.HandleAPI("PATCH /api/v1/things/{id}", Public(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
 
 	for _, c := range []struct {
 		method, path string
@@ -278,7 +278,7 @@ func TestAPIMiddlewareWrapsMatchedRoutesOnly(t *testing.T) {
 
 func TestResourceErrorsMapToEnvelope(t *testing.T) {
 	s := apiServer(t)
-	s.Handle("GET /api/v1/e/{kind}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.HandleAPI("GET /api/v1/e/{kind}", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.PathValue("kind") {
 		case "missing":
 			WriteError(w, r, fmt.Errorf("load: %w", resource.ErrNotFound))

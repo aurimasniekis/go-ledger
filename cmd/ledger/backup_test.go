@@ -178,3 +178,32 @@ func TestServeRefusesSecondInstance(t *testing.T) {
 	}
 	_ = l.Close()
 }
+
+func TestRestoreReportsStaleWALWithoutDatabase(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "ledger.db")
+	newDB(t, dbPath)
+	env := opsFor(dbPath)
+	var out, errOut bytes.Buffer
+	if code := runBackup(nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("backup exit %d: %s", code, errOut.String())
+	}
+	backup := dbPath + ".backup-20261120T120000Z.db"
+	if err := os.Remove(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbPath+"-wal", []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := runRestore([]string{backup}, &out, &errOut, env); code != 0 {
+		t.Fatalf("restore exit %d: %s", code, errOut.String())
+	}
+	if strings.Contains(out.String(), "previous database kept at") {
+		t.Fatalf("stdout claims a previous database was kept: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "stale WAL/SHM/journal moved to "+dbPath+".pre-restore-") {
+		t.Fatalf("stdout = %q, want the stale files reported", out.String())
+	}
+}

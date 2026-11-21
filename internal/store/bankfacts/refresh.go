@@ -364,8 +364,15 @@ func linkSupersededByWindow(ctx context.Context, tx *sql.Tx, id banking.AccountI
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return 0, fmt.Errorf("bankfacts: find unlinked pending transactions: %w", err)
 	}
+	perRef := map[string]int{}
+	for _, c := range cands {
+		perRef[c.ref]++
+	}
 	n := 0
 	for _, c := range cands {
+		if perRef[c.ref] != 1 {
+			continue // several holds share the reference: linking would be a guess
+		}
 		ok, err := linkSuperseded(ctx, tx, id, c.id, c.ref, seen)
 		if err != nil {
 			return 0, err
@@ -400,12 +407,19 @@ func markUnreported(ctx context.Context, tx *sql.Tx, id banking.AccountID, w ban
 	return out, nil
 }
 
+// MaxSupersedeGapDays bounds how long after a pending transaction's date its
+// booked successor may be dated: the default chunk (31 days) plus the default
+// overlap (7). A booking dated before the hold, or later than the bound, is
+// not linked even with the same entry reference.
+const MaxSupersedeGapDays = 38
+
 // linkSuperseded links a pending transaction that stopped being reported to
 // the booked transaction of the same window with the same entry reference,
-// when there is exactly one; with none or several it links nothing (an
+// when there is exactly one dated from the pending date up to
+// [MaxSupersedeGapDays] later; with none or several it links nothing (an
 // ambiguous link would be a guess).
 func linkSuperseded(ctx context.Context, tx *sql.Tx, account banking.AccountID, pending banking.TransactionID, ref, seen string) (bool, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM bank_transactions WHERE account_id = ? AND entry_reference = ? AND booking_status = 'booked' AND id <> ? AND id IN (SELECT value FROM json_each(?)) LIMIT 2", account, ref, pending, seen)
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM bank_transactions WHERE account_id = ? AND entry_reference = ? AND booking_status = 'booked' AND id <> ? AND id IN (SELECT value FROM json_each(?)) AND julianday(coalesce(booking_date, value_date, transaction_date)) - (SELECT julianday(coalesce(p.booking_date, p.value_date, p.transaction_date)) FROM bank_transactions p WHERE p.id = ?) BETWEEN 0 AND ? LIMIT 2", account, ref, pending, seen, pending, MaxSupersedeGapDays)
 	if err != nil {
 		return false, fmt.Errorf("bankfacts: find booked successor: %w", err)
 	}

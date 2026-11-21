@@ -22,6 +22,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0018: Release workflow and container image](0018-release-workflow.md)
 - [ADR-0019: Backup, restore, migration recovery and the instance lock](0019-backup-restore-and-instance-lock.md)
 - [ADR-0020: Bank import engine](0020-bank-import-engine.md)
+- [ADR-0021: Users, roles and the grant vocabulary](0021-users-roles-and-grants.md)
 - [ADR-0022: Currency-rate cache and conversion service](0022-rate-cache-and-conversion.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

@@ -1,9 +1,9 @@
 -- Fixture: a database at schema version 5 (migration ledger, settings, the
 -- transactional outbox, bank facts and bank refresh bookkeeping), holding a
 -- captured reporting zone, outbox rows, one imported bank connection with an
--- account, a balance snapshot, a booked and a pending transaction, and the
--- account's refresh state. Upgrading it must apply migration 0006. All
--- identifiers are synthetic.
+-- account, a balance snapshot, a booked and a pending transaction, and two
+-- refresh runs with the account's refresh state. Upgrading it must apply
+-- migration 0006 (users) and keep every refresh row. All identifiers are synthetic.
 -- The migration ledger. The migration runner reads and writes this table; its
 -- columns are part of the runner's contract, so change them only through a
 -- later migration together with the runner.
@@ -254,6 +254,8 @@ INSERT INTO bank_balance_snapshots (id, account_id, balance_type, provider_type,
 INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, entry_reference, booking_status, provider_status, source_amount, source_currency, booking_date, value_date, raw_description, imported_at, last_seen_at) VALUES ('01JZ0000000000000000000013', '01JZ0000000000000000000011', 'fake', 'ref:00000000000000000000000000000001#1', 'entry_reference', 'fake-ref-rent', 'booked', 'BOOK', '-800.00', 'EUR', '2026-01-02', '2026-01-02', 'RENT', '2026-01-05T03:04:05.000000000Z', '2026-01-05T03:04:05.000000000Z');
 INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, booking_status, provider_status, source_amount, source_currency, transaction_date, raw_description, imported_at, last_seen_at) VALUES ('01JZ0000000000000000000014', '01JZ0000000000000000000011', 'fake', 'fb:00000000000000000000000000000002#1', 'fallback', 'pending', 'PDNG', '-70.00', 'EUR', '2026-01-04', 'HOTEL HOLD', '2026-01-05T03:04:05.000000000Z', '2026-01-05T03:04:05.000000000Z');
 
+-- Bank refresh bookkeeping (B2, ADR-0020): the migration above, then the
+-- migration ledger row and the fixture's refresh rows.
 -- Bank refresh bookkeeping for the import engine (B2, ADR-0020). Both tables
 -- are Ledger-managed operational state, not bank facts and not user data:
 -- refresh never writes user data, and these rows are deleted only by the
@@ -324,5 +326,8 @@ CREATE TABLE bank_account_sync (
     transactions_through TEXT CHECK (transactions_through IS NULL OR (length(transactions_through) = 10 AND transactions_through GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' AND date(transactions_through) = transactions_through)),
     CHECK (last_error_kind <> '' OR last_error_code = '')
 ) STRICT;
+
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (5, 'bank_refresh', 'b59078d9fc18ced1c8e4d60893d39c251701b88d0a22d7d7edc74a58e062a041', '2026-01-06T03:04:05.000000000Z');
-INSERT INTO bank_account_sync (account_id, last_attempt_at, last_success_at, transactions_through) VALUES ('01JZ0000000000000000000011', '2026-01-06T03:04:05.000000000Z', '2026-01-06T03:04:05.000000000Z', '2026-01-05');
+INSERT INTO bank_refresh_runs (id, connection_id, started_at, finished_at, outcome, accounts_reported, accounts_succeeded, balances_added, transactions_inserted, transactions_unchanged) VALUES ('01JZ0000000000000000000020', '01JZ0000000000000000000010', '2026-01-06T04:00:00.000000000Z', '2026-01-06T04:00:05.000000000Z', 'succeeded', 1, 1, 1, 2, 0);
+INSERT INTO bank_refresh_runs (id, connection_id, started_at, finished_at, outcome, error_kind, error_code, accounts_reported, accounts_failed, transactions_rejected) VALUES ('01JZ0000000000000000000021', '01JZ0000000000000000000010', '2026-01-07T04:00:00.000000000Z', '2026-01-07T04:00:02.000000000Z', 'failed', 'rate_limited', 'fake-rate-limit', 1, 1, 0);
+INSERT INTO bank_account_sync (account_id, last_attempt_at, last_success_at, last_error_kind, last_error_code, transactions_through) VALUES ('01JZ0000000000000000000011', '2026-01-07T04:00:02.000000000Z', '2026-01-06T04:00:05.000000000Z', 'rate_limited', 'fake-rate-limit', '2026-01-05');
