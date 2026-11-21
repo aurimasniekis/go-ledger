@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { StatusBadge, type Status } from '@/components/status-badge'
 import { DisconnectedState, EmptyState, FailedState, LoadingState } from '@/components/state-panels'
@@ -38,6 +39,8 @@ export interface MonthBoardProps {
   offline?: boolean
   /** The Undo notice, placed right under the month navigation so it reads as part of the page, not of the title. */
   notice?: ReactNode
+  /** Occurrences with a bank suggestion waiting for review: their rows point to /matches (unknown when it could not load). */
+  waiting?: ReadonlySet<string>
   /** Receives the page title (h1) so focus can fall back to it. */
   titleRef?: Ref<HTMLHeadingElement>
 }
@@ -88,7 +91,7 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           ) : (
             <>
               {p.data.items.length > 0 && <Totals totals={p.data.totals} />}
-              <Occurrences items={p.data.items} onRecord={p.onRecord} offline={p.offline} formFor={p.formFor} form={p.form} />
+              <Occurrences items={p.data.items} onRecord={p.onRecord} offline={p.offline} formFor={p.formFor} form={p.form} waiting={p.waiting} />
             </>
           )}
         </>
@@ -216,7 +219,9 @@ function Occurrences({
   offline,
   formFor,
   form,
+  waiting,
 }: {
+  waiting?: ReadonlySet<string>
   items: MonthItem[]
   onRecord: (i: MonthItem) => void
   offline?: boolean
@@ -224,7 +229,7 @@ function Occurrences({
   form?: ReactNode
 }) {
   const rows = items.map((i) => (
-    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} offline={offline} form={i.id === formFor ? form : null} />
+    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} offline={offline} form={i.id === formFor ? form : null} suggestionWaiting={waiting?.has(i.id)} />
   ))
   // The row that opened the form left the list (paid elsewhere): its place stays, in the same list under the
   // same key, so the open form keeps what was typed and can say so.
@@ -273,7 +278,7 @@ function statusOf(i: MonthItem): Status {
   return i.payment.status
 }
 
-function OccurrenceRow({ item: i, onRecord, offline, form }: { item: MonthItem | null; onRecord: (i: MonthItem) => void; offline?: boolean; form?: ReactNode }) {
+function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting }: { item: MonthItem | null; onRecord: (i: MonthItem) => void; offline?: boolean; form?: ReactNode; suggestionWaiting?: boolean }) {
   // No item: the occurrence the open form came from has left the list. Same component, same key, so the form stays mounted.
   if (!i) {
     return (
@@ -328,6 +333,12 @@ function OccurrenceRow({ item: i, onRecord, offline, form }: { item: MonthItem |
           ) : (
             <>Overdue; documented grace ended <DateText value={p.grace_until} />.</>
           )}
+        </p>
+      )}
+      {suggestionWaiting && !settled && (
+        <p className="text-sm" data-testid="suggestion-waiting">
+          A bank suggestion is waiting for this occurrence.{' '}
+          <Link to="/matches" className="underline underline-offset-4">Review it before recording a payment by hand</Link>, so the same payment is not counted twice.
         </p>
       )}
       {p.timing === 'not_recorded' && (

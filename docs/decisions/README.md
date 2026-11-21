@@ -44,6 +44,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0040: Bank connection API and UI](0040-bank-connection-api-and-ui.md)
 - [ADR-0041: Enable Banking setup documentation](0041-enable-banking-setup-docs.md)
 - [ADR-0042: "Not recorded" occurrences and tolerance-confirmed payments count as paid](0042-not-recorded-and-tolerance-paid.md)
+- [ADR-0043: Matching and correction UI, and the MCP match tools](0043-matching-ui-and-mcp-match-tools.md)
 - [ADR-0044: The outlook against recorded commitments](0044-outlook.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

@@ -68,8 +68,9 @@ export const COMMITMENT_STATUSES = {
 
 // Data state: how trustworthy or complete the data behind a row is. A separate
 // axis: a data state never replaces a commitment status, and a row may show both.
-// Pending-save was added with C4; disconnected and save-failed with U1; the bank connection states with B4. Reserved for
-// later work (X4), not yet implemented: bank-pending, needs-review. See docs/design-system.md.
+// Pending-save was added with C4; disconnected and save-failed with U1; the bank connection states with B4; X4 reuses
+// pending and stale for bank-pending and needs-review. Reserved, not yet implemented: a dedicated needs-review state.
+// See docs/design-system.md.
 export const DATA_STATES = {
   stale: { label: 'Stale', Icon: History, tier: 'default', color: 'stale' },
   error: { label: 'Error', Icon: OctagonX, tier: 'strong', color: 'error' },

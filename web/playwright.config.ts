@@ -13,6 +13,8 @@ const singleProcess = process.env.PLAYWRIGHT_SINGLE_PROCESS === '1'
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
+  // Single-process Chromium dies when its first browser context closes, so a worker can run one test only. With
+  // the opt-in flag every test gets its own worker (the count is an upper bound, not a number of processes started).
   forbidOnly: !!process.env.CI,
   reporter: 'list',
   use: { baseURL: `http://127.0.0.1:${port}`, trace: 'retain-on-failure' },

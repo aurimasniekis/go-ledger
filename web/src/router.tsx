@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { AppShell } from '@/components/app-shell'
 import { DesignPage } from '@/routes-design'
 import { MonthPage } from '@/features/month/month-page'
+import { MatchesPage } from '@/features/matches/matches-page'
 import { isMonth, monthOf } from '@/features/month/month'
 import { OutlookPage } from '@/features/outlook/outlook-page'
 import { RequireSession } from '@/features/auth/require-session'
@@ -120,6 +121,7 @@ const routeTree = rootRoute.addChildren([
   appRoute.addChildren([
     indexRoute,
     monthRoute,
+    child('/matches', MatchesPage),
     connectionsRoute,
     connectionsCallbackRoute,
     outlookRoute,

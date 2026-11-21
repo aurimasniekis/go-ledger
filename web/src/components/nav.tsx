@@ -18,6 +18,9 @@ export function PrimaryNav() {
       <Link to="/month" className={link}>
         Monthly view
       </Link>
+      <Link to="/matches" className={link}>
+        Payment matches
+      </Link>
       {holds(me.data?.grants, 'connections:read') && (
         <Link to="/connections" className={link}>
           Bank connections

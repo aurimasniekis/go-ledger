@@ -31,6 +31,21 @@ afterEach(() => {
 const open = () => renderApp('/month?month=2026-11')
 
 describe('Month page', () => {
+  it('points an unpaid row with a waiting bank suggestion to the matches screen, and no other row', async () => {
+    responder = () => json(200, summary([item('a'), item('b')]))
+    calls = installApi({
+      ...signedIn(),
+      ['GET ' + MONTH]: (r) => responder(r),
+      'GET /api/v1/payment-matches': (r) => ({ json: { items: r.query.get('state') === 'suggested' ? [{ id: 'm1', occurrence_id: 'a' }] : [], next_cursor: null } }),
+    })
+    open()
+    const note = await screen.findByTestId('suggestion-waiting')
+    expect(note).toHaveTextContent('A bank suggestion is waiting for this occurrence')
+    expect(within(note).getByRole('link', { name: /Review it before recording a payment by hand/ })).toHaveAttribute('href', '/matches')
+    expect(screen.getAllByTestId('suggestion-waiting')).toHaveLength(1)
+    expect(note.closest('li')).toHaveTextContent('Rent a')
+  })
+
   it('loads the month from the summary endpoint and shows rows', async () => {
     responder = () => json(200, summary([item('a')]))
     open()

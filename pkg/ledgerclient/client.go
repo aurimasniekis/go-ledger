@@ -189,6 +189,13 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 type RawResponse struct {
 	Status int
 	Body   []byte
+	// Location is the Location header of the answer (the created resource).
+	Location string
+	// Truncated reports that the body was larger than the client keeps and
+	// is empty. The call itself completed and Status is the server's real
+	// status: a caller must not treat it as a failed call, because a write has
+	// already happened.
+	Truncated bool
 }
 
 // Raw performs one call of the API and returns the answer whatever its
@@ -249,10 +256,13 @@ func (c *Client) RawHeader(ctx context.Context, method, path string, query url.V
 	if err != nil {
 		return nil, fmt.Errorf("ledgerclient: read response: %w", err)
 	}
+	out := &RawResponse{Status: resp.StatusCode, Location: resp.Header.Get("Location")}
 	if len(data) > maxResponseBytes {
-		return nil, errors.New("ledgerclient: response is too large")
+		out.Truncated = true
+		return out, nil
 	}
-	return &RawResponse{Status: resp.StatusCode, Body: data}, nil
+	out.Body = data
+	return out, nil
 }
 
 func decodeError(status int, data []byte) *APIError {

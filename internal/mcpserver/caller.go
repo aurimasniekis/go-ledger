@@ -150,5 +150,7 @@ func (c remote) Call(ctx context.Context, _ http.Header, r Request) (Response, e
 	if err != nil {
 		return Response{}, errors.New(strings.TrimPrefix(err.Error(), "ledgerclient: "))
 	}
-	return Response{Status: resp.Status, Body: resp.Body}, nil
+	// A too-large answer is not a failure either: the call completed (a write
+	// has happened), so it is reported as truncated, never as unavailable.
+	return Response{Status: resp.Status, Body: resp.Body, Location: resp.Location, Truncated: resp.Truncated}, nil
 }

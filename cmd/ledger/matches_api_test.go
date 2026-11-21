@@ -30,10 +30,13 @@ type bankFixture struct {
 	now    time.Time
 }
 
-func importFakeBank(t *testing.T, f *apiFixture) *bankFixture {
+func importFakeBank(t *testing.T, f *apiFixture) *bankFixture { return importFakeBankInto(t, f.db) }
+
+// importFakeBankInto is importFakeBank for any test database.
+func importFakeBankInto(t *testing.T, db *store.DB) *bankFixture {
 	t.Helper()
 	ctx := context.Background()
-	b := &bankFixture{facts: bankfacts.New(f.db, nil), now: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)}
+	b := &bankFixture{facts: bankfacts.New(db, nil), now: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)}
 	clock := func() time.Time { return b.now }
 	b.p = bankingtest.New(bankingtest.Options{Mode: banking.ModeApp, Now: clock, PageSize: 3}, bankingtest.Standard())
 	b.engine = bankimport.New(b.facts, bankimport.Options{Now: clock, Sleep: func(context.Context, time.Duration) error { return nil }})

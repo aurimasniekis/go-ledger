@@ -7,6 +7,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 )
 
 // Kind classifies what a tool does, for the MCP tool annotations and for
@@ -116,6 +117,10 @@ var grantCommitmentsRead = authz.G(authz.ResourceCommitments, authz.ActionRead)
 var grantCommitmentsWrite = authz.G(authz.ResourceCommitments, authz.ActionWrite)
 
 func registry() []Tool {
+	return append(coreTools(), matchTools()...)
+}
+
+func coreTools() []Tool {
 	return []Tool{
 		{
 			Name: "list_commitments", Title: "List commitments", Method: "GET", Path: "/commitments",
@@ -158,7 +163,7 @@ func registry() []Tool {
 		{
 			Name: "create_commitment", Title: "Create a commitment", Method: "POST", Path: "/commitments",
 			Grant: grantCommitmentsWrite, Kind: KindWrite,
-			Description: "Create a recurring commitment. Its occurrences are generated from the schedule. The same validation as the HTTP API applies; field errors name the member that is wrong. Not idempotent: calling it twice creates two commitments.",
+			Description: "Create a recurring commitment. Its occurrences are generated from the schedule. The same validation as the HTTP API applies; field errors name the member that is wrong. Optionally sets match_tolerance for automatic payment matching. Not idempotent: calling it twice creates two commitments. If the answer is reported as too large to return, the commitment WAS created: find it with list_commitments instead of calling this again.",
 			Schema: object(map[string]any{
 				"name":       map[string]any{"type": "string", "minLength": 1, "description": "Display name."},
 				"kind":       enum("What kind of commitment it is.", commitments.Kinds()),
@@ -168,6 +173,8 @@ func registry() []Tool {
 				"end_date":   map[string]any{"type": []string{"string", "null"}, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "Last date it applies, YYYY-MM-DD; omit for none."},
 				"priority":   map[string]any{"type": []string{"string", "null"}, "enum": priorityNames(), "description": "essential, important or flexible; omit for none."},
 				"notes":      map[string]any{"type": []string{"string", "null"}, "description": "Free-form notes."},
+				"match_tolerance": map[string]any{"oneOf": []any{moneyArg(), map[string]any{"type": "null"}},
+					"description": "Optional, in the commitment's currency; omit or null for none. How far a booked bank payment may fall short of amount and still be confirmed automatically. A payment above amount is never confirmed automatically."},
 			}, "name", "kind", "amount", "schedule", "start_date"),
 		},
 		{
@@ -175,6 +182,95 @@ func registry() []Tool {
 			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindDestructive,
 			Description: "Delete a commitment and its unpaid future occurrences. Refused while the commitment is in use (it has payment history). Destructive and not undoable: confirm with the person first.",
 			Schema:      object(map[string]any{"id": idArg("commitment"), "version": versionArg("commitment")}, "id", "version"),
+		},
+	}
+}
+
+// matchTools are the payment-matching tools (task X4, ADR-0035, ADR-0039). The similarity score in a suggestion's
+// reason is a hint, never proof of a payment, and only a person decides: write tools must be used on the person's
+// instruction, never to settle an ambiguous suggestion on their behalf.
+func matchTools() []Tool {
+	reason := str("Why, in 1 to 500 characters; kept on the match and in its history. Optional.")
+	allow := map[string]any{"type": "boolean", "description": "Set true only when the person has said the payment really is larger than the amount due. Without it an overpayment is refused (occurrence_overpaid)."}
+	action := func(name, title, path, desc string, kind Kind, extra map[string]any, required ...string) Tool {
+		props := map[string]any{"id": idArg("payment match"), "version": versionArg("payment match"), "reason": reason}
+		for k, v := range extra {
+			props[k] = v
+		}
+		return Tool{Name: name, Title: title, Method: "POST", Path: path, Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: kind, Description: desc,
+			Schema: object(props, append([]string{"id", "version"}, required...)...)}
+	}
+	return []Tool{
+		{
+			Name: "list_payment_matches", Title: "List payment matches", Method: "GET", Path: "/payment-matches",
+			Grant: grantCommitmentsRead, Kind: KindRead,
+			Description: "List links between bank transactions and commitment occurrences, one page at a time. state=suggested is the review queue: proposals that do not count as payment until a person confirms them. Each match keeps apart the bank fact (transaction), who proposed it (origin), the decision (state, decided_by) and whether it counts as payment now (counts_as_evidence). A similarity score in a reason is a hint, never proof. The bank's description and counterparty are null (bank_text_redacted) unless the token holds banking:read.",
+			Schema: object(pagingArgs(map[string]any{
+				"state":          map[string]any{"type": "array", "items": enum("", matches.States()), "description": "Only these states."},
+				"origin":         map[string]any{"type": "array", "items": enum("", matches.Origins()), "description": "Only these origins."},
+				"occurrence_id":  map[string]any{"type": "array", "items": idArg("occurrence"), "description": "Only matches of these occurrences."},
+				"transaction_id": map[string]any{"type": "array", "items": idArg("bank transaction"), "description": "Only matches of these bank transactions."},
+			})),
+		},
+		{
+			Name: "get_payment_match", Title: "Get a payment match", Method: "GET", Path: "/payment-matches/{id}",
+			Grant: grantCommitmentsRead, Kind: KindRead,
+			Description: "Get one payment match with its history, including its version (needed for every change).",
+			Schema:      object(map[string]any{"id": idArg("payment match")}, "id"),
+		},
+		{
+			Name: "create_payment_match", Title: "Match a transaction to an occurrence", Method: "POST", Path: "/payment-matches",
+			Grant: grantCommitmentsWrite, Kind: KindWrite,
+			Description: "Record the person's own confirmed match: a booked, outgoing bank transaction pays an occurrence, in the same currency. It counts as payment at once, so use it only on the person's instruction. Refused for a pending transaction, a transaction already fully allocated, or an overpayment unless allow_overpayment is set. Not idempotent: a second call for the same pair is refused as duplicate_match.",
+			Schema: object(map[string]any{
+				"transaction_id":    idArg("bank transaction"),
+				"occurrence_id":     idArg("occurrence"),
+				"amount":            withDescription(moneyArg(), "How much of the transaction pays this occurrence, in the transaction's currency."),
+				"allow_overpayment": allow,
+				"reason":            reason,
+			}, "transaction_id", "occurrence_id", "amount"),
+		},
+		action("confirm_payment_match", "Confirm a suggested match", "/payment-matches/{id}/confirm",
+			"Confirm a suggestion: from then on it counts as payment. Only on the person's instruction; the model that suggested a match, a similarity score or an amount that looks right never justifies it. Refused while the transaction is pending, and an overpayment is refused unless allow_overpayment is set. A stale version is refused with version_conflict naming the current one.",
+			KindWrite, map[string]any{"allow_overpayment": allow}),
+		action("correct_payment_match", "Correct a match's amount", "/payment-matches/{id}/correct",
+			"Change how much of the transaction pays the occurrence, on a suggested or confirmed match. What it links, its currency and origin never change: for a different target, unmatch and create a new match. A confirmed match is checked again (over-allocation, overpayment).",
+			KindWrite, map[string]any{"amount": withDescription(moneyArg(), "The new allocated amount, in the match's currency."), "allow_overpayment": allow}, "amount"),
+		action("reject_payment_match", "Reject a suggested match", "/payment-matches/{id}/reject",
+			"Reject a suggestion: it is not the payment for that occurrence. Final: the pair is closed and automatic matching will not suggest it again. Destructive; confirm with the person first.",
+			KindDestructive, nil),
+		action("unmatch_payment_match", "Unmatch a confirmed match", "/payment-matches/{id}/unmatch",
+			"Take back a confirmed match that was wrong: the occurrence stops counting this transaction as payment. Final: the pair is closed and automatic matching will not suggest it again. Destructive; confirm with the person first.",
+			KindDestructive, nil),
+		action("reverse_payment_match", "Reverse a confirmed match", "/payment-matches/{id}/reverse",
+			"Record that a confirmed match was right but the payment was reversed (bounced, refunded, returned): the occurrence reopens and the history of both decisions is kept. Final. Destructive; confirm with the person first.",
+			KindDestructive, nil),
+		{
+			Name: "run_payment_matching", Title: "Run automatic payment matching", Method: "POST", Path: "/payment-matching/runs",
+			Grant: grantCommitmentsWrite, Kind: KindWrite,
+			Description: "Run the matching engine now (it also runs after every bank refresh). It confirms a booked payment automatically only when every safeguard passes (exact amount or within the commitment's match_tolerance, close to the due date, no ambiguity); everything else becomes a suggestion for a person. It never rejects, unmatches or reverses a decision a person made. Returns the counts; re-running with unchanged data changes nothing. Its automatic confirmations count as payment and can be undone with unmatch_payment_match.",
+			Schema:      object(map[string]any{}),
+		},
+		{
+			Name: "record_manual_payment", Title: "Record a manual payment", Method: "POST", Path: "/occurrences/{id}/manual-payments",
+			Grant: grantCommitmentsWrite, Kind: KindWrite,
+			Description: "Mark an occurrence as paid, fully or in part, by recording a payment the person made (cash, a card the bank does not report). Counts as payment at once; use it only on the person's instruction. Same currency as the occurrence. Not idempotent: calling it twice records two payments. If the answer is reported as too large to return, the payment WAS recorded: read the occurrence instead of calling this again.",
+			Schema: object(map[string]any{
+				"id":      idArg("occurrence"),
+				"amount":  withDescription(moneyArg(), "The amount paid, in the occurrence's currency."),
+				"paid_on": map[string]any{"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The date it was paid, YYYY-MM-DD."},
+				"note":    map[string]any{"type": []string{"string", "null"}, "description": "Free-form note."},
+			}, "id", "amount", "paid_on"),
+		},
+		{
+			Name: "delete_manual_payment", Title: "Delete a manual payment", Method: "DELETE", Path: "/occurrences/{id}/manual-payments/{payment_id}",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindDestructive,
+			Description: "Remove a manual payment record (the undo of record_manual_payment): the occurrence stops counting it. The record is kept as history. Destructive; confirm with the person first.",
+			Schema: object(map[string]any{
+				"id":         idArg("occurrence"),
+				"payment_id": idArg("manual payment"),
+				"version":    versionArg("manual payment"),
+			}, "id", "payment_id", "version"),
 		},
 	}
 }
