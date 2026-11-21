@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -161,10 +162,26 @@ func WithAuditRecorder(rec audit.Recorder, now func() time.Time) Option {
 		s.auditTokenWrites = func(r *http.Request, p authz.Principal, pattern string) error {
 			e := audit.Event{Action: audit.TokenWriteUsed, Actor: audit.ActorOf(p), TargetType: "route", TargetID: truncate(pattern, audit.MaxTargetID),
 				At: now().UTC(), Details: map[string]string{"method": r.Method, "route": truncate(pattern, audit.MaxValueBytes), "interactive_steps": "skipped"}}
-			return rec.Record(r.Context(), e)
+			if err := rec.Record(r.Context(), e); err != nil {
+				return err
+			}
+			// 'ledger mcp stdio' calls the API as a client, so the server
+			// cannot see the tool itself: the client names it in a header, and
+			// the entry says "requested" because the tool name is asserted by
+			// the client and the outcome is not known yet.
+			if tool := r.Header.Get(MCPToolHeader); tool != "" && mcpToolName.MatchString(tool) {
+				return rec.Record(r.Context(), audit.MCPCall(audit.ActorOf(p), tool, "requested", now().UTC()))
+			}
+			return nil
 		}
 	}
 }
+
+// MCPToolHeader is set by 'ledger mcp stdio' on a tool's API call, to name the
+// tool for the audit log. The name is asserted by the client.
+const MCPToolHeader = "X-Ledger-MCP-Tool"
+
+var mcpToolName = regexp.MustCompile(`^[a-z][a-z0-9_]{2,63}$`)
 
 func truncate(s string, n int) string {
 	if len(s) > n {

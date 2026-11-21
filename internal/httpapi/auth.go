@@ -31,6 +31,7 @@ const (
 	accessPublic
 	accessSession
 	accessSessionOrTokenCreator
+	accessToken
 )
 
 // Requires is a route that needs grant g. The principal must hold it (a write
@@ -65,6 +66,15 @@ func SessionOnly() Access { return Access{kind: accessSession} }
 // creation only (POST /auth/tokens); the token service checks the same rule
 // again from current data.
 func SessionOrTokenCreator() Access { return Access{kind: accessSessionOrTokenCreator} }
+
+// TokenOnly is a route for a caller that authenticated with an API token (the
+// MCP endpoint, ADR-0038): sessions are refused with 403, and no grant is
+// checked here. The route itself does nothing with data: every operation it
+// carries is dispatched to a Requires route, which checks its grant (and audits
+// a token write) exactly as a direct call would. It may guard POST, because the
+// operations inside decide whether state changes. A request on it is not
+// recorded as token.write_used: the audited step is the inner write.
+func TokenOnly() Access { return Access{kind: accessToken} }
 
 // WithRecentAuth returns a with the requirement that a signed-in user proved
 // their password recently (POST /auth/reauthenticate). Requests made with an
@@ -109,6 +119,8 @@ func (a Access) String() string {
 		return "session"
 	case accessSessionOrTokenCreator:
 		return "session-or-root-token"
+	case accessToken:
+		return "token"
 	}
 	return "invalid"
 }
@@ -213,6 +225,10 @@ func (s *Server) authorize(pattern string, a Access, h http.Handler) http.Handle
 			WriteError(w, r, Forbidden("this requires a signed-in session; API tokens cannot use it"))
 			return
 		}
+		if a.kind == accessToken && p.Kind != authz.PrincipalToken {
+			WriteError(w, r, Forbidden("this requires an API token; sessions cannot use it"))
+			return
+		}
 		isSession := p.Kind == authz.PrincipalUser && p.SessionID != ""
 		isCreator := p.Kind == authz.PrincipalToken && p.CanCreateTokens
 		if a.kind == accessSessionOrTokenCreator && !isSession && !isCreator {
@@ -247,7 +263,7 @@ func (s *Server) authorize(pattern string, a Access, h http.Handler) http.Handle
 			WriteError(w, r, reauthRequired())
 			return
 		}
-		if !s.auditTokenWrite(w, r, p, pattern) {
+		if a.kind != accessToken && !s.auditTokenWrite(w, r, p, pattern) {
 			return
 		}
 		h.ServeHTTP(w, r.WithContext(authz.WithPrincipal(r.Context(), p)))

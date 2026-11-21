@@ -75,6 +75,8 @@ type Deps struct {
 	Tokens *tokens.Service
 	// OIDC is single sign-on (ADR-0033); nil when it is not configured.
 	OIDC *OIDCDeps
+	// MCP serves POST /mcp (internal/mcpserver); nil means MCP is turned off.
+	MCP http.Handler
 	// Zone is the reporting time zone (D5): it decides "today" for default
 	// effective dates and the materialisation horizon. Now defaults to
 	// time.Now.
@@ -114,6 +116,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerOccurrences(s, d.Occurrences, d.Payments, d.Commitments, todayFn, d.Grace, d.Now)
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
+	registerMCP(s, d.MCP)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {

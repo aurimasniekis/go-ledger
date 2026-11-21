@@ -33,6 +33,16 @@ type Config struct {
 	Events    Events    `cfg:"events"`
 	Banking   Banking   `cfg:"banking"`
 	Auth      Auth      `cfg:"auth"`
+	MCP       MCP       `cfg:"mcp"`
+}
+
+// MCP configures the Model Context Protocol endpoint, POST /api/v1/mcp
+// (ADR-0038). The defaults are proposals, not operator decisions.
+type MCP struct {
+	Enabled           bool  `cfg:"enabled" default:"true" desc:"Serve the MCP endpoint (streamable HTTP, POST /api/v1/mcp). Every call needs an API token and is limited to what the token's grants allow, exactly as through the HTTP API. false removes the endpoint (404). The stdio mode (ledger mcp stdio) is a separate client-side command and is not affected."`
+	RequestsPerMinute int   `cfg:"requests_per_minute" default:"120" desc:"Sustained MCP requests allowed per API token per minute (1 to 100000); more are refused with 429 rate_limited and Retry-After. Counted in memory per process, reset on restart."`
+	Burst             int   `cfg:"burst" default:"30" desc:"Most MCP requests one API token may send at once before the per-minute rate applies (1 to 10000)."`
+	MaxRequestBytes   int64 `cfg:"max_request_bytes" default:"262144" desc:"Maximum size of one MCP request body in bytes (1024 to 16777216); larger bodies are refused with 413. The general http.max_body_bytes applies as well."`
 }
 
 // Auth configures password sign-in and sessions (ADR-0026). The defaults are
