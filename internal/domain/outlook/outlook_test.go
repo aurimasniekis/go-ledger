@@ -660,6 +660,49 @@ func TestPaymentsAfterTheBalanceDateAreACaveatNeverNettedIn(t *testing.T) {
 	}
 }
 
+// A balance with no reference date is dated by the day it was obtained in the
+// reporting zone, not in UTC; a payment dated on that day is not after it.
+func TestBalanceDateWithoutAReferenceUsesTheReportingZone(t *testing.T) {
+	e := newEnv(t)
+	// The newest EUR fetch (b3) was obtained 21:00 on 2026-11-01 in Honolulu (UTC-10): 07:00 UTC on 2026-11-02.
+	// The older fetch (b1) is before it, and no balance has a reference date.
+	for i, b := range e.banks.balances["a1"] {
+		e.banks.balances["a1"][i].ReferenceDate = calendar.Date{}
+		switch b.ID {
+		case "b1":
+			e.banks.balances["a1"][i].ObtainedAt = time.Date(2026, 10, 31, 7, 0, 0, 0, time.UTC)
+		case "b2", "b3":
+			e.banks.balances["a1"][i].ObtainedAt = time.Date(2026, 11, 2, 7, 0, 0, 0, time.UTC)
+		}
+	}
+	e.facts = map[string]payments.Facts{"o4": {Evidence: []payments.Evidence{
+		{Kind: payments.EvidenceManual, ID: "p4", OccurrenceID: "o4", Amount: m(t, "10.00", "EUR"), Date: d(t, "2026-11-01")},
+		{Kind: payments.EvidenceManual, ID: "p5", OccurrenceID: "o4", Amount: m(t, "25.00", "EUR"), Date: d(t, "2026-11-02")},
+	}}}
+	s := e.service(t, false)
+	s.Zone = calendar.MustLoadZone("Pacific/Honolulu")
+	o, err := s.Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eur := lineOf(t, o, "EUR")
+	if eur.BalanceAsOf != d(t, "2026-11-01") {
+		t.Errorf("balance date: got %s, want 2026-11-01 (the day it was obtained in the reporting zone)", eur.BalanceAsOf)
+	}
+	// Only the payment strictly after the balance date is a caveat.
+	if eur.PaymentsAfterBalance == nil || eur.PaymentsAfterBalance.Count != 1 || eur.PaymentsAfterBalance.Amount.String() != "25.00 EUR" {
+		t.Errorf("caveat: %+v", eur.PaymentsAfterBalance)
+	}
+	// The zero zone means UTC: the same fetch is then dated 2026-11-02.
+	o, err = e.service(t, false).Build(context.Background(), outlook.Request{Balances: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lineOf(t, o, "EUR").BalanceAsOf; got != d(t, "2026-11-02") {
+		t.Errorf("UTC default: balance date %s, want 2026-11-02", got)
+	}
+}
+
 func TestNotRecordedOccurrencesAreCountedNotSummed(t *testing.T) {
 	e := newEnv(t)
 	// o1 fell due before its commitment was created: it owes nothing here.

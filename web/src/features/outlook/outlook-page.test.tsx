@@ -2,7 +2,7 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installApi, renderApp, signedIn, type Reply, type Req } from '@/test/fake-api'
-import type { Outlook } from './types'
+import type { FreshnessState, Outlook, OutlookAccount } from './types'
 
 const PATH = '/api/v1/outlook'
 const eur = (amount: string) => ({ amount, currency: 'EUR' })
@@ -45,6 +45,11 @@ function outlook(over: Partial<Outlook> = {}): Outlook {
   }
 }
 
+/** A copy of an account with another freshness state; stale for every state but fresh, as the server reports it. */
+function withState(a: OutlookAccount, state: FreshnessState, id = a.id): OutlookAccount {
+  return { ...a, id, freshness: { ...a.freshness, state, stale: state !== 'fresh' } }
+}
+
 let calls: Req[]
 let responder: (r: Req) => Reply
 
@@ -76,7 +81,8 @@ describe('Outlook page', () => {
   it('flags the converted aggregate as incomplete and secondary, with the excluded rate', async () => {
     // GBP converts (a rate is used) while a third currency cannot: the figures are shown, with the exclusion beside them.
     const base = outlook()
-    responder = () => ({ status: 200, json: outlook({ converted: { ...base.converted!, included: [{ currency: 'EUR', rate: null, age_seconds: null, from_cache: false, refresh_failed: false },
+    const usdStale = withState({ ...base.accounts[0]!, id: 'a4', name: 'Dollars', currency: 'USD', balances: [{ ...base.accounts[0]!.balances[0]!, amount: { amount: '10.00', currency: 'USD' } }] }, 'stale')
+    responder = () => ({ status: 200, json: outlook({ accounts: [...base.accounts, usdStale], converted: { ...base.converted!, included: [{ currency: 'EUR', rate: null, age_seconds: null, from_cache: false, refresh_failed: false },
       { currency: 'USD', rate: { provider: 'frankfurter', source: 'ECB', base: 'USD', quote: 'EUR', value: '0.9000', date: '2026-11-16', retrieved_at: '2026-11-16T09:00:00Z', confirmed_through: '2026-11-16' }, age_seconds: 60, from_cache: false, refresh_failed: false }] } }) })
     renderApp('/outlook?currency=EUR')
     const conv = await screen.findByRole('region', { name: 'Converted to EUR (secondary)' })
@@ -164,6 +170,84 @@ describe('Outlook page', () => {
     expect(within(screen.getByTestId('outlook-GBP')).getByText('1 of 1 balance not refreshed in 90 min')).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Commitments counted through' })).toHaveTextContent('Everything still owed since your first commitment started (December 2025), through November 2026')
     expect(screen.getByRole('group', { name: 'Commitments counted through' }).className).not.toContain('flex-wrap')
+  })
+
+  it('words the not-fresh count by state, so an account refreshed recently but now needing reconnect is not called stale', async () => {
+    const base = outlook()
+    responder = () => ({ status: 200, json: outlook({
+      accounts: base.accounts.map((a) => (a.id === 'a2' ? withState(a, 'reconnect_required') : a)),
+    }) })
+    renderApp('/outlook')
+    const g = within(await screen.findByTestId('outlook-GBP'))
+    expect(g.getByText('1 of 1 balance not fresh: 1 needs reconnect')).toBeInTheDocument()
+    expect(g.queryByText(/not refreshed in/)).toBeNull()
+  })
+
+  it('names each state when the not-fresh balances differ, and says "not refreshed" only for stale ones', async () => {
+    const base = outlook()
+    const eur = base.accounts[0]!
+    responder = () => ({ status: 200, json: outlook({
+      currencies: base.currencies.map((l) => (l.currency === 'EUR' ? { ...l, account_count: 3, stale_account_count: 2 } : l)),
+      accounts: [...base.accounts, withState(eur, 'disconnected', 'a6'), withState(eur, 'stale', 'a7')],
+    }) })
+    renderApp('/outlook')
+    const e = within(await screen.findByTestId('outlook-EUR'))
+    expect(e.getByText('2 of 3 balances not fresh: 1 disconnected, 1 stale')).toBeInTheDocument()
+    expect(e.queryByText(/not refreshed in/)).toBeNull()
+  })
+
+  it('names a failed refresh and a never-refreshed account by their own state', async () => {
+    const base = outlook()
+    responder = () => ({ status: 200, json: outlook({
+      accounts: base.accounts.map((a) => (a.id === 'a2' ? withState(a, 'failed') : a)),
+    }) })
+    renderApp('/outlook')
+    expect(within(await screen.findByTestId('outlook-GBP')).getByText('1 of 1 balance not fresh: 1 last refresh failed')).toBeInTheDocument()
+  })
+
+  it('falls back to a plain "not fresh" when the states cannot be matched to the count', async () => {
+    const base = outlook()
+    responder = () => ({ status: 200, json: outlook({ accounts: base.accounts.map((a) => withState(a, 'fresh')) }) })
+    renderApp('/outlook')
+    const g = within(await screen.findByTestId('outlook-GBP'))
+    expect(g.getByText('1 of 1 balance not fresh')).toBeInTheDocument()
+    expect(g.queryByText(/not refreshed in/)).toBeNull()
+  })
+
+  it('does not refer to figures above when the reporting currency has no line', async () => {
+    const base = outlook()
+    responder = () => ({ status: 200, json: outlook({
+      currencies: [base.currencies[1]!],
+      accounts: base.accounts.filter((a) => a.id !== 'a1'),
+      converted: { currency: 'USD', complete: false, still_due: { amount: '7.50', currency: 'GBP' }, overdue: { amount: '7.50', currency: 'GBP' }, balance: null, balance_less_still_due: null,
+        balance_account_count: 0, stale_balance_account_count: 0, included: [], excluded: [{ currency: 'GBP', status: 'stale', reason: 'not_retrieved_recently', rate: null }] },
+    }) })
+    renderApp('/outlook?currency=USD')
+    const conv = await screen.findByRole('region', { name: 'Converted to USD (secondary)' })
+    expect(within(conv).getByText(/There are no USD amounts on this page; the others are not included:/)).toBeInTheDocument()
+    expect(conv).not.toHaveTextContent('figures above')
+    expect(within(conv).getByText(/GBP: the exchange rate was last retrieved too long ago/)).toBeInTheDocument()
+  })
+
+  it('says there is nothing to convert, without naming figures, when no amount is recorded at all', async () => {
+    responder = () => ({ status: 200, json: outlook({ currencies: [], accounts: [], converted: { currency: 'USD', complete: true, still_due: { amount: '0.00', currency: 'USD' }, overdue: { amount: '0.00', currency: 'USD' }, balance: null, balance_less_still_due: null,
+      balance_account_count: 0, stale_balance_account_count: 0, included: [], excluded: [] } }) })
+    renderApp('/outlook?currency=USD')
+    const none = await screen.findByTestId('outlook-converted-none')
+    expect(none).toHaveTextContent('There are no amounts yet, so there is nothing to convert to USD.')
+    expect(none).not.toHaveTextContent('figures above')
+  })
+
+  it('ties the payments-after-balance caveat to the balance-minus-still-due row', async () => {
+    responder = () => ({ status: 200, json: outlook() })
+    renderApp('/outlook')
+    const e = within(await screen.findByTestId('outlook-EUR'))
+    const row = e.getByText('Balance minus recorded commitments still due')
+    expect(row.tagName).toBe('DT')
+    expect(row).toContainElement(screen.getByTestId('outlook-after-EUR'))
+    expect(row).toHaveTextContent(/2 payments \(35\.00/)
+    // The GBP line has no payments after its balance, so its row has no caveat.
+    expect(within(screen.getByTestId('outlook-GBP')).queryByRole('note')).toBeNull()
   })
 
   it('points the empty state at the Connections page', async () => {

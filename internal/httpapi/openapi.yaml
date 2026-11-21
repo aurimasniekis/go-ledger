@@ -3464,12 +3464,12 @@ components:
               amount:
                 $ref: "#/components/schemas/Money"
         balance_as_of:
-          description: The date of the oldest counted balance (its reference date, or the UTC date it was obtained when the bank gave none); null when no balance is counted. The balance is never adjusted.
+          description: The date of the oldest counted balance (its reference date, or the date it was obtained in the reporting time zone when the bank gave none); null when no balance is counted. The balance is never adjusted.
           oneOf:
             - $ref: "#/components/schemas/Date"
             - type: "null"
         payments_after_balance:
-          description: Payment evidence in this currency dated after balance_as_of (manual payments and confirmed bank matches), that is recorded payments the balance may not yet reflect. A caveat only, never netted into the balance. Null when no balance is counted.
+          description: Payment evidence in this currency dated strictly after balance_as_of (manual payments and confirmed bank matches); a payment dated on balance_as_of itself is not counted. These are recorded payments the balance may not yet reflect. A caveat only, never netted into the balance. Null when no balance is counted.
           oneOf:
             - type: object
               additionalProperties: false

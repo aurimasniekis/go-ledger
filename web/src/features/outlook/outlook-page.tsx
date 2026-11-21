@@ -10,7 +10,7 @@ import { STALE_AFTER_MS } from '@/features/month/month-board'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from '@/features/month/month'
 import type { Money } from '@/features/month/types'
 import { useOutlook } from './api'
-import type { ExchangeRate, Outlook, OutlookAccount, OutlookConverted, OutlookCurrency } from './types'
+import type { ExchangeRate, FreshnessState, Outlook, OutlookAccount, OutlookConverted, OutlookCurrency } from './types'
 
 const money = (m: Money) => <Amount amount={m.amount} currency={m.currency} />
 /** The staleness threshold as people say it: "24 h", "90 min", "3 days". */
@@ -21,9 +21,43 @@ function durationLabel(seconds: number): string {
   return seconds + ' s'
 }
 
-/** "2 of 3 balances not refreshed in 24 h" (not fresh, when the server did not say). */
-function notFreshLabel(stale: number, total: number, staleAfter: number | null): string {
-  return stale + ' of ' + total + (total === 1 ? ' balance' : ' balances') + (staleAfter ? ' not refreshed in ' + durationLabel(staleAfter) : ' not fresh')
+type NotFresh = Exclude<FreshnessState, 'fresh'>
+
+/** How each state that is not fresh reads in a count: "1 needs reconnect". */
+const NOT_FRESH_WORD: Record<NotFresh, string> = {
+  stale: 'stale',
+  never_refreshed: 'never refreshed',
+  failed: 'last refresh failed',
+  reconnect_required: 'needs reconnect',
+  disconnected: 'disconnected',
+}
+
+/**
+ * The states of the counted accounts that hold a balance in one of the currencies and whose data is not fresh, one
+ * entry per balance. It mirrors the server's count (stale_account_count, stale_balance_account_count).
+ */
+function notFreshStates(accounts: OutlookAccount[], currencies: string[]): NotFresh[] {
+  const out: NotFresh[] = []
+  for (const a of accounts) {
+    if (!a.counted || !a.freshness.stale || a.freshness.state === 'fresh') continue
+    for (const b of a.balances) if (currencies.includes(b.amount.currency)) out.push(a.freshness.state)
+  }
+  return out
+}
+
+/**
+ * Says what is not fresh, by state, so that an account that was refreshed recently but is now disconnected or needs
+ * reconnecting is never described as "not refreshed in 24 h". "Not refreshed in <threshold>" is used only when every
+ * one is stale; when the states cannot be matched to the server's count, the count is said without a reason.
+ */
+function notFreshLabel(stale: number, total: number, staleAfter: number | null, states: NotFresh[]): string {
+  const head = stale + ' of ' + total + (total === 1 ? ' balance' : ' balances')
+  if (states.length !== stale) return head + ' not fresh'
+  if (staleAfter && states.every((s) => s === 'stale')) return head + ' not refreshed in ' + durationLabel(staleAfter)
+  const counts = new Map<NotFresh, number>()
+  for (const s of states) counts.set(s, (counts.get(s) ?? 0) + 1)
+  const parts = [...counts].map(([s, n]) => n + ' ' + NOT_FRESH_WORD[s])
+  return head + ' not fresh: ' + parts.join(', ')
 }
 
 const AMOUNT = 'mb-1 whitespace-nowrap font-mono sm:mb-0 sm:text-right'
@@ -117,9 +151,17 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
               No commitment is still due in this window{q.data.balances.shown ? ' and no bank balance is counted' : ''}. Add commitments, or <Link to="/connections" className="underline">connect a bank on the Connections page</Link>, to see the outlook.
             </EmptyState>
           ) : (
-            <Currencies lines={q.data.currencies} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} />
+            <Currencies lines={q.data.currencies} accounts={q.data.accounts} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} />
           )}
-          {q.data.converted && <Converted c={q.data.converted} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} />}
+          {q.data.converted && (
+            <Converted
+              c={q.data.converted}
+              accounts={q.data.accounts}
+              hasLine={q.data.currencies.some((l) => l.currency === q.data.converted?.currency)}
+              balancesShown={q.data.balances.shown}
+              staleAfter={q.data.balances.stale_after_seconds}
+            />
+          )}
           <Accounts data={q.data} />
           <p className="text-sm text-muted-foreground">{q.data.planned_outflows.note}</p>
         </>
@@ -171,7 +213,7 @@ function Freshness(p: {
   )
 }
 
-function Currencies({ lines, balancesShown, staleAfter }: { lines: OutlookCurrency[]; balancesShown: boolean; staleAfter: number | null }) {
+function Currencies({ lines, accounts, balancesShown, staleAfter }: { lines: OutlookCurrency[]; accounts: OutlookAccount[]; balancesShown: boolean; staleAfter: number | null }) {
   return (
     <section aria-labelledby="outlook-currencies" className="space-y-2">
       <h2 id="outlook-currencies" className="font-semibold">
@@ -186,7 +228,7 @@ function Currencies({ lines, balancesShown, staleAfter }: { lines: OutlookCurren
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-semibold">{l.currency}</h3>
               {l.stale_account_count > 0 && (
-                <StatusBadge status="stale" label={notFreshLabel(l.stale_account_count, l.account_count, staleAfter)} />
+                <StatusBadge status="stale" label={notFreshLabel(l.stale_account_count, l.account_count, staleAfter, notFreshStates(accounts, [l.currency]))} />
               )}
             </div>
             <dl className="mt-1 grid grid-cols-1 gap-x-4 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-0.5">
@@ -210,17 +252,20 @@ function Currencies({ lines, balancesShown, staleAfter }: { lines: OutlookCurren
               <dd className={AMOUNT}>{money(l.upcoming)}</dd>
               {l.balance_less_still_due && (
                 <>
-                  <dt>Balance minus recorded commitments still due</dt>
+                  <dt>
+                    Balance minus recorded commitments still due
+                    {l.payments_after_balance && l.payments_after_balance.count > 0 && (
+                      // The caveat sits inside the label of the row it qualifies, under the label, beside the amount.
+                      <span role="note" data-testid={'outlook-after-' + l.currency} className="block text-xs font-normal">
+                        {l.payments_after_balance.count} {l.payments_after_balance.count === 1 ? 'payment' : 'payments'} ({money(l.payments_after_balance.amount)}) recorded as paid after this balance's date{' '}
+                        {l.payments_after_balance.count === 1 ? 'is' : 'are'} already off "still due" but may not be in the bank balance yet. The balance is shown as the bank reported it.
+                      </span>
+                    )}
+                  </dt>
                   <dd className={AMOUNT}>{money(l.balance_less_still_due)}</dd>
                 </>
               )}
             </dl>
-            {l.payments_after_balance && l.payments_after_balance.count > 0 && (
-              <p role="note" data-testid={'outlook-after-' + l.currency} className="mt-1 text-xs">
-                {l.payments_after_balance.count} {l.payments_after_balance.count === 1 ? 'payment' : 'payments'} ({money(l.payments_after_balance.amount)}) recorded as paid after this balance's date{' '}
-                {l.payments_after_balance.count === 1 ? 'is' : 'are'} already off "still due" but may not be in the bank balance yet. The balance is shown as the bank reported it.
-              </p>
-            )}
             {l.overdue_months.length > 0 && (
               <div className="mt-1 text-xs">
                 <p className="text-muted-foreground">Overdue comes from (open the month to see the items):</p>
@@ -257,7 +302,7 @@ function rateText(r: ExchangeRate): string {
   return '1 ' + r.base + ' = ' + r.value + ' ' + r.quote + ', rate of ' + r.date + ' from ' + r.provider + ' (' + r.source + '), retrieved ' + utcStamp(r.retrieved_at)
 }
 
-function Converted({ c, balancesShown, staleAfter }: { c: OutlookConverted; balancesShown: boolean; staleAfter: number | null }) {
+function Converted({ c, accounts, hasLine, balancesShown, staleAfter }: { c: OutlookConverted; accounts: OutlookAccount[]; hasLine: boolean; balancesShown: boolean; staleAfter: number | null }) {
   // Nothing besides the reporting currency converts: the figures would only repeat that currency's card, and beside
   // an "incomplete" note they could be read as a total across currencies. Show the explanation alone.
   if (c.included.every((u) => !u.rate)) {
@@ -268,12 +313,21 @@ function Converted({ c, balancesShown, staleAfter }: { c: OutlookConverted; bala
         </h2>
         {c.excluded.length === 0 ? (
           <p className="text-sm text-muted-foreground" data-testid="outlook-converted-none">
-            Every amount is already in {c.currency}, so there is nothing to convert: the {c.currency} figures above are the whole picture.
+            {hasLine ? (
+              <>Every amount is already in {c.currency}, so there is nothing to convert: the {c.currency} figures above are the whole picture.</>
+            ) : (
+              <>There are no amounts yet, so there is nothing to convert to {c.currency}.</>
+            )}
           </p>
         ) : (
           <div role="note" className="space-y-2 text-sm" data-testid="outlook-converted-none">
             <p>
-              <StatusBadge status="stale" label="No converted total" /> No total in {c.currency} is shown, because no other currency could be converted. The {c.currency} figures above are the only {c.currency} amounts; the others are not included:
+              <StatusBadge status="stale" label="No converted total" />{' '}
+              {hasLine ? (
+                <>No total in {c.currency} is shown, because no other currency could be converted. The {c.currency} figures above are the only {c.currency} amounts; the others are not included:</>
+              ) : (
+                <>No total in {c.currency} is shown, because no currency could be converted to {c.currency}. There are no {c.currency} amounts on this page; the others are not included:</>
+              )}
             </p>
             <ul className="space-y-1">
               {c.excluded.map((x) => (
@@ -311,7 +365,7 @@ function Converted({ c, balancesShown, staleAfter }: { c: OutlookConverted; bala
       )}
       {balancesShown && c.stale_balance_account_count > 0 && (
         <div role="note" className="flex flex-wrap items-center gap-2 text-sm">
-          <StatusBadge status="stale" label={notFreshLabel(c.stale_balance_account_count, c.balance_account_count, staleAfter)} />
+          <StatusBadge status="stale" label={notFreshLabel(c.stale_balance_account_count, c.balance_account_count, staleAfter, notFreshStates(accounts, c.included.map((u) => u.currency)))} />
           <span>The bank balances below include data that is not fresh.</span>
         </div>
       )}

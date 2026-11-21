@@ -30,7 +30,7 @@ export interface OutlookCurrency {
   overdue_months: { month: string; count: number; amount: Money }[]
   /** The date of the oldest counted balance; null without a balance. */
   balance_as_of: string | null
-  /** Payments dated after balance_as_of: a caveat, never netted into the balance. Null without a balance. */
+  /** Payments dated strictly after balance_as_of: a caveat, never netted into the balance. Null without a balance. */
   payments_after_balance: { count: number; amount: Money } | null
 }
 
