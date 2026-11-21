@@ -164,6 +164,8 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	c.Banking.EnableBanking.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {
 		ps = append(ps, Problem{Key: "kek", Msg: "required: set " + EnvName("kek.value") + " or " + EnvName("kek.file")})
+	} else if c.KEK.Value != "" && len(c.KEK.Value) < MinKEKBytes {
+		ps = append(ps, Problem{Key: "kek", Msg: fmt.Sprintf("too short: the key-encryption key must be at least %d bytes (it is %d); use a long random value, for example 32 random bytes in base64", MinKEKBytes, len(c.KEK.Value))})
 	}
 	return ps
 }

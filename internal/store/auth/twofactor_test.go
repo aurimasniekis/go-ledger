@@ -94,13 +94,14 @@ func TestTwoFactorLifecycle(t *testing.T) {
 		t.Fatalf("re-enrolment: %+v", st)
 	}
 	dis := audit.Event{Action: audit.TwoFactorDisabled, Actor: audit.System, TargetType: "user", TargetID: alice, At: at, Details: map[string]string{"method": "totp", "by": "host"}}
-	if was, err := s.DisableTwoFactor(ctx, alice, dis); err != nil || !was {
+	evs := func(int) []audit.Event { return []audit.Event{dis} }
+	if was, _, err := s.DisableTwoFactor(ctx, alice, "", evs); err != nil || !was {
 		t.Fatalf("disable: %v %v", was, err)
 	}
 	if st, _ := s.TwoFactor(ctx, alice); st.Enabled() || st.PendingSecret != "" || st.RecoveryCodes != 0 {
 		t.Fatalf("after disable: %+v", st)
 	}
-	if was, err := s.DisableTwoFactor(ctx, alice, dis); err != nil || was {
+	if was, _, err := s.DisableTwoFactor(ctx, alice, "", evs); err != nil || was {
 		t.Fatalf("disable again: %v %v", was, err)
 	}
 	got, _ := al.List(ctx, audit.Filter{Limit: 100})

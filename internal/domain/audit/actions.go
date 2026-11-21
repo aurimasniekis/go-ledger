@@ -18,7 +18,7 @@ const (
 
 	// Second factors (A3, ADR-0030). The target is the user.
 	TwoFactorEnabled   Action = "two_factor.enabled"                    // Details: method, replaced (true, false), sessions_ended
-	TwoFactorDisabled  Action = "two_factor.disabled"                   // Details: method, by (self, administrator, host)
+	TwoFactorDisabled  Action = "two_factor.disabled"                   // Details: method, by (self, administrator, host), sessions_ended
 	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated" // Details: count
 
 	OIDCLinked   Action = "oidc.linked"   // Details: provider
@@ -78,7 +78,7 @@ var Definitions = map[Action][]Field{
 	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...)},
 
 	TwoFactorEnabled:   {f("method", "totp"), f("replaced", "true", "false"), f("sessions_ended")},
-	TwoFactorDisabled:  {f("method", "totp"), f("by", passwordChangedBy...)},
+	TwoFactorDisabled:  {f("method", "totp"), f("by", passwordChangedBy...), f("sessions_ended")},
 	RecoveryCodesReset: {f("count")},
 
 	OIDCLinked:   {f("provider")},

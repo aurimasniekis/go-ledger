@@ -151,6 +151,16 @@ func TestMissingYAMLAllowedWhenEnvSuppliesRequired(t *testing.T) {
 	wantProblem(t, problems(t, err), "kek", "required")
 }
 
+func TestShortKEKIsRefused(t *testing.T) {
+	_, err := load(t, env{"LEDGER_KEK_VALUE": "short"}, nil, nil, "")
+	wantProblem(t, problems(t, err), "kek", "too short", "at least 32 bytes")
+	if _, err := load(t, env{"LEDGER_KEK_VALUE": strings.Repeat("k", 32)}, nil, nil, ""); err != nil {
+		t.Errorf("a 32-byte KEK: %v", err)
+	}
+	_, err = load(t, env{"LEDGER_KEK_FILE": "/run/kek"}, files{"/run/kek": "short\n"}, nil, "")
+	wantProblem(t, problems(t, err), "kek", "too short")
+}
+
 func TestYAMLProblems(t *testing.T) {
 	tests := []struct {
 		name string

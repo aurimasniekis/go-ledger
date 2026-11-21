@@ -816,7 +816,7 @@ func TestAuthSetPasswordCommand(t *testing.T) {
 			case "LEDGER_DATABASE_PATH":
 				return filepath.Join(dir, "ledger.db"), true
 			case "LEDGER_KEK_VALUE":
-				return "test-kek-value-0123456789abcdef", true
+				return "test-kek-value-0123456789abcdef-0123456789", true
 			}
 			return "", false
 		},

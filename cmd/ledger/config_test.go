@@ -9,7 +9,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/config"
 )
 
-const cmdSentinel = "SENTINEL-cmd-secret-9876543210"
+const cmdSentinel = "SENTINEL-cmd-secret-9876543210-long-enough-kek"
 
 func testOpts(env, files map[string]string) config.Options {
 	return config.Options{
