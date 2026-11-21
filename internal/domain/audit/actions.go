@@ -59,6 +59,10 @@ const (
 	BankConnectionConnected        Action = "bank_connection.connected"
 	BankConnectionDisconnected     Action = "bank_connection.disconnected"
 	BankRefreshRequested           Action = "bank_connection.refresh_requested"
+	// A reconnect replaced the provider session and the old one could not be
+	// ended (it may still be live at the bank). Details: provider,
+	// application and the error kind, never a session reference.
+	BankSessionEndFailed Action = "bank_connection.session_end_failed"
 	// A person asked for an automatic matching run through the API (X2,
 	// ADR-0039). The matches it wrote are audited one by one as
 	// payment_match.* with the system as actor. The target is the run
@@ -172,7 +176,8 @@ var Definitions = map[Action][]Field{
 	BankConnectionConnected:        {f("provider"), f("application"), f("reconnect", "true", "false")},
 	BankConnectionDisconnected:     {f("provider"), f("application")},
 	BankRefreshRequested:           {f("provider"), f("application"), f("outcome", refreshOutcomes...)},
-	PaymentMatchingRun: {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
+	BankSessionEndFailed:           {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled")},
+	PaymentMatchingRun:             {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

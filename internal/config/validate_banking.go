@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -64,6 +65,9 @@ const BankRedirectPath = "/connections/callback"
 // https URL (http only on loopback) with no query or fragment, ending in
 // [BankRedirectPath].
 func (b Banking) validateRedirect(bad func(key, msg string)) {
+	if b.ConsentTTL < time.Minute || b.ConsentTTL > 24*time.Hour {
+		bad("banking.consent_ttl", "must be between 1 minute and 24 hours")
+	}
 	if b.RedirectURL == "" {
 		return
 	}

@@ -155,6 +155,13 @@ banking:
   # Environment: LEDGER_BANKING_REDIRECT_URL  Flag: --banking.redirect_url
   redirect_url: ""
 
+  # How long a started bank consent may wait for the bank's redirect. After it
+  # a completion is refused (409 consent_not_found) and a connection that
+  # never connected becomes failed (consent_expired). Between 1 minute and 24
+  # hours.
+  # Environment: LEDGER_BANKING_CONSENT_TTL  Flag: --banking.consent_ttl
+  consent_ttl: "1h"
+
   enable_banking:
 
     # Enable Banking API base URL. Sandbox and production applications use the

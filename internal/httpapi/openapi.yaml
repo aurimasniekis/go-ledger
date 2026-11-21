@@ -2564,7 +2564,10 @@ paths:
       description: |
         Called by the consent callback page with the state and code (or error)
         the bank returned. The state works once: a replay is 409
-        consent_not_found. A refused or failed first consent leaves the
+        consent_not_found; so is a state older than banking.consent_ttl, or one
+        started by another user (it stays valid for them). The state is claimed
+        before the bank is called, so of two completions only one reaches it. A
+        refused or failed first consent leaves the
         connection failed; a failed reconnect leaves a connection that needed
         reconnecting still needing it. The code is never stored or logged. Audited
         as bank_connection.connected.
@@ -4162,6 +4165,7 @@ components:
         consent_granted_at: {type: [string, "null"], format: date-time}
         consent_valid_until: {type: [string, "null"], format: date-time}
         consent_expires_soon: {type: boolean, description: An active consent ends within 14 days.}
+        previous_session_end_failed: {type: boolean, description: "Only in the answer of completeBankConnection, and only when true: the reconnect replaced a provider session that could not be ended, so it may still be live at the bank (audited as bank_connection.session_end_failed)."}
         last_error:
           oneOf:
             - $ref: "#/components/schemas/BankError"

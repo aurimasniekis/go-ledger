@@ -155,6 +155,7 @@ type Pulse struct {
 type Banking struct {
 	// RedirectURL is where a bank sends the user back after consent.
 	RedirectURL   string        `cfg:"redirect_url" desc:"Where a bank sends you back after you approve access: Ledger's external address followed by /connections/callback, for example https://ledger.example.com/connections/callback. The same URL must be registered with the banking provider. https only (plain http only on loopback). Empty means connecting a bank (and reconnecting) is switched off; refreshing and disconnecting existing connections still work."`
+	ConsentTTL    time.Duration `cfg:"consent_ttl" default:"1h" desc:"How long a started bank consent may wait for the bank's redirect. After it a completion is refused (409 consent_not_found) and a connection that never connected becomes failed (consent_expired). Between 1 minute and 24 hours."`
 	EnableBanking EnableBanking `cfg:"enable_banking"`
 	Refresh       BankRefresh   `cfg:"refresh"`
 }

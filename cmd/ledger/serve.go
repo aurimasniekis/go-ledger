@@ -226,7 +226,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	}
 	// Bank connections (B4, ADR-0040) and the background refresh (B6, ADR-0028)
 	// share one engine, so one connection is never refreshed twice at once.
-	facts := bankfacts.New(db, nil)
+	facts := bankfacts.New(db, nil).WithAudit(auditLog)
 	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(ctx context.Context, _ bankimport.Result) {
 		// A failed run is retried after the next refresh, or on request.
 		if _, err := parts.matching.Run(ctx); err != nil && ctx.Err() == nil {
@@ -239,7 +239,8 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff,
 		})
 	}
-	connSvc := &bankconnect.Service{Facts: facts, Providers: providerMap(bankProviders), Engine: engine, Audit: auditLog, RedirectURL: cfg.Banking.RedirectURL}
+	connSvc := &bankconnect.Service{Facts: facts, Providers: providerMap(bankProviders), Engine: engine, Audit: auditLog, RedirectURL: cfg.Banking.RedirectURL,
+		ConsentTTL: cfg.Banking.ConsentTTL, RefreshTimeout: refreshTimeout(cfg.HTTP.WriteTimeout)}
 	if sched != nil {
 		connSvc.Schedule = sched.Status
 	}
@@ -352,6 +353,17 @@ type auditLog interface {
 // buildAPI). Changes record their audit entries in the same transaction
 // through al (ADR-0025). zone is the reporting time zone; now defaults to
 // time.Now.
+// refreshTimeout bounds a refresh on request below the HTTP write timeout
+// (Go does not cancel a request when its response deadline passes, so an
+// unbounded run would finish with nobody to answer); 5 seconds are left to
+// write the answer.
+func refreshTimeout(write time.Duration) time.Duration {
+	if write <= 0 {
+		return 0
+	}
+	return max(write-5*time.Second, time.Second)
+}
+
 func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar.Zone, now func() time.Time) {
 	matching := parts.matching
 	if matching == nil {

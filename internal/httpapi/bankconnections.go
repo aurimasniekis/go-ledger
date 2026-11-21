@@ -146,6 +146,9 @@ type bankConnectionJSON struct {
 	Version            int64                    `json:"version"`
 	CreatedAt          time.Time                `json:"created_at"`
 	UpdatedAt          time.Time                `json:"updated_at"`
+	// PreviousSessionEndFailed is only ever set by completeBankConnection:
+	// a reconnect replaced a provider session that could not be ended.
+	PreviousSessionEndFailed bool `json:"previous_session_end_failed,omitempty"`
 }
 
 func timePtr(t time.Time) *time.Time {
@@ -256,6 +259,10 @@ func bankError(w http.ResponseWriter, err error) error {
 		return Validation("institution_id", "the provider does not offer this institution in that country")
 	case errors.Is(err, bankconnect.ErrUnknownConsent):
 		return conflict(CodeConsentUnknown, "no consent is waiting for this redirect: it was already used, replaced by a newer attempt, or never started here. Start the connection again")
+	case errors.Is(err, bankconnect.ErrConsentExpired):
+		return conflict(CodeConsentUnknown, "this consent was not completed in time and has expired. Start the connection again")
+	case errors.Is(err, bankconnect.ErrWrongInitiator):
+		return conflict(CodeConsentUnknown, "this consent was started by another user and cannot be completed here")
 	case errors.Is(err, bankconnect.ErrNoRedirect):
 		return conflict(CodeConnectUnavailable, "connecting a bank is not set up: banking.redirect_url is not configured")
 	case errors.Is(err, bankconnect.ErrPending):
@@ -483,17 +490,20 @@ func registerBankConnections(s *Server, svc *bankconnect.Service) {
 			return
 		}
 		rd.Code = banking.NewSensitive(code)
-		conn, err := svc.Complete(r.Context(), actor(r), rd)
+		done, err := svc.Complete(r.Context(), actor(r), rd)
 		if err != nil {
 			WriteError(w, r, bankError(w, err))
 			return
 		}
-		view, err := svc.View(r.Context(), conn.ID)
+		view, err := svc.View(r.Context(), done.Connection.ID)
 		if err != nil {
 			WriteError(w, r, bankError(w, err))
 			return
 		}
-		write(w, http.StatusOK, view)
+		out := toBankConnectionJSON(view)
+		out.PreviousSessionEndFailed = done.PreviousSessionEndFailed
+		SetVersion(w, view.Connection.Version)
+		WriteJSON(w, http.StatusOK, out)
 	}))
 
 	s.HandleAPI("GET "+item, Requires(grantConnectionsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

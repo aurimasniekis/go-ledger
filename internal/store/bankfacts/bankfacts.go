@@ -33,9 +33,31 @@ import (
 type Store struct {
 	db    *store.DB
 	newID func() string
+	audit store.AuditWriter
 }
 
-var _ banking.FactStore = (*Store)(nil)
+var (
+	_ banking.FactStore    = (*Store)(nil)
+	_ banking.ConsentStore = (*Store)(nil)
+)
+
+// WithAudit sets the writer the audited transitions of [banking.ConsentStore]
+// use inside their transaction. Without one they refuse an audit function.
+func (s *Store) WithAudit(w store.AuditWriter) *Store {
+	s.audit = w
+	return s
+}
+
+// auditTx writes the event of ev for c in tx; a nil ev writes nothing.
+func (s *Store) auditTx(ctx context.Context, tx *sql.Tx, ev banking.AuditFunc, c banking.Connection) error {
+	if ev == nil {
+		return nil
+	}
+	if s.audit == nil {
+		return errors.New("bankfacts: an audited change needs an audit writer (WithAudit)")
+	}
+	return s.audit.WriteAudit(ctx, tx, ev(c))
+}
 
 // New returns a Store. newID returns ULIDs; nil means resource.NewID.
 func New(db *store.DB, newID func() string) *Store {
@@ -123,6 +145,11 @@ func validProviderName(s string) bool {
 
 // CreateConnection implements [banking.FactStore].
 func (s *Store) CreateConnection(ctx context.Context, nc banking.NewConnection, at time.Time) (banking.Connection, error) {
+	return s.StartConnection(ctx, nc, "", at, nil)
+}
+
+// StartConnection implements [banking.ConsentStore].
+func (s *Store) StartConnection(ctx context.Context, nc banking.NewConnection, initiator string, at time.Time, ev banking.AuditFunc) (banking.Connection, error) {
 	caps := nc.Capabilities
 	switch {
 	case !validProviderName(caps.Provider):
@@ -144,14 +171,17 @@ func (s *Store) CreateConnection(ctx context.Context, nc banking.NewConnection, 
 	id := banking.ConnectionID(s.newID())
 	var out banking.Connection
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO bank_connections (id, provider, application, mode, environment, account_access, institution_id, institution_name, institution_country, status, consent_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		_, err := tx.ExecContext(ctx, "INSERT INTO bank_connections (id, provider, application, mode, environment, account_access, institution_id, institution_name, institution_country, status, consent_state, consent_started_at, consent_initiator, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			id, caps.Provider, caps.Application, caps.Mode, caps.Environment, caps.Mode.AccountAccess(),
-			nc.Institution.ID, nc.Institution.Name, nc.Institution.Country, banking.ConnectionPending, nc.ConsentState, ts(at), ts(at))
+			nc.Institution.ID, nc.Institution.Name, nc.Institution.Country, banking.ConnectionPending, nc.ConsentState, ts(at), initiator, ts(at), ts(at))
 		if err != nil {
 			return fmt.Errorf("bankfacts: create connection: %w", err)
 		}
 		out, err = connectionTx(ctx, tx, "id = ?", id)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.auditTx(ctx, tx, ev, out)
 	})
 	return out, err
 }
@@ -204,6 +234,28 @@ func (s *Store) Connections(ctx context.Context) ([]banking.Connection, error) {
 		return nil, fmt.Errorf("bankfacts: list connections: %w", err)
 	}
 	return out, nil
+}
+
+// updateConnectionAudited is updateConnection with an audit entry in the same
+// transaction.
+func (s *Store) updateConnectionAudited(ctx context.Context, id banking.ConnectionID, ev banking.AuditFunc, set string, args ...any) (banking.Connection, error) {
+	var out banking.Connection
+	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, "UPDATE bank_connections SET "+set+", version = version + 1 WHERE id = ?", append(args, id)...)
+		if err != nil {
+			return fmt.Errorf("bankfacts: update connection %s: %w", id, err)
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return fmt.Errorf("bankfacts: connection: %w", banking.ErrNotFound)
+		}
+		if out, err = connectionTx(ctx, tx, "id = ?", id); err != nil {
+			return err
+		}
+		return s.auditTx(ctx, tx, ev, out)
+	})
+	return out, err
 }
 
 // updateConnection is for provider-driven transitions: it bumps version
@@ -282,7 +334,18 @@ func (s *Store) BeginReconnect(ctx context.Context, id banking.ConnectionID, con
 	if err := requireTime("reconnect", at); err != nil {
 		return banking.Connection{}, err
 	}
-	return s.updateConnection(ctx, id, "consent_state = ?, updated_at = ?", consentState, ts(at))
+	return s.updateConnection(ctx, id, "consent_state = ?, consent_started_at = ?, consent_initiator = '', updated_at = ?", consentState, ts(at), ts(at))
+}
+
+// BeginReconnectBy implements [banking.ConsentStore].
+func (s *Store) BeginReconnectBy(ctx context.Context, id banking.ConnectionID, consentState, initiator string, at time.Time, ev banking.AuditFunc) (banking.Connection, error) {
+	if consentState == "" {
+		return banking.Connection{}, errors.New("bankfacts: reconnect without a consent state")
+	}
+	if err := requireTime("reconnect", at); err != nil {
+		return banking.Connection{}, err
+	}
+	return s.updateConnectionAudited(ctx, id, ev, "consent_state = ?, consent_started_at = ?, consent_initiator = ?, updated_at = ?", consentState, ts(at), initiator, ts(at))
 }
 
 // SetConnectionStatus implements [banking.FactStore]. It cannot set active

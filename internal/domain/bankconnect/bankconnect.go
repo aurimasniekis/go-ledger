@@ -45,8 +45,18 @@ var (
 	// ErrNoRedirect: no redirect URL is configured, so consent cannot start.
 	ErrNoRedirect = errors.New("bankconnect: banking.redirect_url is not configured")
 	// ErrDisconnected: the connection was disconnected on purpose.
-	ErrDisconnected = errors.New("bankconnect: the connection is disconnected")
+	ErrDisconnected = banking.ErrDisconnected
+	// ErrConsentExpired: the consent was started longer ago than
+	// Service.ConsentTTL. Start (or reconnect) again.
+	ErrConsentExpired = errors.New("bankconnect: the consent was not completed in time")
+	// ErrWrongInitiator: the consent was started by another user.
+	ErrWrongInitiator = errors.New("bankconnect: the consent was started by another user")
 )
+
+// DefaultConsentTTL is how long a started consent may wait for its redirect.
+// A proposal, not an operator decision: Enable Banking's authorisation-link
+// validity is not yet verified against its documentation (ADR-0040).
+const DefaultConsentTTL = time.Hour
 
 // Refresher runs one refresh. *bankimport.Engine implements it; it must be the
 // engine the background scheduler uses, so one connection is never refreshed
@@ -62,7 +72,7 @@ type ScheduleStatus func() []bankimport.ConnectionStatus
 // Service is the connection service. Facts, Providers, Engine and Audit are
 // required.
 type Service struct {
-	Facts banking.FactStore
+	Facts banking.ConsentStore
 	// Providers maps a provider application name to its adapter.
 	Providers map[string]banking.Provider
 	Engine    Refresher
@@ -77,6 +87,35 @@ type Service struct {
 	Now        func() time.Time
 	// NewState returns an unguessable consent state; nil uses 32 random bytes.
 	NewState func() string
+	// ConsentTTL is how long a started consent may wait; zero means
+	// DefaultConsentTTL.
+	ConsentTTL time.Duration
+	// RefreshTimeout bounds a refresh on request; it must be below the HTTP
+	// write timeout, or the response is dropped while the run goes on. Zero
+	// means no extra bound.
+	RefreshTimeout time.Duration
+}
+
+func (s *Service) consentTTL() time.Duration {
+	if s.ConsentTTL > 0 {
+		return s.ConsentTTL
+	}
+	return DefaultConsentTTL
+}
+
+// principal is who a consent is bound to: the user (a token acts as its owner).
+func principal(a audit.Actor) string { return a.UserID }
+
+// event builds the audit event of a change, written in the change's own
+// transaction.
+func (s *Service) event(a audit.Action, actor audit.Actor, at time.Time, details func(banking.Connection) map[string]string) banking.AuditFunc {
+	return func(c banking.Connection) audit.Event {
+		return audit.Event{Action: a, Actor: actor, TargetType: "bank_connection", TargetID: string(c.ID), At: at, Details: details(c)}
+	}
+}
+
+func appDetails(c banking.Connection) map[string]string {
+	return map[string]string{"provider": c.Provider, "application": c.Application}
 }
 
 func (s *Service) now() time.Time {
@@ -205,7 +244,8 @@ func (s *Service) Start(ctx context.Context, actor audit.Actor, st Start) (Start
 		psu = banking.PSUPersonal
 	}
 	now := s.now()
-	conn, err := s.Facts.CreateConnection(ctx, banking.NewConnection{Capabilities: caps, Institution: inst, ConsentState: state}, now)
+	conn, err := s.Facts.StartConnection(ctx, banking.NewConnection{Capabilities: caps, Institution: inst, ConsentState: state}, principal(actor), now,
+		s.event(audit.BankConnectionStarted, actor, now, appDetails))
 	if err != nil {
 		return Started{}, err
 	}
@@ -214,9 +254,6 @@ func (s *Service) Start(ctx context.Context, actor audit.Actor, st Start) (Start
 		if _, serr := s.Facts.SetConnectionStatus(context.WithoutCancel(ctx), conn.ID, banking.ConnectionFailed, err, s.now()); serr != nil {
 			return Started{}, errors.Join(err, serr)
 		}
-		return Started{}, err
-	}
-	if err := s.record(ctx, audit.BankConnectionStarted, actor, conn, map[string]string{"provider": conn.Provider, "application": conn.Application}); err != nil {
 		return Started{}, err
 	}
 	return Started{Connection: conn, AuthorizationURL: cs.AuthorizationURL}, nil
@@ -242,15 +279,13 @@ func (s *Service) Reconnect(ctx context.Context, actor audit.Actor, id banking.C
 		return Started{}, err
 	}
 	state := s.state()
-	conn, err = s.Facts.BeginReconnect(ctx, id, state, s.now())
+	now := s.now()
+	conn, err = s.Facts.BeginReconnectBy(ctx, id, state, principal(actor), now, s.event(audit.BankConnectionReconnectStarted, actor, now, appDetails))
 	if err != nil {
 		return Started{}, err
 	}
 	cs, err := p.StartConsent(ctx, banking.ConsentRequest{Institution: conn.Institution, ValidUntil: s.validUntil(p.Capabilities(), conn.Institution, validFor), RedirectURL: s.RedirectURL, State: state, PSUType: banking.PSUPersonal})
 	if err != nil {
-		return Started{}, err
-	}
-	if err := s.record(ctx, audit.BankConnectionReconnectStarted, actor, conn, map[string]string{"provider": conn.Provider, "application": conn.Application}); err != nil {
 		return Started{}, err
 	}
 	return Started{Connection: conn, AuthorizationURL: cs.AuthorizationURL}, nil
@@ -266,61 +301,111 @@ type Redirect struct {
 	Error string
 }
 
-// Complete finishes a consent: it finds the connection by the redirect's
-// state, asks the provider for the session and activates the connection. The
-// state works once: completing clears it, so replaying a redirect finds
-// nothing. A refused first consent leaves the connection failed; a refused
-// reconnect leaves a connection that needed reconnecting still needing it. A
-// retryable failure (the bank could not be reached) changes nothing, so the
-// same redirect can be completed again.
-func (s *Service) Complete(ctx context.Context, actor audit.Actor, r Redirect) (banking.Connection, error) {
-	conn, err := s.Facts.ConnectionByConsentState(ctx, r.State)
-	if errors.Is(err, banking.ErrNotFound) {
-		return banking.Connection{}, ErrUnknownConsent
+// Completed is a finished consent.
+type Completed struct {
+	Connection banking.Connection
+	// PreviousSessionEndFailed is set when the consent renewed a connection
+	// and the provider session it replaced could not be ended: it may still
+	// be live at the bank. The failure is audited as
+	// bank_connection.session_end_failed.
+	PreviousSessionEndFailed bool
+}
+
+// Complete finishes a consent: it claims the redirect's state, asks the
+// provider for the session and activates the connection. The claim is atomic
+// and happens before the provider is called, so of two completions of one
+// state only one reaches the provider and the other finds
+// [ErrUnknownConsent]. A state older than the consent time to live is
+// [ErrConsentExpired], and one started by another user is [ErrWrongInitiator]
+// (and stays valid for them). A refused first consent leaves the connection
+// failed; a refused reconnect leaves a connection that needed reconnecting
+// still needing it. Only a retryable failure (the bank could not be reached)
+// puts the state back, so the same redirect can be completed again. When the
+// consent renewed an active connection, the replaced provider session is
+// ended, best effort.
+func (s *Service) Complete(ctx context.Context, actor audit.Actor, r Redirect) (Completed, error) {
+	now := s.now()
+	claim, err := s.Facts.ClaimConsent(ctx, r.State, principal(actor), now, s.consentTTL())
+	switch {
+	case errors.Is(err, banking.ErrNotFound):
+		return Completed{}, ErrUnknownConsent
+	case errors.Is(err, banking.ErrConsentTimedOut):
+		return Completed{}, ErrConsentExpired
+	case errors.Is(err, banking.ErrConsentInitiator):
+		return Completed{}, ErrWrongInitiator
+	case err != nil:
+		return Completed{}, err
 	}
-	if err != nil {
-		return banking.Connection{}, err
-	}
+	conn := claim.Connection
 	p, err := s.provider(conn.Application)
 	if err != nil {
-		return banking.Connection{}, err
+		s.consentFailed(ctx, claim, err)
+		return Completed{}, err
 	}
 	sess, err := p.CompleteConsent(ctx, banking.ConsentCompletion{State: r.State, Code: r.Code, Error: r.Error})
 	if err == nil && r.Error != "" {
 		err = &banking.Error{Kind: banking.KindPermanent, Provider: conn.Provider, Op: "complete_consent", Code: r.Error, Err: errors.New("consent was not granted")}
 	}
 	if err != nil {
-		s.consentFailed(ctx, conn, err)
-		return banking.Connection{}, err
-	}
-	out, err := s.Facts.ActivateConnection(ctx, conn.ID, sess, s.now())
-	if err != nil {
-		return banking.Connection{}, err
+		s.consentFailed(ctx, claim, err)
+		return Completed{}, err
 	}
 	reconnect := "false"
 	if conn.Status != banking.ConnectionPending {
 		reconnect = "true"
 	}
-	if err := s.record(ctx, audit.BankConnectionConnected, actor, out, map[string]string{"provider": out.Provider, "application": out.Application, "reconnect": reconnect}); err != nil {
-		return out, err
+	out, err := s.Facts.ActivateClaimed(ctx, conn.ID, sess, now, s.event(audit.BankConnectionConnected, actor, now, func(c banking.Connection) map[string]string {
+		return map[string]string{"provider": c.Provider, "application": c.Application, "reconnect": reconnect}
+	}))
+	if err != nil {
+		// The provider granted a session Ledger could not record (or audit):
+		// end it so no consent stays open at the bank unseen, and do not leave
+		// the connection waiting for a code that can no longer be used.
+		bg := context.WithoutCancel(ctx)
+		_ = p.EndSession(bg, sess.Reference)
+		if !errors.Is(err, ErrDisconnected) {
+			s.consentFailed(bg, claim, &banking.Error{Kind: banking.KindPermanent, Provider: conn.Provider, Op: "activate", Code: "activation_failed", Err: errors.New("the session could not be recorded")})
+		}
+		return Completed{}, err
 	}
-	return out, nil
+	done := Completed{Connection: out}
+	if old := conn.Session; !old.IsZero() && old.Reveal() != sess.Reference.Reveal() {
+		done.PreviousSessionEndFailed = !s.endReplacedSession(ctx, actor, p, out, old)
+	}
+	return done, nil
+}
+
+// endReplacedSession ends the provider session a reconnect replaced. A
+// session the provider no longer knows counts as ended. A failure is audited
+// (kind and code only: never the reference) and reported to the caller.
+func (s *Service) endReplacedSession(ctx context.Context, actor audit.Actor, p banking.Provider, c banking.Connection, old banking.Sensitive) bool {
+	bg := context.WithoutCancel(ctx)
+	err := p.EndSession(bg, old)
+	if err == nil || errors.Is(err, banking.ErrReconnectRequired) {
+		return true
+	}
+	d := appDetails(c)
+	d["kind"] = string(banking.Classify(err))
+	_ = s.Audit.Record(bg, audit.Event{Action: audit.BankSessionEndFailed, Actor: actor, TargetType: "bank_connection", TargetID: string(c.ID), At: s.now(), Details: d})
+	return false
 }
 
 // consentFailed records a failed consent without losing the connection's
 // current data. A pending connection becomes failed; a connection that was
 // reconnect-required (or failed) keeps its status with the new error; an
-// active or disconnected one is left alone apart from its consent state
-// being spent.
-func (s *Service) consentFailed(ctx context.Context, c banking.Connection, cause error) {
+// active one is left alone. The state was claimed, so it is already spent
+// unless the failure is one a retry can fix, when it is put back.
+func (s *Service) consentFailed(ctx context.Context, claim banking.ConsentClaim, cause error) {
+	ctx = context.WithoutCancel(ctx)
 	switch banking.Classify(cause) {
 	case banking.KindRetryable, banking.KindRateLimited, banking.KindCanceled:
 		// The bank or provider could not be reached: the consent is neither
 		// granted nor refused, so the state stays valid and the redirect can be
 		// completed again (the callback page offers it).
+		_ = s.Facts.ReleaseConsent(ctx, claim)
 		return
 	}
-	ctx = context.WithoutCancel(ctx)
+	c := claim.Connection
 	switch c.Status {
 	case banking.ConnectionPending:
 		_, _ = s.Facts.SetConnectionStatus(ctx, c.ID, banking.ConnectionFailed, cause, s.now())
@@ -354,13 +439,27 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 	if err != nil {
 		return View{}, err
 	}
-	_, rerr := s.Engine.Refresh(ctx, id, p)
-	if errors.Is(rerr, banking.ErrRefreshInProgress) {
+	rctx := ctx
+	if s.RefreshTimeout > 0 {
+		var cancel context.CancelFunc
+		rctx, cancel = context.WithTimeout(ctx, s.RefreshTimeout)
+		defer cancel()
+	}
+	res, rerr := s.Engine.Refresh(rctx, id, p)
+	if res.Run.ID == "" {
+		// No run started: nothing to report about a run. The connection
+		// stopped being refreshable meanwhile, or the engine could not start.
+		switch {
+		case errors.Is(rerr, bankimport.ErrNotRefreshable):
+			return View{}, ErrNotActive
+		case rerr == nil:
+			rerr = errors.New("bankconnect: the refresh returned no run")
+		}
 		return View{}, rerr
 	}
 	outcome := "failed"
-	if runs, err := s.Facts.RefreshRuns(ctx, id, 1); err == nil && len(runs) > 0 && runs[0].Outcome.Valid() {
-		outcome = string(runs[0].Outcome)
+	if res.Run.Outcome.Valid() {
+		outcome = string(res.Run.Outcome)
 	}
 	if err := s.record(ctx, audit.BankRefreshRequested, actor, conn, map[string]string{"provider": conn.Provider, "application": conn.Application, "outcome": outcome}); err != nil {
 		return View{}, err
@@ -378,9 +477,11 @@ func (s *Service) Disconnect(ctx context.Context, actor audit.Actor, id banking.
 	if err != nil {
 		return banking.Connection{}, err
 	}
+	now := s.now()
+	ev := s.event(audit.BankConnectionDisconnected, actor, now, appDetails)
 	if conn.Version != expected {
 		// Let the store produce the version conflict the API reports.
-		return s.Facts.DisconnectConnection(ctx, id, expected, s.now())
+		return s.Facts.DisconnectWithAudit(ctx, id, expected, now, ev)
 	}
 	if !conn.Session.IsZero() && conn.Status != banking.ConnectionDisconnected {
 		if p, perr := s.provider(conn.Application); perr == nil {
@@ -389,19 +490,12 @@ func (s *Service) Disconnect(ctx context.Context, actor audit.Actor, id banking.
 			}
 		}
 	}
-	out, err := s.Facts.DisconnectConnection(ctx, id, expected, s.now())
-	if err != nil {
-		return banking.Connection{}, err
-	}
-	if err := s.record(ctx, audit.BankConnectionDisconnected, actor, out, map[string]string{"provider": out.Provider, "application": out.Application}); err != nil {
-		return out, err
-	}
-	return out, nil
+	return s.Facts.DisconnectWithAudit(ctx, id, expected, now, ev)
 }
 
 func (s *Service) record(ctx context.Context, a audit.Action, actor audit.Actor, c banking.Connection, details map[string]string) error {
 	if err := s.Audit.Record(ctx, audit.Event{Action: a, Actor: actor, TargetType: "bank_connection", TargetID: string(c.ID), At: s.now(), Details: details}); err != nil {
-		return fmt.Errorf("bankconnect: the change was made but its audit entry could not be written: %w", err)
+		return fmt.Errorf("bankconnect: the action happened but its audit entry could not be written: %w", err)
 	}
 	return nil
 }
@@ -514,8 +608,18 @@ func (s *Service) scheduleMap() map[banking.ConnectionID]bankimport.ConnectionSt
 	return m
 }
 
+// expire ends consents that waited longer than the time to live, so a
+// pending connection nobody completed shows as failed (consent_expired).
+func (s *Service) expire(ctx context.Context) error {
+	_, err := s.Facts.ExpireConsents(ctx, s.now(), s.consentTTL())
+	return err
+}
+
 // View returns one connection.
 func (s *Service) View(ctx context.Context, id banking.ConnectionID) (View, error) {
+	if err := s.expire(ctx); err != nil {
+		return View{}, err
+	}
 	c, err := s.Facts.Connection(ctx, id)
 	if err != nil {
 		return View{}, err
@@ -525,6 +629,9 @@ func (s *Service) View(ctx context.Context, id banking.ConnectionID) (View, erro
 
 // List returns every connection, oldest first.
 func (s *Service) List(ctx context.Context) ([]View, error) {
+	if err := s.expire(ctx); err != nil {
+		return nil, err
+	}
 	cs, err := s.Facts.Connections(ctx)
 	if err != nil {
 		return nil, err

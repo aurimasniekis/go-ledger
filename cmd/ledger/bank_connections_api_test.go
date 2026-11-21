@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -77,8 +78,9 @@ func TestBankConnectionJourney(t *testing.T) {
 
 	code, body, _ := c.do("GET", "/api/v1/bank-applications", "")
 	apps := asList(t, body["items"])
-	if code != 200 || len(apps) != 1 || asMap(t, apps[0])["name"] != app || asMap(t, apps[0])["account_access"] != "all" {
-		t.Fatalf("applications: %d %v", code, body)
+	if code != 200 || len(apps) != 2 || asMap(t, apps[0])["name"] != app || asMap(t, apps[0])["account_access"] != "all" ||
+		asMap(t, apps[1])["name"] != "fake-developer" || asMap(t, apps[1])["account_access"] != "linked_only" || asMap(t, apps[1])["mode"] != "developer" {
+		t.Fatalf("applications (app mode, then developer mode): %d %v", code, body)
 	}
 	if code, _, _ := c.do("GET", "/api/v1/bank-applications/"+app+"/institutions?country=fi", ""); code != 400 {
 		t.Errorf("a lower-case country: %d, want 400", code)
@@ -117,6 +119,9 @@ func TestBankConnectionJourney(t *testing.T) {
 	}
 	if code, body := complete(state); code != 409 || body["code"] != "consent_not_found" {
 		t.Errorf("a replayed redirect: %d %v", code, body)
+	}
+	if _, body, _ := c.do("GET", "/api/v1/bank-connections/"+id, ""); body["status"] != "active" {
+		t.Errorf("a replayed redirect must not change an active connection: %v", body)
 	}
 
 	// Refresh: accounts, balances and freshness appear; unknown stays unknown.
@@ -184,6 +189,12 @@ func TestBankConnectionJourney(t *testing.T) {
 	state = stateOf(t, body["authorization_url"].(string))
 	if code, body = complete(state); code != 200 || body["status"] != "active" || body["needs_reconnect"] != false {
 		t.Fatalf("complete reconnect: %d %v", code, body)
+	}
+	if _, has := body["previous_session_end_failed"]; has {
+		t.Errorf("the replaced session was ended, nothing to flag: %v", body)
+	}
+	if calls := f.bank.Calls(); !slices.Contains(calls, bankingtest.OpEndSession) {
+		t.Errorf("a successful reconnect must end the replaced provider session: %v", calls)
 	}
 
 	// A transient failure is retryable and does not ask for a reconnect.
@@ -307,5 +318,90 @@ func TestRetryableConsentCompletionKeepsTheRedirectUsable(t *testing.T) {
 	}
 	if code, body, _ = c.do("POST", "/api/v1/bank-connections/complete", complete); code != 200 || body["status"] != "active" {
 		t.Errorf("the same redirect completed again: %d %v", code, body)
+	}
+}
+
+// TestDeveloperModeApplicationThroughTheAPI: a developer-mode application
+// coexists with an app-mode one (D10). It lists only the accounts linked to it,
+// and an application with nothing linked refreshes to an empty list, not an
+// error.
+func TestDeveloperModeApplicationThroughTheAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	c := bankCall{t: t, f: f, hdr: f.signIn(t, "alice")}
+	connect := func() (string, map[string]any) {
+		_, body, _ := c.do("POST", "/api/v1/bank-connections", `{"application":"fake-developer","institution_id":"Fake Bank","country":"FI"}`)
+		conn := asMap(t, body["connection"])
+		if conn["mode"] != "developer" || conn["account_access"] != "linked_only" || conn["application"] != "fake-developer" {
+			t.Fatalf("connection mode: %v", conn)
+		}
+		state := stateOf(t, body["authorization_url"].(string))
+		code, done, _ := c.do("POST", "/api/v1/bank-connections/complete", `{"state":"`+state+`","code":"`+bankingtest.AuthorizationCode(state).Reveal()+`"}`)
+		if code != 200 || done["status"] != "active" {
+			t.Fatalf("complete: %d %v", code, done)
+		}
+		return conn["id"].(string), done
+	}
+
+	id, _ := connect()
+	code, body, _ := c.do("POST", "/api/v1/bank-connections/"+id+"/refresh", "")
+	if code != 200 || body["status"] != "active" {
+		t.Fatalf("refresh: %d %v", code, body)
+	}
+	var currencies []string
+	for _, a := range asList(t, body["accounts"]) {
+		currencies = append(currencies, asMap(t, a)["currency"].(string))
+	}
+	slices.Sort(currencies)
+	if !slices.Equal(currencies, []string{"EUR", "XXX"}) {
+		t.Errorf("a developer-mode connection must show only linked accounts (EUR, XXX), got %v", currencies)
+	}
+
+	// Nothing linked: an empty list, a succeeded run, no error.
+	f.devBank.Mutate(func(d *bankingtest.Dataset) {
+		for i := range d.Accounts {
+			d.Accounts[i].Linked = false
+		}
+	})
+	id2, _ := connect()
+	code, body, _ = c.do("POST", "/api/v1/bank-connections/"+id2+"/refresh", "")
+	if code != 200 || body["status"] != "active" || len(asList(t, body["accounts"])) != 0 {
+		t.Fatalf("refresh with nothing linked: %d %v", code, body)
+	}
+	if run := asMap(t, body["last_refresh_run"]); run["outcome"] != "succeeded" || run["error"] != nil {
+		t.Errorf("an empty list is not an error: %v", run)
+	}
+}
+
+// TestConsentCannotBeCompletedByAnotherUserOrAfterTheTTL covers F4 through the API.
+func TestConsentCannotBeCompletedByAnotherUserOrAfterTheTTL(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Now().UTC()
+	alice := bankCall{t: t, f: f, hdr: f.signIn(t, "alice")}
+	f.addAdmin(t, "heidi")
+	heidi := bankCall{t: t, f: f, hdr: f.signIn(t, "heidi")}
+	start := func() (string, string) {
+		_, body, _ := alice.do("POST", "/api/v1/bank-connections", `{"application":"fake-app","institution_id":"Fake Bank","country":"FI"}`)
+		state := stateOf(t, body["authorization_url"].(string))
+		return asMap(t, body["connection"])["id"].(string), `{"state":"` + state + `","code":"` + bankingtest.AuthorizationCode(state).Reveal() + `"}`
+	}
+	id, complete := start()
+	if code, body, _ := heidi.do("POST", "/api/v1/bank-connections/complete", complete); code != 409 || body["code"] != "consent_not_found" {
+		t.Errorf("another administrator completing: %d %v", code, body)
+	}
+	if code, body, _ := alice.do("POST", "/api/v1/bank-connections/complete", complete); code != 200 || body["status"] != "active" {
+		t.Errorf("the starter completing after the refusal: %d %v", code, body)
+	}
+
+	id2, complete2 := start()
+	f.now = f.now.Add(2 * time.Hour)
+	if code, body, _ := alice.do("POST", "/api/v1/bank-connections/complete", complete2); code != 409 || body["code"] != "consent_not_found" {
+		t.Errorf("completing after the TTL: %d %v", code, body)
+	}
+	_, body, _ := alice.do("GET", "/api/v1/bank-connections/"+id2, "")
+	if body["status"] != "failed" || asMap(t, body["last_error"])["code"] != "consent_expired" {
+		t.Errorf("an expired consent must show as failed (consent_expired): %v", body)
+	}
+	if _, body, _ := alice.do("GET", "/api/v1/bank-connections/"+id, ""); body["status"] != "active" {
+		t.Errorf("an unrelated connection changed: %v", body)
 	}
 }

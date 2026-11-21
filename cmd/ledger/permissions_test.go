@@ -118,7 +118,7 @@ var permissionMatrix = map[string]string{
 	"POST /api/v1/bank-connections/{id}/reconnect":             "connections:write",
 	"POST /api/v1/bank-connections/{id}/refresh":               "connections:write",
 	"POST /api/v1/bank-connections/{id}/disconnect":            "connections:write",
-	"POST /api/v1/payment-matching/runs":        "commitments:write",
+	"POST /api/v1/payment-matching/runs":                       "commitments:write",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
@@ -153,6 +153,23 @@ type apiFixture struct {
 	db *store.DB
 	// bank is the fake banking provider behind the bank connection routes.
 	bank *bankingtest.Provider
+	// devBank is the developer-mode application beside it.
+	devBank *bankingtest.Provider
+}
+
+// addAdmin creates one more administrator with the fixture password, for the
+// tests that need a second person.
+func (f *apiFixture) addAdmin(t *testing.T, name string) {
+	t.Helper()
+	ctx := context.Background()
+	u, err := f.users.Create(ctx, audit.System, users.New{Username: name, Role: authz.RoleAdministrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.auth.SetPassword(ctx, authz.Principal{}, true, u.ID, testPassword, auth.ByHost); err != nil {
+		t.Fatal(err)
+	}
+	f.ids[name] = u.ID
 }
 
 // signIn signs name in with the fixture password and returns the headers of
@@ -203,8 +220,11 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	// Bank connections run against the in-memory fake provider (B4): no live
 	// bank is ever contacted.
 	f.bank = bankingtest.New(bankingtest.Options{Mode: banking.ModeApp, Now: clock}, bankingtest.Standard())
-	facts := bankfacts.New(db, nil)
-	parts.banking = &bankconnect.Service{Facts: facts, Providers: map[string]banking.Provider{f.bank.Capabilities().Application: f.bank},
+	// A developer-mode application too (D10: modes coexist per connection): it
+	// sees only the accounts linked to it.
+	f.devBank = bankingtest.New(bankingtest.Options{Mode: banking.ModeDeveloper, Now: clock}, bankingtest.Standard())
+	facts := bankfacts.New(db, nil).WithAudit(al)
+	parts.banking = &bankconnect.Service{Facts: facts, Providers: map[string]banking.Provider{f.bank.Capabilities().Application: f.bank, f.devBank.Capabilities().Application: f.devBank},
 		Engine: bankimport.New(facts, bankimport.Options{Now: clock, Sleep: func(context.Context, time.Duration) error { return nil }}), Audit: al, RedirectURL: "https://ledger.example/connections/callback", Now: clock}
 	f.db = db
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
