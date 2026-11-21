@@ -45,7 +45,8 @@ export interface MonthBoardProps {
   titleRef?: Ref<HTMLHeadingElement>
 }
 
-const money = (m: { amount: string; currency: string }) => <Amount amount={m.amount} currency={m.currency} />
+/** A money amount: the amount with its currency, one line, never broken (the shared formatter for the month views). */
+export const money = (m: { amount: string; currency: string }) => <Amount amount={m.amount} currency={m.currency} />
 
 export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
   const label = monthLabel(p.month)

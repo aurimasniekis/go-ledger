@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 
 export type Politeness = 'polite' | 'assertive'
 export type Announce = (message: string, politeness?: Politeness) => void
@@ -16,12 +16,26 @@ const AnnounceContext = createContext<Announce>(() => {})
 export function AnnouncerProvider({ children }: { children: ReactNode }) {
   const [text, setText] = useState<Record<Politeness, string>>({ polite: '', assertive: '' })
   const flip = useRef({ polite: false, assertive: false })
+  // Pending "set" timers. They are cleared on unmount so none fires after the shell is gone (a timer that
+  // outlives its test environment throws outside any component).
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
+  useEffect(() => {
+    const pending = timers.current
+    return () => {
+      pending.forEach(clearTimeout)
+      pending.clear()
+    }
+  }, [])
   const announce = useCallback<Announce>((message, politeness = 'polite') => {
     // Clear first, then set, and alternate a trailing no-break space, so repeating the same message is announced again.
     flip.current[politeness] = !flip.current[politeness]
     const next = message + (flip.current[politeness] ? '\xA0' : '')
     setText((t) => ({ ...t, [politeness]: '' }))
-    setTimeout(() => setText((t) => ({ ...t, [politeness]: next })), 50)
+    const id = setTimeout(() => {
+      timers.current.delete(id)
+      setText((t) => ({ ...t, [politeness]: next }))
+    }, 50)
+    timers.current.add(id)
   }, [])
   return (
     <AnnounceContext.Provider value={announce}>

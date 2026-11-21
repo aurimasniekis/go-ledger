@@ -39,4 +39,11 @@ describe('PaymentPanel shortfall note', () => {
     panel({ status: 'paid', shortfall: '0.00' })
     expect(screen.queryByText(/Paid within the commitment's tolerance/)).toBeNull()
   })
+
+  it('groups thousands with a narrow no-break space (U+202F), as the month row does', () => {
+    panel({ status: 'paid', shortfall: '1234.50' })
+    const note = screen.getByText(/Paid within the commitment's tolerance/)
+    expect(note.textContent).toContain('1\u202F234.50')
+    expect(note.textContent).not.toContain('1 234.50') // no ordinary space
+  })
 })
