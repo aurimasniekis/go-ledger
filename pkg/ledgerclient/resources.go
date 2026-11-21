@@ -402,6 +402,14 @@ func (c *Client) UnmatchPaymentMatch(ctx context.Context, id string, version int
 	return c.matchAction(ctx, opUnmatchMatch, id, version, MatchDecision{Reason: reason})
 }
 
+// UnconfirmPaymentMatch takes back a confirmation: the match is a suggestion
+// again. Only the person who confirmed it may, and only inside the server's
+// undo window (ADR-0045); otherwise the server answers match_undo_not_decider
+// or match_undo_window_closed.
+func (c *Client) UnconfirmPaymentMatch(ctx context.Context, id string, version int64, reason *string) (*PaymentMatch, error) {
+	return c.matchAction(ctx, opUnconfirmMatch, id, version, MatchDecision{Reason: reason})
+}
+
 // CorrectPaymentMatch changes the allocated amount of a suggested or
 // confirmed match.
 func (c *Client) CorrectPaymentMatch(ctx context.Context, id string, version int64, in MatchCorrection) (*PaymentMatch, error) {

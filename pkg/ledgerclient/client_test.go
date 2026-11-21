@@ -135,6 +135,9 @@ func TestPaymentMatchRequests(t *testing.T) {
 	if _, err := c.RejectPaymentMatch(ctx, "m1", 5, nil); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := c.UnconfirmPaymentMatch(ctx, "m1", 6, &why); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := c.RunPaymentMatching(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +149,7 @@ func TestPaymentMatchRequests(t *testing.T) {
 		`POST /api/v1/payment-matches/m1/reverse  if-match="3" {"reason":"returned"}`,
 		`POST /api/v1/payment-matches/m1/unmatch  if-match="4" {}`,
 		`POST /api/v1/payment-matches/m1/reject  if-match="5" {}`,
+		`POST /api/v1/payment-matches/m1/unconfirm  if-match="6" {"reason":"returned"}`,
 		`POST /api/v1/payment-matching/runs  if-match= {}`,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {

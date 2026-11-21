@@ -50,6 +50,9 @@ func Validate(e Event) error {
 	default:
 		return invalid("unknown actor kind %q", string(e.Actor.Kind))
 	}
+	if e.Actor.Via != "" && !viaFits(e.Actor.Via, e.Actor.Kind) {
+		return invalid("provenance %q does not fit a %s actor", string(e.Actor.Via), e.Actor.Kind)
+	}
 	if e.At.IsZero() {
 		return invalid("the event has no time")
 	}

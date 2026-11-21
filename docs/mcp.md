@@ -51,6 +51,10 @@ and the engine of [ADR-0039](decisions/0039-automatic-payment-matching.md). The 
   `reject_payment_match`, `unmatch_payment_match`, `reverse_payment_match` and `delete_manual_payment` are marked
   destructive: reject, unmatch and reverse are final (the pair stays closed and is not suggested again), so confirm with
   the person first.
+- `unconfirm_payment_match` takes back a confirmation right after it was made: the match is a suggestion again. Only the
+  person who confirmed it may (a token counts as its owner), and only while nothing changed since
+  ([ADR-0045](decisions/0045-unconfirm-and-match-provenance.md)); otherwise `match_undo_not_decider` or
+  `match_undo_window_closed`, and unmatch is the way back. Every match change made through MCP records `via: "mcp"`.
 - Every change to a match takes its `version`; a stale one is a `version_conflict` naming the current version. Read the
   match again and decide again; never resend the old change blindly.
 - An overpayment is refused (`occurrence_overpaid`) unless the person has said the payment really is larger and the call
@@ -828,6 +832,45 @@ Take back a confirmed match that was wrong: the occurrence stops counting this t
 
 - Kind: destructive
 - Operation: `POST /api/v1/payment-matches/{id}/unmatch`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The payment match identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; kept on the match and in its history. Optional.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the payment match this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `unconfirm_payment_match`
+
+Take back a confirmation right after it was made, on the person's instruction: the match becomes a suggestion again, exactly as before, and stops counting as payment. Only the person who confirmed it may (this token counts as its owner); otherwise match_undo_not_decider. Only while the confirmation is still the match's latest change, the person's latest match decision, and nothing else changed the occurrence since; otherwise match_undo_window_closed, and unmatch_payment_match is the way to take it back. A match created confirmed cannot be unconfirmed (invalid_match_state).
+
+- Kind: write
+- Operation: `POST /api/v1/payment-matches/{id}/unconfirm`
 - Grant: `commitments:write`
 
 <details><summary>Input schema</summary>

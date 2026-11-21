@@ -106,6 +106,9 @@ const (
 	ActionUnmatched Action = "unmatched" // a confirmation undone: the transaction does not pay the occurrence
 	ActionCorrected Action = "corrected" // the allocated amount changed
 	ActionReversed  Action = "reversed"  // the payment was reversed
+	// ActionUnconfirmed is a confirmation taken back by the person who made
+	// it, inside the undo window (ADR-0045): the match is a suggestion again.
+	ActionUnconfirmed Action = "unconfirmed"
 )
 
 // MaxReason is the longest reason, in characters.
@@ -143,14 +146,20 @@ func (t Transaction) Countable() bool {
 // allocated from it.
 func (t Transaction) Magnitude() money.Money { return t.Amount.Abs() }
 
-// Decider is who made a decision about a match.
+// Decider is who made a decision about a match, and how it reached the
+// server (decision D42 3a).
 type Decider struct {
 	Kind   audit.ActorKind
 	UserID string // empty for the system
+	// Via is session, token, mcp or system; empty for changes recorded
+	// before provenance was (migration 0023).
+	Via audit.Via
 }
 
 // DeciderOf returns the decider for an audit actor.
-func DeciderOf(a audit.Actor) Decider { return Decider{Kind: a.Kind, UserID: a.UserID} }
+func DeciderOf(a audit.Actor) Decider {
+	return Decider{Kind: a.Kind, UserID: a.UserID, Via: a.Channel()}
+}
 
 // Event is one entry of a match's history: the change, the state and amount
 // after it, who made it and the reason given.
@@ -323,6 +332,17 @@ var (
 	// model output is only ever a suggestion, which a person confirms
 	// (decision D9).
 	ErrAutoModel = errors.New("automation cannot confirm a model suggestion; only a user or a token can")
+	// ErrUndoNotDecider refuses an unconfirm by anyone but the person who
+	// confirmed the match (a token acts as its owner, decision D42 3a), and
+	// any unconfirm of a confirmation automation made.
+	ErrUndoNotDecider = errors.New("only the person who confirmed this match can unconfirm it; unmatch it instead")
+	// ErrUndoWindow refuses an unconfirm outside the undo window (ADR-0045):
+	// the confirmation is no longer the match's latest change or the person's
+	// latest match decision, or something else changed the occurrence since.
+	ErrUndoWindow = errors.New("the undo window for this confirmation has closed: something changed since; unmatch it instead")
+	// ErrNotUnconfirmable refuses an unconfirm of a match that was never a
+	// suggestion: a match a person created confirmed is undone by unmatching.
+	ErrNotUnconfirmable = fmt.Errorf("%w: only a confirmed suggestion can go back to suggested; unmatch a match created confirmed", ErrTransition)
 	// ErrDuplicate refuses a second open (suggested or confirmed) match of
 	// the same transaction and occurrence.
 	ErrDuplicate = errors.New("the transaction and the occurrence already have an open match")
@@ -433,26 +453,30 @@ const TargetType = "payment_match"
 
 // auditActions maps history actions to audit actions.
 var auditActions = map[Action]audit.Action{
-	ActionSuggested: audit.PaymentMatchSuggested,
-	ActionConfirmed: audit.PaymentMatchConfirmed,
-	ActionRejected:  audit.PaymentMatchRejected,
-	ActionUnmatched: audit.PaymentMatchUnmatched,
-	ActionCorrected: audit.PaymentMatchCorrected,
-	ActionReversed:  audit.PaymentMatchReversed,
+	ActionSuggested:   audit.PaymentMatchSuggested,
+	ActionConfirmed:   audit.PaymentMatchConfirmed,
+	ActionRejected:    audit.PaymentMatchRejected,
+	ActionUnmatched:   audit.PaymentMatchUnmatched,
+	ActionCorrected:   audit.PaymentMatchCorrected,
+	ActionReversed:    audit.PaymentMatchReversed,
+	ActionUnconfirmed: audit.PaymentMatchUnconfirmed,
 }
 
 // AuditEvent is the audit entry for a change of m (after the change). It
 // names the occurrence, the transaction, the origin, the state before and the
-// currency; never the amount, the reason or anything from the bank payload
-// (ADR-0025).
+// currency and how the change came (via); never the amount, the reason or
+// anything from the bank payload (ADR-0025).
 func AuditEvent(a Action, actor audit.Actor, m Match, from State, at time.Time) audit.Event {
 	prev := string(from)
 	if prev == "" {
 		prev = "none"
 	}
-	return audit.Event{Action: auditActions[a], Actor: actor, TargetType: TargetType, TargetID: m.ID, At: at,
-		Details: map[string]string{"occurrence_id": m.OccurrenceID, "transaction_id": string(m.TransactionID), "origin": string(m.Origin),
-			"from": prev, "currency": m.Amount.Currency().Code()}}
+	d := map[string]string{"occurrence_id": m.OccurrenceID, "transaction_id": string(m.TransactionID), "origin": string(m.Origin),
+		"from": prev, "currency": m.Amount.Currency().Code()}
+	if v := actor.Channel(); v != "" {
+		d["via"] = string(v)
+	}
+	return audit.Event{Action: auditActions[a], Actor: actor, TargetType: TargetType, TargetID: m.ID, At: at, Details: d}
 }
 
 // ListFilter selects matches. Empty fields select everything; After is the
@@ -495,4 +519,8 @@ type Store interface {
 	Correct(ctx context.Context, actor audit.Actor, id string, expected int64, amount money.Money, allowOverpayment bool, reason *string) (Change, error)
 	// Reverse marks a confirmed match reversed; the occurrence reopens.
 	Reverse(ctx context.Context, actor audit.Actor, id string, expected int64, reason *string) (Change, error)
+	// Unconfirm takes back a confirmation: the match is a suggestion again,
+	// as it was before it was confirmed (decision D42 1a, ADR-0045). Only the
+	// person who confirmed it may, and only inside the undo window.
+	Unconfirm(ctx context.Context, actor audit.Actor, id string, expected int64, reason *string) (Change, error)
 }

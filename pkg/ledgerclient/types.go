@@ -233,6 +233,9 @@ type StatusOverride struct {
 type MatchActor struct {
 	Kind   string  `json:"kind"`
 	UserID *string `json:"user_id"`
+	// Via is how the change came: session, token, mcp or system; nil for
+	// changes recorded before provenance was.
+	Via *string `json:"via"`
 }
 
 // MatchedBankTransaction is the bank fact a payment match refers to, as the
