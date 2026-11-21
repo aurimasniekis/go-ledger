@@ -41,5 +41,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0037: App shell and shared state primitives](0037-app-shell-and-state-primitives.md)
 - [ADR-0038: MCP server core](0038-mcp-server-core.md)
 - [ADR-0039: Automatic payment matching engine](0039-automatic-payment-matching.md)
+- [ADR-0042: "Not recorded" occurrences and tolerance-confirmed payments count as paid](0042-not-recorded-and-tolerance-paid.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

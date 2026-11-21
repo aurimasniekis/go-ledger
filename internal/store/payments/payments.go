@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
@@ -112,6 +113,9 @@ func factsTx(ctx context.Context, tx *sql.Tx, ids []string) (map[string]payments
 		if err := overridesTx(ctx, tx, chunk, args, out); err != nil {
 			return nil, err
 		}
+		if err := commitmentTx(ctx, tx, chunk, args, out); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -140,6 +144,62 @@ func evidenceTx(ctx context.Context, tx *sql.Tx, chunk []string, args []any, out
 		f := out[e.OccurrenceID]
 		f.Evidence = append(f.Evidence, e)
 		out[e.OccurrenceID] = f
+	}
+	return rows.Err()
+}
+
+// reportingZone is the zone commitment creation dates are read in; UTC until
+// the application sets it with [SetReportingZone].
+var reportingZone atomic.Pointer[calendar.Zone]
+
+// SetReportingZone sets the reporting zone in which the creation instant of a
+// commitment becomes the date before which unpaid occurrences are "not
+// recorded" (D38 1a, ADR-0042). Call it once at start-up.
+func SetReportingZone(z calendar.Zone) {
+	if z.IsZero() {
+		reportingZone.Store(nil)
+		return
+	}
+	reportingZone.Store(&z)
+}
+
+func zoneOrUTC() calendar.Zone {
+	if z := reportingZone.Load(); z != nil {
+		return *z
+	}
+	return calendar.MustLoadZone("UTC")
+}
+
+// commitmentTx adds the commitment's creation date and match tolerance to the
+// facts of every listed occurrence.
+func commitmentTx(ctx context.Context, tx *sql.Tx, chunk []string, args []any, out map[string]payments.Facts) error {
+	rows, err := tx.QueryContext(ctx, "SELECT o.id, c.created_at, c.match_tolerance_amount, c.match_tolerance_currency FROM commitment_occurrences o"+
+		" JOIN commitments c ON c.id = o.commitment_id WHERE o.id IN ("+placeholders(len(chunk))+")", args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	zone := zoneOrUTC()
+	for rows.Next() {
+		var id string
+		var created store.Timestamp
+		var amt sql.Null[sqlvalue.Amount]
+		var cur sql.Null[sqlvalue.Currency]
+		if err := rows.Scan(&id, &created, &amt, &cur); err != nil {
+			return err
+		}
+		f := out[id]
+		if f.CommitmentCreatedOn, err = zone.DateOf(created.Time); err != nil {
+			return err
+		}
+		if amt.Valid {
+			m, err := sqlvalue.Money(amt.V, cur.V)
+			if err != nil {
+				return err
+			}
+			f.MatchTolerance = &m
+		}
+		out[id] = f
 	}
 	return rows.Err()
 }

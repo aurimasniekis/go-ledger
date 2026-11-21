@@ -7,7 +7,7 @@ export interface Money {
   currency: string
 }
 
-export type PaymentStatus = 'paid' | 'partially_paid' | 'upcoming' | 'due' | 'overdue' | 'cancelled'
+export type PaymentStatus = 'paid' | 'partially_paid' | 'upcoming' | 'due' | 'overdue' | 'not_recorded' | 'cancelled'
 
 export interface PaymentState {
   status: PaymentStatus
@@ -16,6 +16,8 @@ export interface PaymentState {
   paid_amount: Money
   outstanding_amount: Money
   overpaid_amount: Money
+  /** How far a bank payment confirmed within the commitment's match tolerance fell short (D39 5a); zero otherwise. */
+  shortfall_amount: Money
   unconverted_currencies: string[]
   evidence_count: number
   /** Manual payment records and confirmed bank matches; they add up to evidence_count. */

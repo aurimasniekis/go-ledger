@@ -28,6 +28,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
+	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
 	"github.com/aurimasniekis/go-ledger/internal/web"
 )
 
@@ -342,6 +343,7 @@ type auditLog interface {
 // through al (ADR-0025). zone is the reporting time zone; now defaults to
 // time.Now.
 func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar.Zone, now func() time.Time) {
+	paymentstore.SetReportingZone(zone) // commitment creation dates (D38 1a)
 	matching := parts.matching
 	if matching == nil {
 		matching = newMatcher(parts.db, al, parts.matches, zone, now, nil)

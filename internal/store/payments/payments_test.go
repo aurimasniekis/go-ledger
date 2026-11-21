@@ -58,7 +58,10 @@ func (r *recorder) actions(keys ...string) []string {
 
 var alice = audit.Actor{Kind: audit.ActorUser, UserID: "01JD3Y4C8V9M2Q7W5R6T0XZBNA"}
 
-var clock = time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)
+// clock is when the fixtures' commitments are created: before the occurrences
+// the tests read, so none of them is "not recorded" (D38 1a) unless a test
+// says so.
+var clock = time.Date(2026, 2, 15, 10, 0, 0, 0, time.UTC)
 
 func d(s string) calendar.Date {
 	v, err := calendar.ParseDate(s)
@@ -565,5 +568,25 @@ func TestManualPaymentTriggers(t *testing.T) {
 		if err == nil {
 			t.Errorf("%s: accepted", c.name)
 		}
+	}
+}
+
+// TestNotRecordedFollowsCommitmentCreation pins D38 1a through the store: the
+// commitment is created on 2026-02-15 (the fixture clock), so the 10 February
+// occurrence is not recorded and the 10 March one is overdue; the first can
+// still be paid.
+func TestNotRecordedFollowsCommitmentCreation(t *testing.T) {
+	f := newFixture(t)
+	c, march := f.commitment(t, "50.00", "2026-03")
+	feb := f.occurrence(t, c.ID, "2026-02")
+	if st := f.state(t, feb); st.Status != payments.StatusNotRecorded || st.Timing != payments.StatusNotRecorded {
+		t.Fatalf("february: %+v", st)
+	}
+	if st := f.state(t, march); st.Status != payments.StatusOverdue {
+		t.Fatalf("march: %+v", st)
+	}
+	f.record(t, feb.ID, "50.00", "2026-02-12")
+	if st := f.state(t, feb); st.Status != payments.StatusPaid {
+		t.Fatalf("february paid: %+v", st)
 	}
 }

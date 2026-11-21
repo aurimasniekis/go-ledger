@@ -8,6 +8,7 @@ import {
   History,
   LoaderCircle,
   Ban,
+  CircleSlash,
   OctagonX,
   SaveOff,
   TriangleAlert,
@@ -54,6 +55,8 @@ export const COMMITMENT_STATUSES = {
   partially_paid: { label: 'Partly paid', Icon: CircleDashed, tier: 'default', color: 'upcoming' },
   overdue: { label: 'Overdue', Icon: TriangleAlert, tier: 'strong', color: 'overdue' },
   // A cancelled occurrence (D31) owes nothing: quiet, never the overdue look.
+  // Due before the commitment was created (D38 1a): not tracked yet, so never the overdue look.
+  not_recorded: { label: 'Not recorded', Icon: CircleSlash, tier: 'quiet', color: 'deferred' },
   cancelled: { label: 'Cancelled', Icon: Ban, tier: 'quiet', color: 'deferred' },
   deferred: { label: 'Deferred', Icon: Hourglass, tier: 'quiet', color: 'deferred' },
 } satisfies Record<string, Entry>

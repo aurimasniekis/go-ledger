@@ -52,6 +52,19 @@ func (f *apiFixture) createCommitment(t *testing.T, body string) string {
 	return c.ID
 }
 
+// createCommitmentAt creates a commitment as if on the instant at, then puts
+// the clock back; occurrences due before it are "not recorded" (D38 1a).
+func (f *apiFixture) createCommitmentAt(t *testing.T, at time.Time, body string) string {
+	t.Helper()
+	now := f.now
+	f.now = at
+	defer func() { f.now = now }()
+	return f.createCommitment(t, body)
+}
+
+// earlier is before every due date the API tests read as overdue.
+var earlier = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
 const monthEndBody = `{"name":"VPS","kind":"server","amount":{"amount":"10.00","currency":"EUR"},"schedule":{"version":1,"frequency":"monthly","interval":1,"day":31},"start_date":"2026-01-01"}`
 
 // TestOccurrencesTimezoneBoundary checks that "today", the default effective
@@ -99,8 +112,8 @@ func TestOccurrencesTimezoneBoundary(t *testing.T) {
 func TestOccurrencesSummaryAPI(t *testing.T) {
 	f := newAPIFixture(t)
 	f.now = time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
-	f.createCommitment(t, strings.Replace(monthEndBody, `"day":31`, `"day":5`, 1))
-	f.createCommitment(t, strings.Replace(strings.Replace(monthEndBody, `"day":31`, `"day":28`, 1), `"currency":"EUR"`, `"currency":"USD"`, 1))
+	f.createCommitmentAt(t, earlier, strings.Replace(monthEndBody, `"day":31`, `"day":5`, 1))
+	f.createCommitmentAt(t, earlier, strings.Replace(strings.Replace(monthEndBody, `"day":31`, `"day":28`, 1), `"currency":"EUR"`, `"currency":"USD"`, 1))
 	rec := f.do("GET", "/api/v1/occurrences/summary?month=2026-11", "", map[string]string{"X-Test-User": f.ids["alice"]})
 	if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("summary: %d %s", rec.Code, rec.Body.String())
