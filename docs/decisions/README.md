@@ -25,5 +25,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0021: Users, roles and the grant vocabulary](0021-users-roles-and-grants.md)
 - [ADR-0022: Currency-rate cache and conversion service](0022-rate-cache-and-conversion.md)
 - [ADR-0025: Audit log](0025-audit-log.md)
+- [ADR-0026: Passwords, sign-in, sessions, CSRF and recent authentication](0026-passwords-sign-in-and-sessions.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

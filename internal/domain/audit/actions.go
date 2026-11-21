@@ -9,6 +9,13 @@ const (
 	SignInSucceeded Action = "auth.signin_succeeded" // Details: method
 	SignInFailed    Action = "auth.signin_failed"    // Details: method, reason
 
+	// Sessions and credentials (A2, ADR-0026). The target of a session event
+	// is the session; of a password or re-authentication event, the user.
+	SessionEnded           Action = "auth.session_ended"           // Details: reason (signed_out, terminated)
+	PasswordChanged        Action = "auth.password_changed"        // Details: by (self, administrator, host), sessions_ended
+	Reauthenticated        Action = "auth.reauthenticated"         // Details: method
+	ReauthenticationFailed Action = "auth.reauthentication_failed" // Details: method, reason
+
 	TwoFactorEnabled   Action = "two_factor.enabled"
 	TwoFactorDisabled  Action = "two_factor.disabled"
 	RecoveryCodesReset Action = "two_factor.recovery_codes_regenerated"
@@ -33,9 +40,14 @@ var (
 	signInMethods = []string{"password", "totp", "recovery_code", "oidc"}
 	// Reasons never say which part was wrong beyond the stage: a failed
 	// password and an unknown username are both invalid_credentials.
-	signInReasons   = []string{"invalid_credentials", "invalid_second_factor", "account_disabled", "locked_out"}
-	mcpOutcomes     = []string{"succeeded", "failed", "denied"}
-	correctionKinds = []string{"match", "unmatch", "payment_status", "categorisation", "other"}
+	signInReasons = []string{"invalid_credentials", "invalid_second_factor", "account_disabled", "locked_out"}
+	mcpOutcomes   = []string{"succeeded", "failed", "denied"}
+	// A session ended by its own user signing out, or terminated from
+	// another session of the same user. Sessions ended by a password change
+	// are counted in auth.password_changed instead.
+	sessionEndReasons = []string{"signed_out", "terminated"}
+	passwordChangedBy = []string{"self", "administrator", "host"}
+	correctionKinds   = []string{"match", "unmatch", "payment_status", "categorisation", "other"}
 )
 
 // Field declares one allowed detail field. Enum, when set, lists the only
@@ -58,6 +70,11 @@ var Definitions = map[Action][]Field{
 
 	SignInSucceeded: {f("method", signInMethods...)},
 	SignInFailed:    {f("method", signInMethods...), f("reason", signInReasons...)},
+
+	SessionEnded:           {f("reason", sessionEndReasons...)},
+	PasswordChanged:        {f("by", passwordChangedBy...), f("sessions_ended")},
+	Reauthenticated:        {f("method", signInMethods...)},
+	ReauthenticationFailed: {f("method", signInMethods...), f("reason", signInReasons...)},
 
 	TwoFactorEnabled:   {f("method", "totp")},
 	TwoFactorDisabled:  {f("method", "totp")},

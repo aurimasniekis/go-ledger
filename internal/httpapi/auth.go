@@ -15,6 +15,9 @@ import (
 type Access struct {
 	kind  accessKind
 	grant authz.Grant
+	// recent: a signed-in user must have proved their password within the
+	// re-authentication window (ADR-0026). API tokens are exempt by design.
+	recent bool
 }
 
 type accessKind int
@@ -23,6 +26,7 @@ const (
 	accessGrant accessKind = iota + 1
 	accessAuthenticated
 	accessPublic
+	accessSession
 )
 
 // Requires is a route that needs grant g. The principal must hold it (a write
@@ -39,8 +43,28 @@ func Requires(g authz.Grant) Access {
 func Authenticated() Access { return Access{kind: accessAuthenticated} }
 
 // Public is a route anyone may call without credentials (the API description,
-// and later sign-in itself).
+// sign-in itself).
 func Public() Access { return Access{kind: accessPublic} }
+
+// SessionOnly is a route for a user signed in with a session cookie, acting
+// on their own session or credentials (sign-out, their session list, their
+// password), whatever their role. API tokens are refused with 403: a token has
+// no session and cannot prove a password. It is the one access rule besides a
+// write grant that may guard a state-changing method, because it only ever
+// touches the caller's own sign-in state (ADR-0026).
+func SessionOnly() Access { return Access{kind: accessSession} }
+
+// WithRecentAuth returns a with the requirement that a signed-in user proved
+// their password recently (POST /auth/reauthenticate). Requests made with an
+// API token are exempt: tokens skip interactive steps by design, and their
+// state-changing requests are audited as token.write_used.
+func (a Access) WithRecentAuth() Access {
+	a.recent = true
+	return a
+}
+
+// RecentAuth reports whether the route requires recent authentication.
+func (a Access) RecentAuth() bool { return a.recent }
 
 // Grant returns the required grant, if the route requires one.
 func (a Access) Grant() (authz.Grant, bool) { return a.grant, a.kind == accessGrant }
@@ -55,6 +79,8 @@ func (a Access) String() string {
 		return "authenticated"
 	case accessPublic:
 		return "public"
+	case accessSession:
+		return "session"
 	}
 	return "invalid"
 }
@@ -76,6 +102,15 @@ type AuthenticatorFunc func(r *http.Request) (authz.Principal, error)
 // Authenticate calls f.
 func (f AuthenticatorFunc) Authenticate(r *http.Request) (authz.Principal, error) { return f(r) }
 
+// CSRFVerifier is implemented by an authenticator whose credentials a browser
+// sends by itself (a session cookie). For every state-changing request of a
+// user principal, the server asks the authenticator that produced it to check
+// the request's CSRF token; an authenticator without this method cannot
+// authorize such requests at all (fail closed).
+type CSRFVerifier interface {
+	VerifyCSRF(r *http.Request, p authz.Principal) bool
+}
+
 // Authentication outcomes.
 var (
 	ErrNoCredentials      = errors.New("no credentials")
@@ -88,6 +123,19 @@ func WithAuthenticators(a ...Authenticator) Option {
 	return func(s *Server) { s.authn = append(s.authn, a...) }
 }
 
+// WithRecentAuth sets the check behind [Access.WithRecentAuth] for user
+// principals (auth.Service.Recent). Without it, such routes refuse every user
+// principal with 403 reauthentication_required (fail closed).
+func WithRecentAuth(recent func(authz.Principal) bool) Option {
+	return func(s *Server) { s.recentAuth = recent }
+}
+
+// crossOrigin rejects browser requests that come from another origin, using
+// the Sec-Fetch-Site and Origin headers (net/http's CrossOriginProtection).
+// Requests without either header (non-browser clients) pass; the CSRF token
+// still guards cookie-authenticated writes.
+var crossOrigin = http.NewCrossOriginProtection()
+
 func safeMethod(m string) bool { return m == http.MethodGet || m == http.MethodHead }
 
 // checkAccess panics on an access rule that would let a reader change state:
@@ -98,6 +146,9 @@ func safeMethod(m string) bool { return m == http.MethodGet || m == http.MethodH
 func checkAccess(method string, a Access) {
 	if a.kind == 0 {
 		panic("httpapi: API route without an access rule; use Requires, Authenticated or Public")
+	}
+	if a.recent && a.kind != accessGrant && a.kind != accessSession {
+		panic("httpapi: recent authentication applies to grant and session routes only")
 	}
 	if a.kind == accessAuthenticated && !safeMethod(method) {
 		panic(fmt.Sprintf("httpapi: %s route is Authenticated: state-changing routes must require a write grant", method))
@@ -113,7 +164,7 @@ func (s *Server) authorize(pattern string, a Access, h http.Handler) http.Handle
 		return h
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.authenticate(r)
+		p, by, err := s.authenticate(r)
 		switch {
 		case errors.Is(err, ErrNoCredentials):
 			w.Header().Set("WWW-Authenticate", `Bearer realm="ledger"`)
@@ -127,10 +178,30 @@ func (s *Server) authorize(pattern string, a Access, h http.Handler) http.Handle
 			WriteError(w, r, Internal(err))
 			return
 		}
+		if a.kind == accessSession && (p.Kind != authz.PrincipalUser || p.SessionID == "") {
+			WriteError(w, r, Forbidden("this requires a signed-in session; API tokens cannot use it"))
+			return
+		}
+		// CSRF (ADR-0026): every state-changing request of a signed-in user
+		// must come from Ledger's own origin and carry the session's CSRF
+		// token. Bearer-token requests are exempt by design: a browser never
+		// attaches them on its own.
+		if !safeMethod(r.Method) && p.Kind == authz.PrincipalUser {
+			v, ok := by.(CSRFVerifier)
+			if err := crossOrigin.Check(r); err != nil || !ok || !v.VerifyCSRF(r, p) {
+				logging.FromContext(r.Context()).InfoContext(r.Context(), "csrf check failed", "user_id", p.UserID)
+				WriteError(w, r, csrfFailed())
+				return
+			}
+		}
 		if g, ok := a.Grant(); ok && !p.Allows(g) {
 			logging.FromContext(r.Context()).InfoContext(r.Context(), "permission denied",
 				"principal_kind", string(p.Kind), "user_id", p.UserID, "grant", g.String())
 			WriteError(w, r, Forbidden("this requires the "+g.String()+" grant"))
+			return
+		}
+		if a.recent && p.Kind == authz.PrincipalUser && (s.recentAuth == nil || !s.recentAuth(p)) {
+			WriteError(w, r, reauthRequired())
 			return
 		}
 		if !s.auditTokenWrite(w, r, p, pattern) {
@@ -140,19 +211,20 @@ func (s *Server) authorize(pattern string, a Access, h http.Handler) http.Handle
 	})
 }
 
-func (s *Server) authenticate(r *http.Request) (authz.Principal, error) {
+// authenticate returns the principal and the authenticator that found it.
+func (s *Server) authenticate(r *http.Request) (authz.Principal, Authenticator, error) {
 	for _, a := range s.authn {
 		p, err := a.Authenticate(r)
 		if errors.Is(err, ErrNoCredentials) {
 			continue
 		}
 		if err != nil {
-			return authz.Principal{}, err
+			return authz.Principal{}, nil, err
 		}
 		if p.Kind == "" || p.UserID == "" {
-			return authz.Principal{}, errors.New("httpapi: authenticator returned an empty principal")
+			return authz.Principal{}, nil, errors.New("httpapi: authenticator returned an empty principal")
 		}
-		return p, nil
+		return p, a, nil
 	}
-	return authz.Principal{}, ErrNoCredentials
+	return authz.Principal{}, nil, ErrNoCredentials
 }

@@ -135,3 +135,46 @@ events:
     # Connection name shown on the Pulse server.
     # Environment: LEDGER_EVENTS_PULSE_NAME  Flag: --events.pulse.name
     name: "ledger"
+
+auth:
+
+  password:
+
+    # Minimum password length in bytes (1 to 1024). Length is the only rule:
+    # there are no composition rules.
+    # Environment: LEDGER_AUTH_PASSWORD_MIN_LENGTH  Flag: --auth.password.min_length
+    min_length: 12
+
+  session:
+
+    # A session not used for this long ends. Must not exceed the absolute
+    # timeout.
+    # Environment: LEDGER_AUTH_SESSION_IDLE_TIMEOUT  Flag: --auth.session.idle_timeout
+    idle_timeout: "30m"
+
+    # A session ends this long after sign-in, however much it is used.
+    # Environment: LEDGER_AUTH_SESSION_ABSOLUTE_TIMEOUT  Flag: --auth.session.absolute_timeout
+    absolute_timeout: "12h"
+
+    # How long a password check counts as recent for sensitive actions
+    # (credential changes, token creation, user management). After it, the
+    # user confirms their password again.
+    # Environment: LEDGER_AUTH_SESSION_REAUTH_WINDOW  Flag: --auth.session.reauth_window
+    reauth_window: "10m"
+
+  sign_in:
+
+    # Failed sign-ins (and re-authentications) allowed per username within
+    # auth.sign_in.window before further attempts for it are refused with 429.
+    # Environment: LEDGER_AUTH_SIGN_IN_ACCOUNT_MAX_FAILURES  Flag: --auth.sign_in.account_max_failures
+    account_max_failures: 10
+
+    # Failed sign-ins allowed per client address (an IPv6 address counts as
+    # its /64) within auth.sign_in.window before further attempts from it are
+    # refused with 429.
+    # Environment: LEDGER_AUTH_SIGN_IN_ADDRESS_MAX_FAILURES  Flag: --auth.sign_in.address_max_failures
+    address_max_failures: 30
+
+    # Sliding window over which failed sign-ins are counted.
+    # Environment: LEDGER_AUTH_SIGN_IN_WINDOW  Flag: --auth.sign_in.window
+    window: "15m"

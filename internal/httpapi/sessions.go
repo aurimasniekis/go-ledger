@@ -1,0 +1,373 @@
+package httpapi
+
+import (
+	"errors"
+	"net"
+	"net/http"
+	"net/netip"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
+	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
+)
+
+// Session cookie and CSRF header (ADR-0026).
+const (
+	// SessionCookie holds the session token: Secure, HttpOnly,
+	// SameSite=Strict, Path=/, expiring with the session's absolute timeout.
+	SessionCookie = "ledger_session"
+	// CSRFHeader carries the session's CSRF token on every state-changing
+	// request made with the session cookie.
+	CSRFHeader = "X-CSRF-Token"
+)
+
+// Paths of the sign-in and session routes.
+const (
+	AuthPath     = APIPrefix + "/auth"
+	SessionsPath = AuthPath + "/sessions"
+)
+
+// SessionAuth authenticates requests by the session cookie and verifies their
+// CSRF token. Install it with [WithAuthenticators] and the service's Recent
+// check with [WithRecentAuth].
+type SessionAuth struct{ svc *auth.Service }
+
+var (
+	_ Authenticator = SessionAuth{}
+	_ CSRFVerifier  = SessionAuth{}
+)
+
+// NewSessionAuth returns the session-cookie authenticator of svc.
+func NewSessionAuth(svc *auth.Service) SessionAuth { return SessionAuth{svc: svc} }
+
+func sessionToken(r *http.Request) string {
+	c, err := r.Cookie(SessionCookie)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
+// Authenticate looks the session up on every request, so a terminated
+// session fails on its next request.
+func (a SessionAuth) Authenticate(r *http.Request) (authz.Principal, error) {
+	tok := sessionToken(r)
+	if tok == "" {
+		return authz.Principal{}, ErrNoCredentials
+	}
+	_, p, err := a.svc.Authenticate(r.Context(), tok)
+	if errors.Is(err, auth.ErrInvalidSession) {
+		return authz.Principal{}, ErrInvalidCredentials
+	}
+	return p, err
+}
+
+// VerifyCSRF compares the X-CSRF-Token header with the token derived from
+// the session cookie.
+func (a SessionAuth) VerifyCSRF(r *http.Request, _ authz.Principal) bool {
+	return auth.VerifyCSRF(sessionToken(r), r.Header.Get(CSRFHeader))
+}
+
+func parseTrusted(list []string) []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range list {
+		s = strings.TrimSpace(s)
+		if p, err := netip.ParsePrefix(s); err == nil {
+			out = append(out, p.Masked())
+		} else if a, err := netip.ParseAddr(s); err == nil {
+			out = append(out, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+		}
+	}
+	return out
+}
+
+func (s *Server) isTrusted(a netip.Addr) bool {
+	for _, p := range s.trusted {
+		if p.Contains(a.Unmap()) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClientAddress is the address of the client: the connection's peer, or,
+// when the peer is a trusted proxy (http.trusted_proxies), the right-most
+// X-Forwarded-For entry that is not a trusted proxy. It keys the per-address
+// sign-in limit and is shown in the session list.
+func (s *Server) ClientAddress(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil {
+		return host
+	}
+	peer = peer.Unmap()
+	if !s.isTrusted(peer) {
+		return peer.String()
+	}
+	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			break // a malformed hop: stop trusting the chain here
+		}
+		if !s.isTrusted(a) {
+			return a.Unmap().String()
+		}
+	}
+	return peer.String()
+}
+
+// sessionJSON is a session as the API shows it. It never contains the token.
+type sessionJSON struct {
+	ID              string    `json:"id"`
+	Current         bool      `json:"current"`
+	CreatedAt       time.Time `json:"created_at"`
+	LastSeenAt      time.Time `json:"last_seen_at"`
+	AuthenticatedAt time.Time `json:"authenticated_at"`
+	IdleExpiresAt   time.Time `json:"idle_expires_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	UserAgent       string    `json:"user_agent"`
+	Address         string    `json:"address"`
+}
+
+func toSessionJSON(x auth.Session, idle time.Duration, current string) sessionJSON {
+	return sessionJSON{ID: x.ID, Current: x.ID == current, CreatedAt: x.CreatedAt.UTC(), LastSeenAt: x.LastSeenAt.UTC(),
+		AuthenticatedAt: x.AuthenticatedAt.UTC(), IdleExpiresAt: x.IdleExpiresAt(idle).UTC(), ExpiresAt: x.ExpiresAt.UTC(),
+		UserAgent: x.UserAgent, Address: x.Address}
+}
+
+// currentSessionJSON is the answer of sign-in and GET /auth/session.
+type currentSessionJSON struct {
+	UserID    string      `json:"user_id"`
+	Session   sessionJSON `json:"session"`
+	CSRFToken string      `json:"csrf_token"`
+	// RecentAuthUntil is when the last password check stops counting as
+	// recent; null when it already has.
+	RecentAuthUntil *time.Time `json:"recent_auth_until"`
+}
+
+func noStore(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+}
+
+func setSessionCookie(w http.ResponseWriter, token string, expires time.Time, maxAge time.Duration) {
+	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: token, Path: "/", Expires: expires.UTC(), MaxAge: max(1, int(maxAge/time.Second)),
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+}
+
+func clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+}
+
+func invalidCredentials(status int) *Error {
+	return &Error{Status: status, Code: CodeInvalidCredentials, Message: auth.ErrInvalidCredentials.Error()}
+}
+
+// authError maps the auth service's errors to API errors.
+func authError(w http.ResponseWriter, err error, failStatus int) error {
+	var rl *auth.RateLimitedError
+	var pe *auth.PolicyError
+	switch {
+	case errors.As(err, &rl):
+		w.Header().Set("Retry-After", strconv.Itoa(int((rl.RetryAfter+time.Second-1)/time.Second)))
+		return RateLimited(rl.Error())
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		return invalidCredentials(failStatus)
+	case errors.Is(err, auth.ErrInvalidSession):
+		return Unauthenticated("invalid credentials")
+	case errors.As(err, &pe):
+		return Validation("password", pe.Message)
+	}
+	return err
+}
+
+func principal(r *http.Request) authz.Principal {
+	p, _ := authz.FromContext(r.Context())
+	return p
+}
+
+// passwordBody decodes {"password": "..."}.
+func passwordBody(r *http.Request) (string, error) {
+	var in struct {
+		Password *string `json:"password"`
+	}
+	if err := DecodeJSON(r, &in); err != nil {
+		return "", err
+	}
+	if in.Password == nil {
+		return "", Validation("password", "password is required")
+	}
+	return *in.Password, nil
+}
+
+type passwordSetJSON struct {
+	SessionsEnded int `json:"sessions_ended"`
+}
+
+func registerSessions(s *Server, svc *auth.Service) {
+	current := func(w http.ResponseWriter, x auth.Session, token string, status int) {
+		cfg := svc.Config()
+		out := currentSessionJSON{UserID: x.UserID, Session: toSessionJSON(x, cfg.IdleTimeout, x.ID), CSRFToken: auth.CSRFToken(token)}
+		if svc.Recent(authz.Principal{Kind: authz.PrincipalUser, SessionID: x.ID, AuthTime: x.AuthenticatedAt}) {
+			t := x.AuthenticatedAt.Add(cfg.ReauthWindow).UTC()
+			out.RecentAuthUntil = &t
+		}
+		noStore(w)
+		WriteJSON(w, status, out)
+	}
+
+	// Sign-in. Every failure is the same 401 invalid_credentials, after the
+	// same work; a blocked account or address is 429 with Retry-After. A
+	// cross-origin browser request is refused (login CSRF).
+	s.HandleAPI("POST "+AuthPath+"/sign-in", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := crossOrigin.Check(r); err != nil {
+			WriteError(w, r, csrfFailed())
+			return
+		}
+		var in struct {
+			Username *string `json:"username"`
+			Password *string `json:"password"`
+		}
+		if err := DecodeJSON(r, &in); err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		if in.Username == nil {
+			WriteError(w, r, Validation("username", "username is required"))
+			return
+		}
+		if in.Password == nil {
+			WriteError(w, r, Validation("password", "password is required"))
+			return
+		}
+		iss, err := svc.SignIn(r.Context(), auth.SignInInput{Username: *in.Username, Password: *in.Password,
+			Address: s.ClientAddress(r), UserAgent: r.UserAgent()})
+		if err != nil {
+			noStore(w)
+			WriteError(w, r, authError(w, err, http.StatusUnauthorized))
+			return
+		}
+		setSessionCookie(w, iss.Token, iss.Session.ExpiresAt, iss.Session.ExpiresAt.Sub(iss.Session.CreatedAt))
+		current(w, iss.Session, iss.Token, http.StatusOK)
+	}))
+
+	s.HandleAPI("GET "+AuthPath+"/session", SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tok := sessionToken(r)
+		x, _, err := svc.Authenticate(r.Context(), tok)
+		if err != nil {
+			WriteError(w, r, authError(w, err, http.StatusUnauthorized))
+			return
+		}
+		current(w, x, tok, http.StatusOK)
+	}))
+
+	s.HandleAPI("POST "+AuthPath+"/sign-out", SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := principal(r)
+		if err := svc.EndSession(r.Context(), p, p.SessionID); err != nil && !errors.Is(err, resource.ErrNotFound) {
+			WriteError(w, r, err)
+			return
+		}
+		clearSessionCookie(w)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	s.HandleAPI("GET "+SessionsPath, SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := principal(r)
+		list, err := svc.Sessions(r.Context(), p.UserID)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		out := make([]sessionJSON, len(list))
+		for i, x := range list {
+			out[i] = toSessionJSON(x, svc.Config().IdleTimeout, p.SessionID)
+		}
+		noStore(w)
+		WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	}))
+
+	// Ending a session takes effect on its next request: every request looks
+	// its session up.
+	s.HandleAPI("DELETE "+SessionsPath+"/{id}", SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := principal(r)
+		id := r.PathValue("id")
+		if !resource.ValidID(id) {
+			WriteError(w, r, NotFound("no such session"))
+			return
+		}
+		if err := svc.EndSession(r.Context(), p, id); err != nil {
+			if errors.Is(err, resource.ErrNotFound) {
+				err = NotFound("no such session")
+			}
+			WriteError(w, r, err)
+			return
+		}
+		if id == p.SessionID {
+			clearSessionCookie(w)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	s.HandleAPI("POST "+AuthPath+"/reauthenticate", SessionOnly(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pw, err := passwordBody(r)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		at, err := svc.Reauthenticate(r.Context(), principal(r), pw, s.ClientAddress(r))
+		if err != nil {
+			noStore(w)
+			WriteError(w, r, authError(w, err, http.StatusForbidden))
+			return
+		}
+		until := at.Add(svc.Config().ReauthWindow).UTC()
+		noStore(w)
+		WriteJSON(w, http.StatusOK, map[string]time.Time{"authenticated_at": at.UTC(), "recent_auth_until": until})
+	}))
+
+	// Changing one's own password ends every other session of the user.
+	s.HandleAPI("PUT "+AuthPath+"/password", SessionOnly().WithRecentAuth(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pw, err := passwordBody(r)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		p := principal(r)
+		n, err := svc.SetPassword(r.Context(), p, false, p.UserID, pw, auth.ByUser)
+		if err != nil {
+			WriteError(w, r, authError(w, err, http.StatusForbidden))
+			return
+		}
+		WriteJSON(w, http.StatusOK, passwordSetJSON{SessionsEnded: n})
+	}))
+}
+
+// registerUserPassword is an administrator setting a user's password (user
+// management): it ends every session of that user (except the caller's own
+// current one, when they set their own).
+func registerUserPassword(s *Server, svc *auth.Service) {
+	s.HandleAPI("PUT "+UsersPath+"/{id}/password", Requires(grantUsersWrite).WithRecentAuth(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pw, err := passwordBody(r)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		p := principal(r)
+		by := auth.ByAdministrator
+		if p.Kind == authz.PrincipalUser && p.UserID == r.PathValue("id") {
+			by = auth.ByUser
+		}
+		n, err := svc.SetPassword(r.Context(), p, false, r.PathValue("id"), pw, by)
+		if err != nil {
+			WriteError(w, r, authError(w, err, http.StatusForbidden))
+			return
+		}
+		WriteJSON(w, http.StatusOK, passwordSetJSON{SessionsEnded: n})
+	}))
+}

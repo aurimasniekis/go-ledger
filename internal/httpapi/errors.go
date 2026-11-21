@@ -29,6 +29,12 @@ const (
 	CodePrecondition    Code = "precondition_required"  // 428: a write did not say which version it applies to
 	CodeVersionConflict Code = "version_conflict"       // 409: the write was based on a stale version; carries reconciliation
 	CodeUnsupportedType Code = "unsupported_media_type" // 415: the request body's media type is not accepted here
+	// CodeInvalidCredentials: a username and password (sign-in, 401) or a
+	// password (re-authentication, 403: the session stays valid) did not
+	// match. The same answer for every reason (ADR-0026).
+	CodeInvalidCredentials Code = "invalid_credentials"
+	CodeCSRF               Code = "csrf_failed"               // 403: a cookie-authenticated write without the session's CSRF token, or from another origin
+	CodeReauthRequired     Code = "reauthentication_required" // 403: the action needs a recent password check (POST /auth/reauthenticate)
 )
 
 // ErrorBody is the JSON error envelope sent for every non-2xx API response.
@@ -118,6 +124,14 @@ func Unavailable(message string, cause error) *Error {
 // Internal wraps an unexpected failure. The client sees a generic message.
 func Internal(cause error) *Error {
 	return &Error{Status: http.StatusInternalServerError, Code: CodeInternal, Message: "internal error", Cause: cause}
+}
+
+func csrfFailed() *Error {
+	return &Error{Status: http.StatusForbidden, Code: CodeCSRF, Message: "missing or invalid CSRF token, or a cross-origin request"}
+}
+
+func reauthRequired() *Error {
+	return &Error{Status: http.StatusForbidden, Code: CodeReauthRequired, Message: "this action needs recent authentication: confirm your password first"}
 }
 
 func unsupportedMediaType(message string) *Error {

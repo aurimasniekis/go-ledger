@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
 
@@ -30,6 +31,10 @@ type Server struct {
 	apiMW     []func(http.Handler) http.Handler
 	apiRoutes []Route
 	authn     []Authenticator
+	// recentAuth checks recent authentication ([WithRecentAuth]).
+	recentAuth func(authz.Principal) bool
+	// trusted are the reverse proxies whose X-Forwarded-For is believed.
+	trusted []netip.Prefix
 	// auditTokenWrites records a token's state-changing request ([WithAuditRecorder]).
 	auditTokenWrites func(r *http.Request, p authz.Principal, pattern string) error
 }
@@ -70,7 +75,7 @@ func WithAPIMiddleware(mw ...func(http.Handler) http.Handler) Option {
 // New builds a server from the HTTP section of the configuration. Register
 // routes with Handle before calling Run.
 func New(cfg config.HTTP, log *slog.Logger, opts ...Option) *Server {
-	s := &Server{cfg: cfg, log: log, mux: http.NewServeMux(), api: http.NewServeMux()}
+	s := &Server{cfg: cfg, log: log, mux: http.NewServeMux(), api: http.NewServeMux(), trusted: parseTrusted(cfg.TrustedProxies)}
 	for _, o := range opts {
 		o(s)
 	}

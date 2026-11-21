@@ -88,6 +88,29 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	if c.HTTP.MaxBodyBytes <= 0 {
 		bad("http.max_body_bytes", "must be positive")
 	}
+	if c.Auth.Password.MinLength < 1 || c.Auth.Password.MinLength > 1024 {
+		bad("auth.password.min_length", "must be from 1 to 1024 bytes")
+	}
+	for _, d := range []struct {
+		key string
+		val time.Duration
+	}{
+		{"auth.session.idle_timeout", c.Auth.Session.IdleTimeout}, {"auth.session.absolute_timeout", c.Auth.Session.AbsoluteTimeout},
+		{"auth.session.reauth_window", c.Auth.Session.ReauthWindow}, {"auth.sign_in.window", c.Auth.SignIn.Window},
+	} {
+		if d.val <= 0 {
+			bad(d.key, "must be a positive duration")
+		}
+	}
+	if c.Auth.Session.IdleTimeout > c.Auth.Session.AbsoluteTimeout && c.Auth.Session.AbsoluteTimeout > 0 {
+		bad("auth.session.idle_timeout", "must not exceed auth.session.absolute_timeout")
+	}
+	if c.Auth.SignIn.AccountMaxFailures < 1 {
+		bad("auth.sign_in.account_max_failures", "must be at least 1")
+	}
+	if c.Auth.SignIn.AddressMaxFailures < 1 {
+		bad("auth.sign_in.address_max_failures", "must be at least 1")
+	}
 	if strings.TrimSpace(c.Database.Path) == "" {
 		bad("database.path", "must not be empty")
 	}

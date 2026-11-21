@@ -16,6 +16,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -30,15 +31,32 @@ import (
 // written out by hand, so adding a route or changing its access needs a
 // deliberate change here; TestPermissionMatrixCoversEveryRoute fails otherwise.
 var permissionMatrix = map[string]string{
-	"GET /api/v1/openapi.json": "public",
-	"GET /api/v1/openapi.yaml": "public",
-	"GET /api/v1/me":           "authenticated",
-	"GET /api/v1/grants":       "authenticated",
-	"GET /api/v1/audit":        "audit:read",
-	"GET /api/v1/users":        "users:read",
-	"POST /api/v1/users":       "users:write",
-	"GET /api/v1/users/{id}":   "users:read",
-	"PATCH /api/v1/users/{id}": "users:write",
+	"GET /api/v1/openapi.json":          "public",
+	"GET /api/v1/openapi.yaml":          "public",
+	"GET /api/v1/me":                    "authenticated",
+	"GET /api/v1/grants":                "authenticated",
+	"GET /api/v1/audit":                 "audit:read",
+	"GET /api/v1/users":                 "users:read",
+	"POST /api/v1/users":                "users:write+recent",
+	"GET /api/v1/users/{id}":            "users:read",
+	"PATCH /api/v1/users/{id}":          "users:write+recent",
+	"PUT /api/v1/users/{id}/password":   "users:write+recent",
+	"POST /api/v1/auth/sign-in":         "public",
+	"POST /api/v1/auth/sign-out":        "session",
+	"GET /api/v1/auth/session":          "session",
+	"GET /api/v1/auth/sessions":         "session",
+	"DELETE /api/v1/auth/sessions/{id}": "session",
+	"POST /api/v1/auth/reauthenticate":  "session",
+	"PUT /api/v1/auth/password":         "session+recent",
+}
+
+// matrixAccess is a route's access as the matrix writes it: the access rule,
+// with "+recent" when it needs recent authentication.
+func matrixAccess(a httpapi.Access) string {
+	if a.RecentAuth() {
+		return a.String() + "+recent"
+	}
+	return a.String()
 }
 
 // apiFixture is the API as ledger serve registers it, with a test
@@ -47,8 +65,22 @@ var permissionMatrix = map[string]string{
 type apiFixture struct {
 	srv   *httpapi.Server
 	users *userstore.Store
+	auth  *auth.Service
 	log   *bytes.Buffer
 	ids   map[string]string // subject name -> user ID
+	// daveSession is a session of dave from before he was disabled.
+	daveSession map[string]string
+}
+
+// signIn signs name in with the fixture password and returns the headers of
+// a request made with that session: the cookie and the CSRF token.
+func (f *apiFixture) signIn(t *testing.T, name string) map[string]string {
+	t.Helper()
+	iss, err := f.auth.SignIn(context.Background(), auth.SignInInput{Username: name, Password: testPassword, Address: "192.0.2.10"})
+	if err != nil {
+		t.Fatalf("sign in %s: %v", name, err)
+	}
+	return map[string]string{"Cookie": httpapi.SessionCookie + "=" + iss.Token, httpapi.CSRFHeader: iss.CSRFToken}
 }
 
 func newAPIFixture(t *testing.T) *apiFixture {
@@ -67,7 +99,8 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	// Audit entries go to the real table and, so these tests can assert on them
 	// line by line, to the log as well.
 	al := teeAudit{AuditLog: store.NewAuditLog(db), lines: store.LogAudit(log)}
-	f := &apiFixture{users: userstore.New(db, al, nil, nil), log: buf, ids: map[string]string{}}
+	parts := mustParts(t, db, al)
+	f := &apiFixture{users: parts.users, auth: parts.auth, log: buf, ids: map[string]string{}}
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {
@@ -93,12 +126,17 @@ func newAPIFixture(t *testing.T) *apiFixture {
 		}
 		return p, nil
 	})
-	f.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log, httpapi.WithAuthenticators(authn))
-	registerAPI(f.srv, db, al)
+	// Real session cookies first, then the test header.
+	f.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log,
+		httpapi.WithAuthenticators(httpapi.NewSessionAuth(parts.auth), testAuthn{authn}), httpapi.WithRecentAuth(testRecent(parts.auth)))
+	registerAPI(f.srv, al, parts)
 
 	mk := func(name string, role authz.Role) users.User {
 		u, err := f.users.Create(ctx, audit.System, users.New{Username: name, Role: role})
 		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.auth.SetPassword(ctx, authz.Principal{}, true, u.ID, testPassword, auth.ByHost); err != nil {
 			t.Fatal(err)
 		}
 		f.ids[name] = u.ID
@@ -108,6 +146,7 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	mk("bob", authz.RoleReadOnly)
 	mk("carol", authz.RoleReadOnly) // the target of /users/{id}; never changed by the matrix
 	d := mk("dave", authz.RoleAdministrator)
+	f.daveSession = f.signIn(t, "dave")
 	if _, err := f.users.Update(ctx, audit.System, d.ID, 1, users.Patch{Disabled: ptr(true)}); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +201,7 @@ func TestPermissionMatrixCoversEveryRoute(t *testing.T) {
 			t.Errorf("%s is registered but has no row in permissionMatrix", key)
 			continue
 		}
-		if got := r.Access.String(); got != want {
+		if got := matrixAccess(r.Access); got != want {
 			t.Errorf("%s requires %q, the matrix says %q", key, got, want)
 		}
 	}
@@ -186,21 +225,30 @@ func TestPermissionMatrix(t *testing.T) {
 	}
 	type subject struct {
 		name     string
-		hdr      map[string]string
+		hdr      func() map[string]string
 		valid    bool
-		readOnly bool // must never pass a state-changing route
+		readOnly bool // must never pass a state-changing route that needs a grant
+		session  bool // signed in with a session cookie
 		allows   func(g authz.Grant) bool
 	}
+	static := func(h map[string]string) func() map[string]string { return func() map[string]string { return h } }
+	// Signed-in subjects get a fresh session for every request, so a
+	// sign-out or session termination in one row does not affect the next.
+	session := func(name string) func() map[string]string {
+		return func() map[string]string { return f.signIn(t, name) }
+	}
 	subjects := []subject{
-		{name: "anonymous", allows: func(authz.Grant) bool { return false }},
-		{name: "disabled administrator", hdr: map[string]string{"X-Test-User": f.ids["dave"]}, allows: func(authz.Grant) bool { return false }},
-		{name: "unknown user", hdr: map[string]string{"X-Test-User": "01JD3Y4C8V9M2Q7W5R6T0XZBNZ"}, allows: func(authz.Grant) bool { return false }},
-		{name: "administrator", hdr: map[string]string{"X-Test-User": f.ids["alice"]}, valid: true, allows: func(authz.Grant) bool { return true }},
-		{name: "read-only user", hdr: map[string]string{"X-Test-User": f.ids["bob"]}, valid: true, readOnly: true,
+		{name: "anonymous", hdr: static(nil), allows: func(authz.Grant) bool { return false }},
+		{name: "disabled administrator's session", hdr: static(f.daveSession), allows: func(authz.Grant) bool { return false }},
+		{name: "disabled administrator", hdr: static(map[string]string{"X-Test-User": f.ids["dave"]}), allows: func(authz.Grant) bool { return false }},
+		{name: "unknown user", hdr: static(map[string]string{"X-Test-User": "01JD3Y4C8V9M2Q7W5R6T0XZBNZ"}), allows: func(authz.Grant) bool { return false }},
+		{name: "unknown session", hdr: static(map[string]string{"Cookie": httpapi.SessionCookie + "=not-a-session", httpapi.CSRFHeader: "x"}), allows: func(authz.Grant) bool { return false }},
+		{name: "administrator", hdr: session("alice"), valid: true, session: true, allows: func(authz.Grant) bool { return true }},
+		{name: "read-only user", hdr: session("bob"), valid: true, readOnly: true, session: true,
 			allows: func(g authz.Grant) bool { return g.Action == authz.ActionRead && !adminOnly[g.Resource] }},
-		{name: "administrator's users:read token", hdr: map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "users:read"}, valid: true, readOnly: true,
+		{name: "administrator's users:read token", hdr: static(map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "users:read"}), valid: true, readOnly: true,
 			allows: func(g authz.Grant) bool { return g == authz.G(authz.ResourceUsers, authz.ActionRead) }},
-		{name: "read-only user's users:write token", hdr: map[string]string{"X-Test-User": f.ids["bob"], "X-Test-Token-Grants": "users:write"}, valid: true, readOnly: true,
+		{name: "read-only user's users:write token", hdr: static(map[string]string{"X-Test-User": f.ids["bob"], "X-Test-Token-Grants": "users:write"}), valid: true, readOnly: true,
 			allows: func(g authz.Grant) bool { return g.Action == authz.ActionRead && !adminOnly[g.Resource] }},
 	}
 	n := 0
@@ -209,7 +257,7 @@ func TestPermissionMatrix(t *testing.T) {
 		for _, s := range subjects {
 			n++
 			body, hdr := "", map[string]string{}
-			for k, v := range s.hdr {
+			for k, v := range s.hdr() {
 				hdr[k] = v
 			}
 			switch {
@@ -227,6 +275,8 @@ func TestPermissionMatrix(t *testing.T) {
 				allowed = true
 			case "authenticated":
 				allowed = s.valid
+			case "session":
+				allowed = s.valid && s.session
 			default:
 				g, _ := a.Grant()
 				allowed = s.valid && s.allows(g)
@@ -240,7 +290,8 @@ func TestPermissionMatrix(t *testing.T) {
 			case !allowed && s.valid && rec.Code != 403:
 				t.Errorf("%s: %d, want 403", name, rec.Code)
 			}
-			if s.readOnly && !safe(r.Method) && rec.Code != 403 {
+			_, needsGrant := r.Access.Grant()
+			if s.readOnly && needsGrant && !safe(r.Method) && rec.Code != 403 {
 				t.Errorf("%s: a read-only subject got %d on a state-changing route, want 403", name, rec.Code)
 			}
 			if allowed && rec.Code >= 500 {
@@ -252,6 +303,10 @@ func TestPermissionMatrix(t *testing.T) {
 	if strings.Contains(f.log.String(), `"msg":"audit"`) {
 		// Only the administrator's POSTs may have been audited.
 		for _, line := range strings.Split(strings.TrimSpace(f.log.String()), "\n") {
+			// Sign-ins, sign-outs and session ends are each subject's own.
+			if strings.Contains(line, `"action":"auth.`) {
+				continue
+			}
 			if strings.Contains(line, `"msg":"audit"`) && !strings.Contains(line, `"actor_user_id":"`+f.ids["alice"]+`"`) {
 				t.Errorf("audit line from a subject that was not allowed: %s", line)
 			}

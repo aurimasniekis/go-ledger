@@ -13,6 +13,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
 
@@ -50,6 +51,8 @@ type Deps struct {
 	Users users.Store
 	// Audit reads the audit log.
 	Audit audit.Reader
+	// Auth is sign-in, sessions and passwords.
+	Auth *auth.Service
 }
 
 // RegisterAPI registers every route of the Management API under [APIPrefix].
@@ -73,6 +76,8 @@ func RegisterAPI(s *Server, d Deps) {
 	}))
 	registerAuthz(s)
 	registerUsers(s, d.Users)
+	registerUserPassword(s, d.Auth)
+	registerSessions(s, d.Auth)
 	registerAudit(s, d.Audit)
 }
 
@@ -124,6 +129,7 @@ func CheckContract(doc []byte, routes []Route) []string {
 
 	documented := map[string]bool{}
 	access := map[string]string{}
+	recent := map[string]bool{}
 	opIDs := map[string]string{}
 	paths, _ := root["paths"].(map[string]any)
 	for p, item := range paths {
@@ -136,6 +142,7 @@ func CheckContract(doc []byte, routes []Route) []string {
 			key := strings.ToUpper(m) + " " + base + p
 			documented[key] = true
 			access[key], _ = op["x-ledger-access"].(string)
+			recent[key], _ = op["x-ledger-recent-auth"].(bool)
 			id, _ := op["operationId"].(string)
 			switch {
 			case id == "":
@@ -183,6 +190,8 @@ func CheckContract(doc []byte, routes []Route) []string {
 			problems = append(problems, r.String()+": registered but not documented in the OpenAPI document")
 		} else if got, want := access[r.String()], r.Access.String(); got != want {
 			problems = append(problems, fmt.Sprintf("%s: x-ledger-access is %q, the route requires %q", r, got, want))
+		} else if recent[r.String()] != r.Access.RecentAuth() {
+			problems = append(problems, fmt.Sprintf("%s: x-ledger-recent-auth is %v, the route's is %v", r, recent[r.String()], r.Access.RecentAuth()))
 		}
 	}
 	for key := range documented {

@@ -19,6 +19,8 @@ import (
 type opsEnv struct {
 	Options config.Options
 	Now     func() time.Time
+	// Stdin is where "ledger auth set-password" reads the password.
+	Stdin io.Reader
 }
 
 func (e opsEnv) now() time.Time {

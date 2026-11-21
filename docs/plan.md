@@ -27,6 +27,10 @@ Last updated: 2026-11-20.
 - **B2 Import engine** (ADR-0020): `internal/domain/bankimport`; whole-day windows stored atomically with a per-account resume cursor and overlap; every page fetched; no-longer-reported marking; `superseded_by` on a shared entry reference; D17 retries; migration `0005_bank_refresh` (refresh runs, per-account last attempt/success/error); computed freshness (24 h); unknown balances dropped, never zero; `StoredTransaction.Countable`.
   - Follow-up: refresh and freshness endpoints with the connection API (B4, auth tasks); scheduler (B6); serve wiring after B3; reversal, split and supersession handling in matching (X1/X2); retention of refresh runs.
 
+- **A2 Passwords, sign-in and sessions** (ADR-0026): Argon2id (RFC 9106 parameters, bounded concurrency) in `user_passwords`; minimum length in bytes, no composition rules; uniform 401 `invalid_credentials` with one hash verification per attempt; in-memory failure limits per username and per address (IPv6 /64), 429 with Retry-After; server-side sessions (`sessions`, token stored as SHA-256) in a Secure, HttpOnly, SameSite=Strict cookie with idle and absolute timeouts; list and end own sessions (effective on the next request); setting a password ends the user's other sessions; CSRF for every cookie-authenticated write (origin check plus HMAC token), bearer tokens exempt; recent re-authentication (`x-ledger-recent-auth`) for user management and password changes; `ledger auth set-password` host command; audit of sign-in, re-authentication, session end and password change. Migration `0009_auth_sessions` (renumbered at merge), fixture `0008_audit_log`.
+  - Defaults (12 bytes, 30m idle, 12h absolute, 10m re-auth window, 10 per username and 30 per address per 15m) are proposed, not operator decisions.
+  - Follow-ups: A7 screens (sign-in, sessions, re-auth prompt, password change); A3 second factor in the sign-in flow; A4 token authenticator first, re-auth on token creation, whether a password change revokes tokens; A6 sessions through the same table.
+
 ## Next (first wave)
 
 - **F2 Configuration system**: YAML, environment and `.env` configuration, `.env.example`.
