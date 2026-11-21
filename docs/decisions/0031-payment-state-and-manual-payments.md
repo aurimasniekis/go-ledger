@@ -81,8 +81,8 @@ for both and builds neither.
    ADR-0011/0015); a stale one is 409 with the current occurrence as reconciliation. The override table therefore
    has no version of its own and is listed in `unversionedTables`.
 9. **Proposed: API and grants.** `GET /occurrences` and `GET /occurrences/{id}` carry a `payment` object (status,
-   derived_status, timing, paid_amount, outstanding_amount, unconverted_currencies, evidence_count, grace_until,
-   within_grace, override). New routes: `GET`/`POST /occurrences/{id}/manual-payments`,
+   derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, unconverted_currencies, evidence_count,
+   manual_evidence_count, bank_evidence_count, grace_until, within_grace, override). New routes: `GET`/`POST /occurrences/{id}/manual-payments`,
    `GET`/`DELETE /occurrences/{id}/manual-payments/{payment_id}`, `PUT`/`DELETE /occurrences/{id}/status-override`.
    They use `commitments:read` and `commitments:write`: payments are decisions about commitment occurrences, and no
    new grant was added to the ADR-0021 vocabulary. A separate `payments` grant can be split off later without

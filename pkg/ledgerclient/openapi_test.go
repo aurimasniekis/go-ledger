@@ -115,6 +115,18 @@ func jsonTags(t reflect.Type) map[string]bool {
 	return out
 }
 
+// alwaysSent returns the JSON member names a type marshals without omitempty.
+func alwaysSent(t reflect.Type) map[string]bool {
+	out := map[string]bool{}
+	for i := range t.NumField() {
+		name, opts, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" && !strings.Contains(opts, "omitempty") {
+			out[name] = true
+		}
+	}
+	return out
+}
+
 func keys(m map[string]bool) []string {
 	var out []string
 	for k := range m {
@@ -279,6 +291,15 @@ func TestTypesMatchSchemas(t *testing.T) {
 		for k := range required {
 			if !have[k] {
 				t.Errorf("%s: required member %s missing", c.name, k)
+			}
+		}
+		// A response always carries every member its Go type marshals
+		// (no omitempty), so the schema must require each of them.
+		if !c.request {
+			for k := range alwaysSent(c.typ) {
+				if !required[k] {
+					t.Errorf("%s: member %s is always sent but openapi.yaml does not require it", c.name, k)
+				}
 			}
 		}
 	}

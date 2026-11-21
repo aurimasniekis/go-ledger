@@ -12,7 +12,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Proposed defaults (ADR-0033).
+// Defaults (ADR-0033 point 13, accepted by the operator 2026-11-21).
 const (
 	// TransactionTTL is how long an authorization request may take, from
 	// leaving Ledger to the callback.
