@@ -161,7 +161,7 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 		}
 		inc := q.Filter("include_cancelled", OpEq)
 		if len(inc) > 1 {
-			WriteError(w, r, Validation("include_cancelled", "include_cancelled may be given once"))
+			WriteError(w, r, Validation("include_cancelled", "include_cancelled cannot be both true and false"))
 			return
 		}
 		items, err := st.List(r.Context(), occurrences.ListFilter{Month: month, CommitmentIDs: q.Filter("commitment_id", OpEq), After: q.After, Limit: q.Limit,

@@ -1491,7 +1491,8 @@ paths:
             When true, also returns cancelled occurrences (decision D31),
             which are left out by default. They carry cancelled_at and
             cancelled_reason, have payment status cancelled and are never part
-            of the monthly totals. May be given once; a repeat is a 400.
+            of the monthly totals. Given both true and false it is a 400; the same
+            value repeated is accepted.
           schema:
             type: boolean
       responses:
@@ -2733,7 +2734,8 @@ components:
             The amount less paid_amount, never below zero; zero when paid. Under an
             applied "unpaid" override it is the full amount (the evidence is declared
             not to settle the occurrence), so it is never zero while the status is not paid.
-            Always zero for a cancelled occurrence; paid_amount and evidence_count stay as history.
+            Always zero for a cancelled occurrence, which has no live evidence; paid_amount and
+            evidence_count count live evidence only (deleted payments are not counted), so both are zero too.
           $ref: "#/components/schemas/Money"
         overpaid_amount:
           description: paid_amount less the amount when positive, else zero. Informational; it does not change the status.

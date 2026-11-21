@@ -17,7 +17,9 @@ import (
 // Guards of the D31 cancellation that the first tests left uncovered.
 
 // TestArchivedCommitmentGeneratesNothingAPI: a soft-deleted commitment is not
-// materialised again as time passes (its cancelled history stays).
+// materialised again as time passes (its cancelled history stays). A second
+// live commitment keeps the materialisation pre-check busy, so the filter in
+// MaterialiseAllTx (the deleted_at guard) is what keeps the archived one out.
 func TestArchivedCommitmentGeneratesNothingAPI(t *testing.T) {
 	f := newAPIFixture(t)
 	f.now = time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)
@@ -25,16 +27,23 @@ func TestArchivedCommitmentGeneratesNothingAPI(t *testing.T) {
 	id := f.createCommitment(t, strings.Replace(monthEndBody, `"day":31`, `"day":10`, 1))
 	f.occurrences(t, "month=2026-03", "alice")
 	f.payAndDelete(t, "2026-01")
+	live := f.createCommitment(t, strings.Replace(monthEndBody, `"VPS"`, `"Hosting"`, 1))
 	if rec := f.do("DELETE", "/api/v1/commitments/"+id, "", map[string]string{"X-Test-User": f.ids["alice"], "If-Match": `"1"`}); rec.Code != 204 {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
 	}
 	f.now = time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
-	if n := len(f.listMonth(t, "2026-08", true)); n != 0 {
-		t.Errorf("an archived commitment generated %d occurrences", n)
+	items := f.listMonth(t, "2026-08", true)
+	if !slicesContainsCommitment(items, live) {
+		t.Fatalf("the live commitment was not generated for August: %+v", items)
+	}
+	for _, it := range items {
+		if it.CommitmentID == id {
+			t.Errorf("an archived commitment generated occurrence %s for August", it.ID)
+		}
 	}
 	rec := f.do("GET", "/api/v1/occurrences/summary?month=2026-08", "", admin)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"items":[]`) {
-		t.Errorf("summary: %d %s", rec.Code, rec.Body.String())
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), `"commitment_id":"`+id+`"`) {
+		t.Errorf("summary shows the archived commitment: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -81,4 +90,13 @@ func TestCancelledOccurrenceRefusesOverrideAndMatchAPI(t *testing.T) {
 	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "occurrence_cancelled") {
 		t.Errorf("match on a cancelled occurrence: %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+func slicesContainsCommitment(items []cancelledOcc, commitmentID string) bool {
+	for _, it := range items {
+		if it.CommitmentID == commitmentID {
+			return true
+		}
+	}
+	return false
 }

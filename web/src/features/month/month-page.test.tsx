@@ -239,3 +239,23 @@ describe('Month page', () => {
     expect(within(form).getByTestId('panel-occurrence')).toHaveTextContent('Rent b')
   })
 })
+
+describe('Month page: cancelled rows', () => {
+  it('Record a payment skips a cancelled row and opens the first unpaid one', async () => {
+    const cancelled = payment({ status: 'cancelled', derived_status: 'cancelled', timing: null, outstanding_amount: { amount: '0.00', currency: 'EUR' } })
+    calls = installApi({
+      ...signedIn(),
+      ['GET ' + MONTH]: (r) => responder(r),
+      ['POST /api/v1/occurrences/b/manual-payments']: (r) => responder(r),
+    })
+    responder = (c) => (c.method === 'POST'
+      ? json(201, { id: 'p9', occurrence_id: 'b', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-21', version: 1 })
+      : json(200, summary([item('a', { payment: cancelled }), item('b')])))
+    open()
+    expect(await screen.findByText('Rent a')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Record a payment' }))
+    const form = await screen.findByRole('form', { name: 'Record a payment' })
+    await userEvent.click(within(form).getByRole('button', { name: 'Save payment' }))
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.path).toBe('/api/v1/occurrences/b/manual-payments'))
+  })
+})

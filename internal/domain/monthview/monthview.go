@@ -178,6 +178,10 @@ func totalsOf(rows []Row) ([]CurrencyTotals, *time.Time) {
 		if o.UpdatedAt.After(latest) {
 			latest = o.UpdatedAt
 		}
+		if st.Status == payments.StatusCancelled {
+			// A cancelled occurrence is owed nothing: it adds to no total and no count.
+			continue
+		}
 		cur := o.Amount.Currency()
 		a := by[cur]
 		if a == nil {

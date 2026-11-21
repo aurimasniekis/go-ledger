@@ -14,6 +14,7 @@ import (
 
 type cancelledOcc struct {
 	ID              string  `json:"id"`
+	CommitmentID    string  `json:"commitment_id"`
 	Month           string  `json:"month"`
 	Version         int64   `json:"version"`
 	CancelledAt     *string `json:"cancelled_at"`
@@ -126,12 +127,17 @@ func TestDateCorrectionCancelsReferencedAPI(t *testing.T) {
 		t.Errorf("cancelled payment state by id: %+v", p)
 	}
 	raw := f.do("GET", "/api/v1/occurrences?month=2026-01&include_cancelled=true", "", admin).Body.String()
-	if !strings.Contains(raw, `"status":"cancelled"`) || strings.Contains(raw, "overdue") {
+	// Its history is the live evidence only: none, so paid and evidence_count are zero.
+	if !strings.Contains(raw, `"status":"cancelled"`) || strings.Contains(raw, "overdue") || !strings.Contains(raw, `"paid_amount":{"amount":"0.00"`) || !strings.Contains(raw, `"evidence_count":0`) {
 		t.Errorf("cancelled payment state in the list: %s", raw)
 	}
-	// Repeating include_cancelled is refused rather than merged (ADR-0011).
+	// Conflicting values of include_cancelled are refused rather than merged (ADR-0011);
+	// the same value repeated is accepted.
 	if rec := f.do("GET", "/api/v1/occurrences?month=2026-01&include_cancelled=true&include_cancelled=false", "", admin); rec.Code != 400 {
-		t.Errorf("repeated include_cancelled: %d %s", rec.Code, rec.Body.String())
+		t.Errorf("conflicting include_cancelled: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do("GET", "/api/v1/occurrences?month=2026-01&include_cancelled=true&include_cancelled=true", "", admin); rec.Code != 200 {
+		t.Errorf("identical include_cancelled repeated: %d %s", rec.Code, rec.Body.String())
 	}
 	// It is not in the monthly view and takes no new payment.
 	rec := f.do("GET", "/api/v1/occurrences/summary?month=2026-01", "", admin)

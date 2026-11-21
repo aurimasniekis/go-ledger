@@ -111,15 +111,15 @@ ADR-0024 left C2 three jobs: reading schedules through `commitments.Schedule`, d
     `commitment.deleted` carries `unpaid_occurrences_removed`, `cancelled_referenced` and `archived`.
     An earlier build skipped such a removal silently yet counted it as removed, and a date correction failed with 500.
     **Payment state of a cancelled occurrence** is its own: `status` and `derived_status` are `cancelled`, `timing` is
-    null, `outstanding_amount` is zero and there is no grace; `paid_amount` and `evidence_count` stay as history. It
+    null, `outstanding_amount` is zero and there is no grace; `paid_amount` and `evidence_count` count live evidence only, so both are zero (deleted payments are not counted). It
     never reads as upcoming, due or overdue, on `GET /occurrences/{id}` and with `include_cancelled` alike.
     **Cancel reason** follows the code path that removes the row, not the cause of the edit: the D23 removal of
     rows before the effective date is `out_of_range`, rows the edit plan removes are `terms_change` (so an end-date
     correction gives `out_of_range` for earlier months and `terms_change` for later ones), and a commitment delete
     is `commitment_deleted`.
     **Revival is counted as `created`:** a revived row keeps its id and history, but the `created` count of
-    `occurrences.regenerated` includes it (there is no separate `revived` count). `include_cancelled` may be given
-    once; a repeat is 400.
+    `occurrences.regenerated` includes it (there is no separate `revived` count). `include_cancelled` given both `true`
+    and `false` is 400; the same value repeated is accepted.
 
 11. **Proposed: a future-dated terms edit is protected.** A definition holds only the latest terms, so a terms edit with
     `effective_from` after today leaves the older terms of the months in between only in the stored rows. The edit

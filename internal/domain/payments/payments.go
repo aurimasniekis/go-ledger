@@ -210,7 +210,8 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 	}
 	if o.CancelledAt != nil {
 		// A cancelled occurrence owes nothing whatever its dates say. Paid and
-		// EvidenceCount stay as history; there is no timing and no grace.
+		// EvidenceCount are what its live evidence gives (a row is cancelled
+		// only when none refers to it, so both are zero); no timing, no grace.
 		st.Status, st.Derived, st.Outstanding = StatusCancelled, StatusCancelled, zero
 		return st
 	}
