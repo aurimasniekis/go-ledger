@@ -262,9 +262,10 @@ func registerUsers(s *Server, st users.Store) {
 }
 
 // guardAdministratorPatch applies D32 to PATCH /users/{id}: a token that is not
-// the root token of the root account may not make a user an administrator or
+// a root token of the root account may not make a user an administrator or
 // re-enable a disabled administrator (which also revives their tokens, D25-2).
-// D34 adds the root account: demoting or disabling it needs the root token too.
+// D34 adds the root account: demoting or disabling it needs a root token of the
+// root account too.
 // Demoting or disabling any other user stays open to users:write tokens.
 //
 // The decision is made on a read outside the write transaction, so it is pinned

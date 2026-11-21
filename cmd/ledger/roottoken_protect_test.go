@@ -132,4 +132,66 @@ func TestOnlyTheRootTokenOrASessionRevokesTheRootToken(t *testing.T) {
 	if c := del(again.Token.ID, again.Secret); c != 204 {
 		t.Errorf("root token revokes itself: %d", c)
 	}
+
+	// "The root token" means a root token of the root account (D25, D32): a
+	// second root token B revokes the first, A.
+	a := e.createToken(alice, `{"name":"root-a","root":true}`)
+	b := e.createToken(alice, `{"name":"root-b","root":true}`)
+	if c := del(a.Token.ID, b.Secret); c != 204 {
+		t.Errorf("root token B revokes root token A: %d", c)
+	}
+	if s := status(a.Token.ID); s != "revoked" {
+		t.Errorf("root token A after B revoked it: %s", s)
+	}
+	if s := status(b.Token.ID); s != "active" {
+		t.Errorf("root token B after revoking A: %s", s)
+	}
+
+	// Only root tokens are protected: a tokens:write token still revokes a
+	// non-root token owned by the root account.
+	plain := e.createToken(alice, `{"name":"plain","grants":["users:read"]}`)
+	if c := del(plain.Token.ID, writer.Secret); c != 204 {
+		t.Errorf("tokens:write revokes a non-root token of the root account: %d", c)
+	}
+}
+
+// TestRootAccountNoOpsStayOpenOnceDemotedOrDisabled pins the guard's two
+// preconditions: a patch only counts as demoting when the root account is
+// still an administrator, and as disabling when it is still enabled. Repeating
+// either change on an account a session already demoted or disabled is a no-op
+// and stays open to a users:write token.
+func TestRootAccountNoOpsStayOpenOnceDemotedOrDisabled(t *testing.T) {
+	e := newSignInEnv(t, nil)
+	e.addAdministrator("erin")
+	ctx := context.Background()
+	e.signIn("alice")
+	erin, _ := e.signIn("erin")
+	narrow := e.createToken(erin, `{"name":"um","grants":["users:read","users:write"]}`)
+	version := func() int64 {
+		u, err := e.parts.users.Get(ctx, e.ids["alice"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.Version
+	}
+	session := func(body string) {
+		t.Helper()
+		if w := e.req("PATCH", "/api/v1/users/"+e.ids["alice"], fmt.Sprintf(body, version()), erin, nil); w.Code != 200 {
+			t.Fatalf("session patch %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	token := func(body string) {
+		t.Helper()
+		if w := e.req("PATCH", "/api/v1/users/"+e.ids["alice"], fmt.Sprintf(body, version()), nil, bearer(narrow.Secret)); w.Code != 200 {
+			t.Errorf("no-op %s on the root account: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+
+	// M1: role read-only on an already-demoted root account.
+	session(`{"role":"read-only","version":%d}`)
+	token(`{"role":"read-only","version":%d}`)
+
+	// M2: disabled:true on an already-disabled root account.
+	session(`{"disabled":true,"version":%d}`)
+	token(`{"disabled":true,"version":%d}`)
 }

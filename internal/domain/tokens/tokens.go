@@ -366,7 +366,8 @@ func (s *Service) checkMinter(ctx context.Context, p authz.Principal) (Token, er
 }
 
 // IsProtectedRoot reports whether id is the root token of the root account
-// (decision D34): a root token owned by the root account, in any status. A
+// (decision D34): a root token owned by the root account, in any status. Every
+// such token is protected, not only one of them. A
 // missing token is not protected (the caller's own lookup answers not found).
 func (s *Service) IsProtectedRoot(ctx context.Context, id string) (bool, error) {
 	t, err := s.store.Get(ctx, id)

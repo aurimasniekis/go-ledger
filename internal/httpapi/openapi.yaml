@@ -356,6 +356,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        "403":
+          description: "With an API token: code `root_token_required` when creating an administrator unless the caller is a root token of the root account (decision D32); also the usual authorization refusals."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /users/{id}:
@@ -399,11 +405,13 @@ paths:
         disable them instead, which keeps audit history and token ownership
         intact. A disabled user's sessions and tokens stop working on their
         next request. With an API token, making a user an administrator or
-        re-enabling a disabled administrator needs the root token of the root
-        account (decision D32); any other token is refused with 403
-        `root_token_required` before anything changes. Demoting, disabling
-        and profile edits stay open to a `users:write` token. Sessions are
-        unchanged.
+        re-enabling a disabled administrator needs a root token of the root
+        account (decision D32); so does demoting or disabling the root
+        (first) account (decision D34). Any other token is refused with 403
+        `root_token_required` before anything changes, and that check is
+        pinned to the version (a stale version is a 409). Demoting or
+        disabling other users, no-op changes and profile edits stay open to a
+        `users:write` token. Sessions are unchanged.
       tags: [users]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
@@ -437,6 +445,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/User"
+        "403":
+          description: "With an API token: code `root_token_required` when promoting to administrator or re-enabling an administrator (decision D32), or when demoting or disabling the root account (decision D34), unless the caller is a root token of the root account; also the usual authorization refusals."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /commitments:
@@ -747,6 +761,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PasswordSet"
+        "403":
+          description: "With an API token: code `root_token_required` unless the caller is a root token of the root account (decision D32); also the usual authorization refusals."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /auth/sign-in:
@@ -1714,6 +1734,13 @@ paths:
         audited as `token.revoked` with `cascaded_from` naming this token.
         Descendants that are already revoked are left alone. Tokens without a
         parent (made with a session or on the host) are never reached.
+
+        With an API token, revoking a root token of the root account (which
+        also ends its children) needs a root token of the root account:
+        one such token may revoke another. Any other token, even one holding
+        `tokens:write`, is refused with 403 `root_token_required`
+        (decision D34). Sessions are unchanged. Revoking any other token is
+        open to `tokens:write`.
       tags: [tokens]
       responses:
         "204":
@@ -1784,6 +1811,12 @@ paths:
       responses:
         "204":
           description: Revoked.
+        "403":
+          description: "With an API token: code `root_token_required` when the token is a root token of the root account and the caller is not one (decision D34); also the usual authorization refusals."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /occurrences/{id}/manual-payments:

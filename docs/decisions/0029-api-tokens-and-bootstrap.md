@@ -211,11 +211,12 @@ the root account, `authz.Principal.CanCreateTokens`, computed on every request f
 
 ## Amendment: the root path is protected from other tokens (A4i; operator decision D34)
 
-Only the root token of the root account, or a session, may demote or disable the root (first) account or revoke the root
-token. Every other token, including one holding `users:write` or `tokens:write` and another administrator's root token,
+Only a root token of the root account (the D25 and D32 meaning of "the root token"), or a session, may demote or disable the root
+(first) account or revoke a root token of the root account; one root token of the root account may revoke another. Every other
+token, including one holding `users:write` or `tokens:write` and another administrator's root token,
 gets 403 `root_token_required` before anything is written:
 
 - `PATCH /users/{root-id}` that demotes the root account or disables it (a no-op such as `disabled: false` on an enabled
   administrator, or a profile edit, stays open). Like D32 the check is pinned to the version (409 `version_conflict` when the
   caller's version is stale).
-- `DELETE /tokens/{root-token-id}`, which also ends the root token's children. Revoking any other token is unchanged.
+- `DELETE /tokens/{root-token-id}` for a root token of the root account, which also ends its children. Revoking any other token is unchanged.
