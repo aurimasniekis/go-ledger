@@ -119,11 +119,16 @@ reads only; it takes the write lock only when some commitment is behind.
 
 ## Consequences
 
-- **For the operator (proposed, not decided):** the every-N-months anchor and the late-start first occurrence
-  (point 2: start Jan 20, day 15, interval 3 gives Apr 15), the pending future-dated edit guard (point 11), the
-  1900-01-01 lower bound on `start_date` (point 12), the slot rule (point 5), today as the default effective date
-  (point 6), materialising on read with a 60-month horizon (point 7), deleting unpaid occurrences with the commitment
-  (point 9), and reading occurrences under `commitments:read` (point 10).
+- **D23 (accepted, 2026-11-21):** a start or end date change removes the unpaid occurrences outside the new
+  [start, end], whatever the effective date (so an unpaid occurrence before the effective date can go). Occurrences
+  with payment evidence, or with a status override of any state, are never removed (an override would cascade away
+  with its row). The counts are audited as `removed_out_of_range` and `kept_override` on
+  `occurrences.regenerated`. Accepted with it: the every-N anchor, late start (point 2), today as the default
+  effective date (point 6), generation on read up to 60 months (point 7), the 1900 floor (point 12), deleting unpaid
+  occurrences with the commitment (point 9, audited count; paid ones block the delete), and the `commitments:read`
+  grant (point 10).
+- **For the operator (still proposed, not decided):** the slot rule (point 5) and the pending future-dated edit guard
+  (point 11).
 - C3 must add its evidence conditions to `DefaultEvidence`, with `RESTRICT` foreign keys. Any other table that
   refers to occurrences (for example match suggestions) must either count as evidence or use `ON DELETE CASCADE`.
   Otherwise an edit that removes an unpaid occurrence fails on the foreign key.

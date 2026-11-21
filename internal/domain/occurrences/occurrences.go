@@ -165,6 +165,13 @@ type Plan struct {
 	// unchanged; KeptHistory counts unpaid ones before it.
 	KeptPaid    int
 	KeptHistory int
+	// OutOfRange counts the unpaid occurrences removed because a start or end
+	// date change left them outside [start, end] (D23 2b), whatever the
+	// effective date. The store fills it in; PlanEdit does not.
+	OutOfRange int
+	// KeptOverride counts the unpaid occurrences outside the dates that stay
+	// because they carry a status override (any state). The store fills it in.
+	KeptOverride int
 }
 
 // Empty reports whether the plan changes nothing.
@@ -243,12 +250,14 @@ const TargetType = commitments.TargetType
 func RegeneratedEvent(actor audit.Actor, commitmentID string, effective calendar.Date, p Plan, at time.Time) audit.Event {
 	return audit.Event{Action: audit.OccurrencesRegenerated, Actor: actor, TargetType: TargetType, TargetID: commitmentID, At: at,
 		Details: map[string]string{
-			"effective_from": effective.String(),
-			"created":        strconv.Itoa(len(p.Create)),
-			"updated":        strconv.Itoa(len(p.Update)),
-			"removed":        strconv.Itoa(len(p.Remove)),
-			"kept_paid":      strconv.Itoa(p.KeptPaid),
-			"kept_history":   strconv.Itoa(p.KeptHistory),
+			"effective_from":       effective.String(),
+			"created":              strconv.Itoa(len(p.Create)),
+			"updated":              strconv.Itoa(len(p.Update)),
+			"removed":              strconv.Itoa(len(p.Remove)),
+			"kept_paid":            strconv.Itoa(p.KeptPaid),
+			"kept_history":         strconv.Itoa(p.KeptHistory),
+			"removed_out_of_range": strconv.Itoa(p.OutOfRange),
+			"kept_override":        strconv.Itoa(p.KeptOverride),
 		}}
 }
 
