@@ -292,8 +292,9 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 				back(oidcErrInternal)
 			case iss.SecondFactor != nil:
 				// The challenge goes in the fragment, which browsers never send
-				// to a server nor put in a Referer header.
-				redirect(w, r, SignInPagePath+"#second_factor="+url.QueryEscape(iss.SecondFactor.Token))
+				// to a server nor put in a Referer header. The marker in the query
+				// lets GET /sign-in tell this page from a bare visit.
+				redirect(w, r, SignInPagePath+"?step="+signInStepSecondFactor+"#second_factor="+url.QueryEscape(iss.SecondFactor.Token))
 			default:
 				setSessionCookie(w, iss.Token, iss.Session.ExpiresAt, iss.Session.ExpiresAt.Sub(iss.Session.CreatedAt))
 				redirect(w, r, t.ReturnTo)
@@ -433,7 +434,10 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 	// another origin is refused.
 	s.HandleAPI("GET "+AuthPath+"/recovery-sign-in", Public(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		noStore(w)
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		// same-origin, not no-referrer: a form POST from a no-referrer page sends
+		// Origin: null, which browsers without Sec-Fetch-Site would have refused
+		// by the cross-origin check. Nothing leaves the origin either way.
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -466,7 +470,7 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 	// sign-in is disabled, unless it is showing the outcome of an attempt.
 	s.Handle("GET "+SignInPagePath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if configured && svc.Config().PasswordSignInDisabled && !q.Has("oidc_error") && !q.Has("recovery_error") {
+		if configured && svc.Config().PasswordSignInDisabled && !q.Has("oidc_error") && !q.Has("recovery_error") && q.Get("step") != signInStepSecondFactor {
 			to := OIDCAuthorizePath
 			if ret := returnPath(q.Get("return_to")); ret != "/" {
 				to = withQuery(to, "return_to", ret)
@@ -481,6 +485,11 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 		WriteError(w, r, NotFound("no such resource"))
 	}))
 }
+
+// signInStepSecondFactor marks /sign-in?step=second_factor, the page where the
+// UI takes the second step after the provider. The marker is visible to the
+// server (the fragment is not), so the page is served instead of redirected.
+const signInStepSecondFactor = "second_factor"
 
 // recoveryPage asks the person holding a recovery link to confirm the
 // sign-in. It is plain HTML with no script, so it works before the UI loads.
