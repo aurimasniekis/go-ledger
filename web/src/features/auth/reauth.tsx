@@ -40,6 +40,16 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
     return () => setReauthHandler(null)
   }, [])
 
+  // Leaving the page with the prompt open must not strand the requests waiting on it.
+  useEffect(
+    () => () => {
+      const w = waiters.current
+      waiters.current = []
+      w.forEach((r) => r(false))
+    },
+    [],
+  )
+
   const check = useMutation({
     mutationFn: () =>
       apiFetch(api('/auth/reauthenticate'), { method: 'POST', json: { password }, noReauth: true }),

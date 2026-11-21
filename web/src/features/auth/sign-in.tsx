@@ -12,7 +12,9 @@ import { formatInstant } from '@/lib/format'
 
 /** Only same-origin paths are followed after sign-in. */
 export function safeRedirect(r: string | undefined): string {
-  return r && r.startsWith('/') && !r.startsWith('//') && !r.startsWith('/sign-in') ? r : '/'
+  // Backslashes and control characters are rejected: browsers read `/\` as `//`.
+  if (!r || [...r].some((c) => c === '\\' || c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f)) return '/'
+  return r.startsWith('/') && !r.startsWith('//') && !r.startsWith('/sign-in') ? r : '/'
 }
 
 /** The form-level message: a rate limit says when to try again; other errors use the server's text. */

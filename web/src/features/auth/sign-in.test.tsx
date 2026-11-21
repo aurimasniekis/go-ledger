@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fail, installApi, ok, renderApp, session, signedIn } from '@/test/fake-api'
 import { setCsrfToken } from '@/lib/api'
+import { safeRedirect } from '@/features/auth/sign-in'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -10,6 +11,15 @@ afterEach(() => {
 })
 
 const signedOut = { 'GET /api/v1/auth/session': fail(401, 'unauthenticated', 'sign in required') }
+
+describe('safeRedirect', () => {
+  it('keeps same-origin paths and rejects everything else', () => {
+    expect(safeRedirect('/month?m=2026-11')).toBe('/month?m=2026-11')
+    for (const bad of ['//evil.example', '/\\evil.example', '/a\\b', '/a\tb', '/a\nb', '/a\x00b', '/a\x7fb', 'https://evil.example', '/sign-in', undefined, '']) {
+      expect(safeRedirect(bad)).toBe('/')
+    }
+  })
+})
 
 describe('sign-in', () => {
   it('sends a signed-out visitor to sign-in, remembering where they were going', async () => {
