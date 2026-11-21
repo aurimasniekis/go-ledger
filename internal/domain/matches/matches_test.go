@@ -130,3 +130,64 @@ func TestEvidenceAndAudit(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckTargetScale(t *testing.T) {
+	if err := matches.CheckTarget(booked("-3.50"), occ("3.50"), eur("3.499")); !errors.Is(err, matches.ErrScale) {
+		t.Errorf("finer than the transaction: %v", err)
+	}
+	if err := matches.CheckTarget(booked("-3.50"), occ("3.50"), eur("3.4")); err != nil {
+		t.Errorf("coarser is fine: %v", err)
+	}
+}
+
+func TestCheckAuto(t *testing.T) {
+	none := money.Money{}
+	if err := matches.CheckAuto(booked("-12.00"), 0, eur("12.00"), occ("12.00"), none); err != nil {
+		t.Errorf("1:1 exact: %v", err)
+	}
+	if err := matches.CheckAuto(booked("-12.00"), 0, eur("7.00"), occ("7.00"), none); !errors.Is(err, matches.ErrAutoNotOneToOne) {
+		t.Errorf("partial: %v", err)
+	}
+	if err := matches.CheckAuto(booked("-12.00"), 1, eur("12.00"), occ("12.00"), none); !errors.Is(err, matches.ErrAutoNotOneToOne) {
+		t.Errorf("another open allocation: %v", err)
+	}
+	if err := matches.CheckAuto(booked("-12.00"), 0, eur("12.00"), occ("12.50"), none); !errors.Is(err, matches.ErrAutoAmount) {
+		t.Errorf("amount differs: %v", err)
+	}
+	if err := matches.CheckAuto(booked("-12.00"), 0, eur("12.00"), occ("12.50"), eur("0.50")); err != nil {
+		t.Errorf("within tolerance: %v", err)
+	}
+	if err := matches.CheckAuto(booked("-12.00"), 0, eur("12.00"), occ("12.51"), eur("0.50")); !errors.Is(err, matches.ErrAutoAmount) {
+		t.Errorf("beyond tolerance: %v", err)
+	}
+}
+
+func TestNeedsReview(t *testing.T) {
+	mk := func(state matches.State, mut func(*matches.Transaction)) matches.Match {
+		tx := booked("-5.00")
+		mut(&tx)
+		return matches.Match{State: state, Transaction: tx}
+	}
+	gone := time.Now()
+	for name, c := range map[string]struct {
+		m    matches.Match
+		want bool
+	}{
+		"confirmed and countable":       {mk(matches.StateConfirmed, func(*matches.Transaction) {}), false},
+		"confirmed, no longer reported": {mk(matches.StateConfirmed, func(x *matches.Transaction) { x.NoLongerReportedAt = gone }), true},
+		"suggestion on a live pending":  {mk(matches.StateSuggested, func(x *matches.Transaction) { x.Status = banking.StatusPending }), false},
+		"suggestion on a vanished pending": {mk(matches.StateSuggested, func(x *matches.Transaction) {
+			x.Status = banking.StatusPending
+			x.NoLongerReportedAt = gone
+		}), true},
+		"suggestion on a superseded pending": {mk(matches.StateSuggested, func(x *matches.Transaction) {
+			x.Status = banking.StatusPending
+			x.SupersededBy = "01JD3Y4C8V9M2Q7W5R6T0XZBNC"
+		}), true},
+		"rejected on a vanished one": {mk(matches.StateRejected, func(x *matches.Transaction) { x.NoLongerReportedAt = gone }), false},
+	} {
+		if got := c.m.NeedsReview(); got != c.want {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+}

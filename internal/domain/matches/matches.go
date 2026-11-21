@@ -194,6 +194,19 @@ type Match struct {
 // count until the transaction is reported again.
 func (m Match) CountsAsEvidence() bool { return m.State == StateConfirmed && m.Transaction.Countable() }
 
+// NeedsReview reports whether an open match (suggested or confirmed) is on a
+// transaction that can no longer back it: the provider stopped reporting it,
+// it was superseded, or it is not booked and not a pending one that is still
+// reported (a pending transaction only ever yields suggestions, which is
+// normal).
+func (m Match) NeedsReview() bool {
+	t := m.Transaction
+	if !m.State.Open() {
+		return false
+	}
+	return !t.NoLongerReportedAt.IsZero() || t.SupersededBy != "" || (!t.Countable() && t.Status != banking.StatusPending)
+}
+
 // New is a match to create.
 type New struct {
 	TransactionID banking.TransactionID
@@ -206,7 +219,11 @@ type New struct {
 	// AllowOverpayment lets a confirmation take the occurrence's evidence
 	// past its amount; the excess shows as overpaid_amount.
 	AllowOverpayment bool
-	Reason           *string
+	// AutoTolerance is how far an auto_rule confirmation's allocation may
+	// differ from the occurrence's amount; the zero value means exactly
+	// equal.
+	AutoTolerance money.Money
+	Reason        *string
 }
 
 // Validate checks n on its own (not against stored data).
@@ -278,6 +295,16 @@ var (
 	// payment evidence past its amount, unless overpayment is explicitly
 	// allowed.
 	ErrOverpaid = errors.New("this would pay the occurrence more than its amount; allow overpayment explicitly if that is what happened")
+	// ErrScale refuses an allocation with more decimal places than the
+	// transaction's amount: it would leave an unpayable sub-unit remainder.
+	ErrScale = errors.New("the allocation has more decimal places than the bank transaction's amount")
+	// ErrAutoNotOneToOne refuses a rule confirmation (decision D8: automatic
+	// matching is 1:1 only) that is not the transaction's whole amount, or
+	// whose transaction has another open allocation.
+	ErrAutoNotOneToOne = errors.New("an automatic confirmation must allocate the whole transaction and be its only open match")
+	// ErrAutoAmount refuses a rule confirmation whose allocation differs
+	// from the occurrence's amount by more than the tolerance given.
+	ErrAutoAmount = errors.New("an automatic confirmation must match the occurrence's amount within the tolerance given")
 	// ErrDuplicate refuses a second open (suggested or confirmed) match of
 	// the same transaction and occurrence.
 	ErrDuplicate = errors.New("the transaction and the occurrence already have an open match")
@@ -300,8 +327,42 @@ func CheckTarget(t Transaction, o occurrences.Occurrence, amount money.Money) er
 	if amount.Currency() != t.Amount.Currency() || amount.Currency() != o.Amount.Currency() {
 		return ErrCurrency
 	}
+	if amount.Amount().Scale() > t.Amount.Amount().Scale() {
+		return ErrScale
+	}
 	if c, _ := amount.Cmp(t.Magnitude()); c > 0 {
 		return ErrOverAllocated
+	}
+	return nil
+}
+
+// CheckAuto is the store's guard for a confirmation by the matching engine
+// (origin auto_rule, decision D8: 1:1 only), whatever the caller decided: the
+// allocation is the transaction's whole magnitude, the transaction has no
+// other open (suggested or confirmed) allocation (otherAllocations counts
+// them, leaving out the match itself), and the allocation equals the
+// occurrence's amount, or differs by at most tolerance when it is valid. The
+// matching safeguards of decision D9 stay with task X2.
+func CheckAuto(t Transaction, otherOpen int, amount money.Money, o occurrences.Occurrence, tolerance money.Money) error {
+	if otherOpen > 0 {
+		return ErrAutoNotOneToOne
+	}
+	if c, err := amount.Cmp(t.Magnitude()); err != nil || c != 0 {
+		return ErrAutoNotOneToOne
+	}
+	diff, err := amount.Sub(o.Amount)
+	if err != nil {
+		return ErrCurrency
+	}
+	diff = diff.Abs()
+	if !tolerance.IsValid() {
+		if diff.Sign() != 0 {
+			return ErrAutoAmount
+		}
+		return nil
+	}
+	if c, err := diff.Cmp(tolerance); err != nil || c > 0 {
+		return ErrAutoAmount
 	}
 	return nil
 }

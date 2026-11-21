@@ -171,6 +171,17 @@ BEGIN
     SELECT RAISE(ABORT, 'a payment match history entry must be in the currency of its match');
 END;
 
+-- The history of a confirmed or reversed match is payment history too: it is
+-- never deleted on its own. (A rejected match's history still goes with it
+-- when its occurrence is regenerated; whether rejections should survive is an
+-- open decision.)
+CREATE TRIGGER payment_match_events_history_kept
+BEFORE DELETE ON payment_match_events
+WHEN (SELECT state FROM payment_matches WHERE id = OLD.match_id) IN ('confirmed', 'reversed')
+BEGIN
+    SELECT RAISE(ABORT, 'the history of a confirmed or reversed payment match is never deleted');
+END;
+
 CREATE TRIGGER payment_match_events_append_only
 BEFORE UPDATE ON payment_match_events
 BEGIN

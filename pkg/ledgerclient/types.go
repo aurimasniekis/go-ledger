@@ -267,8 +267,11 @@ type PaymentMatch struct {
 	Transaction      MatchedBankTransaction `json:"transaction"`
 	History          []MatchEvent           `json:"history"`
 	Version          int64                  `json:"version"`
-	CreatedAt        string                 `json:"created_at"`
-	UpdatedAt        string                 `json:"updated_at"`
+	// OccurrenceVersion is the occurrence's new version on create and action
+	// responses; nil on reads.
+	OccurrenceVersion *int64 `json:"occurrence_version,omitempty"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
 }
 
 // NewPaymentMatch is the body of CreatePaymentMatch: the user's confirmed

@@ -2316,9 +2316,18 @@ components:
         needs_review:
           type: boolean
           description: |
-            True for a suggested or confirmed match whose (non-pending)
-            transaction no longer counts: the provider stopped reporting it.
-            Such a match stays listed and is never deleted.
+            True for a suggested or confirmed match whose transaction can no
+            longer back it: the provider stopped reporting it (a pending
+            transaction too), it was superseded, or it is neither booked nor
+            a still-reported pending one. Such a match stays listed and is
+            never deleted.
+        occurrence_version:
+          type: integer
+          format: int64
+          description: |
+            The occurrence's new version. Present on the responses of create
+            and of the confirm, reject, unmatch, correct and reverse actions;
+            absent on reads.
         created_by:
           $ref: "#/components/schemas/MatchActor"
         decided_by:

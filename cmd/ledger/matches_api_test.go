@@ -83,14 +83,15 @@ func (b *bankFixture) tx(t *testing.T, description string) banking.StoredTransac
 }
 
 type matchJSON struct {
-	ID               string  `json:"id"`
-	State            string  `json:"state"`
-	Origin           string  `json:"origin"`
-	CountsAsEvidence bool    `json:"counts_as_evidence"`
-	NeedsReview      bool    `json:"needs_review"`
-	Version          int64   `json:"version"`
-	Reason           *string `json:"reason"`
-	Amount           struct {
+	ID                string  `json:"id"`
+	State             string  `json:"state"`
+	Origin            string  `json:"origin"`
+	CountsAsEvidence  bool    `json:"counts_as_evidence"`
+	NeedsReview       bool    `json:"needs_review"`
+	Version           int64   `json:"version"`
+	OccurrenceVersion int64   `json:"occurrence_version"`
+	Reason            *string `json:"reason"`
+	Amount            struct {
 		Amount   string `json:"amount"`
 		Currency string `json:"currency"`
 	} `json:"amount"`
@@ -188,6 +189,9 @@ func TestPaymentMatchAPI(t *testing.T) {
 	if m.State != "confirmed" || m.Origin != "user" || !m.CountsAsEvidence || m.DecidedBy == nil || m.DecidedBy.Kind != "user" || *m.DecidedBy.UserID != f.ids["alice"] ||
 		m.Transaction.Source != "bank" || m.Transaction.Amount.Amount != "-800.00" || m.Transaction.BookingStatus != "booked" || *m.Reason != "first part" {
 		t.Fatalf("created: %+v", m)
+	}
+	if m.OccurrenceVersion != 2 {
+		t.Errorf("occurrence_version after create: %d", m.OccurrenceVersion)
 	}
 	if o := f.getOccurrence(t, oct); o.Payment.Status != "partially_paid" || o.Payment.Outstanding.Amount != "300.00" || o.Version != 2 {
 		t.Fatalf("after 500: v%d %+v", o.Version, o.Payment)

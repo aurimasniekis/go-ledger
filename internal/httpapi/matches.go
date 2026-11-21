@@ -95,8 +95,11 @@ type paymentMatchJSON struct {
 	Transaction      bankTransactionJSON `json:"transaction"`
 	History          []matchEventJSON    `json:"history"`
 	Version          int64               `json:"version"`
-	CreatedAt        time.Time           `json:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at"`
+	// OccurrenceVersion is the occurrence's new version, set on create and
+	// action responses so a client can send its next If-Match without a refetch.
+	OccurrenceVersion *int64    `json:"occurrence_version,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 func datePtr(d calendar.Date) *calendar.Date {
@@ -120,7 +123,7 @@ func toPaymentMatchJSON(m matches.Match) paymentMatchJSON {
 		tj.SupersededBy = &s
 	}
 	out := paymentMatchJSON{ID: m.ID, OccurrenceID: m.OccurrenceID, TransactionID: string(m.TransactionID), Amount: m.Amount, Origin: m.Origin, State: m.State,
-		CountsAsEvidence: m.CountsAsEvidence(), NeedsReview: m.State.Open() && !t.Countable() && t.Status != banking.StatusPending,
+		CountsAsEvidence: m.CountsAsEvidence(), NeedsReview: m.NeedsReview(),
 		CreatedBy: toDeciderJSON(m.CreatedBy), DecidedAt: m.DecidedAt, Reason: m.Reason, Transaction: tj,
 		History: make([]matchEventJSON, len(m.History)), Version: m.Version, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 	if m.DecidedBy != nil {
@@ -148,6 +151,8 @@ func matchError(err error) error {
 		return Validation("occurrence_id", err.Error())
 	case errors.Is(err, matches.ErrCurrency):
 		return Validation("amount.currency", err.Error())
+	case errors.Is(err, matches.ErrScale):
+		return Validation("amount", err.Error())
 	case errors.Is(err, matches.ErrNotCountable):
 		return conflict(CodeTransactionNotCountable, "transaction_id")
 	case errors.Is(err, matches.ErrNotDebit):
@@ -291,6 +296,13 @@ func registerMatches(s *Server, st matches.Store) {
 		SetVersion(w, m.Version)
 		WriteJSON(w, status, toPaymentMatchJSON(m))
 	}
+	writeChange := func(w http.ResponseWriter, status int, ch matches.Change) {
+		SetVersion(w, ch.Match.Version)
+		out := toPaymentMatchJSON(ch.Match)
+		v := ch.Result.Occurrence.Version
+		out.OccurrenceVersion = &v
+		WriteJSON(w, status, out)
+	}
 
 	s.HandleAPI("GET "+PaymentMatchesPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q, err := ParseList(r, matchesListSpec)
@@ -335,7 +347,7 @@ func registerMatches(s *Server, st matches.Store) {
 			return
 		}
 		w.Header().Set("Location", PaymentMatchesPath+"/"+ch.Match.ID)
-		writeMatch(w, http.StatusCreated, ch.Match)
+		writeChange(w, http.StatusCreated, ch)
 	}))
 
 	s.HandleAPI("GET "+item, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -379,7 +391,7 @@ func registerMatches(s *Server, st matches.Store) {
 				WriteError(w, r, matchError(err))
 				return
 			}
-			writeMatch(w, http.StatusOK, ch.Match)
+			writeChange(w, http.StatusOK, ch)
 		}))
 	}
 	action("confirm", []string{"allow_overpayment"}, nil, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {

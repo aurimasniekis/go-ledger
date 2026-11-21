@@ -17,6 +17,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -325,6 +326,33 @@ func checkConfirm(ctx context.Context, tx *sql.Tx, t matches.Transaction, o occu
 			kept = append(kept, e)
 		}
 	}
+	// Every other confirmed match of the occurrence counts toward the
+	// overpayment check, countable or not: a transaction the provider
+	// reports again would count again, and must not double-count.
+	rows, err := tx.QueryContext(ctx, "SELECT id, amount, currency FROM payment_matches WHERE occurrence_id = ? AND state = 'confirmed' AND id <> ?", o.ID, except)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		var a sqlvalue.Amount
+		var c sqlvalue.Currency
+		if err := rows.Scan(&id, &a, &c); err != nil {
+			return err
+		}
+		if slices.ContainsFunc(kept, func(e payments.Evidence) bool { return e.Kind == payments.EvidenceBankTransaction && e.ID == id }) {
+			continue
+		}
+		m, err := sqlvalue.Money(a, c)
+		if err != nil {
+			return err
+		}
+		kept = append(kept, payments.Evidence{Kind: payments.EvidenceBankTransaction, ID: id, OccurrenceID: o.ID, Amount: m})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	f.Evidence = kept
 	return matches.CheckConfirm(t, others, amount, o, f, allow)
 }
@@ -404,6 +432,15 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 			return matches.ErrDuplicate
 		}
 		action := matches.ActionSuggested
+		if n.State == matches.StateConfirmed && n.Origin == matches.OriginAutoRule {
+			var others int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM payment_matches WHERE transaction_id = ? AND state IN ('suggested', 'confirmed')", string(t.ID)).Scan(&others); err != nil {
+				return err
+			}
+			if err := matches.CheckAuto(t, others, n.Amount, o, n.AutoTolerance); err != nil {
+				return err
+			}
+		}
 		if n.State == matches.StateConfirmed {
 			if err := checkConfirm(ctx, tx, t, o, n.Amount, "", n.AllowOverpayment); err != nil {
 				return err
