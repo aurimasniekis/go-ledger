@@ -305,6 +305,12 @@ var (
 	// ErrAutoAmount refuses a rule confirmation whose allocation differs
 	// from the occurrence's amount by more than the tolerance given.
 	ErrAutoAmount = errors.New("an automatic confirmation must match the occurrence's amount within the tolerance given")
+	// ErrActorOrigin refuses a match that claims origin user from an actor
+	// that is neither a user nor a token.
+	ErrActorOrigin = errors.New("a match with origin user needs a user or token actor")
+	// ErrActorCorrect refuses a correction by an actor that is neither a
+	// user nor a token: automation cannot change an allocation.
+	ErrActorCorrect = errors.New("only a user or a token can correct a match's allocation")
 	// ErrDuplicate refuses a second open (suggested or confirmed) match of
 	// the same transaction and occurrence.
 	ErrDuplicate = errors.New("the transaction and the occurrence already have an open match")

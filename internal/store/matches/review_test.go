@@ -7,9 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
+	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 )
 
 func (f *fixture) exec(query string, args ...any) error {
@@ -216,4 +218,80 @@ func TestDatabaseRefusesOriginStateMismatch(t *testing.T) {
 	if err := f.exec(insertMatch, "01JZ0000000000000000000C04", string(rent.ID), o.ID, "user", "confirmed", "user", at); err != nil {
 		t.Errorf("control insert: %v", err)
 	}
+}
+
+// TestAutomationActorIsHeldToTheAutoRules: a system actor cannot go around the
+// 1:1 guard by suggesting first, by claiming origin user or by correcting.
+func TestAutomationActorIsHeldToTheAutoRules(t *testing.T) {
+	sys := audit.System
+	create := func(f *fixture, tx banking.StoredTransaction, o occurrences.Occurrence, amount string, origin matches.Origin, st matches.State) (matches.Change, error) {
+		return f.ms.Create(f.ctx, sys, matches.New{TransactionID: tx.ID, OccurrenceID: o.ID, Amount: money.MustParse(amount, "EUR"), Origin: origin, State: st})
+	}
+	setup := func(t *testing.T) (*fixture, banking.StoredTransaction, occurrences.Occurrence, occurrences.Occurrence) {
+		f := newFixture(t)
+		rent := f.tx("RENT 2026-10") // -800.00
+		o := f.occurrence(f.commitment("800.00", "EUR", 2).ID, "2026-10")
+		oo := f.occurrence(f.commitment("500.00", "EUR", 3).ID, "2026-10")
+		return f, rent, o, oo
+	}
+	t.Run("confirm a partial suggestion (a)", func(t *testing.T) {
+		f, rent, o, oo := setup(t)
+		s, err := create(f, rent, o, "300.00", matches.OriginAutoRule, matches.StateSuggested)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.match(rent, oo, "500.00", matches.OriginModel, matches.StateSuggested); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.ms.Confirm(f.ctx, sys, s.Match.ID, s.Match.Version, false, nil); !errors.Is(err, matches.ErrAutoNotOneToOne) {
+			t.Errorf("confirm beside another open match: %v", err)
+		}
+	})
+	t.Run("confirm a partial suggestion alone", func(t *testing.T) {
+		f, rent, o, _ := setup(t)
+		s, _ := create(f, rent, o, "300.00", matches.OriginModel, matches.StateSuggested)
+		if _, err := f.ms.Confirm(f.ctx, sys, s.Match.ID, s.Match.Version, false, nil); !errors.Is(err, matches.ErrAutoNotOneToOne) {
+			t.Errorf("partial: %v", err)
+		}
+	})
+	t.Run("confirm an exact suggestion", func(t *testing.T) {
+		f, rent, o, _ := setup(t)
+		s, _ := create(f, rent, o, "800.00", matches.OriginModel, matches.StateSuggested)
+		if ch, err := f.ms.Confirm(f.ctx, sys, s.Match.ID, s.Match.Version, false, nil); err != nil || ch.Match.State != matches.StateConfirmed {
+			t.Errorf("1:1 confirm: %+v %v", ch.Match, err)
+		}
+	})
+	t.Run("correct (b)", func(t *testing.T) {
+		f, rent, o, _ := setup(t)
+		c, err := create(f, rent, o, "800.00", matches.OriginAutoRule, matches.StateConfirmed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.ms.Correct(f.ctx, sys, c.Match.ID, c.Match.Version, money.MustParse("5.00", "EUR"), false, nil); !errors.Is(err, matches.ErrActorCorrect) {
+			t.Errorf("system correct: %v", err)
+		}
+		if _, err := f.ms.Correct(f.ctx, alice, c.Match.ID, c.Match.Version, money.MustParse("5.00", "EUR"), false, nil); err != nil {
+			t.Errorf("user correct: %v", err)
+		}
+	})
+	t.Run("origin user (c)", func(t *testing.T) {
+		f, rent, o, _ := setup(t)
+		if _, err := create(f, rent, o, "300.00", matches.OriginUser, matches.StateConfirmed); !errors.Is(err, matches.ErrActorOrigin) {
+			t.Errorf("system origin user: %v", err)
+		}
+		tok := audit.Actor{Kind: audit.ActorToken, UserID: alice.UserID, TokenID: "01JD3Y4C8V9M2Q7W5R6T0XZBNT"}
+		if _, err := f.ms.Create(f.ctx, tok, matches.New{TransactionID: rent.ID, OccurrenceID: o.ID, Amount: money.MustParse("300.00", "EUR"),
+			Origin: matches.OriginUser, State: matches.StateConfirmed}); err != nil {
+			t.Errorf("token origin user: %v", err)
+		}
+	})
+	t.Run("create confirmed", func(t *testing.T) {
+		f, rent, o, _ := setup(t)
+		if _, err := create(f, rent, o, "300.00", matches.OriginAutoRule, matches.StateConfirmed); !errors.Is(err, matches.ErrAutoNotOneToOne) {
+			t.Errorf("system partial confirmation: %v", err)
+		}
+		if _, err := create(f, rent, o, "800.00", matches.OriginAutoRule, matches.StateConfirmed); err != nil {
+			t.Errorf("system exact confirmation: %v", err)
+		}
+	})
 }
