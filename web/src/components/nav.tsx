@@ -23,6 +23,9 @@ export function PrimaryNav() {
           Bank connections
         </Link>
       )}
+      <Link to="/outlook" className={link}>
+        Outlook
+      </Link>
     </nav>
   )
 }

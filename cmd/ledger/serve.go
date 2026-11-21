@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
+	moneypkg "github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/health"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/logging"
@@ -245,6 +246,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		connSvc.Schedule = sched.Status
 	}
 	parts.banking = connSvc
+	if cfg.Reporting.Currency != "" {
+		// Validated with the configuration.
+		parts.reportingCurrency, _ = moneypkg.ParseCurrency(cfg.Reporting.Currency)
+	}
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
@@ -385,8 +390,14 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Tokens:      parts.tokens,
 		OIDC:        parts.oidc,
 		MCP:         parts.mcp,
-		Zone:        zone,
-		Now:         now,
+		// The outlook (ADR-0044) reads stored bank facts. No rate service is
+		// wired until the rate provider adapter (FX2) exists: only amounts
+		// already in the reporting currency convert, the rest are excluded
+		// and flagged.
+		Banks:             bankfacts.New(parts.db, nil),
+		ReportingCurrency: parts.reportingCurrency,
+		Zone:              zone,
+		Now:               now,
 	})
 }
 

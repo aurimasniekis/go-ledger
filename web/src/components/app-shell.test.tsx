@@ -40,10 +40,10 @@ describe('shell while signed in', () => {
     return screen.findByRole('button', { name: 'Account' })
   }
 
-  it('keeps the finance page primary and groups account and administration pages under one menu', async () => {
+  it('keeps the finance pages primary and groups account and administration pages under one menu', async () => {
     const button = await open()
     const primary = screen.getByRole('navigation', { name: 'Primary' })
-    expect(within(primary).getAllByRole('link').map((l) => l.textContent)).toEqual(['Monthly view'])
+    expect(within(primary).getAllByRole('link').map((l) => l.textContent)).toEqual(['Monthly view', 'Outlook'])
     expect(within(primary).getByRole('link', { name: 'Monthly view' })).toHaveAttribute('aria-current', 'page')
     expect(button).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('link', { name: 'Security' })).toBeNull() // hidden until opened

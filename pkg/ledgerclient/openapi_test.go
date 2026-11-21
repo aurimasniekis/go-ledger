@@ -171,6 +171,7 @@ var notImplemented = map[string]string{
 	"reconnectBankConnection":   "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
 	"refreshBankConnection":     "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
 	"disconnectBankConnection":  "bank connections (task B4) serve the browser UI; a typed client method and CLI command are a follow-up (M2), listed as a limitation in ADR-0040",
+	"getOutlook":                "the outlook serves the browser UI (task FX3); a typed client method comes with a CLI or MCP view of it, which reuses internal/domain/outlook",
 	"getOccurrencesSummary":     "the monthly view serves the browser UI (task C4); a typed client method and CLI view come with the MCP read tool (P-MCP2), which reuses internal/domain/monthview",
 	"getSignInMethods":          "what the browser sign-in page offers; the client authenticates with API tokens",
 	"startOIDCSignIn":           "browser redirect to the identity provider (single sign-on), not a JSON operation",

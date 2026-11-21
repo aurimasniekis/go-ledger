@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/automatch"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
+	moneypkg "github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
@@ -72,6 +73,9 @@ type apiParts struct {
 	mcp http.Handler
 	// banking is the bank connection service, set by ledger serve.
 	banking *bankconnect.Service
+	// reportingCurrency is reporting.currency: the default currency of the
+	// outlook's converted aggregate (ADR-0044); zero for none.
+	reportingCurrency moneypkg.Currency
 }
 
 // buildAPI builds the API's stores and services on db. Changes record their

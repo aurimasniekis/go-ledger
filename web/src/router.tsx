@@ -11,6 +11,7 @@ import { AppShell } from '@/components/app-shell'
 import { DesignPage } from '@/routes-design'
 import { MonthPage } from '@/features/month/month-page'
 import { isMonth, monthOf } from '@/features/month/month'
+import { OutlookPage } from '@/features/outlook/outlook-page'
 import { RequireSession } from '@/features/auth/require-session'
 import { SignInPage } from '@/features/auth/sign-in'
 import { SecurityPage } from '@/features/account/security'
@@ -99,6 +100,20 @@ const connectionsCallbackRoute = createRoute({
   },
 })
 
+// The outlook (FX3): ?through=YYYY-MM and ?currency=XXX are optional; the server defaults them.
+const outlookRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/outlook',
+  validateSearch: (s: Record<string, unknown>): { through?: string; currency?: string } => ({
+    ...(isMonth(s.through) ? { through: s.through } : {}),
+    ...(typeof s.currency === 'string' && /^[A-Z]{3}$/.test(s.currency) ? { currency: s.currency } : {}),
+  }),
+  component: function OutlookRoute() {
+    const { through, currency } = outlookRoute.useSearch()
+    return <OutlookPage through={through} currency={currency} />
+  },
+})
+
 const routeTree = rootRoute.addChildren([
   signInRoute,
   designRoute,
@@ -107,6 +122,7 @@ const routeTree = rootRoute.addChildren([
     monthRoute,
     connectionsRoute,
     connectionsCallbackRoute,
+    outlookRoute,
     child('/account/security', SecurityPage),
     child('/account/sessions', SessionsPage),
     child('/account/tokens', MyTokensPage),

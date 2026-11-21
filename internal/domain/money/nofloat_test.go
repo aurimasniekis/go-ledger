@@ -39,6 +39,7 @@ var moneyPackages = []string{
 	"../matches",
 	"../../store/matches",
 	"../automatch",
+	"../outlook",
 	"../../providers/enablebanking",
 }
 

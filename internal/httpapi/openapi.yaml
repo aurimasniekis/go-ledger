@@ -1636,6 +1636,67 @@ paths:
                 $ref: "#/components/schemas/Occurrence"
         default:
           $ref: "#/components/responses/Error"
+  /outlook:
+    get:
+      operationId: getOutlook
+      x-ledger-access: commitments:read
+      summary: Get the outlook against recorded commitments
+      description: |
+        Compares bank balances with the recorded commitments still due
+        (ADR-0044). It is an outlook against recorded commitments only: not a
+        forecast and never a statement of money that is safe to spend (see
+        notice, which every presentation should show).
+
+        currencies has one entry per currency, computed on the server with
+        exact decimals and never summed across currencies. still_due is the
+        outstanding amount of every occurrence from window.from (the month
+        of the earliest commitment start, at most 240 months back) through
+        window.through, exactly as the monthly view derives it: paid,
+        cancelled and "not recorded" occurrences owe nothing. overdue is the
+        part past its original due date (a documented grace period does not
+        reduce it); upcoming the rest. balance is the sum of the counted
+        balance of every account in that currency (the newest fetch, booked
+        before expected before available; "other" balances, accounts without
+        balances and accounts no longer reported are not counted) and
+        balance_less_still_due is balance minus still_due; both are null
+        when no account has a balance in the currency.
+
+        Balances and accounts need the connections:read grant as well; without
+        it balances.shown is false and only commitments are compared. Each
+        account carries its data freshness (state, last success and error);
+        stale_account_count says how many counted balances are not fresh.
+
+        converted is a secondary aggregate in one reporting currency
+        (currency, or reporting.currency when not given; null when neither).
+        Each currency line is converted as a whole at the latest acceptable
+        rate, rounded half-even to the reporting currency's minor units, and
+        included lists the rate used with its provenance. A currency without
+        an acceptable rate (stale or missing) is left out entirely and listed
+        in excluded with the reason; complete is false then. Planned outflows
+        are not part of Ledger yet (planned_outflows.included is false).
+      tags: [outlook]
+      parameters:
+        - name: through
+          in: query
+          required: false
+          description: "The last month whose commitments count; default the current month in the reporting time zone. At most 60 months ahead. A month before the current one is treated as the current month: every occurrence due up to today is always counted; window.through reports the month used."
+          schema:
+            $ref: "#/components/schemas/YearMonth"
+        - name: currency
+          in: query
+          required: false
+          description: Reporting currency of the converted aggregate; default reporting.currency.
+          schema:
+            $ref: "#/components/schemas/Currency"
+      responses:
+        "200":
+          description: The outlook.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Outlook"
+        default:
+          $ref: "#/components/responses/Error"
   /auth/tokens:
     get:
       operationId: listMyTokens
@@ -2869,6 +2930,8 @@ tags:
     description: Dated occurrences generated from commitment definitions, their payment state, manual payments and status overrides.
   - name: bank-connections
     description: Connecting banks, consent, reconnecting, refreshing on request, and each account's freshness.
+  - name: outlook
+    description: The outlook against recorded commitments, compared with bank balances; never money that is safe to spend.
   - name: payment-matches
     description: Links between bank transactions and occurrences (allocations), with suggestions, confirmations, corrections, unmatching and reversal.
   - name: tokens
@@ -3269,6 +3332,276 @@ components:
               description: Always false until bank freshness is exposed over the API.
             note:
               type: string
+    SignedMoney:
+      type: object
+      description: An exact amount with its currency that may be negative (a balance, or a difference). It is never converted.
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount:
+          $ref: "#/components/schemas/Decimal"
+        currency:
+          $ref: "#/components/schemas/Currency"
+    Outlook:
+      type: object
+      description: The outlook against recorded commitments (ADR-0044). Not a forecast and not money that is safe to spend.
+      additionalProperties: false
+      required: [as_of, notice, window, currencies, balances, accounts, converted, planned_outflows, freshness]
+      properties:
+        as_of:
+          $ref: "#/components/schemas/Date"
+        notice:
+          type: string
+          description: The wording to show with the outlook.
+        window:
+          type: object
+          additionalProperties: false
+          required: [from, through, truncated]
+          properties:
+            from:
+              description: The first month read; null when no commitment starts by through.
+              oneOf:
+                - $ref: "#/components/schemas/YearMonth"
+                - type: "null"
+            through:
+              $ref: "#/components/schemas/YearMonth"
+            truncated:
+              type: boolean
+              description: True when commitments start more than 240 months before through; older occurrences are not counted.
+        currencies:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutlookCurrency"
+        balances:
+          type: object
+          additionalProperties: false
+          required: [shown, note]
+          properties:
+            shown:
+              type: boolean
+            note:
+              type: string
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutlookAccount"
+        converted:
+          oneOf:
+            - $ref: "#/components/schemas/OutlookConverted"
+            - type: "null"
+        planned_outflows:
+          type: object
+          additionalProperties: false
+          required: [included, note]
+          properties:
+            included:
+              type: boolean
+            note:
+              type: string
+        freshness:
+          type: object
+          additionalProperties: false
+          required: [computed_at, occurrences_changed_at]
+          properties:
+            computed_at:
+              type: string
+              format: date-time
+            occurrences_changed_at:
+              type: [string, "null"]
+              format: date-time
+    OutlookCurrency:
+      type: object
+      description: The comparison in one currency. Nothing in it is converted.
+      additionalProperties: false
+      required: [currency, still_due, overdue, upcoming, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at]
+      properties:
+        currency:
+          $ref: "#/components/schemas/Currency"
+        still_due:
+          $ref: "#/components/schemas/Money"
+        overdue:
+          $ref: "#/components/schemas/Money"
+        upcoming:
+          $ref: "#/components/schemas/Money"
+        overdue_count:
+          type: integer
+        unconverted_evidence_count:
+          type: integer
+          description: Occurrences with payment evidence in another currency, which is never converted and counted nowhere.
+        balance:
+          oneOf:
+            - $ref: "#/components/schemas/SignedMoney"
+            - type: "null"
+        balance_less_still_due:
+          oneOf:
+            - $ref: "#/components/schemas/SignedMoney"
+            - type: "null"
+        account_count:
+          type: integer
+        stale_account_count:
+          type: integer
+        oldest_balance_obtained_at:
+          type: [string, "null"]
+          format: date-time
+    OutlookAccount:
+      type: object
+      description: A bank account, the balances the outlook counts for it (one per currency) and its data freshness.
+      additionalProperties: false
+      required: [id, connection_id, name, institution, currency, balances, counted, not_counted_reason, freshness]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        connection_id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+        institution:
+          type: string
+        currency:
+          $ref: "#/components/schemas/Currency"
+        balances:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, provider_type, amount, reference_date, obtained_at]
+            properties:
+              type:
+                type: string
+                enum: [booked, available, expected, other]
+              provider_type:
+                type: string
+              amount:
+                $ref: "#/components/schemas/SignedMoney"
+              reference_date:
+                oneOf:
+                  - $ref: "#/components/schemas/Date"
+                  - type: "null"
+              obtained_at:
+                type: string
+                format: date-time
+        counted:
+          type: boolean
+        not_counted_reason:
+          type: [string, "null"]
+          enum: [no_balance, no_longer_reported, unsupported_balance_type, null]
+        freshness:
+          type: object
+          additionalProperties: false
+          required: [state, stale, last_success_at, last_attempt_at, last_error_kind, last_error_code, notice_code]
+          properties:
+            state:
+              type: string
+              enum: [fresh, stale, failed, reconnect_required, disconnected, never_refreshed]
+            stale:
+              type: boolean
+              description: True for every state but fresh.
+            last_success_at:
+              type: [string, "null"]
+              format: date-time
+            last_attempt_at:
+              type: [string, "null"]
+              format: date-time
+            last_error_kind:
+              type: [string, "null"]
+            last_error_code:
+              type: [string, "null"]
+            notice_code:
+              type: [string, "null"]
+    OutlookConverted:
+      type: object
+      description: The secondary aggregate in one reporting currency (decision D5). Only currencies with an acceptable rate are included.
+      additionalProperties: false
+      required: [currency, complete, still_due, overdue, balance, balance_less_still_due, balance_account_count, stale_balance_account_count, included, excluded]
+      properties:
+        currency:
+          $ref: "#/components/schemas/Currency"
+        complete:
+          type: boolean
+          description: False when any currency is excluded.
+        still_due:
+          $ref: "#/components/schemas/Money"
+        overdue:
+          $ref: "#/components/schemas/Money"
+        balance:
+          oneOf:
+            - $ref: "#/components/schemas/SignedMoney"
+            - type: "null"
+        balance_less_still_due:
+          oneOf:
+            - $ref: "#/components/schemas/SignedMoney"
+            - type: "null"
+        balance_account_count:
+          type: integer
+          description: Accounts whose balance is counted in balance (included currencies only).
+        stale_balance_account_count:
+          type: integer
+          description: Of those accounts, how many have data that is not fresh. Stale balances are counted and flagged.
+        included:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [currency, rate, age_seconds, from_cache, refresh_failed]
+            properties:
+              currency:
+                $ref: "#/components/schemas/Currency"
+              rate:
+                description: Null for the reporting currency itself.
+                oneOf:
+                  - $ref: "#/components/schemas/ExchangeRate"
+                  - type: "null"
+              age_seconds:
+                type: [integer, "null"]
+                description: Seconds since Ledger last retrieved the rate.
+              from_cache:
+                type: boolean
+              refresh_failed:
+                type: boolean
+                description: A refresh was due and failed; the cached rate is still within the freshness policy.
+        excluded:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [currency, status, reason, rate]
+            properties:
+              currency:
+                $ref: "#/components/schemas/Currency"
+              status:
+                type: string
+                enum: [stale, missing]
+              reason:
+                type: string
+                description: not_retrieved_recently, rate_date_too_old, unconfirmed, not_cached, not_published, no_provider or conversion_failed.
+              rate:
+                description: The rate found too old, for a stale conversion; null otherwise.
+                oneOf:
+                  - $ref: "#/components/schemas/ExchangeRate"
+                  - type: "null"
+    ExchangeRate:
+      type: object
+      description: A cached exchange rate with its provenance (ADR-0022). 1 base = value quote.
+      additionalProperties: false
+      required: [provider, source, base, quote, value, date, retrieved_at, confirmed_through]
+      properties:
+        provider:
+          type: string
+        source:
+          type: string
+        base:
+          $ref: "#/components/schemas/Currency"
+        quote:
+          $ref: "#/components/schemas/Currency"
+        value:
+          $ref: "#/components/schemas/PositiveDecimal"
+        date:
+          $ref: "#/components/schemas/Date"
+        retrieved_at:
+          type: string
+          format: date-time
+        confirmed_through:
+          $ref: "#/components/schemas/Date"
     PaymentStatus:
       type: string
       enum: [paid, partially_paid, upcoming, due, overdue, not_recorded, cancelled]
