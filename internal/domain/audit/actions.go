@@ -49,6 +49,8 @@ var (
 	sessionEndReasons = []string{"signed_out", "terminated"}
 	passwordChangedBy = []string{"self", "administrator", "host"}
 	correctionKinds   = []string{"match", "unmatch", "payment_status", "categorisation", "other"}
+	overrideStatuses  = []string{"paid", "unpaid"}
+	overrideOrNone    = []string{"none", "paid", "unpaid"}
 )
 
 // Field declares one allowed detail field. Enum, when set, lists the only
@@ -102,6 +104,11 @@ var Definitions = map[Action][]Field{
 	CommitmentDeleted: {f("kind"), f("unpaid_occurrences_removed")},
 
 	OccurrencesRegenerated: {f("effective_from"), f("created"), f("updated"), f("removed"), f("kept_paid"), f("kept_history")},
+
+	ManualPaymentRecorded:          {f("payment_id"), f("currency")},
+	ManualPaymentDeleted:           {f("payment_id"), f("currency")},
+	OccurrenceStatusOverridden:     {f("status", overrideStatuses...), f("previous", overrideOrNone...)},
+	OccurrenceStatusOverrideUndone: {f("undone", overrideStatuses...), f("restored", overrideOrNone...)},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

@@ -145,6 +145,7 @@ var unversionedTables = map[string]string{
 	"api_tokens":                     "API tokens (ADR-0029): created once, then only revoked (idempotent) or stamped with last use by the server; never edited through the API",
 	"user_totp":                      "sealed TOTP secrets (ADR-0030), keyed by user and written only by enrolment, sign-in and disabling; never read or edited as an API object",
 	"user_recovery_codes":            "recovery code hashes (ADR-0030), replaced as a set and deleted when used; never read or edited as an API object",
+	"occurrence_status_overrides":    "append-only override history (ADR-0031); rows only change state, and concurrency is the occurrence's version, which every override change increases",
 }
 
 // versionProblems checks the optimistic-concurrency convention: every table

@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
 
@@ -73,6 +74,13 @@ var permissionMatrix = map[string]string{
 
 	"GET /api/v1/occurrences":      "commitments:read",
 	"GET /api/v1/occurrences/{id}": "commitments:read",
+
+	"GET /api/v1/occurrences/{id}/manual-payments":                 "commitments:read",
+	"POST /api/v1/occurrences/{id}/manual-payments":                "commitments:write",
+	"GET /api/v1/occurrences/{id}/manual-payments/{payment_id}":    "commitments:read",
+	"DELETE /api/v1/occurrences/{id}/manual-payments/{payment_id}": "commitments:write",
+	"PUT /api/v1/occurrences/{id}/status-override":                 "commitments:write",
+	"DELETE /api/v1/occurrences/{id}/status-override":              "commitments:write",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
@@ -148,6 +156,7 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 		return f.now
 	}
 	parts.commitments = commitmentstore.New(db, al, clock, nil)
+	parts.payments = paymentstore.New(db, al, clock, nil)
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {

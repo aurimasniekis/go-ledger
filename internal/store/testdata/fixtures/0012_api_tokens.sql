@@ -1,7 +1,7 @@
 -- Fixture: a database at schema version 12 (the version 11 contents plus the
 -- API tokens of migration 0012), holding every row of the version 11 fixture
--- and one API token. Upgrading it must apply migration 0013 (second factors)
--- and keep every row. All identifiers, hashes and tokens are synthetic: the
+-- and one API token. Upgrading it must apply migrations 0013 (second factors)
+-- and 0014 (payment state) and keep every row. All identifiers, hashes and tokens are synthetic: the
 -- token hash is not of any token.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),

@@ -19,7 +19,7 @@ import (
 // boundary (ADR-0013) with its fake provider, the import engine (ADR-0020),
 // the Enable Banking adapter (ADR-0023), the rate cache and conversion
 // service (ADR-0022) with its test doubles, commitment definitions
-// (ADR-0024) and their occurrences (ADR-0027). Paths are
+// (ADR-0024), their occurrences (ADR-0027) and payment state (ADR-0031). Paths are
 // relative to this package's directory.
 var moneyPackages = []string{
 	".",
@@ -33,6 +33,8 @@ var moneyPackages = []string{
 	"../commitments",
 	"../occurrences",
 	"../../store/occurrences",
+	"../payments",
+	"../../store/payments",
 	"../../providers/enablebanking",
 }
 

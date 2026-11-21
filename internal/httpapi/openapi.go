@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
 )
@@ -57,6 +58,11 @@ type Deps struct {
 	Commitments commitments.Store
 	// Occurrences reads materialised commitment occurrences (ADR-0027).
 	Occurrences occurrences.Reader
+	// Payments stores manual payments and status overrides and reads the
+	// facts payment state is derived from (ADR-0031). Grace is the hook for
+	// documented grace periods (task DF2); nil means none is known.
+	Payments payments.Store
+	Grace    payments.GraceFunc
 	// Audit reads the audit log.
 	Audit audit.Reader
 	// Auth is sign-in, sessions and passwords.
@@ -98,7 +104,8 @@ func RegisterAPI(s *Server, d Deps) {
 	registerTokens(s, d.Tokens)
 	todayFn := newToday(d.Zone, d.Now)
 	registerCommitments(s, d.Commitments, todayFn)
-	registerOccurrences(s, d.Occurrences, todayFn)
+	registerOccurrences(s, d.Occurrences, d.Payments, todayFn, d.Grace)
+	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {

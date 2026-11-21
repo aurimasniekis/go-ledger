@@ -1,8 +1,8 @@
 -- Fixture: a database at schema version 11 (the version 10 contents plus the
 -- commitment occurrences of migration 0011), holding every row of the version
 -- 10 fixture, one materialised occurrence and its horizon. Upgrading it must
--- apply migrations 0012 (API tokens) and 0013 (second factors) and keep
--- every row. All identifiers, hashes and tokens are synthetic.
+-- apply migrations 0012 (API tokens), 0013 (second factors) and 0014
+-- (payment state) and keep every row. All identifiers, hashes and tokens are synthetic.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
     name       TEXT NOT NULL CHECK (name <> ''),

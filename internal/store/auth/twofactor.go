@@ -12,7 +12,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/store"
 )
 
-// Second factors (A3, ADR-0030) in the tables of migration 0012_totp.
+// Second factors (A3, ADR-0030) in the tables of migration 0013_totp.
 
 // TwoFactor returns the user's second-factor state.
 func (s *Store) TwoFactor(ctx context.Context, userID string) (auth.TwoFactorState, error) {
