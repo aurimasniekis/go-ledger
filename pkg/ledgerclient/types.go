@@ -32,6 +32,15 @@ const (
 	OverridePaid   = "paid"
 	OverrideUnpaid = "unpaid"
 
+	MatchSuggested = "suggested"
+	MatchConfirmed = "confirmed"
+	MatchRejected  = "rejected"
+	MatchReversed  = "reversed"
+
+	OriginAutoRule = "auto_rule"
+	OriginModel    = "model_suggestion"
+	OriginUser     = "user"
+
 	TokenActive  = "active"
 	TokenExpired = "expired"
 	TokenRevoked = "revoked"
@@ -200,6 +209,91 @@ type NewManualPayment struct {
 type StatusOverride struct {
 	Status string `json:"status"`
 	Reason string `json:"reason"`
+}
+
+// MatchActor is who created or decided a payment match. UserID is nil for
+// the system.
+type MatchActor struct {
+	Kind   string  `json:"kind"`
+	UserID *string `json:"user_id"`
+}
+
+// MatchedBankTransaction is the bank fact a payment match refers to, as the
+// provider reported it. Source is always "bank"; Amount is signed (a payment
+// is negative).
+type MatchedBankTransaction struct {
+	Source             string  `json:"source"`
+	ID                 string  `json:"id"`
+	AccountID          string  `json:"account_id"`
+	Provider           string  `json:"provider"`
+	BookingStatus      string  `json:"booking_status"`
+	Amount             Money   `json:"amount"`
+	Date               string  `json:"date"`
+	BookingDate        *string `json:"booking_date"`
+	ValueDate          *string `json:"value_date"`
+	Description        string  `json:"description"`
+	Counterparty       string  `json:"counterparty"`
+	NoLongerReportedAt *string `json:"no_longer_reported_at"`
+	SupersededBy       *string `json:"superseded_by"`
+	Countable          bool    `json:"countable"`
+}
+
+// MatchEvent is one entry of a payment match's history.
+type MatchEvent struct {
+	Action string     `json:"action"`
+	State  string     `json:"state"`
+	Amount Money      `json:"amount"`
+	By     MatchActor `json:"by"`
+	Reason *string    `json:"reason"`
+	At     string     `json:"at"`
+}
+
+// PaymentMatch links a bank transaction to an occurrence with the amount
+// allocated to it. Origin says who proposed it, State the decision, and
+// CountsAsEvidence whether it pays the occurrence now.
+type PaymentMatch struct {
+	ID               string                 `json:"id"`
+	OccurrenceID     string                 `json:"occurrence_id"`
+	TransactionID    string                 `json:"transaction_id"`
+	Amount           Money                  `json:"amount"`
+	Origin           string                 `json:"origin"`
+	State            string                 `json:"state"`
+	CountsAsEvidence bool                   `json:"counts_as_evidence"`
+	NeedsReview      bool                   `json:"needs_review"`
+	CreatedBy        MatchActor             `json:"created_by"`
+	DecidedBy        *MatchActor            `json:"decided_by"`
+	DecidedAt        *string                `json:"decided_at"`
+	Reason           *string                `json:"reason"`
+	Transaction      MatchedBankTransaction `json:"transaction"`
+	History          []MatchEvent           `json:"history"`
+	Version          int64                  `json:"version"`
+	CreatedAt        string                 `json:"created_at"`
+	UpdatedAt        string                 `json:"updated_at"`
+}
+
+// NewPaymentMatch is the body of CreatePaymentMatch: the user's confirmed
+// match of Amount of the transaction to the occurrence.
+type NewPaymentMatch struct {
+	TransactionID    string  `json:"transaction_id"`
+	OccurrenceID     string  `json:"occurrence_id"`
+	Amount           Money   `json:"amount"`
+	AllowOverpayment bool    `json:"allow_overpayment,omitempty"`
+	Reason           *string `json:"reason,omitempty"`
+}
+
+// MatchDecision is the body of ConfirmPaymentMatch, RejectPaymentMatch,
+// UnmatchPaymentMatch and ReversePaymentMatch (AllowOverpayment applies to
+// a confirmation only). The version travels as If-Match.
+type MatchDecision struct {
+	AllowOverpayment bool    `json:"allow_overpayment,omitempty"`
+	Reason           *string `json:"reason,omitempty"`
+}
+
+// MatchCorrection is the body of CorrectPaymentMatch.
+type MatchCorrection struct {
+	Amount           Money   `json:"amount"`
+	AllowOverpayment bool    `json:"allow_overpayment,omitempty"`
+	Reason           *string `json:"reason,omitempty"`
 }
 
 // APIToken describes an API token. It never includes the token itself.

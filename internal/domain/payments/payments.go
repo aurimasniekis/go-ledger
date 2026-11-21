@@ -70,10 +70,14 @@ func TimingOf(due, today calendar.Date) Status {
 // EvidenceKind says where a piece of payment evidence comes from.
 type EvidenceKind string
 
-// Evidence kinds. Task X1 adds the bank-transaction allocation kind.
+// Evidence kinds.
 const (
 	// EvidenceManual is a manual payment record entered by the user.
 	EvidenceManual EvidenceKind = "manual_payment"
+	// EvidenceBankTransaction is a confirmed allocation of a bank transaction
+	// to the occurrence (a payment match, task X1, ADR-0035); its ID is the
+	// match's.
+	EvidenceBankTransaction EvidenceKind = "bank_transaction"
 )
 
 // Evidence is one piece of payment evidence for one occurrence: an amount

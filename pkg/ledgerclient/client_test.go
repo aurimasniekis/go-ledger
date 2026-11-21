@@ -99,6 +99,56 @@ func TestRequestShape(t *testing.T) {
 	}
 }
 
+func TestPaymentMatchRequests(t *testing.T) {
+	var got []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		raw, _ := json.Marshal(b)
+		got = append(got, r.Method+" "+r.URL.Path+" "+r.URL.RawQuery+" if-match="+r.Header.Get("If-Match")+" "+string(raw))
+		if r.Method == "GET" && r.URL.Path == "/api/v1/payment-matches" {
+			writeJSON(w, 200, Page[PaymentMatch]{})
+			return
+		}
+		writeJSON(w, 200, PaymentMatch{ID: "m1", Version: 2})
+	})
+	ctx := context.Background()
+	why := "returned"
+	if _, err := c.ListPaymentMatches(ctx, PaymentMatchFilter{States: []string{MatchSuggested}, Origins: []string{OriginModel, OriginAutoRule}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreatePaymentMatch(ctx, NewPaymentMatch{TransactionID: "t1", OccurrenceID: "o1", Amount: Money{Amount: "8.00", Currency: "EUR"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ConfirmPaymentMatch(ctx, "m1", 1, MatchDecision{AllowOverpayment: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CorrectPaymentMatch(ctx, "m1", 2, MatchCorrection{Amount: Money{Amount: "9.00", Currency: "EUR"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ReversePaymentMatch(ctx, "m1", 3, &why); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.UnmatchPaymentMatch(ctx, "m1", 4, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RejectPaymentMatch(ctx, "m1", 5, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"GET /api/v1/payment-matches origin=model_suggestion&origin=auto_rule&state=suggested if-match= null",
+		`POST /api/v1/payment-matches  if-match= {"amount":{"amount":"8.00","currency":"EUR"},"occurrence_id":"o1","transaction_id":"t1"}`,
+		`POST /api/v1/payment-matches/m1/confirm  if-match="1" {"allow_overpayment":true}`,
+		`POST /api/v1/payment-matches/m1/correct  if-match="2" {"amount":{"amount":"9.00","currency":"EUR"}}`,
+		`POST /api/v1/payment-matches/m1/reverse  if-match="3" {"reason":"returned"}`,
+		`POST /api/v1/payment-matches/m1/unmatch  if-match="4" {}`,
+		`POST /api/v1/payment-matches/m1/reject  if-match="5" {}`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("requests:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 func TestPathIDIsEscaped(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.EscapedPath() != "/api/v1/users/a%2Fb%3Fc" {

@@ -26,6 +26,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	matchstore "github.com/aurimasniekis/go-ledger/internal/store/matches"
 	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
 )
@@ -81,6 +82,15 @@ var permissionMatrix = map[string]string{
 	"DELETE /api/v1/occurrences/{id}/manual-payments/{payment_id}": "commitments:write",
 	"PUT /api/v1/occurrences/{id}/status-override":                 "commitments:write",
 	"DELETE /api/v1/occurrences/{id}/status-override":              "commitments:write",
+
+	"GET /api/v1/payment-matches":               "commitments:read",
+	"POST /api/v1/payment-matches":              "commitments:write",
+	"GET /api/v1/payment-matches/{id}":          "commitments:read",
+	"POST /api/v1/payment-matches/{id}/confirm": "commitments:write",
+	"POST /api/v1/payment-matches/{id}/reject":  "commitments:write",
+	"POST /api/v1/payment-matches/{id}/unmatch": "commitments:write",
+	"POST /api/v1/payment-matches/{id}/correct": "commitments:write",
+	"POST /api/v1/payment-matches/{id}/reverse": "commitments:write",
 }
 
 // matrixAccess is a route's access as the matrix writes it: the access rule,
@@ -111,6 +121,8 @@ type apiFixture struct {
 	zone calendar.Zone
 	// daveSession is a session of dave from before he was disabled.
 	daveSession map[string]string
+	// db is the fixture's database (for importing bank facts in tests).
+	db *store.DB
 }
 
 // signIn signs name in with the fixture password and returns the headers of
@@ -157,6 +169,8 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	}
 	parts.commitments = commitmentstore.New(db, al, clock, nil)
 	parts.payments = paymentstore.New(db, al, clock, nil)
+	parts.matches = matchstore.New(db, al, clock, nil)
+	f.db = db
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {

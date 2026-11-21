@@ -17,6 +17,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
@@ -63,6 +64,9 @@ type Deps struct {
 	// documented grace periods (task DF2); nil means none is known.
 	Payments payments.Store
 	Grace    payments.GraceFunc
+	// Matches stores payment matches between bank transactions and
+	// occurrences (ADR-0035).
+	Matches matches.Store
 	// Audit reads the audit log.
 	Audit audit.Reader
 	// Auth is sign-in, sessions and passwords.
@@ -106,6 +110,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerCommitments(s, d.Commitments, todayFn)
 	registerOccurrences(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
+	registerMatches(s, d.Matches)
 }
 
 func writeDoc(w http.ResponseWriter, contentType string, doc []byte) {

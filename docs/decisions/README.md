@@ -34,5 +34,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0030: TOTP, recovery codes and required two-factor authentication](0030-totp-recovery-codes-and-required-2fa.md)
 - [ADR-0031: Payment state, manual payments and status overrides](0031-payment-state-and-manual-payments.md)
 - [ADR-0032: Go client and CLI management commands](0032-go-client-and-cli-management-commands.md)
+- [ADR-0035: Payment matches, manual matching, corrections and reversal](0035-payment-matches-and-corrections.md) (0033 and 0034 are reserved for tasks in flight)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

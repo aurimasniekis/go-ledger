@@ -71,7 +71,8 @@ func TestOpenAPIDocumentListsEveryErrorCode(t *testing.T) {
 	codes := []Code{CodeValidation, CodeUnauthenticated, CodeForbidden, CodeConflict, CodeRateLimited,
 		CodeUnavailable, CodeInternal, CodeNotFound, CodeTooLarge, CodeMethod, CodePrecondition,
 		CodeVersionConflict, CodeUnsupportedType, CodeInvalidCredentials, CodeCSRF, CodeReauthRequired, CodePendingTerms,
-		CodeEnrollmentRequired, CodeInvalidSecondFactor}
+		CodeEnrollmentRequired, CodeInvalidSecondFactor, CodeEvidenceRequired,
+		CodeTransactionNotCountable, CodeTransactionNotDebit, CodeOverAllocated, CodeOverpaid, CodeDuplicateMatch, CodeMatchState}
 	var doc map[string]any
 	if err := yaml.Unmarshal(OpenAPIYAML(), &doc); err != nil {
 		t.Fatal(err)

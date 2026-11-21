@@ -37,6 +37,9 @@ Last updated: 2026-11-20.
   - Defaults (one step of skew, ten recovery codes, 10m enrolment, 5m and five wrong codes per challenge) are proposed, not operator decisions.
   - Follow-ups: A7 enrolment, second-step and required-2FA gate screens; whether re-authentication should also ask for a second factor; an administrator reset route for other users; KEK rotation.
 
+- **X1 Payment matches, manual matching, corrections, reversal** (ADR-0035): `payment_matches` allocation table (one row per transaction and occurrence with the allocated amount, D8 a) with origin (auto_rule, model_suggestion, user) and state (suggested, confirmed, rejected, reversed), append-only `payment_match_events` history; database constraints (one open match per pair, same currency on transaction, occurrence and allocation, outgoing booked reported transactions only for confirmations, allowed state changes, decisions never deleted) and exact-decimal checks in the write transaction (no over-allocation, no overpayment without `allow_overpayment`); confirmed matches on countable transactions are `bank_transaction` evidence (ADR-0031 seam); match, confirm, reject, unmatch, correct and reverse under `/payment-matches`, audited as `payment_match.*`; Go client methods. Migration `0015_payment_matches` (0016 once A6 lands), fixture `0014_payment_state`.
+  - Follow-ups: X2 engine and review queue (uses `matches.Store.Create`); X4 UI and MCP; CLI commands; linking bank reversal transactions to reversed matches; following `superseded_by` from pending suggestions.
+
 ## Next (first wave)
 
 - **F2 Configuration system**: YAML, environment and `.env` configuration, `.env.example`.
