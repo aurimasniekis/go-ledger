@@ -12,7 +12,6 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
-	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
@@ -27,7 +26,7 @@ type Store interface {
 	// ConfirmAuto confirms the engine's own suggestion as audit.System,
 	// applying the automatic-confirmation guards with the commitment's
 	// tolerance.
-	ConfirmAuto(ctx context.Context, id string, expected int64, tolerance money.Money, reason *string) (matches.Change, error)
+	ConfirmAuto(ctx context.Context, id string, expected int64, reason *string) (matches.Change, error)
 	// Reject rejects a suggestion.
 	Reject(ctx context.Context, actor audit.Actor, id string, expected int64, reason *string) (matches.Change, error)
 }
@@ -126,15 +125,15 @@ func (e *Engine) Run(ctx context.Context) (Result, error) {
 			_, werr = e.st.Reject(ctx, audit.System, a.MatchID, a.Version, &reason)
 		case ActionConfirm:
 			if a.MatchID != "" {
-				_, werr = e.st.ConfirmAuto(ctx, a.MatchID, a.Version, a.Tolerance, &reason)
+				_, werr = e.st.ConfirmAuto(ctx, a.MatchID, a.Version, &reason)
 			} else {
 				_, werr = e.st.Create(ctx, audit.System, matches.New{TransactionID: a.TransactionID, OccurrenceID: a.OccurrenceID, Amount: a.Amount,
-					Origin: matches.OriginAutoRule, State: matches.StateConfirmed, AutoTolerance: a.Tolerance, Reason: &reason})
+					Origin: matches.OriginAutoRule, State: matches.StateConfirmed, Reason: &reason})
 				if werr != nil && refused(werr) {
 					// The store's guards outrank the plan: leave a suggestion
 					// for a person instead.
 					e.log.Info("automatic confirmation refused; suggesting instead", "occurrence_id", a.OccurrenceID, "transaction_id", string(a.TransactionID), "error", werr.Error())
-					reason = "automatic match not confirmed: the store refused the automatic confirmation (" + werr.Error() + "); description similarity " + strconv.Itoa(a.Checks.Score) + "/100 (a hint only)"
+					reason = "automatic match not confirmed: the store refused the automatic confirmation (" + refusalCode(werr) + "); description similarity " + strconv.Itoa(a.Checks.Score) + "/100 (a hint only)"
 					if len(reason) > matches.MaxReason {
 						reason = reason[:matches.MaxReason]
 					}
@@ -192,6 +191,28 @@ func (e *Engine) Request(ctx context.Context, actor audit.Actor) (Result, error)
 	return res, nil
 }
 
+// refusalCode is the stable code of a store refusal, for a match's reason: the
+// store's error text is for logs, not for people reading a suggestion.
+func refusalCode(err error) string {
+	codes := []struct {
+		err  error
+		code string
+	}{
+		{matches.ErrNotCountable, "not_countable"}, {matches.ErrNotDebit, "not_debit"}, {matches.ErrCurrency, "currency"},
+		{matches.ErrOverAllocated, "over_allocated"}, {matches.ErrOverpaid, "overpaid"}, {matches.ErrScale, "scale"},
+		{matches.ErrAutoNotOneToOne, "not_one_to_one"}, {matches.ErrAutoAmount, "amount_outside_tolerance"}, {matches.ErrAutoDate, "date_outside_window"},
+		{matches.ErrAutoModel, "model_suggestion"}, {matches.ErrDuplicate, "duplicate"}, {matches.ErrActorOrigin, "actor_origin"},
+		{matches.ErrActorOverpayment, "actor_overpayment"}, {matches.ErrActorCorrect, "actor_correct"}, {matches.ErrActorUndo, "actor_undo"},
+		{matches.ErrTransition, "transition"}, {matches.ErrTransactionNotFound, "transaction_not_found"}, {matches.ErrOccurrenceNotFound, "occurrence_not_found"},
+	}
+	for _, c := range codes {
+		if errors.Is(err, c.err) {
+			return "store_refused: " + c.code
+		}
+	}
+	return "store_refused: other"
+}
+
 // refused reports whether err is the store refusing an action on its rules
 // or because the data changed since the snapshot, rather than a failure.
 func refused(err error) bool {
@@ -201,7 +222,7 @@ func refused(err error) bool {
 		return true
 	}
 	for _, rule := range []error{matches.ErrNotCountable, matches.ErrNotDebit, matches.ErrCurrency, matches.ErrOverAllocated, matches.ErrOverpaid,
-		matches.ErrScale, matches.ErrAutoNotOneToOne, matches.ErrAutoAmount, matches.ErrActorOrigin, matches.ErrActorOverpayment, matches.ErrActorCorrect,
+		matches.ErrScale, matches.ErrAutoNotOneToOne, matches.ErrAutoAmount, matches.ErrAutoDate, matches.ErrActorOrigin, matches.ErrActorOverpayment, matches.ErrActorCorrect,
 		matches.ErrActorUndo, matches.ErrAutoModel, matches.ErrDuplicate, matches.ErrTransition, matches.ErrTransactionNotFound, matches.ErrOccurrenceNotFound} {
 		if errors.Is(err, rule) {
 			return true

@@ -286,9 +286,12 @@ func TestToleranceConfirmsThroughTheStore(t *testing.T) {
 		t.Errorf("state: %+v", st)
 	}
 
-	// ConfirmAuto checks the tolerance itself.
+	// ConfirmAuto reads the tolerance from the commitment inside its own
+	// transaction: a tolerance narrowed after the suggestion was made (here
+	// to 0.49) refuses the confirmation, and the stored tolerance (0.50)
+	// accepts it.
 	g := newFixture(t)
-	o := g.occurrence(g.named("Books", "45.50", 29, "").ID, "2026-10")
+	o := g.occurrence(g.named("Books", "45.50", 29, "0.50").ID, "2026-10")
 	s, err := g.ms.Create(g.ctx, audit.System, matches.New{TransactionID: g.tx("CARD PURCHASE BOOKSHOP").ID, OccurrenceID: o.ID, Amount: money.MustParse("45.00", "EUR"),
 		Origin: matches.OriginAutoRule, State: matches.StateSuggested})
 	if err != nil {
@@ -296,11 +299,40 @@ func TestToleranceConfirmsThroughTheStore(t *testing.T) {
 	}
 	g.p.Mutate(bankingtest.BookPending)
 	g.refresh()
-	if _, err := g.ms.ConfirmAuto(g.ctx, s.Match.ID, s.Match.Version, money.MustParse("0.49", "EUR"), nil); err == nil || !strings.Contains(err.Error(), "tolerance") {
+	g.mustExec("UPDATE commitments SET match_tolerance_amount = '0.49'")
+	if _, err := g.ms.ConfirmAuto(g.ctx, s.Match.ID, s.Match.Version, nil); !errors.Is(err, matches.ErrAutoAmount) {
 		t.Errorf("beyond the tolerance: %v", err)
 	}
-	if _, err := g.ms.ConfirmAuto(g.ctx, s.Match.ID, s.Match.Version, money.MustParse("0.50", "EUR"), nil); err != nil {
+	g.mustExec("UPDATE commitments SET match_tolerance_amount = '0.50'")
+	if _, err := g.ms.ConfirmAuto(g.ctx, s.Match.ID, s.Match.Version, nil); err != nil {
 		t.Errorf("within the tolerance: %v", err)
+	}
+}
+
+// TestAutoConfirmReadsToleranceInTheTransaction (review of X2, F2): the
+// store, not the caller, decides the tolerance. A system confirmation short
+// of a commitment without tolerance is refused, and so is one after the
+// tolerance was cleared since the plan.
+func TestAutoConfirmReadsToleranceInTheTransaction(t *testing.T) {
+	f := newFixture(t)
+	streaming := f.occurrence(f.named("Streaming", "13.49", 5, "").ID, "2026-10")
+	tx := f.tx("STREAMING SERVICE")
+	if _, err := f.ms.Create(f.ctx, audit.System, matches.New{TransactionID: tx.ID, OccurrenceID: streaming.ID, Amount: money.MustParse("12.99", "EUR"),
+		Origin: matches.OriginAutoRule, State: matches.StateConfirmed}); !errors.Is(err, matches.ErrAutoAmount) {
+		t.Errorf("no tolerance, short payment: %v", err)
+	}
+	f.mustExec("UPDATE commitments SET match_tolerance_amount = '0.50', match_tolerance_currency = 'EUR'")
+	if _, err := f.ms.Create(f.ctx, audit.System, matches.New{TransactionID: tx.ID, OccurrenceID: streaming.ID, Amount: money.MustParse("12.99", "EUR"),
+		Origin: matches.OriginAutoRule, State: matches.StateConfirmed}); err != nil {
+		t.Errorf("within the stored tolerance: %v", err)
+	}
+	// Cleared after the plan was made (a stale tolerance in the plan).
+	g := newFixture(t)
+	o := g.occurrence(g.named("Streaming", "13.49", 15, "2.00").ID, "2026-10")
+	g.mustExec("UPDATE commitments SET match_tolerance_amount = NULL, match_tolerance_currency = NULL")
+	if _, err := g.ms.Create(g.ctx, audit.System, matches.New{TransactionID: g.tx("STREAMING SERVICE").ID, OccurrenceID: o.ID, Amount: money.MustParse("12.99", "EUR"),
+		Origin: matches.OriginAutoRule, State: matches.StateConfirmed}); !errors.Is(err, matches.ErrAutoAmount) {
+		t.Errorf("tolerance cleared since the plan: %v", err)
 	}
 }
 
@@ -314,7 +346,7 @@ func TestConfirmAutoRefusesModelSuggestions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.ms.ConfirmAuto(f.ctx, s.Match.ID, s.Match.Version, money.Money{}, nil); !errors.Is(err, matches.ErrAutoModel) {
+	if _, err := f.ms.ConfirmAuto(f.ctx, s.Match.ID, s.Match.Version, nil); !errors.Is(err, matches.ErrAutoModel) {
 		t.Fatalf("confirm: %v", err)
 	}
 	if _, err := f.ms.Confirm(f.ctx, audit.System, s.Match.ID, s.Match.Version, false, nil); !errors.Is(err, matches.ErrAutoModel) {

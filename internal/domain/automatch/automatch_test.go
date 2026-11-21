@@ -412,7 +412,7 @@ func (f *fakeStore) Create(_ context.Context, actor audit.Actor, n matches.New) 
 	return matches.Change{}, f.record("create-"+string(n.State), actor, n.TransactionID, n.OccurrenceID)
 }
 
-func (f *fakeStore) ConfirmAuto(_ context.Context, id string, _ int64, _ money.Money, _ *string) (matches.Change, error) {
+func (f *fakeStore) ConfirmAuto(_ context.Context, id string, _ int64, _ *string) (matches.Change, error) {
 	return matches.Change{}, f.record("confirm", audit.System, "", id)
 }
 

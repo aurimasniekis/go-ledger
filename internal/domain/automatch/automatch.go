@@ -44,7 +44,7 @@ import (
 const (
 	// ConfirmDays is how many days before or after the due date a
 	// transaction may be dated and still be confirmed automatically (D9).
-	ConfirmDays = 3
+	ConfirmDays = matches.AutoConfirmDays
 	// CandidateDays is how many days before or after the due date a
 	// transaction may be dated and still be suggested.
 	CandidateDays = 7

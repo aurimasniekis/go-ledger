@@ -4,6 +4,12 @@ Status: Proposed (2026-11-21). The safeguards of point 4 follow operator decisio
 candidate window, amount band, hint score, drop rule, run triggers and the guard of point 9 are implementation choices no
 operator decision covers; they are listed for the operator under Consequences.
 
+> **Review amendment (PR #74).** The store reads the tolerance itself: `Create` (for an automation actor or origin
+> `auto_rule`) and `ConfirmAuto` read `match_tolerance` from the commitment, through the occurrence, inside the write
+> transaction, so a stale or widened value in a plan cannot loosen the guard. The caller no longer passes one. The store
+> also refuses an automatic confirmation dated more than 3 days from the due date (`ErrAutoDate`). A refused
+> confirmation's reason carries a stable code (`store_refused: overpaid`), never the store's error text.
+
 ## Context
 
 Task X2 needs an automatic matching engine on top of payment matches (ADR-0035, task X1). The engine pairs outgoing bank

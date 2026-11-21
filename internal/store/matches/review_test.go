@@ -96,8 +96,9 @@ func TestAutoRuleConfirmationIsOneToOne(t *testing.T) {
 	if _, err := f.match(rent, ob, "800.00", matches.OriginAutoRule, matches.StateConfirmed); !errors.Is(err, matches.ErrAutoAmount) {
 		t.Errorf("amount differs from the occurrence: %v", err)
 	}
+	f.mustExec("UPDATE commitments SET match_tolerance_amount = '10.00', match_tolerance_currency = 'EUR' WHERE id = ?", big.ID)
 	ch, err := f.ms.Create(f.ctx, alice, matches.New{TransactionID: rent.ID, OccurrenceID: ob.ID, Amount: money.MustParse("800.00", "EUR"),
-		Origin: matches.OriginAutoRule, State: matches.StateConfirmed, AutoTolerance: money.MustParse("10.00", "EUR")})
+		Origin: matches.OriginAutoRule, State: matches.StateConfirmed})
 	if err != nil || ch.Match.State != matches.StateConfirmed {
 		t.Fatalf("within the tolerance: %+v %v", ch.Match, err)
 	}
