@@ -55,11 +55,28 @@ func createExclusive(path string) error {
 		return fmt.Errorf("store: create %s: %w", path, err)
 	}
 	// O_CREATE applies the umask only downwards; this makes the mode certain.
-	return os.Chmod(path, 0o600)
+	// A file whose mode cannot be fixed is removed rather than left behind.
+	if err := chmodFile(path, 0o600); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("store: chmod %s: %w", path, err)
+	}
+	return nil
 }
 
 // chmodFile is os.Chmod; tests replace it to simulate a failure.
 var chmodFile = os.Chmod
+
+// statWAL is os.Stat for a "<backup>-wal" file; tests replace it to simulate
+// a failure.
+var statWAL = os.Stat
+
+// renameRestored puts the restored copy in place; tests replace it to simulate
+// a failure of the final rename.
+var renameRestored = os.Rename
+
+// restoreSyncDir flushes the database directory after the final rename; tests
+// replace it to simulate a failure.
+var restoreSyncDir = syncDir
 
 // syncFile flushes a file's contents to stable storage.
 func syncFile(path string) error {
@@ -142,7 +159,7 @@ func Backup(ctx context.Context, dbPath, dest string, busy time.Duration) (Backu
 	if err := vacuumInto(ctx, conn, dest); err != nil {
 		return BackupInfo{}, err
 	}
-	info, err := VerifyBackup(ctx, dest)
+	info, err := verifyBackup(ctx, dest, nil, filepath.Dir(dbPath))
 	if err != nil {
 		_ = os.Remove(dest)
 		return BackupInfo{}, fmt.Errorf("store: backup failed verification: %w", err)
@@ -176,10 +193,13 @@ func sameFile(a, b string) (bool, error) {
 // (ErrDatabaseNewer); one from an older binary is valid and is migrated when
 // the application next opens it.
 func VerifyBackup(ctx context.Context, path string) (BackupInfo, error) {
-	return verifyBackup(ctx, path, nil)
+	return verifyBackup(ctx, path, nil, "")
 }
 
-func verifyBackup(ctx context.Context, path string, known []Migration) (BackupInfo, error) {
+// verifyBackup is VerifyBackup with the migration set to check against (nil
+// means the embedded one) and the directory for a private copy of a backup
+// with a WAL ("" means the system temporary directory).
+func verifyBackup(ctx context.Context, path string, known []Migration, tmpDir string) (BackupInfo, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return BackupInfo{}, fmt.Errorf("store: %w", err)
@@ -189,7 +209,7 @@ func verifyBackup(ctx context.Context, path string, known []Migration) (BackupIn
 			return BackupInfo{}, err
 		}
 	}
-	db, cleanup, err := openBackupSource(path)
+	db, cleanup, err := openBackupSource(path, tmpDir)
 	if err != nil {
 		return BackupInfo{}, fmt.Errorf("%w: %w", ErrBackupInvalid, err)
 	}
@@ -224,10 +244,13 @@ func verifyBackup(ctx context.Context, path string, known []Migration) (BackupIn
 // hot-journal recovery next to a copy. Immutable ignores a -wal file, so when
 // "<path>-wal" exists and is not empty (a backup that was a live database,
 // such as a .pre-restore-* file) the file and its WAL are copied to a private
-// temporary directory and opened normally there: SQLite replays the WAL, and
-// the original files are never modified. The returned function closes the
-// database and removes the temporary directory.
-func openBackupSource(path string) (*sql.DB, func(), error) {
+// temporary directory inside tmpDir ("" means the system temporary directory)
+// and opened normally there: SQLite replays the WAL, and the original files
+// are never modified. The returned function closes the database and removes
+// the temporary directory. Only a missing or empty WAL selects the immutable
+// open; any other error reading the WAL is returned, because falling back
+// would silently drop its data.
+func openBackupSource(path, tmpDir string) (*sql.DB, func(), error) {
 	open := func(dsn string, cleanup func()) (*sql.DB, func(), error) {
 		db, err := sql.Open(driverName, dsn)
 		if err != nil {
@@ -237,11 +260,14 @@ func openBackupSource(path string) (*sql.DB, func(), error) {
 		db.SetMaxOpenConns(1)
 		return db, func() { _ = db.Close(); cleanup() }, nil
 	}
-	fi, err := os.Stat(path + "-wal")
+	fi, err := statWAL(path + "-wal")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, fmt.Errorf("store: %w", err)
+	}
 	if err != nil || fi.Size() == 0 {
 		return open("file:"+escapeURIPath(path)+"?mode=ro&immutable=1", func() {})
 	}
-	tmp, err := os.MkdirTemp("", "ledger-backup-")
+	tmp, err := os.MkdirTemp(tmpDir, "ledger-backup-")
 	if err != nil {
 		return nil, nil, fmt.Errorf("store: %w", err)
 	}
@@ -288,9 +314,17 @@ func escapeURIPath(p string) string {
 type RestoreResult struct {
 	// Backup describes the restored backup.
 	Backup BackupInfo
-	// MovedAside is where the previous database (without its -wal and -shm
-	// files, which are kept next to it) now lives; empty when there was none.
+	// MovedAside is where the previous database now lives, with its -wal,
+	// -shm and -journal files kept next to it as aside-wal, aside-shm and
+	// aside-journal. It is empty when there was no database to move aside.
 	MovedAside string
+	// StaleMoved lists the stale -wal, -shm and -journal files that had no
+	// database next to them and were moved aside to the restore's aside name.
+	// It is empty when a database was moved aside or there were no such files.
+	StaleMoved []string
+	// Placed is true once the restored database is in place at the database
+	// path. It can be true together with an error (the directory sync failed).
+	Placed bool
 }
 
 // Restore replaces the database at dbPath with the backup at backupPath.
@@ -315,7 +349,13 @@ func restore(ctx context.Context, backupPath, dbPath string, replace bool, now t
 	if err := checkPath(dbPath); err != nil {
 		return RestoreResult{}, err
 	}
-	info, err := verifyBackup(ctx, backupPath, known)
+	// The directory is created first: a private copy of the backup, when it
+	// has a WAL, is made next to the database.
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return RestoreResult{}, fmt.Errorf("store: %w", err)
+	}
+	info, err := verifyBackup(ctx, backupPath, known, dir)
 	if err != nil {
 		return RestoreResult{}, err
 	}
@@ -329,10 +369,11 @@ func restore(ctx context.Context, backupPath, dbPath string, replace bool, now t
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return RestoreResult{}, fmt.Errorf("store: %w", statErr)
 	}
-	// A -wal or -shm without a database is just as dangerous: SQLite would
-	// replay it into whatever is renamed into place.
+	// A -wal, -shm or -journal without a database is just as dangerous: SQLite
+	// would replay a WAL, or roll a hot journal back, into whatever is renamed
+	// into place.
 	leftovers := false
-	for _, s := range []string{"-wal", "-shm"} {
+	for _, s := range []string{"-wal", "-shm", "-journal"} {
 		if _, err := os.Lstat(dbPath + s); err == nil {
 			leftovers = true
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -342,15 +383,10 @@ func restore(ctx context.Context, backupPath, dbPath string, replace bool, now t
 	if exists && !replace {
 		return RestoreResult{}, fmt.Errorf("%w: %s (restore with the replace option to move it aside)", ErrRestoreTargetExists, dbPath)
 	}
-	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return RestoreResult{}, fmt.Errorf("store: %w", err)
-	}
-
 	// Copy via VACUUM INTO into a private staging file in the same directory
 	// (same file system, so the final rename is atomic).
 	staged := fmt.Sprintf("%s.restore-%s.tmp", dbPath, now.UTC().Format(backupTimeFormat))
-	src, closeSrc, err := openBackupSource(backupPath)
+	src, closeSrc, err := openBackupSource(backupPath, dir)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("store: open backup: %w", err)
 	}
@@ -369,37 +405,50 @@ func restore(ctx context.Context, backupPath, dbPath string, replace bool, now t
 			_ = os.Remove(staged)
 		}
 	}()
-	if _, err := verifyBackup(ctx, staged, known); err != nil {
+	if _, err := verifyBackup(ctx, staged, known, dir); err != nil {
 		return RestoreResult{}, fmt.Errorf("store: restored copy failed verification: %w", err)
 	}
 
 	res := RestoreResult{Backup: info}
-	var undo func()
+	aside := fmt.Sprintf("%s.pre-restore-%s", dbPath, now.UTC().Format(backupTimeFormat))
+	var undo func() error
 	if exists || leftovers {
-		aside := fmt.Sprintf("%s.pre-restore-%s", dbPath, now.UTC().Format(backupTimeFormat))
-		var err error
-		if undo, err = moveAside(dbPath, aside); err != nil {
+		moved, u, err := moveAside(dbPath, aside)
+		if err != nil {
 			return RestoreResult{}, err
 		}
-		res.MovedAside = aside
-	}
-	if err := os.Rename(staged, dbPath); err != nil {
-		rolled := ""
-		if undo != nil {
-			undo()
-			if _, statErr := os.Stat(dbPath); statErr == nil {
-				rolled = "; the previous database was put back"
-			} else {
-				rolled = fmt.Sprintf("; the previous database is at %s", res.MovedAside)
-			}
+		undo = u
+		if exists {
+			res.MovedAside = aside
+		} else {
+			res.StaleMoved = moved
 		}
-		return RestoreResult{}, fmt.Errorf("store: put the restored database in place: %w%s", err, rolled)
+	}
+	if err := renameRestored(staged, dbPath); err != nil {
+		note := ""
+		if undo != nil {
+			note = rollBack(undo, exists, aside)
+		}
+		return RestoreResult{}, fmt.Errorf("store: put the restored database in place: %w%s", err, note)
 	}
 	cleanup = false
-	if err := syncDir(dir); err != nil {
-		return res, err
+	res.Placed = true
+	if err := restoreSyncDir(dir); err != nil {
+		return res, fmt.Errorf("store: restore completed, but the sync of directory %s failed (the restored database may not survive a crash until the directory is synced): %w", dir, err)
 	}
 	return res, nil
+}
+
+// rollBack puts back the files moved aside by a restore whose final rename
+// failed, and describes the outcome for the error message.
+func rollBack(undo func() error, hadDatabase bool, aside string) string {
+	if err := undo(); err != nil {
+		return fmt.Sprintf("; putting the previous files back failed (%v); check the files named %s*", err, aside)
+	}
+	if hadDatabase {
+		return "; the previous database was put back"
+	}
+	return "; the stale WAL, SHM and journal files were put back"
 }
 
 func sameFileIfBoth(a, b string) (bool, error) {
@@ -409,31 +458,38 @@ func sameFileIfBoth(a, b string) (bool, error) {
 	return sameFile(a, b)
 }
 
-// moveAside renames the database and its WAL and shared-memory files to
-// aside, aside-wal and aside-shm, each only if it exists (a stale -wal or -shm
-// may exist without the database). A stale -wal or -shm left behind would be
-// replayed into the restored database, so they must move with it. If a move
+// moveAside renames the database and its -wal, -shm and -journal files to
+// aside, aside-wal, aside-shm and aside-journal, each only if it exists (a
+// stale sidecar file may exist without the database). A stale -wal or -shm
+// left behind would be replayed into the restored database, and a stale
+// -journal could be rolled back into it, so they must move with it. If a move
 // fails, the files already moved are put back and the error names aside. On
-// success it returns a function that puts everything back.
-func moveAside(dbPath, aside string) (func(), error) {
-	var moved []string
-	undo := func() {
+// success it returns the new paths and a function that puts everything back.
+func moveAside(dbPath, aside string) ([]string, func() error, error) {
+	var moved []string // suffixes already moved, in order
+	var dests []string
+	undo := func() error {
+		var errs []error
 		for i := len(moved) - 1; i >= 0; i-- {
-			_ = os.Rename(aside+moved[i], dbPath+moved[i])
+			if err := os.Rename(aside+moved[i], dbPath+moved[i]); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		moved = nil
+		return errors.Join(errs...)
 	}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
+	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
 		if err := os.Rename(dbPath+suffix, aside+suffix); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			undo()
-			return nil, fmt.Errorf("store: move the existing database aside to %s: %w (files already moved were put back where possible; check %s)", aside, err, aside)
+			_ = undo()
+			return nil, nil, fmt.Errorf("store: move the existing database aside to %s: %w (files already moved were put back where possible; check %s)", aside, err, aside)
 		}
 		moved = append(moved, suffix)
+		dests = append(dests, aside+suffix)
 	}
-	return undo, nil
+	return dests, undo, nil
 }
 
 // syncDir flushes a directory entry change. Errors are returned except on
@@ -503,22 +559,22 @@ func PruneMigrationBackups(dbPath string, keep int) ([]string, error) {
 }
 
 // ModeWarnings reports file system permissions that expose the database to
-// other local users: the database, its -wal/-shm files and the backups next
-// to it should not be accessible by group or others, and the directory should
-// not be writable by them. It returns nothing on Windows, where mode bits do
+// other local users: the database, its -wal/-shm/-journal files and the
+// backups and restore files next to it should not be accessible by group or
+// others, and the directory should not be writable by them. It returns nothing on Windows, where mode bits do
 // not describe access. Files that do not exist are skipped.
 func ModeWarnings(dbPath string) []string {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
 	var out []string
-	files := []string{dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + ".lock"}
+	files := []string{dbPath, dbPath + "-wal", dbPath + "-shm", dbPath + "-journal", dbPath + ".lock"}
 	if b, err := PreMigrationBackups(dbPath); err == nil {
 		files = append(files, b...)
 	}
-	// Backups made with "ledger backup" and moved-aside databases, each with
-	// its -wal and -shm files.
-	for _, pat := range []string{".backup-*.db*", ".pre-restore-*"} {
+	// Backups made with "ledger backup", moved-aside databases (each with its
+	// -wal, -shm and -journal files) and restore staging files left by a crash.
+	for _, pat := range []string{".backup-*.db*", ".pre-restore-*", ".restore-*.tmp"} {
 		if m, err := filepath.Glob(escapeGlob(dbPath) + pat); err == nil {
 			files = append(files, m...)
 		}
