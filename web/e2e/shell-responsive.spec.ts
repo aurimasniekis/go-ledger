@@ -123,6 +123,28 @@ test.describe('640 to 830 CSS px wide, an administrator with connections:read', 
   })
 })
 
+// The header is at most two rows at every width from 320 to 1280 CSS px, with and without connections:read. The administrator
+// has the longest link row (the 320, 340, 360 and 390 px cases are the phone widths it was checked at first).
+// "Monthly" keeps its full word on a phone (WCAG 2.5.3: the visible label is part of the accessible name "Monthly view").
+const adminGrants = ['commitments:read', 'users:read', 'tokens:read', 'connections:read']
+const memberGrants = ['commitments:read', 'users:read', 'tokens:read']
+const headerWidths = Array.from({ length: 1280 - 320 + 1 }, (_, i) => 320 + i)
+for (const [label, grants] of [['an administrator with connections:read', adminGrants], ['without connections:read', memberGrants]] as const) {
+  test.describe('320 to 1280 CSS px wide, ' + label, () => {
+    test.use({ viewport: { width: 320, height: 640 } })
+    test('the header is at most two rows and nothing overflows', async ({ page }) => {
+      test.setTimeout(120_000)
+      await signedIn(page, [...grants])
+      await page.goto('/month?month=2026-11')
+      for (const width of headerWidths) {
+        await page.setViewportSize({ width, height: 640 })
+        expect(await headerRows(page), `rows in the header at ${width} px`).toBeLessThanOrEqual(2)
+        await noOverflow(page)
+      }
+    })
+  })
+}
+
 // One extra phone width (375), kept separate so the browser is launched for as few extra pages as possible.
 test.describe('375 CSS px wide', () => {
   test.use({ viewport: { width: 375, height: 667 } })
