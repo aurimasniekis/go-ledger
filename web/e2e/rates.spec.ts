@@ -25,7 +25,7 @@ async function stub(page: Page) {
   await page.route('**/api/v1/me', (r) =>
     r.fulfill(body({ kind: 'user', user_id: 'u1', token_id: null, role: 'read-only', grants: ['commitments:read', 'rates:read'] })))
   await page.route('**/api/v1/rates/status', (r) => r.fulfill(body(status)))
-  await page.route('**/api/v1/rates?*', (r) => r.fulfill(body({
+  await page.route('**/api/v1/rates', (r) => r.fulfill(body({
     items: [rate('GBP', '1.16210', '2026-11-13', '2026-11-14T09:00:00Z', 'not_retrieved_recently'), rate('USD', '0.90992', '2026-11-20', '2026-11-21T09:00:00Z', null)],
     next_cursor: null,
   })))
