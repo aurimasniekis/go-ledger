@@ -49,6 +49,9 @@ const (
 	StatusUpcoming      Status = "upcoming"
 	StatusDue           Status = "due"
 	StatusOverdue       Status = "overdue"
+	// StatusCancelled is the status of a cancelled occurrence (D31): it is
+	// not an obligation, so it is never upcoming, due or overdue.
+	StatusCancelled Status = "cancelled"
 )
 
 // TimingOf places a due date against today in the reporting zone:
@@ -204,6 +207,12 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 		case EvidenceBankTransaction:
 			st.BankEvidenceCount++
 		}
+	}
+	if o.CancelledAt != nil {
+		// A cancelled occurrence owes nothing whatever its dates say. Paid and
+		// EvidenceCount stay as history; there is no timing and no grace.
+		st.Status, st.Derived, st.Outstanding = StatusCancelled, StatusCancelled, zero
+		return st
 	}
 	c, _ := paid.Cmp(o.Amount)
 	if c > 0 {

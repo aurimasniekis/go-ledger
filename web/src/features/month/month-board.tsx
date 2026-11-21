@@ -276,7 +276,7 @@ function OccurrenceRow({ item: i, onRecord, form }: { item: MonthItem | null; on
     )
   }
   const p = i.payment
-  const settled = p.status === 'paid'
+  const settled = p.status === 'paid' || p.status === 'cancelled'
   const provenance = provenanceOf(i)
   return (
     <li className="space-y-2 rounded-md border border-border bg-surface p-3">

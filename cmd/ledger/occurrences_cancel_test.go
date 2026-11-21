@@ -120,6 +120,19 @@ func TestDateCorrectionCancelsReferencedAPI(t *testing.T) {
 	if rec := f.do("GET", "/api/v1/occurrences/"+jan, "", admin); rec.Code != 200 || !strings.Contains(rec.Body.String(), "cancelled_at") {
 		t.Errorf("a cancelled occurrence stays readable: %d %s", rec.Code, rec.Body.String())
 	}
+	// Its payment state is its own: never overdue or owed, history kept (F1).
+	o := f.getOccurrence(t, jan)
+	if p := o.Payment; p.Status != "cancelled" || p.DerivedStatus != "cancelled" || p.Timing != nil || p.Outstanding.Amount != "0.00" || p.GraceUntil != nil || p.WithinGrace {
+		t.Errorf("cancelled payment state by id: %+v", p)
+	}
+	raw := f.do("GET", "/api/v1/occurrences?month=2026-01&include_cancelled=true", "", admin).Body.String()
+	if !strings.Contains(raw, `"status":"cancelled"`) || strings.Contains(raw, "overdue") {
+		t.Errorf("cancelled payment state in the list: %s", raw)
+	}
+	// Repeating include_cancelled is refused rather than merged (ADR-0011).
+	if rec := f.do("GET", "/api/v1/occurrences?month=2026-01&include_cancelled=true&include_cancelled=false", "", admin); rec.Code != 400 {
+		t.Errorf("repeated include_cancelled: %d %s", rec.Code, rec.Body.String())
+	}
 	// It is not in the monthly view and takes no new payment.
 	rec := f.do("GET", "/api/v1/occurrences/summary?month=2026-01", "", admin)
 	if rec.Code != 200 || strings.Contains(rec.Body.String(), jan) || !strings.Contains(rec.Body.String(), `"items":[]`) {

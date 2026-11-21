@@ -7,7 +7,7 @@ export interface Money {
   currency: string
 }
 
-export type PaymentStatus = 'paid' | 'partially_paid' | 'upcoming' | 'due' | 'overdue'
+export type PaymentStatus = 'paid' | 'partially_paid' | 'upcoming' | 'due' | 'overdue' | 'cancelled'
 
 export interface PaymentState {
   status: PaymentStatus
