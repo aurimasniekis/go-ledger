@@ -35,16 +35,19 @@ Two separate axes, separate types (`CommitmentStatus`, `DataState`), so a data s
 | --- | --- | --- | --- |
 | Commitment | Paid | check circle | quiet |
 | Commitment | Upcoming | clock | default |
+| Commitment | Due today | calendar clock | default |
+| Commitment | Partly paid | dashed circle | default |
 | Commitment | Overdue | triangle alert | strong |
 | Commitment | Deferred | hourglass | quiet |
 | Data state | Stale | history | default |
 | Data state | Error | octagon X | strong |
+| Data state | Not saved yet (pending save) | spinner | default |
 
 **Emphasis tiers** order badges by visual mass so the order survives greyscale: *strong* is a solid fill with `status-strong-foreground` text (things the user must act on or a failure), *default* is a tint with a coloured border, *quiet* is coloured text and icon on a neutral border with no tint (settled or parked). Overdue (amber/orange, triangle) and Error (red/magenta, octagon) differ in hue and shape.
 
 **Hue rules**: status tokens are never equal to, and stay at least 20 CIE76 delta-E from, any accent or the focus ring, and from each other; overdue and error at least 35 apart. The dark focus ring is near-white for that reason. `contrast.test.ts` enforces it in both themes. Violet and warm accents therefore never read as a commitment or freshness state.
 
-**Reserved, not yet built** (tokens and badges to add with U1, C4, X4, B4 before those screens): disconnected, pending-save, save-failed, bank-pending transaction, needs-review (ambiguous match), and provenance markers (bank fact, user correction, manual paid).
+**Reserved, not yet built** (tokens and badges to add with U1, C4, X4, B4 before those screens): disconnected, save-failed, bank-pending transaction, needs-review (ambiguous match), and provenance markers (bank fact, user correction, manual paid).
 
 ## Contrast (automated)
 
