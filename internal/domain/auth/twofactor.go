@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +102,13 @@ var (
 	// ErrTwoFactorRequired: TOTP cannot be disabled while auth.require_2fa
 	// is on (it can be replaced by enrolling again).
 	ErrTwoFactorRequired = errors.New("two-factor authentication is required by the configuration and cannot be disabled; enrol a new authenticator to replace it")
+	// ErrInvalidCurrentFactor: the current TOTP or recovery code given with
+	// a change to 2FA did not match. It is also [ErrInvalidSecondFactor].
+	ErrInvalidCurrentFactor = fmt.Errorf("the current authentication code or recovery code is not valid: %w", ErrInvalidSecondFactor)
+	// ErrCurrentFactorRequired: TOTP is enabled, so replacing, disabling or
+	// regenerating it needs exactly one current TOTP code or recovery code
+	// (decision D26-1a).
+	ErrCurrentFactorRequired = errors.New("two-factor authentication is enabled: give a current authentication code or a recovery code (one of them)")
 	// ErrTwoFactorUnavailable: no key-encryption key, so secrets cannot be
 	// stored.
 	ErrTwoFactorUnavailable = errors.New("two-factor authentication is not available: no key-encryption key is configured")
@@ -235,11 +243,72 @@ func (s *Service) BeginTOTP(ctx context.Context, p authz.Principal) (Enrollment,
 	return Enrollment{Secret: EncodeTOTPSecret(secret), URI: TOTPURI(cred.Username, secret), ExpiresAt: now.Add(EnrollmentTTL)}, nil
 }
 
+// CurrentFactor is the user's current second factor, given with a change to
+// it (decision D26-1a): exactly one of a TOTP code from the enabled
+// authenticator or an unused recovery code. Address is the client's, for the
+// sign-in limits.
+type CurrentFactor struct {
+	Code         string
+	RecoveryCode string
+	Address      string
+}
+
+// verifyCurrentFactor checks the current second factor of p's user, whose
+// TOTP is enabled (st), before a change to it. It is a step-up on top of
+// recent re-authentication (password or OIDC), for every session method. The
+// attempt is reserved in the same per-username and per-address limits as a
+// sign-in (ADR-0030), a wrong code counts as a failure and is audited
+// (auth.reauthentication_failed, reason invalid_second_factor), a TOTP step
+// is recorded as used and a recovery code is consumed. It returns the method
+// used, for the change's audit entry.
+func (s *Service) verifyCurrentFactor(ctx context.Context, p authz.Principal, st TwoFactorState, cf CurrentFactor) (string, error) {
+	if (cf.Code == "") == (cf.RecoveryCode == "") {
+		return "", ErrCurrentFactorRequired
+	}
+	cred, err := s.store.CredentialByUser(ctx, p.UserID)
+	if err != nil {
+		return "", err
+	}
+	method := MethodTOTP
+	if cf.RecoveryCode != "" {
+		method = MethodRecoveryCode
+	}
+	now := s.now().UTC()
+	failed := func(reason string) audit.Event {
+		return audit.Event{Action: audit.ReauthenticationFailed, Actor: audit.ActorOf(p), TargetType: "user", TargetID: p.UserID, At: now,
+			Details: map[string]string{"method": method, "reason": reason}}
+	}
+	at, err := s.begin(accountKey(cred.Username), AddressKey(cf.Address), func() error {
+		return s.rec.Record(ctx, failed("locked_out"))
+	})
+	if err != nil {
+		return "", err
+	}
+	defer at.done()
+	ok, _, err := s.checkSecondFactor(ctx, p.UserID, st, SecondFactorInput{Code: cf.Code, RecoveryCode: cf.RecoveryCode})
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		at.failed()
+		if err := s.rec.Record(ctx, failed("invalid_second_factor")); err != nil {
+			return "", err
+		}
+		return "", ErrInvalidCurrentFactor
+	}
+	at.succeeded()
+	return method, nil
+}
+
 // ConfirmTOTP checks code against the pending enrolment of p's user and, when
 // it matches, enables TOTP with that secret, issues new recovery codes
 // (returned once; any earlier ones stop working) and ends every other session
-// of the user. Audited (two_factor.enabled).
-func (s *Service) ConfirmTOTP(ctx context.Context, p authz.Principal, code string) (codes []string, ended int, err error) {
+// of the user. When TOTP is already enabled (a replacement), current must
+// also prove the authenticator being replaced or a recovery code
+// ([ErrCurrentFactorRequired], [ErrInvalidSecondFactor]); the new code is
+// checked first, so a typo in it consumes no recovery code. Audited
+// (two_factor.enabled).
+func (s *Service) ConfirmTOTP(ctx context.Context, p authz.Principal, code string, current CurrentFactor) (codes []string, ended int, err error) {
 	if s.sealer == nil {
 		return nil, 0, ErrTwoFactorUnavailable
 	}
@@ -259,11 +328,18 @@ func (s *Service) ConfirmTOTP(ctx context.Context, p authz.Principal, code strin
 	if !ok {
 		return nil, 0, ErrInvalidSecondFactor
 	}
+	details := map[string]string{"method": MethodTOTP, "replaced": strconv.FormatBool(st.Enabled())}
+	if st.Enabled() {
+		verified, err := s.verifyCurrentFactor(ctx, p, st, current)
+		if err != nil {
+			return nil, 0, err
+		}
+		details["verified_with"] = verified
+	}
 	codes, hashes := newRecoveryCodes(p.UserID)
-	replaced := strconv.FormatBool(st.Enabled())
 	ended, err = s.store.ConfirmTOTP(ctx, p.UserID, st.PendingSecret, step, hashes, p.SessionID, now, func(ended int) []audit.Event {
-		return []audit.Event{{Action: audit.TwoFactorEnabled, Actor: audit.ActorOf(p), TargetType: "user", TargetID: p.UserID, At: now,
-			Details: map[string]string{"method": MethodTOTP, "replaced": replaced, "sessions_ended": strconv.Itoa(ended)}}}
+		details["sessions_ended"] = strconv.Itoa(ended)
+		return []audit.Event{{Action: audit.TwoFactorEnabled, Actor: audit.ActorOf(p), TargetType: "user", TargetID: p.UserID, At: now, Details: details}}
 	})
 	if errors.Is(err, resource.ErrNotFound) {
 		return nil, 0, ErrNoPendingEnrollment
@@ -275,12 +351,25 @@ func (s *Service) ConfirmTOTP(ctx context.Context, p authz.Principal, code strin
 }
 
 // RegenerateRecoveryCodes replaces p's user's recovery codes with new ones,
-// returned once. Audited (two_factor.recovery_codes_regenerated).
-func (s *Service) RegenerateRecoveryCodes(ctx context.Context, p authz.Principal) ([]string, error) {
+// returned once. current must prove a TOTP code or an unused recovery code
+// (decision D26-1a). Audited (two_factor.recovery_codes_regenerated).
+func (s *Service) RegenerateRecoveryCodes(ctx context.Context, p authz.Principal, current CurrentFactor) ([]string, error) {
+	st, err := s.store.TwoFactor(ctx, p.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !st.Enabled() {
+		return nil, ErrTwoFactorNotEnabled
+	}
+	verified, err := s.verifyCurrentFactor(ctx, p, st, current)
+	if err != nil {
+		return nil, err
+	}
 	codes, hashes := newRecoveryCodes(p.UserID)
 	now := s.now().UTC()
-	err := s.store.ReplaceRecoveryCodes(ctx, p.UserID, hashes, now, audit.Event{Action: audit.RecoveryCodesReset,
-		Actor: audit.ActorOf(p), TargetType: "user", TargetID: p.UserID, At: now, Details: map[string]string{"count": strconv.Itoa(len(codes))}})
+	err = s.store.ReplaceRecoveryCodes(ctx, p.UserID, hashes, now, audit.Event{Action: audit.RecoveryCodesReset,
+		Actor: audit.ActorOf(p), TargetType: "user", TargetID: p.UserID, At: now,
+		Details: map[string]string{"count": strconv.Itoa(len(codes)), "verified_with": verified}})
 	if errors.Is(err, resource.ErrNotFound) {
 		return nil, ErrTwoFactorNotEnabled
 	}
@@ -296,18 +385,32 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, p authz.Principal
 // recovery path for a lost authenticator without recovery codes: the user is
 // then confined to enrolment at the next sign-in. Audited
 // (two_factor.disabled) when TOTP was enabled; [ErrTwoFactorNotEnabled]
-// otherwise (a pending enrolment is discarded either way).
-func (s *Service) DisableTwoFactor(ctx context.Context, actor authz.Principal, system bool, target, by string) error {
+// otherwise (a pending enrolment is discarded either way). A user (not the
+// host) must also prove a current TOTP code or recovery code in current
+// (decision D26-1a); the host command needs none.
+func (s *Service) DisableTwoFactor(ctx context.Context, actor authz.Principal, system bool, target, by string, current CurrentFactor) error {
 	if !system && s.cfg.Require2FA {
 		return ErrTwoFactorRequired
 	}
 	a := audit.System
+	details := map[string]string{"method": MethodTOTP, "by": by}
 	if !system {
 		a = audit.ActorOf(actor)
+		st, err := s.store.TwoFactor(ctx, target)
+		if err != nil {
+			return err
+		}
+		if st.Enabled() {
+			verified, err := s.verifyCurrentFactor(ctx, actor, st, current)
+			if err != nil {
+				return err
+			}
+			details["verified_with"] = verified
+		}
 	}
 	now := s.now().UTC()
 	was, err := s.store.DisableTwoFactor(ctx, target, audit.Event{Action: audit.TwoFactorDisabled, Actor: a, TargetType: "user",
-		TargetID: target, At: now, Details: map[string]string{"method": MethodTOTP, "by": by}})
+		TargetID: target, At: now, Details: details})
 	if err != nil {
 		return err
 	}

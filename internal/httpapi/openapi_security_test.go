@@ -8,8 +8,9 @@ import (
 )
 
 // TestOpenAPISecurityMatchesAccess: public operations declare an empty
-// security (no credentials), every other operation inherits the document's
-// root requirement (a bearer API token or the session cookie), and every
+// security (no credentials), session-only operations the session cookie
+// alone, every other operation (including session-or-root-token) inherits the
+// document's root requirement (a bearer API token or the session cookie), and every
 // security reference names a declared scheme. Generated clients read these
 // requirements, so they must agree with x-ledger-access.
 func TestOpenAPISecurityMatchesAccess(t *testing.T) {
@@ -67,8 +68,15 @@ func TestOpenAPISecurityMatchesAccess(t *testing.T) {
 				continue
 			}
 			others++
+			if op.Access == "session" {
+				// A session route refuses API tokens: it declares the cookie only.
+				if op.Security == nil || len(*op.Security) != 1 || len((*op.Security)[0]) != 1 || (*op.Security)[0]["sessionCookie"] == nil {
+					t.Errorf("%s %s is session-only; its security must be exactly [sessionCookie]", method, path)
+				}
+				continue
+			}
 			if op.Security != nil {
-				t.Errorf("%s %s (x-ledger-access %s) overrides the root security; only public operations may", method, path, op.Access)
+				t.Errorf("%s %s (x-ledger-access %s) overrides the root security; only public and session operations may", method, path, op.Access)
 			}
 		}
 	}

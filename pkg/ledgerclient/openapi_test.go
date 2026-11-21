@@ -141,7 +141,6 @@ var notImplemented = map[string]string{
 
 	"signInSecondFactor":      "session-only: the second step of a browser sign-in, so not reachable with a bearer token",
 	"listMyTokens":            "session-only: own tokens are managed with the browser session; a bearer token uses the admin token routes (listTokens)",
-	"createMyToken":           "session-only: creation needs recent re-authentication, and tokens cannot create tokens",
 	"getMyToken":              "session-only: own tokens are managed with the browser session",
 	"revokeMyToken":           "session-only: own tokens are managed with the browser session",
 	"getMyTwoFactor":          "session-only: two-factor management is for the signed-in browser session, not reachable with a bearer token",
@@ -241,6 +240,8 @@ func TestTypesMatchSchemas(t *testing.T) {
 		{"PaymentOverride", reflect.TypeFor[PaymentOverride](), get(ref("PaymentState"), "properties", "override", "oneOf").([]any)[1].(node), false},
 		{"ManualPayment", reflect.TypeFor[ManualPayment](), ref("ManualPayment"), false},
 		{"APIToken", reflect.TypeFor[APIToken](), ref("ApiToken"), false},
+		{"CreatedAPIToken", reflect.TypeFor[CreatedAPIToken](), ref("CreatedApiToken"), false},
+		{"NewAPIToken", reflect.TypeFor[NewAPIToken](), ref("NewApiToken"), true},
 		{"NewManualPayment", reflect.TypeFor[NewManualPayment](), ref("ManualPaymentInput"), true},
 		{"Money", reflect.TypeFor[Money](), ref("PositiveMoney"), false},
 		{"Schedule", reflect.TypeFor[Schedule](), ref("Schedule"), false},

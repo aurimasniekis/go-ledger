@@ -219,6 +219,24 @@ type APIToken struct {
 	RevokedAt  *string  `json:"revoked_at"`
 }
 
+// NewAPIToken is the body of CreateMyToken: a name and either grants or Root.
+type NewAPIToken struct {
+	Name   string   `json:"name"`
+	Grants []string `json:"grants,omitempty"`
+	Root   bool     `json:"root,omitempty"`
+	// ExpiresAt is an RFC 3339 time in the future; nil means never.
+	ExpiresAt *string `json:"expires_at,omitempty"`
+}
+
+// CreatedAPIToken answers CreateMyToken. Secret is the token itself and is
+// never shown again: store it at once.
+type CreatedAPIToken struct {
+	Secret string   `json:"secret"`
+	Token  APIToken `json:"token"`
+	// Warning explains a root token's power; nil for other tokens.
+	Warning *string `json:"warning"`
+}
+
 // AuditEntry is one entry of the append-only audit log.
 type AuditEntry struct {
 	ID          string            `json:"id"`

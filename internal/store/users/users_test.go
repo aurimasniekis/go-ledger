@@ -270,3 +270,45 @@ func TestSchemaRefusesWhatCodeRefuses(t *testing.T) {
 		}
 	}
 }
+
+// TestRootAccountIsTheFirstUserCreated: the root account (decision D25) is
+// the earliest created_at; users created in the same instant keep their
+// insertion order whatever their IDs; disabling or demoting it changes
+// nothing.
+func TestRootAccountIsTheFirstUserCreated(t *testing.T) {
+	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "ledger.db"), store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	now := t0
+	ids := []string{"01JD3Y4C8V9M2Q7W5R6T0XZBNZ", "01JD3Y4C8V9M2Q7W5R6T0XZBNA", "01JD3Y4C8V9M2Q7W5R6T0XZBN5"}
+	n := 0
+	s := New(db, &recorder{}, func() time.Time { return now }, func() string { n++; return ids[n-1] })
+	ctx := context.Background()
+	if _, err := s.RootAccountID(ctx); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("no users: %v", err)
+	}
+	first, err := s.Create(ctx, admin, users.New{Username: "first", Role: authz.RoleAdministrator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same instant, lower ID: still second.
+	if _, err := s.Create(ctx, admin, users.New{Username: "second", Role: authz.RoleAdministrator}); err != nil {
+		t.Fatal(err)
+	}
+	now = t0.Add(time.Hour)
+	if _, err := s.Create(ctx, admin, users.New{Username: "third", Role: authz.RoleReadOnly}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.RootAccountID(ctx); err != nil || got != first.ID {
+		t.Fatalf("root account = %s, %v; want %s", got, err, first.ID)
+	}
+	ro := authz.RoleReadOnly
+	if _, err := s.Update(ctx, admin, first.ID, 1, users.Patch{Disabled: ptr(true), Role: &ro}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.RootAccountID(ctx); got != first.ID {
+		t.Fatalf("root account after disabling and demoting it = %s", got)
+	}
+}

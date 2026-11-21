@@ -52,7 +52,7 @@ var permissionMatrix = map[string]string{
 	"POST /api/v1/auth/reauthenticate":  "session+enroll",
 	"PUT /api/v1/auth/password":         "session+recent",
 	"GET /api/v1/auth/tokens":           "session",
-	"POST /api/v1/auth/tokens":          "session+recent",
+	"POST /api/v1/auth/tokens":          "session-or-root-token+recent",
 	"GET /api/v1/auth/tokens/{id}":      "session",
 	"DELETE /api/v1/auth/tokens/{id}":   "session",
 	"GET /api/v1/tokens":                "tokens:read",
@@ -345,6 +345,10 @@ func TestPermissionMatrix(t *testing.T) {
 			case "authenticated":
 				allowed = s.valid
 			case "session":
+				allowed = s.valid && s.session
+			case "session-or-root-token":
+				// No matrix subject is a root token of the root account (the
+				// test tokens are not stored), so only sessions pass.
 				allowed = s.valid && s.session
 			default:
 				g, _ := a.Grant()

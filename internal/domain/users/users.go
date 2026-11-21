@@ -245,4 +245,8 @@ type Store interface {
 	// role, for authenticators (sessions, tokens): ErrDisabled for a disabled
 	// user, resource.ErrNotFound for an unknown one.
 	Principal(ctx context.Context, id string) (authz.Principal, error)
+	// RootAccountID returns the root account (decision D25): the first user
+	// created on the database, whatever its current state; resource.ErrNotFound
+	// when there is none.
+	RootAccountID(ctx context.Context) (string, error)
 }

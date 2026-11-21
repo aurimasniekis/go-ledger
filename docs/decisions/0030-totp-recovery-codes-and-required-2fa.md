@@ -1,6 +1,7 @@
 # ADR-0030: TOTP, recovery codes and required two-factor authentication
 
 Status: Accepted (2026-11-21); the default values in point 10 are **proposed** and wait for an operator decision.
+Point 13 (a current second factor for changes to 2FA) added and accepted by the operator's decision D26-1a.
 
 ## Context
 
@@ -34,7 +35,8 @@ requirement. There is no UI here (A7).
    issues recovery codes and ends every other session of the user (as a password change does), in one transaction. An
    enabled secret keeps working until a new one is confirmed, so enrolling again replaces an authenticator.
    `DELETE` disables TOTP and deletes the recovery codes; `POST /recovery-codes` regenerates them; `GET` returns the
-   status (never a secret).
+   status (never a secret). While TOTP is enabled, confirming a replacement, `DELETE` and `POST /recovery-codes`
+   also need the current second factor (point 13).
 6. **Two-step sign-in.** For a user with TOTP enabled, a right password answers 202 with a challenge (a random token,
    kept in memory as a hash for five minutes) and no cookie. `POST /auth/sign-in/second-factor` takes the challenge and
    exactly one of a TOTP code or a recovery code, then starts the session exactly as a password sign-in does. A wrong,
@@ -63,12 +65,33 @@ requirement. There is no UI here (A7).
     recommendation for network delay; ten codes is the common practice; the other values bound memory and guessing
     without hurting a user who is typing. Only `auth.require_2fa` is configurable; the others are constants.
 11. **Audit.** `two_factor.enabled` (method, replaced, sessions_ended), `two_factor.disabled` (method, by self or
-    host), `two_factor.recovery_codes_regenerated` (count), and sign-in events with method `totp` or
+    host), `two_factor.recovery_codes_regenerated` (count), each with `verified_with` (`totp` or `recovery_code`)
+    when point 13 asked for the current factor, and sign-in events with method `totp` or
     `recovery_code` (a recovery-code success records how many remain; a failure has reason `invalid_second_factor`).
     Starting an enrolment that is not confirmed changes no second factor and is not audited.
 12. **Schema.** Migration `0013_totp`: `user_totp` (active and pending sealed secrets, `last_step`) and
     `user_recovery_codes` (hashes). Both are unversioned bookkeeping (never API objects). Fixture
     `0011_commitment_occurrences` covers the previous version.
+13. **A current second factor for changes to 2FA (decision D26-1a).** When TOTP is enabled, replacing the
+    authenticator (`POST /totp/confirm` while one is enabled), disabling it (`DELETE`) and regenerating the recovery
+    codes (`POST /recovery-codes`) need, besides recent re-authentication, exactly one of `current_code` (a code
+    from the enabled authenticator) or `current_recovery_code` (an unused recovery code) in the JSON body
+    (`CurrentSecondFactor` in OpenAPI; `auth.CurrentFactor` in the service). It applies to every session,
+    whatever the sign-in or re-authentication method: an OIDC session that skipped Ledger's second step because
+    Ledger trusts the provider (D16), or that re-authenticated through the provider, must give it too. A first
+    enrolment (TOTP not enabled) needs none, and neither does the host (`ledger auth reset-2fa`); tokens cannot reach
+    these routes (session-only).
+    - Missing, empty or both given: 400 `validation_failed` on `current_code`. Wrong, reused or malformed: 400
+      `invalid_second_factor` on the field given, audited as `auth.reauthentication_failed` (method `totp` or
+      `recovery_code`, reason `invalid_second_factor`). Nothing changes on any refusal.
+    - The check uses the sign-in machinery: the attempt is reserved in the per-username and per-address limits
+      (point 7) and a failure counts, so a stolen session cannot guess the code (429 `rate_limited` once blocked,
+      first block audited with reason `locked_out`); a TOTP code's step is recorded as used (replay protection, so
+      the confirmation's own code cannot also disable it in the same step); a recovery code is consumed.
+    - When replacing, the new authenticator's code is checked first, so a mistyped new code uses up no recovery
+      code; the current factor is checked before the change is written.
+    - The web UI asks for the code in the replacement form and in the turn-off and replace-codes dialogs, with a
+      switch to a recovery code; errors are shown on the field.
 
 ## Why
 
@@ -82,6 +105,11 @@ requirement. There is no UI here (A7).
   nothing about it survives a restart. The cost is that a restart between the two steps asks for the password again.
 - Refusing reads too during required enrolment is the requirement ("blocks access until satisfied"); an allow list is
   safer than a deny list as routes are added.
+- Point 13: recent re-authentication proves only the password (or the provider). Without the current factor, a
+  person who learned the password and reached a session (or a provider account) could remove or replace the second
+  factor and so defeat it; asking for it means changing 2FA needs what signing in needs. Recovery codes are accepted
+  because they are the documented fallback for a lost authenticator; whoever has neither uses the host reset.
+  Counting failures in the sign-in limits keeps the code from being guessed through these routes.
 - Ending other sessions when TOTP is enabled follows the password-change rule: a session opened without the second
   factor (possibly by someone else) should not outlive its enabling.
 
@@ -89,8 +117,9 @@ requirement. There is no UI here (A7).
 
 - **Changing the KEK breaks enrolled authenticators** until the user signs in with a recovery code and enrols again, or
   the host runs `ledger auth reset-2fa`. There is no KEK rotation yet.
-- Re-authentication (`POST /auth/reauthenticate`) still checks only the password, also for users with TOTP; whether
-  sensitive actions should ask for a second factor is open.
+- Re-authentication (`POST /auth/reauthenticate`) still checks only the password (or the provider, ADR-0033), also for
+  users with TOTP. Changes to the second factor itself ask for it as well (point 13); other sensitive actions
+  (password change, token creation, user management) do not, and whether they should is still open.
 - There is no administrator route to reset another user's 2FA; the host command covers the single-person deployment.
 - UI pages are static assets: the server guarantees that a confined session reaches no protected data, and the A7
   screens must route to enrolment using `two_factor.enrollment_required`.
