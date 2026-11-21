@@ -408,6 +408,11 @@ func TestTokenCreateCommandBootstrapsAFreshDatabase(t *testing.T) {
 		t.Fatalf("read-only root: %d %q %s", code, stdout, stderr)
 	}
 
+	// A past expiry is refused before the user is created.
+	if code, stdout, stderr := run("create", "--create", "administrator", "--root", "--expires", "2001-01-01T00:00:00Z", "ghost"); code != 2 || stdout != "" || !strings.Contains(stderr, "in the future") {
+		t.Fatalf("past expiry: %d %q %s", code, stdout, stderr)
+	}
+
 	// Bootstrap: a fresh database, an administrator created on the way, a root token printed once.
 	code, stdout, stderr := run("create", "--create", "administrator", "--root", "admin")
 	if code != 0 {
@@ -446,6 +451,9 @@ func TestTokenCreateCommandBootstrapsAFreshDatabase(t *testing.T) {
 	}
 	if _, err := authstore.New(db, al).CredentialByUsername(context.Background(), "viewer"); !errors.Is(err, resource.ErrNotFound) {
 		t.Fatal("the refused bootstrap created a user")
+	}
+	if _, err := authstore.New(db, al).CredentialByUsername(context.Background(), "ghost"); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatal("the past-expiry bootstrap created a user")
 	}
 	created, _ := al.List(context.Background(), audit.Filter{Actions: []audit.Action{audit.TokenCreated}, Limit: 10})
 	if len(created) != 2 || created[0].Actor.Kind != audit.ActorSystem || created[0].Details["root"] != "true" || created[1].Details["expires_at"] == "never" {

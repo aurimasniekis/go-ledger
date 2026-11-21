@@ -190,3 +190,47 @@ func TestSchemaRefusesBadRows(t *testing.T) {
 		}
 	}
 }
+
+// TestTouchBehindAHeldWriteTransactionGivesUpAndNeverMovesBackwards: a last-use
+// write waits only as long as its context, and an older time never replaces a
+// newer one.
+func TestTouchBehindAHeldWriteTransactionGivesUpAndNeverMovesBackwards(t *testing.T) {
+	s, db, _, alice, _ := setup(t)
+	ctx := context.Background()
+	a := token("01JD3Y4C8V9M2Q7W5R6T0XZC01", alice, "x001")
+	if err := s.Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	held, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- db.WriteTx(ctx, func(context.Context, *sql.Tx) error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+	tctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := s.Touch(tctx, a.ID, t0.Add(time.Minute)); err == nil {
+		t.Fatal("touch behind a held writer succeeded")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("touch waited %s", d)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []time.Duration{2 * time.Minute, time.Minute} {
+		if err := s.Touch(ctx, a.ID, t0.Add(at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := s.Get(ctx, a.ID)
+	if got.LastUsedAt == nil || !got.LastUsedAt.Equal(t0.Add(2*time.Minute)) {
+		t.Fatalf("last use %v, want it kept at +2m", got.LastUsedAt)
+	}
+}

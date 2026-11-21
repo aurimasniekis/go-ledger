@@ -187,10 +187,10 @@ func (s *Store) Revoke(ctx context.Context, id, ownerID string, at time.Time, ev
 	return revoked, err
 }
 
-// Touch records use of the token.
+// Touch records use of the token. The value only moves forward.
 func (s *Store) Touch(ctx context.Context, id string, at time.Time) error {
 	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "UPDATE api_tokens SET last_used_at = ? WHERE id = ?", store.Timestamp{Time: at}, id)
+		_, err := tx.ExecContext(ctx, "UPDATE api_tokens SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)", store.Timestamp{Time: at}, id, store.Timestamp{Time: at})
 		return err
 	})
 }

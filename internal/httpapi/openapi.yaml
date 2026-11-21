@@ -1110,6 +1110,16 @@ tags:
   - name: tokens
     description: API tokens (Authorization Bearer); your own, and everyone's for administrators.
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: An API token (ldgr_ followed by 43 characters) in Authorization Bearer. Which operations a token may call follows its grants; see x-ledger-access.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-ledger_session
+      description: The browser session cookie set by sign-in. State-changing requests made with it also send X-CSRF-Token.
   parameters:
     Limit:
       name: limit
