@@ -266,7 +266,7 @@ func registerUsers(s *Server, st users.Store) {
 // re-enable a disabled administrator (which also revives their tokens, D25-2).
 // D34 adds the root account: demoting or disabling it needs a root token of the
 // root account too, and D35 adds renaming it (a username change).
-// Demoting or disabling any other user stays open to users:write tokens.
+// Demoting, disabling or renaming any other user stays open to users:write tokens.
 //
 // The decision is made on a read outside the write transaction, so it is pinned
 // to the version: when the user is no longer at the version the caller expects,

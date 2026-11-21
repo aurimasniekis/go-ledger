@@ -31,7 +31,7 @@ describe('the Undo notice across months (proposal in the U1 pull request)', () =
     renderApp('/month?month=2026-11', client)
     await userEvent.click(await screen.findByRole('button', { name: 'Record a payment' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Save payment' }))
-    return screen.findByText(/^Saved:/)
+    return screen.findByText(/paid on/)
   }
 
   it('names the occurrence and its due date, so it makes sense in any month', async () => {
@@ -44,7 +44,7 @@ describe('the Undo notice across months (proposal in the U1 pull request)', () =
     await record()
     await userEvent.click(screen.getByRole('button', { name: /Next month/ }))
     await screen.findByRole('heading', { level: 1, name: 'December 2026' })
-    expect(screen.getByText(/^Saved:/)).toBeInTheDocument()
+    expect(screen.getByText(/paid on/)).toBeInTheDocument()
     await waitFor(() => expect(document.querySelector('[data-announcer="polite"]')).toHaveTextContent('Showing December 2026.'))
     const before = calls.filter((c) => c.method === 'GET' && c.query.get('month') === '2026-11').length
     const fetchesOf = (m: string) => calls.filter((c) => c.method === 'GET' && c.query.get('month') === m).length
@@ -69,7 +69,7 @@ describe('the Undo notice across months (proposal in the U1 pull request)', () =
       act(() => {
         vi.advanceTimersByTime(60 * 60 * 1000)
       })
-      expect(screen.getByText(/^Saved:/)).toBeInTheDocument()
+      expect(screen.getByText(/paid on/)).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
     } finally {
       vi.useRealTimers()

@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button'
 import { useAnnounce } from '@/components/announcer'
 import { useFocusRestore } from '@/lib/focus'
 import { useMonthSummary } from './api'
-import { MonthBoard } from './month-board'
 import { monthLabel } from './month'
+import { useOnline } from '@/lib/connection'
+import { MonthBoard, OFFLINE_NOTE_ID } from './month-board'
 import { PaymentPanel, UndoNotice } from './payment-panel'
 import type { ManualPayment, MonthItem } from './types'
 
@@ -13,6 +14,7 @@ import type { ManualPayment, MonthItem } from './types'
 export function MonthPage({ month }: { month: string }) {
   const navigate = useNavigate()
   const q = useMonthSummary(month)
+  const online = useOnline()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000)
@@ -43,12 +45,16 @@ export function MonthPage({ month }: { month: string }) {
 
   return (
     <section className="space-y-4" aria-labelledby="month-title">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-medium text-muted-foreground">Monthly view</p>
-        <Button ref={headerButton} className="h-auto min-h-9 whitespace-normal py-1.5" onClick={() => openPanel(unpaid[0] ?? null, false)} disabled={unpaid.length === 0 || panel !== null}>
+      <header className="flex flex-wrap items-center justify-end gap-2">
+        <Button ref={headerButton} className="h-auto min-h-9 whitespace-normal py-1.5" onClick={() => openPanel(unpaid[0] ?? null, false)} disabled={unpaid.length === 0 || panel !== null || !online} aria-describedby={online ? undefined : OFFLINE_NOTE_ID}>
           Record a payment
         </Button>
       </header>
+      {!online && (
+        <p id={OFFLINE_NOTE_ID} className="text-sm text-muted-foreground">
+          Recording a payment is unavailable while you are offline: it could not be saved. It comes back with the connection.
+        </p>
+      )}
       {q.data && unpaid.length === 0 && (
         <p className="text-sm text-muted-foreground">
           {q.data.items.length > 0
@@ -57,12 +63,12 @@ export function MonthPage({ month }: { month: string }) {
         </p>
       )}
 
-      {saved && <UndoNotice key={saved.payment.id} {...saved} onDone={() => {
-        setSaved(null)
-        focus.restore()
-      }} />}
-
       <MonthBoard
+        offline={!online}
+        notice={saved && <UndoNotice key={saved.payment.id} {...saved} shownMonth={month} onDone={() => {
+          setSaved(null)
+          focus.restore()
+        }} />}
         month={month}
         status={q.status}
         data={q.data}

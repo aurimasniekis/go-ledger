@@ -187,7 +187,7 @@ Treat a root token like a password for the whole instance:
 - **The root account and the root token are protected the same way** (decision D34). Demoting, disabling or renaming (changing the username of) the root (first)
   account (decision D35 for the rename; `PATCH /api/v1/users/{id}`) and revoking the root token (`DELETE /api/v1/tokens/{id}`, which also ends its child
   tokens) are refused to every token except a root token of the root account, with 403 `root_token_required`, even for a token holding
-  `users:write` or `tokens:write`. A session may do both.
+  `users:write` or `tokens:write`. A session may do any of these.
 - **The root token of the root account** is the only token that can create tokens through the API. Its power is therefore the
   power to make any other token, bounded by its own grants.
 - **Long-lived tokens** outlive sign-outs, password changes and session timeouts. They end only by revocation, by expiry, by a

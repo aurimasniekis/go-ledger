@@ -1,9 +1,12 @@
+import { Undo2 } from 'lucide-react'
 import { useId, useRef, useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useOptimisticSave } from '@/lib/optimistic-save'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { ApiError } from '@/lib/api'
+import { Amount, DateText } from '@/components/formatted'
+import { formatAmount, isIsoDate } from '@/lib/format'
 import { monthLabel } from './month'
 import { deletePayment, monthKey, recordPayment } from './api'
 import type { ManualPayment, MonthItem } from './types'
@@ -53,19 +56,27 @@ export function PaymentPanel(p: PaymentPanelProps) {
     mutationFn: (v) =>
       gone ? Promise.reject(new Error('This occurrence is no longer unpaid.')) : recordPayment(item.id, { amount: v.amount, currency: item.amount.currency, paid_on: v.paid_on }),
     onSaved: (saved) => p.onSaved(saved, item),
-    messages: { saved: (s) => `Payment recorded: ${s.amount.amount} ${s.amount.currency}. Undo is available above the list.`, failed: () => '' },
+    messages: { saved: (s) => `Payment recorded: ${formatAmount(s.amount.amount)} ${s.amount.currency}. Undo is available above the list.`, failed: () => '' },
   })
+  const [dateError, setDateError] = useState<string | null>(null)
   const pending = save.phase === 'pending'
   const err = save.error instanceof ApiError ? save.error : null
   const fieldError = (f: string) => (err?.field === f || err?.field === `${f}.amount` ? err.message : undefined)
 
   return (
     <form
+      noValidate
       aria-labelledby={`${uid}-h`}
       className="space-y-3 rounded-md border border-border-control bg-surface p-4"
       onSubmit={(e) => {
         e.preventDefault()
-        save.save({ amount: amount.trim(), paid_on: paidOn })
+        // Checked here, before anything is sent: a malformed date is never "saved".
+        if (!isIsoDate(paidOn.trim())) {
+          setDateError('Enter the date as YYYY-MM-DD, for example 2026-11-21.')
+          return
+        }
+        setDateError(null)
+        save.save({ amount: amount.trim(), paid_on: paidOn.trim() })
       }}
     >
       <Heading id={`${uid}-h`} ref={heading} tabIndex={-1} className="font-semibold">
@@ -77,7 +88,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
       <p data-testid="panel-occurrence" className="flex flex-wrap items-center gap-2 text-sm">
         <span className="font-medium break-words">{item.commitment_name || item.commitment_id}</span>
         <span>
-          due <time dateTime={item.due_date}>{item.due_date}</time>, {item.amount.amount} {item.amount.currency}
+          due <DateText value={item.due_date} />, <Amount amount={item.amount.amount} currency={item.amount.currency} />
         </span>
         <StatusBadge status={item.payment.status} />
       </p>
@@ -101,7 +112,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
             )}
             {p.items.map((i) => (
               <option key={i.id} value={i.id}>
-                {i.commitment_name || i.commitment_id}, due {i.due_date} ({i.amount.amount} {i.amount.currency})
+                {i.commitment_name || i.commitment_id}, due {i.due_date} ({formatAmount(i.amount.amount)} {i.amount.currency})
               </option>
             ))}
           </select>
@@ -120,19 +131,30 @@ export function PaymentPanel(p: PaymentPanelProps) {
           />
           {fieldError('amount') && <span id={`${uid}-amount-err`}>{fieldError('amount')}</span>}
         </label>
-        <label className="grid gap-1 text-sm">
-          Paid on
-          <input
-            type="date"
-            className="h-9 rounded-md border border-border-control bg-surface px-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            value={paidOn}
-            disabled={pending}
-            onChange={(e) => setPaidOn(e.target.value)}
-            aria-invalid={err?.field === 'paid_on' ? true : undefined}
-            aria-describedby={err?.field === 'paid_on' ? `${uid}-paid-on-err` : undefined}
-          />
-          {err?.field === 'paid_on' && <span id={`${uid}-paid-on-err`}>{err.message}</span>}
-        </label>
+        <div className="grid content-start gap-1">
+          <label className="grid gap-1 text-sm">
+            Paid on (YYYY-MM-DD)
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="YYYY-MM-DD"
+              maxLength={10}
+              pattern="\d{4}-\d{2}-\d{2}"
+              className="h-9 rounded-md border border-border-control bg-surface px-2 font-mono focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              value={paidOn}
+              disabled={pending}
+              onChange={(e) => {
+                setPaidOn(e.target.value)
+                setDateError(null)
+              }}
+              aria-invalid={dateError || err?.field === 'paid_on' ? true : undefined}
+              aria-describedby={dateError ? `${uid}-paid-on-fmt` : err?.field === 'paid_on' ? `${uid}-paid-on-err` : undefined}
+            />
+            {dateError && <span id={`${uid}-paid-on-fmt`}>{dateError}</span>}
+            {err?.field === 'paid_on' && <span id={`${uid}-paid-on-err`}>{err.message}</span>}
+          </label>
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={pending || gone}>
@@ -171,6 +193,8 @@ export interface UndoNoticeProps {
   payment: ManualPayment
   item: MonthItem
   month: string
+  /** The month on screen; when it differs from `month` the notice names its own month first. */
+  shownMonth?: string
   onDone: () => void
 }
 
@@ -179,7 +203,7 @@ export interface UndoNoticeProps {
  * operator decision): the notice stays until it is dismissed or the next payment replaces it. It goes when the user leaves
  * the monthly view, because MonthPage holds it.
  */
-export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
+export function UndoNotice({ payment, item, month, shownMonth, onDone }: UndoNoticeProps) {
   const qc = useQueryClient()
   const box = useRef<HTMLDivElement>(null)
   const undo = useMutation({
@@ -193,8 +217,14 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
   useEffect(() => box.current?.focus(), [undo.isSuccess])
   return (
     <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3">
+      {shownMonth && shownMonth !== month && <p className="text-sm font-semibold">{monthLabel(month)}</p>}
       {undo.isSuccess ? (
         <p>
+          {/* An action result, not a commitment status: a neutral badge with an undo icon, no status hue. */}
+          <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-sm font-medium text-muted-foreground">
+            <Undo2 aria-hidden className="size-4" />
+            Removed
+          </span>{' '}
           Payment removed. {name} is back as it was before. The {monthLabel(month)} view is refreshed now if it is on screen, otherwise when you open it.{' '}
           <Button variant="ghost" size="sm" onClick={onDone}>
             Dismiss
@@ -203,7 +233,9 @@ export function UndoNotice({ payment, item, month, onDone }: UndoNoticeProps) {
       ) : (
         <>
           <p>
-            Saved: {payment.amount.amount} {payment.amount.currency} paid on {payment.paid_on} for {name}, due {item.due_date}, in {monthLabel(month)}.
+            <StatusBadge status="paid" label="Saved" />{' '}
+            <Amount amount={payment.amount.amount} currency={payment.amount.currency} /> paid on <DateText value={payment.paid_on} /> for {name}, due{' '}
+            <DateText value={item.due_date} />, in {monthLabel(month)}.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => undo.mutate()} disabled={undo.isPending}>
