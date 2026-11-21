@@ -23,10 +23,24 @@ export interface CurrentSession {
   recent_auth_until: string | null
   two_factor: { enabled: boolean; required: boolean; enrollment_required: boolean }
 }
+export interface SignInMethods {
+  password: { enabled: boolean }
+  oidc: { enabled: boolean; name: string | null; authorize_url: string | null }
+}
+export interface OIDCLinkStatus {
+  configured: boolean
+  linked: boolean
+  provider: string | null
+  subject: string | null
+  email: string | null
+  created_at: string | null
+  last_used_at: string | null
+}
 export interface SecondFactorChallenge {
   second_factor_required: true
   challenge: string
-  expires_at: string
+  /** Absent when the challenge came from the single-sign-on redirect, which carries only the token. */
+  expires_at?: string
   methods: ('totp' | 'recovery_code')[]
 }
 export interface TwoFactorStatus {
