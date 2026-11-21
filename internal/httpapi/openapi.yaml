@@ -74,7 +74,10 @@ info:
       re-authentication window when called with a session: otherwise 403
       `reauthentication_required`; confirm with
       `POST /auth/reauthenticate`. API tokens are exempt by design (their
-      writes are audited as `token.write_used`).
+      writes are audited as `token.write_used`). Exception (decision D32):
+      with a token, creating or promoting an administrator, re-enabling a
+      disabled administrator and setting any password need the root token of
+      the root account; other tokens get 403 `root_token_required`.
     - **API tokens** (ADR-0029). Send `Authorization: Bearer ldgr_…`
       (`ldgr_` and 43 base62 characters). A request with an Authorization
       header is judged by it alone: a wrong, expired or revoked token is 401
@@ -318,7 +321,9 @@ paths:
       description: |
         Creates an enabled user with a role. Audited (user.created). A taken
         username is a 409 conflict. Credentials (password, 2FA, OIDC link) are
-        set up separately.
+        set up separately. Creating an administrator with an API token needs
+        the root token of the root account (decision D32); any other token is
+        refused with 403 `root_token_required`. Sessions are unchanged.
       tags: [users]
       requestBody:
         required: true
@@ -393,7 +398,12 @@ paths:
         enabled administrator is a 409 conflict. Users are never deleted:
         disable them instead, which keeps audit history and token ownership
         intact. A disabled user's sessions and tokens stop working on their
-        next request.
+        next request. With an API token, making a user an administrator or
+        re-enabling a disabled administrator needs the root token of the root
+        account (decision D32); any other token is refused with 403
+        `root_token_required` before anything changes. Demoting, disabling
+        and profile edits stay open to a `users:write` token. Sessions are
+        unchanged.
       tags: [users]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
@@ -719,7 +729,10 @@ paths:
         current session when they set their own password, and revokes every
         device cookie of that user. Audited
         (auth.password_changed with by and sessions_ended); the password is
-        never recorded.
+        never recorded. With an API token this needs the root token of the
+        root account (decision D32), even for the token owner's own
+        password; any other token is refused with 403 `root_token_required`.
+        Sessions need recent sign-in instead.
       tags: [users]
       requestBody:
         required: true
@@ -3496,6 +3509,7 @@ components:
             - invalid_credentials
             - csrf_failed
             - reauthentication_required
+            - root_token_required
             - pending_terms_change
             - two_factor_enrollment_required
             - invalid_second_factor

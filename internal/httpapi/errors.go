@@ -36,6 +36,7 @@ const (
 	CodeInvalidCredentials Code = "invalid_credentials"
 	CodeCSRF               Code = "csrf_failed"               // 403: a cookie-authenticated write without the session's CSRF token, or from another origin
 	CodeReauthRequired     Code = "reauthentication_required" // 403: the action needs a recent password check (POST /auth/reauthenticate)
+	CodeRootTokenRequired  Code = "root_token_required"       // 403: only a root token of the root account may do this with a token (D32)
 	CodePendingTerms       Code = "pending_terms_change"      // 409: a commitment terms edit is refused because an earlier edit takes effect later
 	// CodeEnrollmentRequired: 403, auth.require_2fa is on and the signed-in
 	// user has not enrolled a second factor; only enrolment, the current
@@ -178,6 +179,13 @@ func enrollmentRequired() *Error {
 
 func invalidSecondFactor(status int) *Error {
 	return &Error{Status: status, Code: CodeInvalidSecondFactor, Message: auth.ErrInvalidSecondFactor.Error()}
+}
+
+// rootTokenRequired refuses a token principal that is not the root token of the
+// root account from an action that could escalate privileges (decision D32).
+func rootTokenRequired(what string) *Error {
+	return &Error{Status: http.StatusForbidden, Code: CodeRootTokenRequired,
+		Message: what + " with an API token needs the root token of the root account; use a signed-in session or that token"}
 }
 
 func reauthRequired() *Error {
