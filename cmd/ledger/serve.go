@@ -333,6 +333,14 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		stop()
 	}
 	<-retentionDone // before the database closes
+	// A refresh on request that outlived its request is waited for too (bounded,
+	// so a stuck provider cannot hold the shutdown): its audit entry needs the
+	// database.
+	wctx, wcancel := context.WithTimeout(context.Background(), refreshShutdownWait)
+	if err := connSvc.Wait(wctx); err != nil {
+		log.Error("a bank refresh was still running at shutdown", "error", err.Error())
+	}
+	wcancel()
 	if refreshDone != nil {
 		<-refreshDone
 	}
@@ -340,6 +348,21 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		<-pulseDone
 	}
 	return code
+}
+
+// refreshShutdownWait bounds how long shutdown waits for a bank refresh that
+// outlived its request before the database closes.
+const refreshShutdownWait = 30 * time.Second
+
+// refreshTimeout bounds a refresh on request below the HTTP write timeout
+// (Go does not cancel a request when its response deadline passes, so an
+// unbounded run would finish with nobody to answer); 5 seconds are left to
+// write the answer.
+func refreshTimeout(write time.Duration) time.Duration {
+	if write <= 0 {
+		return 0
+	}
+	return max(write-5*time.Second, time.Second)
 }
 
 // auditLog is what the API needs of the audit log: a writer for changes and a
@@ -353,17 +376,6 @@ type auditLog interface {
 // buildAPI). Changes record their audit entries in the same transaction
 // through al (ADR-0025). zone is the reporting time zone; now defaults to
 // time.Now.
-// refreshTimeout bounds a refresh on request below the HTTP write timeout
-// (Go does not cancel a request when its response deadline passes, so an
-// unbounded run would finish with nobody to answer); 5 seconds are left to
-// write the answer.
-func refreshTimeout(write time.Duration) time.Duration {
-	if write <= 0 {
-		return 0
-	}
-	return max(write-5*time.Second, time.Second)
-}
-
 func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar.Zone, now func() time.Time) {
 	// The reporting zone dates commitment creation (D38 1a, ADR-0042).
 	parts.payments = parts.payments.WithZone(zone)

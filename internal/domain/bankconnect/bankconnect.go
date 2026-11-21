@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
@@ -99,6 +100,10 @@ type Service struct {
 	// Log receives housekeeping failures that are not the caller's error; nil
 	// uses slog.Default.
 	Log *slog.Logger
+
+	// detached counts the refresh runs that outlive their request (see
+	// Refresh); Wait waits for them. A Service must not be copied once used.
+	detached sync.WaitGroup
 }
 
 func (s *Service) log() *slog.Logger {
@@ -428,6 +433,21 @@ func (s *Service) consentFailed(ctx context.Context, claim banking.ConsentClaim,
 	}
 }
 
+// Wait blocks until every refresh started by Refresh has ended and its audit
+// entry is written, or ctx ends (then it returns ctx's error). Shutdown calls
+// it after the HTTP server has stopped and before the database closes, so a
+// run that was detached from its request is not cut off.
+func (s *Service) Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() { s.detached.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // Refresh refreshes an active connection now, through the shared engine, and
 // returns the connection as it stands afterwards together with the run. A
 // refresh that fails is not an error of this call: the run says how it ended
@@ -458,7 +478,9 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 	// as a failure and count against the scheduler's backoff).
 	done := make(chan refreshDone, 1)
 	bg := context.WithoutCancel(ctx)
+	s.detached.Add(1)
 	go func() {
+		defer s.detached.Done()
 		res, rerr := s.Engine.Refresh(bg, id, p)
 		d := refreshDone{res: res, rerr: rerr}
 		if res.Run.ID != "" {

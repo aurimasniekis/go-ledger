@@ -586,6 +586,34 @@ func TestRefreshPastTheDeadlineIsNotCancelledOrFailed(t *testing.T) {
 	}
 }
 
+// Shutdown waits for a refresh that outlived its request: Wait blocks while the
+// run is held, gives up when its context ends, and returns once the run and its
+// audit entry are done.
+func TestWaitCoversADetachedRefresh(t *testing.T) {
+	e := newSvcEnv(t)
+	c := e.connect(svcAlice)
+	slow := &svcSlow{Provider: e.fake, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	e.svc.Providers = map[string]banking.Provider{e.fake.Capabilities().Application: slow}
+	e.svc.RefreshTimeout = 50 * time.Millisecond
+	if _, err := e.svc.Refresh(e.ctx, svcAlice, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := e.svc.Wait(short); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait while the run is held = %v, want the context's deadline error", err)
+	}
+	close(slow.release)
+	long, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel2()
+	if err := e.svc.Wait(long); err != nil {
+		t.Fatalf("Wait after release: %v", err)
+	}
+	if n := len(e.actions(audit.BankRefreshRequested)); n != 1 {
+		t.Errorf("%d refresh audit entries after Wait, want 1", n)
+	}
+}
+
 // R1: a disconnected connection can be reconnected; the guard only refuses a
 // disconnect that happened after the consent was claimed.
 func TestReconnectAfterDisconnectCompletes(t *testing.T) {
