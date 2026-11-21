@@ -354,7 +354,7 @@ func (s *Scheduler) Pass(ctx context.Context) time.Duration {
 			}
 			cs.Schedule, cs.NextAttemptAt, cs.ConsecutiveFailures = pl.state, pl.at, pl.failures
 			cs.LastErrorKind, cs.LastErrorCode = pl.errKind, pl.errCode
-			if pl.state != ScheduleRunning && pl.at.Before(wake) {
+			if pl.state != ScheduleRunning && !pl.at.IsZero() && pl.at.Before(wake) {
 				wake = pl.at
 			}
 		}
@@ -410,6 +410,10 @@ func (s *Scheduler) final(c banking.Connection, p banking.Provider, runs []banki
 				pl.at = j.at
 			case fresh:
 				pl.at = r.FinishedAt.Add(s.o.Jitter(pl.at.Sub(r.FinishedAt)))
+				if pl.state == ScheduleRateLimited {
+					// A rate-limit wait is a hard minimum: jitter must not shorten it.
+					pl.at = maxTime(pl.at, r.FinishedAt.Add(s.o.RateLimitBackoff))
+				}
 				s.mu.Lock()
 				s.jit[c.ID] = jittered{run: r.ID, at: pl.at}
 				s.mu.Unlock()
@@ -463,6 +467,13 @@ func (s *Scheduler) attempt(ctx context.Context, jl *slog.Logger, c banking.Conn
 	jl.Warn("scheduled refresh failed; backing off", "connection_id", string(c.ID), "refresh_run_id", string(res.Run.ID),
 		"error_kind", banking.Classify(err), "error_code", res.Run.ErrorCode)
 	return pl, true, false
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 func (s *Scheduler) setFloor(id banking.ConnectionID, t time.Time) {

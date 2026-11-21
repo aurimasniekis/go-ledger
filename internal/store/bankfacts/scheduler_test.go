@@ -219,6 +219,23 @@ func TestSchedulerHonoursRateLimitsAndRetryAfter(t *testing.T) {
 	}
 }
 
+func TestSchedulerRateLimitWaitSurvivesJitter(t *testing.T) {
+	// The default jitter picks from [d/2, d]; a rate limit must still wait the full backoff.
+	e := newSchedEnv(t, func(o *bankimport.SchedulerOptions) {
+		o.Jitter = func(d time.Duration) time.Duration { return d / 2 }
+	})
+	e.failAccounts(banking.KindRateLimited, "rate_limit", 0)
+	e.s.Pass(e.ctx)
+	if st := e.status(); st.Schedule != bankimport.ScheduleRateLimited || st.NextAttemptAt.Before(e.clock.now.Add(6*time.Hour)) {
+		t.Fatalf("rate-limit wait shortened by jitter: %+v", st)
+	}
+	e.advance(3*time.Hour + time.Minute)
+	e.s.Pass(e.ctx)
+	if len(e.runs()) != 1 {
+		t.Fatal("retried before the rate-limit backoff elapsed")
+	}
+}
+
 func TestSchedulerKeepsToTheDailyFetchBudget(t *testing.T) {
 	e := newSchedEnv(t, func(o *bankimport.SchedulerOptions) { o.Interval = time.Hour })
 	start := e.clock.now

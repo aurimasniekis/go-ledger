@@ -244,9 +244,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// connection is never refreshed twice at once. It stops with rctx and is
 	// waited for before the database closes.
 	var refreshDone chan struct{}
+	facts := bankfacts.New(db, nil)
+	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app})
 	if cfg.Banking.Refresh.Enabled {
-		facts := bankfacts.New(db, nil)
-		engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app})
 		sched := bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
 			Log: log, Meter: app, Interval: cfg.Banking.Refresh.Interval, MaxBackoff: cfg.Banking.Refresh.MaxBackoff,
 		})
