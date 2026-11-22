@@ -2,7 +2,7 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeQueryClient } from '@/lib/query'
-import { ALL_GRANTS, installApi, ok, renderApp, signedIn, type Req } from '@/test/fake-api'
+import { ALL_GRANTS, fail, installApi, ok, renderApp, signedIn, type Req } from '@/test/fake-api'
 import { def } from '@/features/organisation/fixtures'
 import type { Outlook } from './types'
 
@@ -80,6 +80,40 @@ describe('Outlook sliced by a bucket (O3)', () => {
     expect(await screen.findByTestId('outlook-slice')).toHaveTextContent('0 accounts')
     expect(screen.getByText('No bank account is in this bucket, so no balance is compared in this slice.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Bank accounts in the bucket Home' })).toBeInTheDocument()
+  })
+
+  it('keeps a way back to the whole outlook when the slice fails (a deleted bucket)', async () => {
+    const user = userEvent.setup()
+    const outlookCalls: Req[] = []
+    installApi({
+      ...signedIn(undefined, ALL_GRANTS),
+      'GET /api/v1/buckets': ok({ items: [bucket], next_cursor: null }),
+      'GET /api/v1/outlook': (r) => {
+        outlookCalls.push(r)
+        return r.query.get('bucket') ? fail(400, 'validation_failed', 'bucket does not name an existing bucket', { field: 'bucket' }) : ok(outlook())
+      },
+    })
+    renderApp('/outlook?bucket=01JZ0000000000000000000999', makeQueryClient())
+    const failed = await screen.findByTestId('outlook-slice-failed')
+    expect(screen.getByRole('heading', { name: 'Outlook against recorded commitments' })).toBeInTheDocument()
+    expect(within(failed).getByLabelText('Show only one bucket (a slice of the outlook)')).toBeInTheDocument()
+    await user.click(within(failed).getByRole('link', { name: 'Show the whole outlook' }))
+    await screen.findByTestId('outlook-notice')
+    expect(screen.queryByTestId('outlook-slice-failed')).toBeNull()
+    expect(outlookCalls.at(-1)!.query.get('bucket')).toBeNull()
+  })
+
+  it('keeps the way back when the slice is refused without organisation:read', async () => {
+    const user = userEvent.setup()
+    installApi({
+      ...signedIn(undefined, ['commitments:read', 'connections:read']),
+      'GET /api/v1/outlook': (r) => (r.query.get('bucket') ? fail(403, 'forbidden', 'slicing by bucket requires the organisation:read grant') : ok(outlook())),
+    })
+    renderApp('/outlook?bucket=' + bucket.id, makeQueryClient())
+    const failed = await screen.findByTestId('outlook-slice-failed')
+    expect(within(failed).queryByLabelText('Show only one bucket (a slice of the outlook)')).toBeNull()
+    await user.click(within(failed).getByRole('link', { name: 'Show the whole outlook' }))
+    await screen.findByTestId('outlook-notice')
   })
 
   it('offers no bucket choice without organisation:read', async () => {

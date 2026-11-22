@@ -114,6 +114,22 @@ export function OutlookPage({ through, currency, bucket }: { through?: string; c
   })
   const go = (m: string) => void navigate({ to: '/outlook', search: search({ through: m }) })
   const slice = q.data?.slice ?? null
+  const bucketChoice =
+    canReadOrganisation && (buckets.items.length > 0 || bucket) && (
+      <Field label="Show only one bucket (a slice of the outlook)" name="outlook-bucket" className="min-w-48 max-w-xs">
+        {(p) => (
+          <Select {...p} value={bucket ?? ''} onChange={(e) => void navigate({ to: '/outlook', search: search({ bucket: e.target.value || undefined }) })}>
+            <option value="">Everything (no slice)</option>
+            {buckets.items.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+                {b.archived ? ' (archived)' : ''}
+              </option>
+            ))}
+          </Select>
+        )}
+      </Field>
+    )
 
   return (
     <section className="space-y-4" aria-labelledby="outlook-title">
@@ -128,26 +144,24 @@ export function OutlookPage({ through, currency, bucket }: { through?: string; c
           <FailedState title="Could not load the outlook" error={q.error} onRetry={() => void q.refetch()} />
         )
       )}
+      {q.status === 'error' && !q.data && bucket && (
+        // A slice can fail on its own (a deleted bucket, no organisation:read): the way back to the whole outlook stays.
+        <div data-testid="outlook-slice-failed" className="space-y-2 text-sm">
+          <p>
+            The slice for this bucket could not be loaded.{' '}
+            <Link to="/outlook" search={search({ bucket: undefined })} className="underline">
+              Show the whole outlook
+            </Link>
+          </p>
+          {bucketChoice}
+        </div>
+      )}
       {q.data && (
         <>
           <p data-testid="outlook-notice" className="rounded-md border border-border bg-surface p-3 text-sm">
             {q.data.notice}
           </p>
-          {canReadOrganisation && (buckets.items.length > 0 || bucket) && (
-            <Field label="Show only one bucket (a slice of the outlook)" name="outlook-bucket" className="min-w-48 max-w-xs">
-              {(p) => (
-                <Select {...p} value={bucket ?? ''} onChange={(e) => void navigate({ to: '/outlook', search: search({ bucket: e.target.value || undefined }) })}>
-                  <option value="">Everything (no slice)</option>
-                  {buckets.items.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                      {b.archived ? ' (archived)' : ''}
-                    </option>
-                  ))}
-                </Select>
-              )}
-            </Field>
-          )}
+          {bucketChoice}
           {slice && (
             <section role="note" aria-label="This is a slice of the outlook" data-testid="outlook-slice" className="space-y-1 rounded-md border-2 border-border bg-surface p-3 text-sm">
               <p>
@@ -183,11 +197,11 @@ export function OutlookPage({ through, currency, bucket }: { through?: string; c
           <Freshness data={q.data} status={q.status} error={q.error} isFetching={q.isFetching} dataUpdatedAt={q.dataUpdatedAt} now={now} offline={!online} onRetry={() => void q.refetch()} />
           {q.data.window.not_recorded_count > 0 && (
             <p data-testid="outlook-not-recorded" className="text-sm text-muted-foreground">
-              {q.data.window.not_recorded_count} {q.data.window.not_recorded_count === 1 ? 'occurrence' : 'occurrences'} due before tracking started {q.data.window.not_recorded_count === 1 ? 'is' : 'are'} not counted (see the{' '}
+              {q.data.window.not_recorded_count} {q.data.window.not_recorded_count === 1 ? 'occurrence was' : 'occurrences were'} due before the {q.data.window.not_recorded_count === 1 ? 'commitment it belongs to was' : 'commitments they belong to were'} created, so {q.data.window.not_recorded_count === 1 ? 'it is' : 'they are'} left out of these figures. {q.data.window.not_recorded_count === 1 ? 'It shows' : 'They show'} as "not recorded" in the{' '}
               <Link to="/month" className="underline">
                 monthly view
               </Link>
-              ).
+              {' '}for the month {q.data.window.not_recorded_count === 1 ? 'it was' : 'they were'} due.
             </p>
           )}
           {q.data.currencies.length === 0 ? (

@@ -92,6 +92,11 @@ export function subjectText(s: Subject): string {
   return [s.name ?? 'this commitment', month].filter(Boolean).join(', ')
 }
 
+/** The last characters of a transaction id: enough to tell apart identical-looking transactions on one screen. */
+export function shortRef(id: string): string {
+  return id.slice(-8)
+}
+
 export const OFFLINE_NOTE_ID = 'matches-offline-note'
 
 const STATE_WORD: Record<MatchState, string> = { suggested: 'a suggestion', confirmed: 'confirmed', rejected: 'rejected', reversed: 'reversed' }
@@ -302,6 +307,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
             <span><DateText value={when} />, <Amount className="font-mono" amount={t.amount.amount} currency={t.amount.currency} /></span>
             {booked ? <span className="text-xs text-muted-foreground">booked</span> : <StatusBadge status="pending" label="Pending at the bank" />}
           </span>
+          <span className="block text-xs text-muted-foreground" data-testid="bank-ref">Transaction ref …{shortRef(t.id)} (Ledger's id for this bank transaction; two transactions with the same text are still two payments)</span>
           {m.bank_text_redacted ? (
             <span className="block text-xs text-muted-foreground">Bank description hidden: it needs the banking:read grant.</span>
           ) : (
@@ -485,8 +491,10 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           </div>
         </div>
       )}
-      <MerchantDisclosure transactionId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}`} />
-      <OrganiseDisclosure objectType="transaction" objectId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}${name.data ? ` matched to ${name.data}` : ''}`} />
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-1">
+      <MerchantDisclosure inline transactionId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}`} />
+      <OrganiseDisclosure inline objectType="transaction" objectId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}${name.data ? ` matched to ${name.data}` : ''}`} />
+      </div>
     </article>
   )
 }

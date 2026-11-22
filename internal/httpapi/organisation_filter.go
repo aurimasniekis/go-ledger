@@ -62,7 +62,12 @@ func selectOrganised(r *http.Request, st organisation.Store, t organisation.Obje
 		}
 		return nil, true, Validation(field, field+" does not name an existing "+string(unknown.Kind))
 	case errors.Is(err, organisation.ErrTooManyObjects):
-		return nil, true, Validation("category_id", err.Error())
+		// Name the filter the caller gave: label_id when only label filters were sent.
+		field := "category_id"
+		if len(categories) == 0 {
+			field = "label_id"
+		}
+		return nil, true, Validation(field, err.Error())
 	case err != nil:
 		return nil, true, err
 	}
