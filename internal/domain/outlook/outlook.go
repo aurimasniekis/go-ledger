@@ -27,6 +27,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 )
 
@@ -46,6 +47,19 @@ const pageSize = 200
 // [monthview.Service] implements it.
 type Months interface {
 	Month(ctx context.Context, month calendar.YearMonth, today calendar.Date) (monthview.Summary, error)
+}
+
+// ScopedMonths is a [Months] that can restrict a month to some commitments;
+// [monthview.Service] implements it. A bucket slice needs it.
+type ScopedMonths interface {
+	MonthScoped(ctx context.Context, month calendar.YearMonth, today calendar.Date, only map[string]struct{}) (monthview.Summary, error)
+}
+
+// Buckets reads buckets and their members (task O3, decision D12);
+// organisation.Store implements it.
+type Buckets interface {
+	GetDefinition(ctx context.Context, k organisation.Kind, id string) (organisation.Definition, error)
+	MemberIDs(ctx context.Context, bucketID string, t organisation.ObjectType) ([]string, error)
 }
 
 // Commitments lists commitment definitions; the outlook reads only their
@@ -84,7 +98,9 @@ type Service struct {
 	Months      Months
 	Commitments Commitments
 	Banks       Banks
-	Rates       Converter
+	// Buckets is needed only to build a bucket slice ([Request.Bucket]).
+	Buckets Buckets
+	Rates   Converter
 	// Today is today in the reporting zone.
 	Today func() (calendar.Date, error)
 	// Now is the clock for bank freshness; nil means time.Now.
@@ -117,7 +133,30 @@ type Request struct {
 	// Balances is whether the caller may see bank balances. When false no
 	// balance is read and [Outlook.BalancesShown] is false.
 	Balances bool
+	// Bucket, when set, slices the outlook (decision D12, task O3): only the
+	// commitments and accounts in that bucket are counted. It is a view, not
+	// an allocation: no money is assigned to the bucket and a balance is still
+	// the whole balance of each account in it.
+	Bucket string
 }
+
+// ErrBucketUnavailable is returned when a slice is asked for but the service
+// has no bucket source.
+var ErrBucketUnavailable = errors.New("outlook: buckets are not available")
+
+// Slice says which bucket an outlook is restricted to and how much of it was
+// selected. It is present on a sliced outlook only.
+type Slice struct {
+	Bucket organisation.Definition
+	// Commitments and Accounts count the bucket's members.
+	Commitments int
+	Accounts    int
+}
+
+// SliceNotice is the wording every presentation of a sliced outlook carries.
+const SliceNotice = "Slice of the outlook: only the commitments and the accounts in this bucket are counted. " +
+	"A bucket allocates no money: each balance is the whole balance of an account in the bucket, not a share of it, " +
+	"and the figures are not budgets and not money that is safe to spend."
 
 // ErrBeyondHorizon is returned when Through is later than the occurrence
 // horizon allows.
@@ -157,6 +196,8 @@ type Outlook struct {
 	// recorded (D38 1a): they owe nothing here, but are listed in the
 	// monthly view.
 	NotRecordedCount int
+	// Slice is set when the outlook was restricted to a bucket.
+	Slice *Slice
 }
 
 // CurrencyLine is the comparison for one currency. Nothing in it is
@@ -367,6 +408,40 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 	// the zero YearMonth does not encode, so the response would be empty.
 	out := Outlook{AsOf: today, Through: through, Currencies: []CurrencyLine{}, Accounts: []Account{}}
 
+	// A bucket slice: the commitments and accounts of the bucket only.
+	var onlyCommitments map[string]struct{}
+	var onlyAccounts map[banking.AccountID]struct{}
+	months := s.Months
+	if r.Bucket != "" {
+		scoped, ok := s.Months.(ScopedMonths)
+		if s.Buckets == nil || !ok {
+			return Outlook{}, ErrBucketUnavailable
+		}
+		def, err := s.Buckets.GetDefinition(ctx, organisation.KindBucket, r.Bucket)
+		if err != nil {
+			return Outlook{}, err
+		}
+		cids, err := s.Buckets.MemberIDs(ctx, r.Bucket, organisation.ObjectCommitment)
+		if err != nil {
+			return Outlook{}, err
+		}
+		aids, err := s.Buckets.MemberIDs(ctx, r.Bucket, organisation.ObjectAccount)
+		if err != nil {
+			return Outlook{}, err
+		}
+		onlyCommitments, onlyAccounts = make(map[string]struct{}, len(cids)), make(map[banking.AccountID]struct{}, len(aids))
+		for _, id := range cids {
+			onlyCommitments[id] = struct{}{}
+		}
+		for _, id := range aids {
+			onlyAccounts[banking.AccountID(id)] = struct{}{}
+		}
+		out.Slice = &Slice{Bucket: def, Commitments: len(cids), Accounts: len(aids)}
+		months = monthsFunc(func(ctx context.Context, m calendar.YearMonth, t calendar.Date) (monthview.Summary, error) {
+			return scoped.MonthScoped(ctx, m, t, onlyCommitments)
+		})
+	}
+
 	lines := map[money.Currency]*CurrencyLine{}
 	// Payment evidence of the window, per currency, for the caveat about
 	// payments dated after a balance.
@@ -385,7 +460,7 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 		return l
 	}
 
-	first, ok, err := s.firstMonth(ctx)
+	first, ok, err := s.firstMonth(ctx, onlyCommitments)
 	if err != nil {
 		return Outlook{}, err
 	}
@@ -401,7 +476,7 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 		out.From = from
 		var latest time.Time
 		for m := from; m.Compare(through) <= 0; {
-			sum, err := s.Months.Month(ctx, m, today)
+			sum, err := months.Month(ctx, m, today)
 			if err != nil {
 				return Outlook{}, fmt.Errorf("outlook: reading %s: %w", m, err)
 			}
@@ -456,7 +531,7 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 	}
 
 	if r.Balances && s.Banks != nil {
-		accounts, err := s.accounts(ctx)
+		accounts, err := s.accounts(ctx, onlyAccounts)
 		if err != nil {
 			return Outlook{}, err
 		}
@@ -545,7 +620,8 @@ func (s Service) zone() calendar.Zone {
 }
 
 // firstMonth is the month of the earliest commitment start.
-func (s Service) firstMonth(ctx context.Context) (calendar.YearMonth, bool, error) {
+// A non-nil only restricts it to those commitments.
+func (s Service) firstMonth(ctx context.Context, only map[string]struct{}) (calendar.YearMonth, bool, error) {
 	var first calendar.YearMonth
 	found := false
 	after := ""
@@ -559,6 +635,9 @@ func (s Service) firstMonth(ctx context.Context) (calendar.YearMonth, bool, erro
 			page = page[:pageSize]
 		}
 		for _, c := range page {
+			if _, in := only[c.ID]; only != nil && !in {
+				continue
+			}
 			m := c.StartDate.YearMonth()
 			if !found || m.Compare(first) < 0 {
 				first, found = m, true
@@ -571,9 +650,17 @@ func (s Service) firstMonth(ctx context.Context) (calendar.YearMonth, bool, erro
 	}
 }
 
+// monthsFunc adapts a function to [Months].
+type monthsFunc func(ctx context.Context, month calendar.YearMonth, today calendar.Date) (monthview.Summary, error)
+
+func (f monthsFunc) Month(ctx context.Context, month calendar.YearMonth, today calendar.Date) (monthview.Summary, error) {
+	return f(ctx, month, today)
+}
+
 // accounts reads every stored account with its counted balances and
-// freshness, ordered by connection and account ID.
-func (s Service) accounts(ctx context.Context) ([]Account, error) {
+// freshness, ordered by connection and account ID. A non-nil only restricts it
+// to those accounts.
+func (s Service) accounts(ctx context.Context, only map[banking.AccountID]struct{}) ([]Account, error) {
 	now := time.Now
 	if s.Now != nil {
 		now = s.Now
@@ -592,6 +679,9 @@ func (s Service) accounts(ctx context.Context) ([]Account, error) {
 		}
 		slices.SortFunc(accts, func(a, b banking.StoredAccount) int { return strings.Compare(string(a.ID), string(b.ID)) })
 		for _, sa := range accts {
+			if _, in := only[sa.ID]; only != nil && !in {
+				continue
+			}
 			bals, err := s.Banks.Balances(ctx, sa.ID)
 			if err != nil {
 				return nil, fmt.Errorf("outlook: reading balances: %w", err)

@@ -154,6 +154,22 @@ func (s Service) Current(ctx context.Context, month calendar.YearMonth) (Summary
 // state as of today and the per-currency totals. A month later than
 // [occurrences.HorizonLimit] allows fails with [occurrences.ErrBeyondHorizon].
 func (s Service) Month(ctx context.Context, month calendar.YearMonth, today calendar.Date) (Summary, error) {
+	return s.MonthScoped(ctx, month, today, nil)
+}
+
+// MonthScoped is [Service.Month] restricted to the occurrences of the
+// commitments in only (nil: every commitment; an empty non-nil set: none). The
+// rows, the carried-in rows and every total cover only those commitments, so a
+// scoped summary is never mistaken for the whole month: callers say so where
+// they present it (task O3).
+func (s Service) MonthScoped(ctx context.Context, month calendar.YearMonth, today calendar.Date, only map[string]struct{}) (Summary, error) {
+	in := func(id string) bool {
+		if only == nil {
+			return true
+		}
+		_, ok := only[id]
+		return ok
+	}
 	if month.Compare(occurrences.HorizonLimit(today)) > 0 {
 		return Summary{}, occurrences.ErrBeyondHorizon
 	}
@@ -199,6 +215,9 @@ func (s Service) Month(ctx context.Context, month calendar.YearMonth, today cale
 				}
 			}
 			for _, o := range items {
+				if !in(o.CommitmentID) {
+					continue
+				}
 				name, err := nameOf(o.CommitmentID)
 				if err != nil {
 					return Summary{}, err
@@ -216,7 +235,7 @@ func (s Service) Month(ctx context.Context, month calendar.YearMonth, today cale
 		}
 	}
 	if s.Deferrals != nil {
-		carried, err := s.carriedIn(ctx, month, today, nameOf)
+		carried, err := s.carriedIn(ctx, month, today, nameOf, in)
 		if err != nil {
 			return Summary{}, err
 		}
@@ -228,7 +247,7 @@ func (s Service) Month(ctx context.Context, month calendar.YearMonth, today cale
 
 // carriedIn reads the occurrences of earlier months whose active plan falls in
 // month, with their payment state as of today.
-func (s Service) carriedIn(ctx context.Context, month calendar.YearMonth, today calendar.Date, nameOf func(string) (string, error)) ([]Row, error) {
+func (s Service) carriedIn(ctx context.Context, month calendar.YearMonth, today calendar.Date, nameOf func(string) (string, error), in func(string) bool) ([]Row, error) {
 	plans, err := s.Deferrals.PlannedIn(ctx, month)
 	if err != nil {
 		return nil, err
@@ -252,8 +271,8 @@ func (s Service) carriedIn(ctx context.Context, month calendar.YearMonth, today 
 		if err != nil {
 			return nil, err
 		}
-		if o.Month.Compare(month) >= 0 {
-			continue // planned within its own month: already a row
+		if o.Month.Compare(month) >= 0 || !in(o.CommitmentID) {
+			continue // planned within its own month: already a row; or outside the scope
 		}
 		name, err := nameOf(o.CommitmentID)
 		if err != nil {

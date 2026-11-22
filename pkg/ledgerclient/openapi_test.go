@@ -177,7 +177,6 @@ var notImplemented = map[string]string{
 	"regenerateRecoveryCodes": "session-only: recovery codes, not reachable with a bearer token",
 
 	"completeBankConnection":    "browser-only: the callback page posts the bank's one-time consent state and code with the browser session; the client and CLI never handle consent codes (start and reconnect return the consent URL instead)",
-	"getOutlook":                "the outlook serves the browser UI (task FX3); a typed client method comes with a CLI or MCP view of it, which reuses internal/domain/outlook",
 	"getOccurrencesSummary":     "the monthly view serves the browser UI (task C4); a typed client method and CLI view come with the MCP read tool (P-MCP2), which reuses internal/domain/monthview",
 	"getSignInMethods":          "what the browser sign-in page offers; the client authenticates with API tokens",
 	"startOIDCSignIn":           "browser redirect to the identity provider (single sign-on), not a JSON operation",

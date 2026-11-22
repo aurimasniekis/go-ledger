@@ -7,6 +7,9 @@ import { DisconnectedState, EmptyState, FailedState, LoadingState } from '@/comp
 import { Amount, DateText } from '@/components/formatted'
 import { isNetworkError, useOnline } from '@/lib/connection'
 import { holds, useMe } from '@/lib/auth'
+import { Select } from '@/components/ui/input'
+import { Field } from '@/components/field'
+import { useAllDefinitions } from '@/features/organisation/api'
 import { STALE_AFTER_MS } from '@/features/month/month-board'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from '@/features/month/month'
 import type { Money } from '@/features/month/types'
@@ -90,9 +93,11 @@ const EXCLUDED_REASON: Record<string, string> = {
 }
 
 /** The /outlook screen: bank balances compared with recorded commitments still due, per currency first. */
-export function OutlookPage({ through, currency }: { through?: string; currency?: string }) {
+export function OutlookPage({ through, currency, bucket }: { through?: string; currency?: string; bucket?: string }) {
   const navigate = useNavigate()
-  const q = useOutlook(through, currency)
+  const q = useOutlook(through, currency, bucket)
+  const canReadOrganisation = holds(useMe().data?.grants, 'organisation:read')
+  const buckets = useAllDefinitions('bucket', undefined, canReadOrganisation)
   // The rates page is administrator-only (D-FX-R): the totals above carry their own rates, so only the link depends on the grant.
   const canSeeRates = holds(useMe().data?.grants, 'rates:read')
   const online = useOnline()
@@ -102,7 +107,13 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
     return () => clearInterval(t)
   }, [])
   const shownThrough = q.data?.window.through ?? through
-  const go = (m: string) => void navigate({ to: '/outlook', search: { through: m, ...(currency ? { currency } : {}) } })
+  const search = (over: { through?: string; bucket?: string }) => ({
+    ...((over.through ?? through) ? { through: over.through ?? through } : {}),
+    ...(currency ? { currency } : {}),
+    ...(('bucket' in over ? over.bucket : bucket) ? { bucket: 'bucket' in over ? over.bucket : bucket } : {}),
+  })
+  const go = (m: string) => void navigate({ to: '/outlook', search: search({ through: m }) })
+  const slice = q.data?.slice ?? null
 
   return (
     <section className="space-y-4" aria-labelledby="outlook-title">
@@ -122,6 +133,35 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
           <p data-testid="outlook-notice" className="rounded-md border border-border bg-surface p-3 text-sm">
             {q.data.notice}
           </p>
+          {canReadOrganisation && (buckets.items.length > 0 || bucket) && (
+            <Field label="Show only one bucket (a slice of the outlook)" name="outlook-bucket" className="min-w-48 max-w-xs">
+              {(p) => (
+                <Select {...p} value={bucket ?? ''} onChange={(e) => void navigate({ to: '/outlook', search: search({ bucket: e.target.value || undefined }) })}>
+                  <option value="">Everything (no slice)</option>
+                  {buckets.items.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                      {b.archived ? ' (archived)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          )}
+          {slice && (
+            <section role="note" aria-label="This is a slice of the outlook" data-testid="outlook-slice" className="space-y-1 rounded-md border-2 border-border bg-surface p-3 text-sm">
+              <p>
+                <StatusBadge status="stale" label="Slice" /> <strong>Only the bucket {slice.bucket.name}</strong>
+                {slice.bucket.archived ? ' (archived)' : ''}: {slice.commitment_count} {slice.commitment_count === 1 ? 'commitment' : 'commitments'} and {slice.account_count} {slice.account_count === 1 ? 'account' : 'accounts'}. Not the whole outlook.
+              </p>
+              <p>{slice.note}</p>
+              <p>
+                <Link to="/outlook" search={search({ bucket: undefined })} className="underline">
+                  Show the whole outlook
+                </Link>
+              </p>
+            </section>
+          )}
           {shownThrough && (
             <div role="group" aria-label="Commitments counted through" className="flex items-center gap-2">
               <Button variant="outline" size="sm" disabled={shownThrough <= q.data.as_of.slice(0, 7)} onClick={() => go(shiftMonth(shownThrough, -1))}>
@@ -155,7 +195,7 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
               No commitment is still due in this window{q.data.balances.shown ? ' and no bank balance is counted' : ''}. Add commitments, or <Link to="/connections" className="underline">connect a bank on the Connections page</Link>, to see the outlook.
             </EmptyState>
           ) : (
-            <Currencies lines={q.data.currencies} accounts={q.data.accounts} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} through={q.data.window.through} />
+            <Currencies sliceName={slice?.bucket.name} lines={q.data.currencies} accounts={q.data.accounts} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} through={q.data.window.through} />
           )}
           {q.data.converted && (
             <Converted
@@ -175,7 +215,7 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
               and when they were retrieved.
             </p>
           )}
-          <Accounts data={q.data} />
+          <Accounts data={q.data} sliceName={slice?.bucket.name} />
           <p className="text-sm text-muted-foreground">{q.data.planned_outflows.note}</p>
         </>
       )}
@@ -226,11 +266,11 @@ function Freshness(p: {
   )
 }
 
-function Currencies({ lines, accounts, balancesShown, staleAfter, through }: { lines: OutlookCurrency[]; accounts: OutlookAccount[]; balancesShown: boolean; staleAfter: number | null; through: string }) {
+function Currencies({ sliceName, lines, accounts, balancesShown, staleAfter, through }: { sliceName?: string; lines: OutlookCurrency[]; accounts: OutlookAccount[]; balancesShown: boolean; staleAfter: number | null; through: string }) {
   return (
     <section aria-labelledby="outlook-currencies" className="space-y-2">
       <h2 id="outlook-currencies" className="font-semibold">
-        By currency
+        By currency{sliceName ? ', bucket ' + sliceName + ' only' : ''}
       </h2>
       <p className="text-sm text-muted-foreground">
         Each currency is compared on its own; amounts in different currencies are never added together here.
@@ -453,15 +493,15 @@ function Converted({ c, accounts, hasLine, balancesShown, staleAfter }: { c: Out
   )
 }
 
-function Accounts({ data }: { data: Outlook }) {
+function Accounts({ data, sliceName }: { data: Outlook; sliceName?: string }) {
   if (!data.balances.shown) return null
   return (
     <section aria-labelledby="outlook-accounts" className="space-y-2">
       <h2 id="outlook-accounts" className="font-semibold">
-        Bank accounts
+        {sliceName ? 'Bank accounts in the bucket ' + sliceName : 'Bank accounts'}
       </h2>
       {data.accounts.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No bank account is connected, so no balance is compared.</p>
+        <p className="text-sm text-muted-foreground">{sliceName ? 'No bank account is in this bucket, so no balance is compared in this slice.' : 'No bank account is connected, so no balance is compared.'}</p>
       ) : (
         <ul className="space-y-2">
           {data.accounts.map((a) => {

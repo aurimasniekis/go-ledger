@@ -95,6 +95,15 @@ func versionArg(what string) map[string]any {
 		"description": "The version of the " + what + " this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one."}
 }
 
+// organisedFilterArgs are the category and label filters of the lists that show
+// organised objects (task O3): the arguments of one object type are those of
+// its owner, named in what.
+func organisedFilterArgs(props map[string]any, what string) map[string]any {
+	props["category_id"] = map[string]any{"type": "array", "items": idArg("category"), "description": "Only " + what + " in these categories or their child categories (any of them). Categories group; they allocate no money. Needs the organisation:read grant too."}
+	props["label_id"] = map[string]any{"type": "array", "items": idArg("label"), "description": "Only " + what + " with these labels (any of them). Combined with category_id, both must hold. Needs the organisation:read grant too."}
+	return props
+}
+
 func pagingArgs(props map[string]any) map[string]any {
 	props["limit"] = map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "description": "Page size (default 50)."}
 	props["cursor"] = str("The next_cursor of the previous page; valid only with the same filters.")
@@ -134,11 +143,11 @@ func coreTools() []Tool {
 			Name: "list_commitments", Title: "List commitments", Method: "GET", Path: "/commitments",
 			Grant: grantCommitmentsRead, Kind: KindRead,
 			Description: "List recurring commitment definitions (name, kind, amount with currency, schedule, dates, priority), oldest first, one page at a time. Filters combine; a repeated filter accepts any of its values.",
-			Schema: object(pagingArgs(map[string]any{
+			Schema: object(organisedFilterArgs(pagingArgs(map[string]any{
 				"kind":     map[string]any{"type": "array", "items": enum("", commitments.Kinds()), "description": "Only these kinds."},
 				"priority": map[string]any{"type": "array", "items": enum("", commitments.Priorities()), "description": "Only these priorities."},
 				"currency": map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": "^[A-Z]{3}$"}, "description": "Only these currencies (ISO 4217)."},
-			})),
+			}), "commitments")),
 		},
 		{
 			Name: "get_commitment", Title: "Get a commitment", Method: "GET", Path: "/commitments/{id}",
@@ -150,17 +159,27 @@ func coreTools() []Tool {
 			Name: "list_occurrences", Title: "List occurrences of a month", Method: "GET", Path: "/occurrences",
 			Grant: grantCommitmentsRead, Kind: KindRead,
 			Description: "List the dated occurrences of recurring commitments in one reporting month, each with its derived payment state (paid, upcoming, overdue ...). Payment state comes from recorded manual payments and confirmed matches, not from a guess. Cancelled occurrences are left out unless asked for. Months more than 60 months ahead are refused.",
-			Schema: object(pagingArgs(map[string]any{
+			Schema: object(organisedFilterArgs(pagingArgs(map[string]any{
 				"month":             monthArg("The reporting month, such as 2026-11."),
 				"commitment_id":     map[string]any{"type": "array", "items": idArg("commitment"), "description": "Only occurrences of these commitments."},
 				"include_cancelled": map[string]any{"type": "boolean", "description": "Include cancelled occurrences (default false)."},
-			}), "month"),
+			}), "occurrences of commitments"), "month"),
 		},
 		{
 			Name: "get_month_summary", Title: "Get the monthly view", Method: "GET", Path: "/occurrences/summary",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed and missed_reason (plan date passed: principal still owed, or a fee still planned). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.",
-			Schema:      object(map[string]any{"month": monthArg("The reporting month, such as 2026-11.")}, "month"),
+			Description: "The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed and missed_reason (plan date passed: principal still owed, or a fee still planned). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is. With category_id or label_id the month is restricted to the matching commitments: the filter member says so, and the items and the totals then cover only those commitments, not the whole month.",
+			Schema:      object(organisedFilterArgs(map[string]any{"month": monthArg("The reporting month, such as 2026-11.")}, "occurrences of commitments"), "month"),
+		},
+		{
+			Name: "get_outlook", Title: "Get the outlook against recorded commitments", Method: "GET", Path: "/outlook",
+			Grant: grantCommitmentsRead, Kind: KindRead,
+			Description: "Compare bank balances with the commitments Ledger has recorded as still due, per currency (never summed across currencies), with an optional secondary total converted into one reporting currency only where an acceptable rate exists (excluded currencies are listed with the reason). It is an outlook against recorded commitments: not a forecast and never a statement of money that is safe to spend. Balances and each account's data freshness need the connections:read grant too; without it only commitments are compared. With bucket the outlook is a slice: only the commitments and accounts in that bucket are counted, the slice member says so, and a balance is still the whole balance of an account in the bucket because a bucket allocates no money. Slicing needs the organisation:read grant too.",
+			Schema: object(map[string]any{
+				"through":  monthArg("The last month whose commitments count (default the current month; at most 60 months ahead)."),
+				"currency": map[string]any{"type": "string", "pattern": "^[A-Z]{3}$", "description": "Reporting currency of the converted aggregate (ISO 4217); default is the configured reporting currency."},
+				"bucket":   idArg("bucket"),
+			}),
 		},
 		{
 			Name: "get_occurrence", Title: "Get an occurrence", Method: "GET", Path: "/occurrences/{id}",
@@ -223,12 +242,12 @@ func matchTools() []Tool {
 			Name: "list_payment_matches", Title: "List payment matches", Method: "GET", Path: "/payment-matches",
 			Grant: grantCommitmentsRead, Kind: KindRead,
 			Description: "List links between bank transactions and commitment occurrences, one page at a time. state=suggested is the review queue: proposals that do not count as payment until a person confirms them. Each match keeps apart the bank fact (transaction), who proposed it (origin), the decision (state, decided_by) and whether it counts as payment now (counts_as_evidence). A similarity score in a reason is a hint, never proof. The bank's description and counterparty are null (bank_text_redacted) unless the token holds banking:read.",
-			Schema: object(pagingArgs(map[string]any{
+			Schema: object(organisedFilterArgs(pagingArgs(map[string]any{
 				"state":          map[string]any{"type": "array", "items": enum("", matches.States()), "description": "Only these states."},
 				"origin":         map[string]any{"type": "array", "items": enum("", matches.Origins()), "description": "Only these origins."},
 				"occurrence_id":  map[string]any{"type": "array", "items": idArg("occurrence"), "description": "Only matches of these occurrences."},
 				"transaction_id": map[string]any{"type": "array", "items": idArg("bank transaction"), "description": "Only matches of these bank transactions."},
-			})),
+			}), "matches whose bank transaction is")),
 		},
 		{
 			Name: "get_payment_match", Title: "Get a payment match", Method: "GET", Path: "/payment-matches/{id}",

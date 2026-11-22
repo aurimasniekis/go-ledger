@@ -23,13 +23,14 @@ var (
 	opCreateUser   = operation{ID: "createUser", Method: http.MethodPost, Path: "/users"}
 	opGetUser      = operation{ID: "getUser", Method: http.MethodGet, Path: "/users/{id}"}
 	opUpdateUser   = operation{ID: "updateUser", Method: http.MethodPatch, Path: "/users/{id}"}
-	opListCommit   = operation{ID: "listCommitments", Method: http.MethodGet, Path: "/commitments", Query: []string{"limit", "cursor", "kind", "priority", "currency"}}
+	opListCommit   = operation{ID: "listCommitments", Method: http.MethodGet, Path: "/commitments", Query: []string{"limit", "cursor", "category_id", "label_id", "kind", "priority", "currency"}}
 	opCreateCommit = operation{ID: "createCommitment", Method: http.MethodPost, Path: "/commitments"}
 	opGetCommit    = operation{ID: "getCommitment", Method: http.MethodGet, Path: "/commitments/{id}"}
 	opUpdateCommit = operation{ID: "updateCommitment", Method: http.MethodPatch, Path: "/commitments/{id}"}
 	opDeleteCommit = operation{ID: "deleteCommitment", Method: http.MethodDelete, Path: "/commitments/{id}"}
-	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "month", "commitment_id", "include_cancelled"}}
+	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "category_id", "label_id", "month", "commitment_id", "include_cancelled"}}
 	opGetOccur     = operation{ID: "getOccurrence", Method: http.MethodGet, Path: "/occurrences/{id}"}
+	opGetOutlook   = operation{ID: "getOutlook", Method: http.MethodGet, Path: "/outlook", Query: []string{"through", "currency", "bucket"}}
 
 	opListManualPayments  = operation{ID: "listManualPayments", Method: http.MethodGet, Path: "/occurrences/{id}/manual-payments", Query: []string{"limit", "cursor"}}
 	opRecordManualPayment = operation{ID: "recordManualPayment", Method: http.MethodPost, Path: "/occurrences/{id}/manual-payments"}
@@ -38,7 +39,7 @@ var (
 	opSetOverride         = operation{ID: "setOccurrenceStatusOverride", Method: http.MethodPut, Path: "/occurrences/{id}/status-override"}
 	opUndoOverride        = operation{ID: "undoOccurrenceStatusOverride", Method: http.MethodDelete, Path: "/occurrences/{id}/status-override"}
 
-	opListMatches    = operation{ID: "listPaymentMatches", Method: http.MethodGet, Path: "/payment-matches", Query: []string{"limit", "cursor", "transaction_id", "occurrence_id", "state", "origin"}}
+	opListMatches    = operation{ID: "listPaymentMatches", Method: http.MethodGet, Path: "/payment-matches", Query: []string{"limit", "cursor", "category_id", "label_id", "transaction_id", "occurrence_id", "state", "origin"}}
 	opCreateMatch    = operation{ID: "createPaymentMatch", Method: http.MethodPost, Path: "/payment-matches"}
 	opGetMatch       = operation{ID: "getPaymentMatch", Method: http.MethodGet, Path: "/payment-matches/{id}"}
 	opConfirmMatch   = operation{ID: "confirmPaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/confirm"}
@@ -119,7 +120,7 @@ var operations = []operation{
 	opGetMe, opGetGrants, opListAudit,
 	opListUsers, opCreateUser, opGetUser, opUpdateUser,
 	opListCommit, opCreateCommit, opGetCommit, opUpdateCommit, opDeleteCommit,
-	opListOccur, opGetOccur,
+	opListOccur, opGetOccur, opGetOutlook,
 	opListManualPayments, opRecordManualPayment, opGetManualPayment, opDeleteManualPayment,
 	opSetOverride, opUndoOverride,
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch, opUnconfirmMatch, opReplaceMatch,

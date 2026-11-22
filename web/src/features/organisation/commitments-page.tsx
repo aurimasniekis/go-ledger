@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/state-panels'
 import { Button } from '@/components/ui/button'
 import { useLoadAll } from './api'
 import { OrganiseDisclosure } from './organise-panel'
+import { useOrgFilters } from './org-filters'
 
 interface CommitmentRow {
   id: string
@@ -16,7 +17,8 @@ interface CommitmentRow {
  * (ended, not started, yearly) can still be given a category, labels and buckets. It changes nothing else about a commitment.
  */
 export function CommitmentsPage() {
-  const q = usePagedList<CommitmentRow>(['commitments', 'organise'], '/api/v1/commitments')
+  const orgFilters = useOrgFilters('commitments')
+  const q = usePagedList<CommitmentRow>(['commitments', 'organise'], '/api/v1/commitments', orgFilters.params)
   useLoadAll(q)
   return (
     <section className="space-y-4" aria-labelledby="commitments-title">
@@ -28,11 +30,17 @@ export function CommitmentsPage() {
           Every recorded commitment, including those with no occurrence in the month shown on the monthly view. Open <strong>Organise</strong> to set a category, labels and buckets. Categories, labels and buckets themselves are managed under Categories, labels and buckets.
         </p>
       </header>
+      {orgFilters.control}
+      {orgFilters.active && (
+        <p role="status" data-testid="commitments-filter-note" className="text-sm text-muted-foreground">
+          Showing only commitments with {orgFilters.describe}.
+        </p>
+      )}
       <QueryState query={q} label="commitments">
         {(items) =>
           items.length === 0 ? (
-            <EmptyState id="commitments-empty" level={2} title="No commitments yet">
-              Commitments you record appear here.
+            <EmptyState id="commitments-empty" level={2} title={orgFilters.active ? 'No commitment matches the filter' : 'No commitments yet'}>
+              {orgFilters.active ? 'Choose another category or label, or clear the filter.' : 'Commitments you record appear here.'}
             </EmptyState>
           ) : (
             <>

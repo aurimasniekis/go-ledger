@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 	"net/http"
 	"slices"
 	"strings"
@@ -94,7 +95,7 @@ var commitmentMembers = []string{"name", "kind", "amount", "schedule", "start_da
 // requiredCommitmentMembers cannot be absent from a create or null in a patch.
 var requiredCommitmentMembers = map[string]bool{"name": true, "kind": true, "amount": true, "schedule": true, "start_date": true}
 
-var commitmentsListSpec = ListSpec{Filters: map[string]FilterSpec{
+var commitmentsListSpec = withOrgFilters(ListSpec{Filters: map[string]FilterSpec{
 	"kind": {Ops: []FilterOp{OpEq}, Check: func(v string) error {
 		if !commitments.Kind(v).Valid() {
 			return errors.New("kind must be one of " + names(commitments.Kinds()))
@@ -113,7 +114,7 @@ var commitmentsListSpec = ListSpec{Filters: map[string]FilterSpec{
 		}
 		return nil
 	}},
-}}
+}})
 
 func names[T ~string](vs []T) string {
 	out := make([]string, len(vs))
@@ -406,7 +407,7 @@ func effectiveFrom(patch MergePatch, t calendar.Date) (calendar.Date, error) {
 	return d, nil
 }
 
-func registerCommitments(s *Server, st commitments.Store, todayFn today) {
+func registerCommitments(s *Server, st commitments.Store, org organisation.Store, todayFn today) {
 	s.HandleAPI("GET "+CommitmentsPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q, err := ParseList(r, commitmentsListSpec)
 		if err != nil {
@@ -423,6 +424,12 @@ func registerCommitments(s *Server, st commitments.Store, todayFn today) {
 		for _, v := range q.Filter("currency", OpEq) {
 			f.Currencies = append(f.Currencies, money.MustParseCurrency(v))
 		}
+		ids, active, err := selectOrganised(r, org, organisation.ObjectCommitment, q.Filter("category_id", OpEq), q.Filter("label_id", OpEq))
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		f.IDs, f.IDsSet = ids, active
 		items, err := st.List(r.Context(), f)
 		if err != nil {
 			WriteError(w, r, err)

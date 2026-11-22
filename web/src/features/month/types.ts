@@ -77,6 +77,8 @@ export interface MonthSummary {
   /** Occurrences of earlier months whose active plan falls in this month; they keep their own month and due date. */
   carried_in?: MonthItem[]
   totals: MonthTotals[]
+  /** Set when a category or label filter restricted the month: the items and totals cover only the matching commitments. */
+  filter?: { category_ids: string[]; label_ids: string[]; note: string } | null
   freshness: {
     computed_at: string
     occurrences_changed_at: string | null

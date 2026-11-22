@@ -561,6 +561,7 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"get_commitment":    func() (string, string, string) { return "GET", "/commitments/" + c.ID, "" },
 		"list_occurrences":  func() (string, string, string) { return "GET", "/occurrences?month=2026-11", "" },
 		"get_month_summary": func() (string, string, string) { return "GET", "/occurrences/summary?month=2026-11", "" },
+		"get_outlook":       func() (string, string, string) { return "GET", "/outlook", "" },
 		"get_occurrence":    func() (string, string, string) { return "GET", "/occurrences/" + occ.Items[0].ID, "" },
 		"create_commitment": func() (string, string, string) {
 			b, _ := json.Marshal(newCommitmentArgs("Parity 2"))
@@ -683,6 +684,7 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"get_commitment":    {"id": c.ID},
 		"list_occurrences":  {"month": "2026-11"},
 		"get_month_summary": {"month": "2026-11"},
+		"get_outlook":       nil,
 		"get_occurrence":    {"id": occ.Items[0].ID},
 		"create_commitment": newCommitmentArgs("Parity 2"),
 		"delete_commitment": {"id": "01JD3Y4C8V9M2Q7W5R6T0XZBNT", "version": 1},

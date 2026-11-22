@@ -111,6 +111,15 @@ List recurring commitment definitions (name, kind, amount with currency, schedul
 {
   "additionalProperties": false,
   "properties": {
+    "category_id": {
+      "description": "Only commitments in these categories or their child categories (any of them). Categories group; they allocate no money. Needs the organisation:read grant too.",
+      "items": {
+        "description": "The category identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
     "currency": {
       "description": "Only these currencies (ISO 4217).",
       "items": {
@@ -134,6 +143,15 @@ List recurring commitment definitions (name, kind, amount with currency, schedul
           "subscription",
           "debt_repayment"
         ],
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "label_id": {
+      "description": "Only commitments with these labels (any of them). Combined with category_id, both must hold. Needs the organisation:read grant too.",
+      "items": {
+        "description": "The label identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
         "type": "string"
       },
       "type": "array"
@@ -207,6 +225,15 @@ List the dated occurrences of recurring commitments in one reporting month, each
 {
   "additionalProperties": false,
   "properties": {
+    "category_id": {
+      "description": "Only occurrences of commitments in these categories or their child categories (any of them). Categories group; they allocate no money. Needs the organisation:read grant too.",
+      "items": {
+        "description": "The category identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
     "commitment_id": {
       "description": "Only occurrences of these commitments.",
       "items": {
@@ -223,6 +250,15 @@ List the dated occurrences of recurring commitments in one reporting month, each
     "include_cancelled": {
       "description": "Include cancelled occurrences (default false).",
       "type": "boolean"
+    },
+    "label_id": {
+      "description": "Only occurrences of commitments with these labels (any of them). Combined with category_id, both must hold. Needs the organisation:read grant too.",
+      "items": {
+        "description": "The label identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
     },
     "limit": {
       "description": "Page size (default 50).",
@@ -247,7 +283,7 @@ List the dated occurrences of recurring commitments in one reporting month, each
 
 ### `get_month_summary`
 
-The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed and missed_reason (plan date passed: principal still owed, or a fee still planned). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.
+The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed and missed_reason (plan date passed: principal still owed, or a fee still planned). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is. With category_id or label_id the month is restricted to the matching commitments: the filter member says so, and the items and the totals then cover only those commitments, not the whole month.
 
 - Kind: read
 - Operation: `GET /api/v1/occurrences/summary`
@@ -259,6 +295,24 @@ The monthly view: every occurrence of the month with its payment state, and exac
 {
   "additionalProperties": false,
   "properties": {
+    "category_id": {
+      "description": "Only occurrences of commitments in these categories or their child categories (any of them). Categories group; they allocate no money. Needs the organisation:read grant too.",
+      "items": {
+        "description": "The category identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "label_id": {
+      "description": "Only occurrences of commitments with these labels (any of them). Combined with category_id, both must hold. Needs the organisation:read grant too.",
+      "items": {
+        "description": "The label identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
     "month": {
       "description": "The reporting month, such as 2026-11.",
       "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
@@ -268,6 +322,42 @@ The monthly view: every occurrence of the month with its payment state, and exac
   "required": [
     "month"
   ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_outlook`
+
+Compare bank balances with the commitments Ledger has recorded as still due, per currency (never summed across currencies), with an optional secondary total converted into one reporting currency only where an acceptable rate exists (excluded currencies are listed with the reason). It is an outlook against recorded commitments: not a forecast and never a statement of money that is safe to spend. Balances and each account's data freshness need the connections:read grant too; without it only commitments are compared. With bucket the outlook is a slice: only the commitments and accounts in that bucket are counted, the slice member says so, and a balance is still the whole balance of an account in the bucket because a bucket allocates no money. Slicing needs the organisation:read grant too.
+
+- Kind: read
+- Operation: `GET /api/v1/outlook`
+- Grant: `commitments:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "bucket": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "currency": {
+      "description": "Reporting currency of the converted aggregate (ISO 4217); default is the configured reporting currency.",
+      "pattern": "^[A-Z]{3}$",
+      "type": "string"
+    },
+    "through": {
+      "description": "The last month whose commitments count (default the current month; at most 60 months ahead).",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+      "type": "string"
+    }
+  },
   "type": "object"
 }
 ```
@@ -603,9 +693,27 @@ List links between bank transactions and commitment occurrences, one page at a t
 {
   "additionalProperties": false,
   "properties": {
+    "category_id": {
+      "description": "Only matches whose bank transaction is in these categories or their child categories (any of them). Categories group; they allocate no money. Needs the organisation:read grant too.",
+      "items": {
+        "description": "The category identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
     "cursor": {
       "description": "The next_cursor of the previous page; valid only with the same filters.",
       "type": "string"
+    },
+    "label_id": {
+      "description": "Only matches whose bank transaction is with these labels (any of them). Combined with category_id, both must hold. Needs the organisation:read grant too.",
+      "items": {
+        "description": "The label identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
     },
     "limit": {
       "description": "Page size (default 50).",

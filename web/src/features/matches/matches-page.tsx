@@ -10,6 +10,7 @@ import { ApiError } from '@/lib/api'
 import { useOnline } from '@/lib/connection'
 import { isVersionConflict, useOptimisticSave } from '@/lib/optimistic-save'
 import { usePagedList } from '@/lib/paged'
+import { useOrgFilters } from '@/features/organisation/org-filters'
 import { matchAction, matchesKey, runMatching } from './api'
 import { ReplacedNotice } from './replace-manual'
 import { describeAction, MatchCard, OFFLINE_NOTE_ID, subjectText, type Subject } from './match-card'
@@ -153,7 +154,8 @@ export function MatchesPage() {
   const online = useOnline()
   const [state, setState] = useState<View>('suggested')
   const view = VIEWS.find((v) => v.state === state)!
-  const q = usePagedList<PaymentMatch>(matchesKey, '/api/v1/payment-matches', { state: state === 'closed' ? undefined : state }, { enabled: state !== 'closed' })
+  const orgFilters = useOrgFilters('matches whose transaction is')
+  const q = usePagedList<PaymentMatch>(matchesKey, '/api/v1/payment-matches', { state: state === 'closed' ? undefined : state, ...orgFilters.params }, { enabled: state !== 'closed' })
   const [done, setDone] = useState<Done | null>(null)
   // Cards whose last save failed stay listed even when a refetch no longer has them (changed elsewhere), in the view they failed in.
   const [held, setHeld] = useState<Record<string, { match: PaymentMatch; view: View }>>({})
@@ -191,6 +193,12 @@ export function MatchesPage() {
         </div>
         {state !== 'closed' && <RunMatching offline={offline} />}
       </div>
+      {state !== 'closed' && orgFilters.control}
+      {state !== 'closed' && orgFilters.active && (
+        <p role="status" data-testid="matches-filter-note" className="text-sm text-muted-foreground">
+          Showing only matches whose bank transaction has {orgFilters.describe}. Categories and labels group transactions; they do not change what counts as payment.
+        </p>
+      )}
       {offline && (
         <p id={OFFLINE_NOTE_ID} className="text-sm text-muted-foreground">
           You are offline. The matches below are the last ones that loaded; every action is off until the connection is back.

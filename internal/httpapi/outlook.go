@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
 // OutlookPath is the outlook against recorded commitments (task FX3,
@@ -140,9 +141,20 @@ type outlookConvertedJSON struct {
 	Excluded             []outlookExcludedJSON `json:"excluded"`
 }
 
+// outlookSliceJSON says the outlook is a slice: restricted to the commitments
+// and accounts of one bucket (decision D12). It is absent on the whole outlook.
+type outlookSliceJSON struct {
+	Bucket          definitionJSON `json:"bucket"`
+	CommitmentCount int            `json:"commitment_count"`
+	AccountCount    int            `json:"account_count"`
+	Note            string         `json:"note"`
+}
+
 type outlookJSON struct {
 	AsOf   calendar.Date `json:"as_of"`
 	Notice string        `json:"notice"`
+	// Slice is null for the whole outlook and describes the bucket otherwise.
+	Slice  *outlookSliceJSON `json:"slice"`
 	Window struct {
 		From      *calendar.YearMonth `json:"from"`
 		Through   calendar.YearMonth  `json:"through"`
@@ -199,6 +211,9 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 	if !o.From.IsZero() {
 		from := o.From
 		out.Window.From = &from
+	}
+	if sl := o.Slice; sl != nil {
+		out.Slice = &outlookSliceJSON{Bucket: toDefinitionJSON(sl.Bucket), CommitmentCount: sl.Commitments, AccountCount: sl.Accounts, Note: outlook.SliceNotice}
 	}
 	out.Window.Through, out.Window.Truncated, out.Window.NotRecordedCount = o.Through, o.Truncated, o.NotRecordedCount
 	for i, l := range o.Currencies {
@@ -284,8 +299,8 @@ func registerOutlook(s *Server, svc outlook.Service, reporting money.Currency, n
 	s.HandleAPI("GET "+OutlookPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		for k := range q {
-			if k != "through" && k != "currency" {
-				WriteError(w, r, Validation(k, "unknown parameter "+k+"; the outlook takes through and currency"))
+			if k != "through" && k != "currency" && k != "bucket" {
+				WriteError(w, r, Validation(k, "unknown parameter "+k+"; the outlook takes through, currency and bucket"))
 				return
 			}
 		}
@@ -315,10 +330,25 @@ func registerOutlook(s *Server, svc outlook.Service, reporting money.Currency, n
 			req.Currency = c
 		}
 		p, _ := authz.FromContext(r.Context())
+		if raw, ok := q["bucket"]; ok {
+			if len(raw) != 1 || !resource.ValidID(raw[0]) {
+				WriteError(w, r, Validation("bucket", "bucket must be given once, as a bucket identifier"))
+				return
+			}
+			// A slice reads the bucket and its members.
+			if !p.Allows(grantOrganisationRead) {
+				WriteError(w, r, Forbidden("slicing the outlook by a bucket requires the "+grantOrganisationRead.String()+" grant"))
+				return
+			}
+			req.Bucket = raw[0]
+		}
 		allowed := p.Allows(grantOutlookBalances)
 		req.Balances = allowed
 		o, err := svc.Build(r.Context(), req)
 		if err != nil {
+			if req.Bucket != "" && errors.Is(err, resource.ErrNotFound) {
+				err = Validation("bucket", "bucket does not exist")
+			}
 			if errors.Is(err, outlook.ErrBeyondHorizon) {
 				err = Validation("through", fmt.Sprintf("through must be within %d months after the current month", occurrences.MaxMonthsAhead))
 			}
