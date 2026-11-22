@@ -133,6 +133,7 @@ A grant is `resource:action`. `write` implies `read` on the same resource. There
 | `banking:read` | Bank-sourced text: raw transaction descriptions and counterparty names (decision D28 5b; administrator only, decision D29, ADR-0035 point 9) | no (administrator only) |
 | `connections:read`, `connections:write` | Bank connections: connect, reconnect, refresh, disconnect, and read accounts, balances and freshness (task B4, ADR-0040) | no (administrator only) |
 | `merchants:read`, `merchants:write` | The merchant identity of bank transactions: the lookup source's enrichment and the person's confirm, correct or reject decision about it (task E1, ADR-0051); merchant names derive from bank text | no (administrator only) |
+| `organisation:read`, `organisation:write` | Categories, labels and buckets, and assigning them to transactions, commitments, accounts and merchants (task O1, ADR-0052); the person's own labelling, not bank text | read |
 | `rates:read`, `rates:write` | Cached exchange rates with provenance and freshness (read; the read-only role holds it), and asking the rate provider for fresh rates (write; administrators only) (task FX2c, ADR-0048) | read |
 | `tokens:read`, `tokens:write` | Everyone's tokens: list and revoke. Never a token value. | no (administrator only) |
 | `users:read`, `users:write` | User accounts, roles, disabling and passwords | no (administrator only) |

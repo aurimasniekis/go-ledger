@@ -803,6 +803,12 @@ func (s *Store) PurgeConnection(ctx context.Context, id banking.ConnectionID, ex
 			// Merchant enrichment is derived, re-fetchable data (ADR-0051); a
 			// merchant decision is user data and blocks the purge like a match.
 			{"DELETE FROM merchant_enrichments WHERE transaction_id IN (SELECT id FROM bank_transactions WHERE account_id IN (" + accounts + "))", nil},
+			// Categories and labels a rule or a model assigned are derived and can
+			// be assigned again; what the person decided (origin user, including
+			// a cleared category or a removed label) and bucket membership is user
+			// data and blocks the purge like a match (ADR-0052).
+			{"DELETE FROM category_assignments WHERE origin <> 'user' AND (transaction_id IN (SELECT t.id FROM bank_transactions t WHERE t.account_id IN (SELECT a.id FROM bank_accounts a WHERE a.connection_id = ?1)) OR account_id IN (SELECT a.id FROM bank_accounts a WHERE a.connection_id = ?1))", nil},
+			{"DELETE FROM label_assignments WHERE origin <> 'user' AND (transaction_id IN (SELECT t.id FROM bank_transactions t WHERE t.account_id IN (SELECT a.id FROM bank_accounts a WHERE a.connection_id = ?1)) OR account_id IN (SELECT a.id FROM bank_accounts a WHERE a.connection_id = ?1))", nil},
 			{"DELETE FROM bank_transactions WHERE account_id IN (" + accounts + ")", &res.Transactions},
 			{"DELETE FROM bank_balance_snapshots WHERE account_id IN (" + accounts + ")", &res.Balances},
 			{"DELETE FROM bank_accounts WHERE connection_id = ?", &res.Accounts},
