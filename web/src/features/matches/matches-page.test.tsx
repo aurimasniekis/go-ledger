@@ -914,6 +914,100 @@ describe('"This is the payment I recorded" (D45)', () => {
     await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('Your manual records of this payment come back and count again.'))
   })
 
+  // A client the test keeps, so the test can refresh the card's record list while the card is open.
+  const startWithClient = (path = '/matches') => {
+    const client = makeQueryClient()
+    calls = installApi(routes())
+    renderApp(path, client)
+    return client
+  }
+  const LIST = ['occurrences', 'manual-payments']
+
+  it('while the record list loads, Unmatch and Reverse do not say a held record counts; once it answers, they do', async () => {
+    const h = confirmedRepl()
+    h.counts_as_evidence = false
+    store = [h]
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    extra['GET /api/v1/occurrences/occ-a/manual-payments'] = async () => {
+      await gate
+      return ok({ items: records, next_cursor: null })
+    }
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    expect(within(card).getByRole('form')).toHaveTextContent('Whether your manual records of this payment still exist is being checked.')
+    expect(within(card).getByRole('form')).not.toHaveTextContent('already counts')
+    await userEvent.click(within(card).getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Reverse (payment bounced)' }))
+    expect(within(card).getByRole('form')).toHaveTextContent('Whether your manual records of this payment still exist is being checked.')
+    expect(within(card).getByRole('form')).not.toHaveTextContent('counts again right now')
+    await act(async () => release())
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('Your manual record of this payment counts again right now.'))
+  })
+
+  it('a record list that cannot load (500) is said to be unchecked, and Unmatch and Reverse do not claim it comes back or counts', async () => {
+    const h = confirmedRepl()
+    h.counts_as_evidence = false
+    store = [h]
+    extra['GET /api/v1/occurrences/occ-a/manual-payments'] = () => fail(500, 'internal', 'boom')
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('Your manual records of this payment could not be checked, so this does not say whether they come back.'), { timeout: 5000 })
+    expect(within(card).getByRole('form')).not.toHaveTextContent('comes back')
+    expect(within(card).getByRole('form')).not.toHaveTextContent('already counts')
+    await userEvent.click(within(card).getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Reverse (payment bounced)' }))
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('could not be checked, so this does not say whether they count again.'), { timeout: 5000 })
+    expect(within(card).getByRole('form')).not.toHaveTextContent('counts again right now')
+  })
+
+  it('while the card refreshes its record list, Unmatch does not repeat the last answer as current', async () => {
+    records = [rec('mp1', { replaced_by_match_id: 'a' }), rec('mp2', { replaced_by_match_id: 'a' })]
+    const c = confirmedRepl()
+    c.history[0]!.replaced_manual_payment_ids = ['mp1', 'mp2']
+    store = [c]
+    let gets = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    extra['GET /api/v1/occurrences/occ-a/manual-payments'] = async () => {
+      gets++
+      if (gets > 1) await gate
+      return ok({ items: records, next_cursor: null })
+    }
+    const client = startWithClient()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('Your manual records of this payment come back and count again.'))
+    // mp2 is deleted elsewhere; the refresh that will show it is still out.
+    records = [rec('mp1', { replaced_by_match_id: 'a' })]
+    void client.invalidateQueries({ queryKey: LIST })
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('Whether your manual records of this payment still exist is being checked.'))
+    expect(within(card).getByRole('form')).not.toHaveTextContent('come back and count again')
+    await act(async () => release())
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('A manual record of this payment was deleted while it was replaced, so it does not come back.'))
+    expect(within(card).getByRole('form')).toHaveTextContent('Your manual record of this payment comes back and counts again.')
+  })
+
+  it('the history says records were released from a replacement, not that they count again', async () => {
+    const c = confirmedRepl()
+    c.history = [
+      c.history[0]!,
+      { ...c.history[0]!, action: 'unconfirmed', state: 'suggested', replaced_manual_payment_ids: undefined, restored_manual_payment_ids: ['mp1'] },
+      { ...c.history[0]! },
+    ]
+    store = [c]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    expect(card).toHaveTextContent('Released 1 manual record it had replaced.')
+    expect(card).not.toHaveTextContent('count again.')
+  })
+
   const openForm = async () => {
     const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
     await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
