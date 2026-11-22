@@ -3076,12 +3076,13 @@ paths:
       x-ledger-access: merchants:read
       summary: A bank transaction's merchant
       description: |
-        The merchant identity of a bank transaction (task E1, ADR-0050), resolved
+        The merchant identity of a bank transaction (task E1, ADR-0051), resolved
         from the lookup source's enrichment and the person's decision, with both
         records kept apart in the answer. name and logo_ref are set only when
         the identity may be shown: the person confirmed or corrected it, or the
-        source is reliable (confidence at or above the reliability threshold,
-        provisionally 800 permille, decision D15). Everything else is explicit
+        source is reliable (confidence at or above the reliability threshold, a
+        named default of 800 permille; decision D15 chose a local curated
+        mapping plus the person's confirmations, offline). Everything else is explicit
         in state (uncertain, ambiguous, none, unavailable, not_looked_up,
         rejected) and fallback is true: use a neutral presentation. The bank's
         own description, counterparty and amount are never changed by merchant
@@ -3117,7 +3118,9 @@ paths:
         ambiguous), corrected (name is the merchant) or rejected (there is no
         merchant to show). The decision is stored apart from the bank
         transaction and the enrichment, so a re-import or a new lookup does not
-        remove it; a confirmation that the source later contradicts (another
+        remove it. When a pending transaction is booked under a new key, the
+        decision made about the pending one carries over to the booking
+        (review_inherited); a new decision on the booking replaces it. A confirmation that the source later contradicts (another
         name) stops applying and is reported as confirmation_outdated. Audited
         as merchant.confirmed, merchant.corrected or merchant.rejected (never
         with the name). Last write wins: there is no version check.
@@ -4242,12 +4245,12 @@ components:
     Merchant:
       type: object
       description: |
-        The merchant of a bank transaction (task E1, ADR-0050). name, logo_ref
+        The merchant of a bank transaction (task E1, ADR-0051). name, logo_ref
         and identity_source are null when no identity may be shown (fallback is
         then true). enrichment (the source's answer) and review (the person's
         decision) are the two records it is resolved from; neither contains an
         amount or a payment status.
-      required: [transaction_id, state, name, logo_ref, identity_source, fallback, needs_review, confirmation_outdated, enrichment, review]
+      required: [transaction_id, state, name, logo_ref, identity_source, fallback, needs_review, confirmation_outdated, review_inherited, enrichment, review]
       properties:
         transaction_id:
           $ref: "#/components/schemas/ID"
@@ -4278,6 +4281,13 @@ components:
         confirmation_outdated:
           type: boolean
           description: True when the person confirmed a name the source no longer reports; the confirmation is not applied.
+        review_inherited:
+          type: boolean
+          description: |
+            True when review is the decision made about the pending
+            transaction this one superseded (its booking arrived under a new
+            key). A new decision on this transaction replaces it; the
+            inherited one is never edited from here.
         enrichment:
           oneOf:
             - $ref: "#/components/schemas/MerchantEnrichment"

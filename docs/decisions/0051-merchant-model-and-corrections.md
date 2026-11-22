@@ -1,4 +1,4 @@
-# ADR-0050: Merchant model and corrections
+# ADR-0051: Merchant model and corrections
 
 Status: Accepted, first increment (task E1, 2026-11-22). Partial: decision D15 (merchant enrichment) is open, so the
 reliability threshold and the reuse of confirmed mappings are provisional or absent. See "What remains".

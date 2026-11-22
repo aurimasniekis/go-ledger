@@ -112,6 +112,10 @@ func TestAnswerValidation(t *testing.T) {
 		{Status: StatusAmbiguous, Candidates: []string{"A"}, Source: "c"},
 		{Status: StatusAmbiguous, Name: "A", Candidates: []string{"A", "B"}, Source: "c"},
 		{Status: StatusAmbiguous, Candidates: []string{"A", "B", "C", "D", "E", "F"}, Source: "c"},
+		{Status: StatusAmbiguous, Candidates: []string{"A", "A"}, Source: "c"},
+		{Status: StatusAmbiguous, Candidates: []string{"A", "B", "B"}, Source: "c"},
+		{Status: StatusIdentified, Name: "Acme\u202e", Source: "c"},
+		{Status: StatusAmbiguous, Candidates: []string{"A", "B\u200b"}, Source: "c"},
 		{Status: StatusNone, Name: "A", Source: "c"},
 		{Status: StatusNone, Source: "c", Confidence: 5},
 		{Status: StatusUnavailable, Source: "c", LogoRef: "x"},
@@ -121,6 +125,14 @@ func TestAnswerValidation(t *testing.T) {
 	for _, a := range bad {
 		if errs := a.Validate(); len(errs) == 0 {
 			t.Errorf("%+v accepted", a)
+		}
+	}
+}
+
+func TestRequestRejectsFormatCharacters(t *testing.T) {
+	for _, name := range []string{"Acme\u202eevil", "Ac\u200bme", "Acme\u2066"} {
+		if errs := (Request{Decision: DecisionCorrected, Name: name}).Validate(); len(errs) == 0 {
+			t.Errorf("name %q accepted", name)
 		}
 	}
 }

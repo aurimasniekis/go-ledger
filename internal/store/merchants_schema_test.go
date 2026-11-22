@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	// Migration 0025 adds merchant enrichments and decisions (ADR-0050): both
+	// Migration 0026 adds merchant enrichments and decisions (ADR-0051): both
 	// tables start empty and enforce what the domain checks.
 	fixtureChecks["0024_manual_payment_replacements.sql"] = func(t *testing.T, db *DB) {
 		ctx := context.Background()

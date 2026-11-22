@@ -1,5 +1,5 @@
 // Package merchants persists merchant enrichments and the person's merchant
-// decisions (task E1, ADR-0050) in the tables of migration 0025_merchants.
+// decisions (task E1, ADR-0051) in the tables of migration 0026_merchants.
 //
 // It never reads or writes a bank transaction's own columns and nothing here
 // touches amounts, occurrences, matches or payment state. A decision is
@@ -46,7 +46,8 @@ func New(db *store.DB, aw store.AuditWriter, now func() time.Time) *Store {
 }
 
 // WithThreshold returns a copy that treats an unreviewed identity as reliable
-// from confidence t (decision D15 leaves the value open).
+// from confidence t (the default is a named constant; D15 fixes the policy,
+// not the number).
 func (s *Store) WithThreshold(t merchants.Confidence) *Store {
 	c := *s
 	c.threshold = t
@@ -110,6 +111,59 @@ func getReview(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (*merc
 	return &r, nil
 }
 
+// maxSupersedeDepth bounds the walk over a chain of superseded rows.
+const maxSupersedeDepth = 8
+
+// inheritedReview finds the decision a pending transaction left behind when
+// its booking arrived under a new key: bankfacts links the old row to the new
+// one with superseded_by, and the person's decision was made about the old
+// row. It follows the chain back (nearest first) and returns the first
+// decision found, or nil.
+func inheritedReview(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (*merchants.Review, error) {
+	seen := map[banking.TransactionID]bool{id: true}
+	frontier := []banking.TransactionID{id}
+	for depth := 0; depth < maxSupersedeDepth && len(frontier) > 0; depth++ {
+		var next []banking.TransactionID
+		for _, cur := range frontier {
+			rows, err := tx.QueryContext(ctx, "SELECT id FROM bank_transactions WHERE superseded_by = ? ORDER BY id", string(cur))
+			if err != nil {
+				return nil, err
+			}
+			var preds []banking.TransactionID
+			for rows.Next() {
+				var p string
+				if err := rows.Scan(&p); err != nil {
+					rows.Close()
+					return nil, err
+				}
+				preds = append(preds, banking.TransactionID(p))
+			}
+			if err := rows.Close(); err != nil {
+				return nil, err
+			}
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+			for _, p := range preds {
+				if seen[p] {
+					continue
+				}
+				seen[p] = true
+				r, err := getReview(ctx, tx, p)
+				if err != nil {
+					return nil, err
+				}
+				if r != nil {
+					return r, nil
+				}
+				next = append(next, p)
+			}
+		}
+		frontier = next
+	}
+	return nil, nil
+}
+
 func (s *Store) resolveTx(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (merchants.Merchant, error) {
 	if err := transactionExists(ctx, tx, id); err != nil {
 		return merchants.Merchant{}, err
@@ -122,8 +176,17 @@ func (s *Store) resolveTx(ctx context.Context, tx *sql.Tx, id banking.Transactio
 	if err != nil {
 		return merchants.Merchant{}, err
 	}
+	inherited := false
+	if r == nil {
+		// A decision about the superseded pending row stands for its booking.
+		if r, err = inheritedReview(ctx, tx, id); err != nil {
+			return merchants.Merchant{}, err
+		}
+		inherited = r != nil
+	}
 	m := merchants.Resolve(e, r, s.threshold)
 	m.TransactionID = id
+	m.ReviewInherited = inherited
 	return m, nil
 }
 

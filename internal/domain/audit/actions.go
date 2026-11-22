@@ -54,7 +54,7 @@ const (
 	// (ADR-0045).
 	PaymentMatchUnconfirmed Action = "payment_match.unconfirmed"
 
-	// Merchant decisions (E1, ADR-0050). The target is the bank transaction
+	// Merchant decisions (E1, ADR-0051). The target is the bank transaction
 	// (target type "transaction"). Details: from (the decision before: none,
 	// confirmed, corrected or rejected) and via. Never the merchant name: it is
 	// free text the person typed or a source returned.

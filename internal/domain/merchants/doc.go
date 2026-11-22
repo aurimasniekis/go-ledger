@@ -1,5 +1,5 @@
 // Package merchants models the merchant identity of bank transactions (task
-// E1, ADR-0050): who a transaction was paid to, as far as that is known.
+// E1, ADR-0051): who a transaction was paid to, as far as that is known.
 //
 // Three things are kept apart and never merged into one stored value:
 //

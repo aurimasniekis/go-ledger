@@ -140,9 +140,9 @@ func keys(m map[string]bool) []string {
 // method for, with the reason. Every other documented operation needs a row in
 // operations.
 var notImplemented = map[string]string{
-	"getTransactionMerchant":         "merchant identity (E1, ADR-0050): the client method, CLI command and MCP tool arrive with the merchant UI and its slice of P-MCP2; the routes are usable through Client.Raw",
-	"reviewTransactionMerchant":      "merchant identity (E1, ADR-0050): see getTransactionMerchant",
-	"clearTransactionMerchantReview": "merchant identity (E1, ADR-0050): see getTransactionMerchant",
+	"getTransactionMerchant":         "merchant identity (E1, ADR-0051): the client method, CLI command and MCP tool arrive with the merchant UI and its slice of P-MCP2; the routes are usable through Client.Raw",
+	"reviewTransactionMerchant":      "merchant identity (E1, ADR-0051): see getTransactionMerchant",
+	"clearTransactionMerchantReview": "merchant identity (E1, ADR-0051): see getTransactionMerchant",
 	"getOpenAPIJSON":                 "the API description itself; the client is built against the document",
 	"getOpenAPIYAML":                 "the API description itself",
 	"postMCP":                        "the Model Context Protocol endpoint (ADR-0038); MCP clients speak JSON-RPC to it, and 'ledger mcp stdio' reaches the API through Client.Raw",

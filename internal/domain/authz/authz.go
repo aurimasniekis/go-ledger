@@ -51,7 +51,7 @@ const (
 	// ResourceCommitments is recurring commitment definitions (task C1).
 	ResourceCommitments Resource = "commitments"
 	// ResourceMerchants is the merchant identity of bank transactions (task E1,
-	// ADR-0050): reading a transaction's merchant, its enrichment and the
+	// ADR-0051): reading a transaction's merchant, its enrichment and the
 	// decision about it, and confirming, correcting, rejecting or clearing that
 	// decision. Merchant names derive from bank text, so like banking:read it is
 	// for administrators.

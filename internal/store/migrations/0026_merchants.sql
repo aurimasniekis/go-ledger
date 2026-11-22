@@ -1,4 +1,4 @@
--- Merchant identity of bank transactions (E1, ADR-0050).
+-- Merchant identity of bank transactions (E1, ADR-0051).
 --
 -- Two tables keep apart what a lookup source said about a transaction and what
 -- the person decided about it, and neither touches the bank fact:

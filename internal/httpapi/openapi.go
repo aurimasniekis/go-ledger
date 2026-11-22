@@ -72,7 +72,7 @@ type Deps struct {
 	// Matches stores payment matches between bank transactions and
 	// occurrences (ADR-0035).
 	Matches matches.Store
-	// Merchants stores merchant enrichments and decisions (ADR-0050).
+	// Merchants stores merchant enrichments and decisions (ADR-0051).
 	Merchants merchants.Store
 	// Banking is the bank connection service (ADR-0040); nil in tests that
 	// never call the routes.

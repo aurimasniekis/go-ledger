@@ -800,7 +800,7 @@ func (s *Store) PurgeConnection(ctx context.Context, id banking.ConnectionID, ex
 			{"UPDATE bank_transactions SET superseded_by = NULL WHERE superseded_by IS NOT NULL AND account_id IN (" + accounts + ")", nil},
 			{"DELETE FROM bank_account_sync WHERE account_id IN (" + accounts + ")", nil},
 			{"DELETE FROM bank_refresh_runs WHERE connection_id = ?", nil},
-			// Merchant enrichment is derived, re-fetchable data (ADR-0050); a
+			// Merchant enrichment is derived, re-fetchable data (ADR-0051); a
 			// merchant decision is user data and blocks the purge like a match.
 			{"DELETE FROM merchant_enrichments WHERE transaction_id IN (SELECT id FROM bank_transactions WHERE account_id IN (" + accounts + "))", nil},
 			{"DELETE FROM bank_transactions WHERE account_id IN (" + accounts + ")", &res.Transactions},

@@ -35,9 +35,11 @@ type Confidence int
 const MaxConfidence Confidence = 1000
 
 // DefaultThreshold is the confidence from which an unreviewed identity counts
-// as reliable and is shown. It is provisional: decision D15 leaves the real
-// threshold open, so callers pass the threshold to [Resolve] and the store
-// takes it as an option instead of this constant being read in deep code.
+// as reliable and is shown: a named default, 800 permille (decision D15, taken
+// 2026-11-20, fixes the policy, a local curated mapping plus the person's
+// confirmations, but not this number). Callers pass the threshold to [Resolve]
+// and the store takes it as an option instead of this constant being read in
+// deep code.
 const DefaultThreshold Confidence = 800
 
 // Status is the outcome of a lookup.
@@ -109,13 +111,19 @@ func (a Answer) Validate() []commitments.FieldError {
 		if a.Name != "" || a.LogoRef != "" {
 			add("name", "an ambiguous answer names no merchant")
 		}
-		if len(a.Candidates) < 2 || len(a.Candidates) > MaxCandidates {
+		if n := len(Candidates(a.Candidates)); n < 2 || n > MaxCandidates {
 			add("candidates", fmt.Sprintf("an ambiguous answer needs 2 to %d candidates", MaxCandidates))
 		}
 		for _, c := range a.Candidates {
 			if msg := checkText(c, MaxName, false); msg != "" {
 				add("candidates", "a candidate "+msg)
 			}
+		}
+		// The store keeps the de-duplicated list, so that is what the bounds
+		// and the table's CHECK constraint apply to: duplicates are a field
+		// error here, never a constraint failure there.
+		if n := len(Candidates(a.Candidates)); n != len(a.Candidates) {
+			add("candidates", "candidates must be distinct names")
 		}
 	case StatusNone, StatusUnavailable:
 		if a.Name != "" || a.LogoRef != "" || len(a.Candidates) > 0 {
@@ -197,8 +205,10 @@ func checkText(s string, max int, optional bool) string {
 		return "must be valid UTF-8"
 	case utf8.RuneCountInString(s) > max:
 		return fmt.Sprintf("must be at most %d characters", max)
-	case strings.IndexFunc(s, unicode.IsControl) >= 0:
-		return "must not contain control characters"
+	case strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) >= 0:
+		// Cf covers the bidirectional overrides (U+202E) and zero-width
+		// characters that make a name read differently from what it is.
+		return "must not contain control or invisible formatting characters"
 	case strings.TrimSpace(s) != s:
 		return "must not start or end with white space"
 	}
@@ -244,6 +254,10 @@ type Merchant struct {
 	// enrichment no longer reports. The confirmation is not applied; the
 	// merchant is described by the enrichment as if unreviewed.
 	ConfirmationOutdated bool
+	// ReviewInherited is true when Review is the decision of the pending
+	// transaction this one superseded (the booking arrived under a new key),
+	// not one made about this transaction itself.
+	ReviewInherited bool
 	Enrichment           *Enrichment
 	Review               *Review
 }

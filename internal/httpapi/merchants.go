@@ -15,7 +15,7 @@ import (
 )
 
 // TransactionsPath is the collection of bank transactions' sub-resources (E1,
-// ADR-0050). Bank transactions themselves are not editable and have no
+// ADR-0051). Bank transactions themselves are not editable and have no
 // routes of their own here: only their merchant identity does.
 const TransactionsPath = APIPrefix + "/transactions"
 
@@ -25,11 +25,11 @@ var (
 )
 
 // CodeNothingToConfirm (409): the transaction has no identified merchant to
-// confirm (ADR-0050); correct it instead.
+// confirm (ADR-0051); correct it instead.
 const CodeNothingToConfirm Code = "nothing_to_confirm"
 
 // enrichmentJSON is what a lookup source said, as stored: the source's own
-// answer, never edited by a decision (ADR-0050).
+// answer, never edited by a decision (ADR-0051).
 type enrichmentJSON struct {
 	Status merchants.Status `json:"status"`
 	Name   *string          `json:"name"`
@@ -66,6 +66,7 @@ type merchantJSON struct {
 	Fallback             bool                `json:"fallback"`
 	NeedsReview          bool                `json:"needs_review"`
 	ConfirmationOutdated bool                `json:"confirmation_outdated"`
+	ReviewInherited      bool                `json:"review_inherited"`
 	Enrichment           *enrichmentJSON     `json:"enrichment"`
 	Review               *merchantReviewJSON `json:"review"`
 }
@@ -79,7 +80,7 @@ func strPtr(s string) *string {
 
 func toMerchantJSON(m merchants.Merchant) merchantJSON {
 	out := merchantJSON{TransactionID: string(m.TransactionID), State: m.State, Name: strPtr(m.Name), LogoRef: strPtr(m.LogoRef), IdentitySource: strPtr(m.IdentitySource),
-		Fallback: m.Fallback(), NeedsReview: m.NeedsReview, ConfirmationOutdated: m.ConfirmationOutdated}
+		Fallback: m.Fallback(), NeedsReview: m.NeedsReview, ConfirmationOutdated: m.ConfirmationOutdated, ReviewInherited: m.ReviewInherited}
 	if e := m.Enrichment; e != nil {
 		ej := &enrichmentJSON{Status: e.Status, Name: strPtr(e.Name), LogoRef: strPtr(e.LogoRef), Source: e.Source, Candidates: slices.Clone(e.Candidates), LastFailedAt: e.LastFailedAt}
 		if ej.Candidates == nil {
@@ -119,7 +120,7 @@ func merchantError(err error) error {
 	return err
 }
 
-// registerMerchants registers the merchant routes (task E1, ADR-0050): read a
+// registerMerchants registers the merchant routes (task E1, ADR-0051): read a
 // transaction's merchant, record the person's decision about it and take the
 // decision back. The routes never change the transaction, an amount or a
 // payment status. Merchant names derive from bank text (decision D13 treats

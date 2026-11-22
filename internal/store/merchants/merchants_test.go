@@ -323,6 +323,71 @@ func TestCorrectionSurvivesReimport(t *testing.T) {
 	}
 }
 
+// link makes old the superseded pending row of booked, as the bank-facts
+// refresh does when a booking arrives under a new key.
+func (f *fixture) link(old, booked banking.TransactionID) {
+	f.t.Helper()
+	err := f.db.WriteTx(f.ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "UPDATE bank_transactions SET superseded_by = ? WHERE id = ?", string(booked), string(old))
+		return err
+	})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func TestDecisionSurvivesSupersededPending(t *testing.T) {
+	f := newFixture(t)
+	pending := f.tx("CARD PURCHASE BOOKSHOP")
+	booked := f.tx("STREAMING SERVICE")
+	other := f.tx("SALARY ACME")
+	f.record(pending.ID, identified("Bookshop Ltd", 900))
+	f.record(booked.ID, identified("Streamly", 900))
+	f.record(other.ID, identified("Acme Payroll", 900))
+
+	// Nothing is inherited before the link, or from an undecided row.
+	f.link(pending.ID, booked.ID)
+	if m, err := f.ms.Get(f.ctx, booked.ID); err != nil || m.ReviewInherited || m.Review != nil || m.State != merchants.StateReliable {
+		t.Fatalf("no decision to inherit: %+v %v", m, err)
+	}
+
+	// A correction on the pending row stands for its booking.
+	f.review(pending.ID, merchants.Request{Decision: merchants.DecisionCorrected, Name: "Corner Books"})
+	m, err := f.ms.Get(f.ctx, booked.ID)
+	if err != nil || m.State != merchants.StateCorrected || m.Name != "Corner Books" || !m.ReviewInherited || m.Review == nil || m.Review.TransactionID != pending.ID {
+		t.Fatalf("inherited correction: %+v %v", m, err)
+	}
+	if m, _ := f.ms.Get(f.ctx, pending.ID); m.ReviewInherited || m.State != merchants.StateCorrected {
+		t.Fatalf("the superseded row's own decision is not inherited: %+v", m)
+	}
+
+	// A rejection is inherited too, and the booking's own decision wins.
+	f.review(pending.ID, merchants.Request{Decision: merchants.DecisionRejected})
+	if m, _ := f.ms.Get(f.ctx, booked.ID); m.State != merchants.StateRejected || !m.ReviewInherited || !m.Fallback() {
+		t.Fatalf("inherited rejection: %+v", m)
+	}
+	own := f.review(booked.ID, merchants.Request{Decision: merchants.DecisionCorrected, Name: "Streamly Media"})
+	if own.State != merchants.StateCorrected || own.Name != "Streamly Media" || own.ReviewInherited {
+		t.Fatalf("own decision: %+v", own)
+	}
+	if _, err := f.ms.ClearReview(f.ctx, alice, booked.ID); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := f.ms.Get(f.ctx, booked.ID); m.State != merchants.StateRejected || !m.ReviewInherited {
+		t.Fatalf("after clearing the booking's own decision the inherited one applies again: %+v", m)
+	}
+
+	// A chain: other supersedes booked, which supersedes pending.
+	f.link(booked.ID, other.ID)
+	if m, _ := f.ms.Get(f.ctx, other.ID); m.State != merchants.StateRejected || !m.ReviewInherited {
+		t.Fatalf("inherited along a chain: %+v", m)
+	}
+	// Nothing about the bank rows changed.
+	if f.tx("SALARY ACME").Description != "SALARY ACME" {
+		t.Fatal("bank description changed")
+	}
+}
+
 func TestUnknownTransactionAndInvalidInput(t *testing.T) {
 	f := newFixture(t)
 	const missing = banking.TransactionID("01JZ0000000000000000009999")

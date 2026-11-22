@@ -12,7 +12,7 @@ import (
 	merchantstore "github.com/aurimasniekis/go-ledger/internal/store/merchants"
 )
 
-// TestMerchantAPI drives the merchant routes (E1, ADR-0050) as ledger serve
+// TestMerchantAPI drives the merchant routes (E1, ADR-0051) as ledger serve
 // wires them: the grants, the explicit states, decisions that survive a
 // re-import and a new lookup, audit without the name, and bank text and
 // amounts left alone. Lookup answers are recorded through the store the way
