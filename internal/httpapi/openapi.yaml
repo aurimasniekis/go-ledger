@@ -2519,6 +2519,81 @@ paths:
                 $ref: "#/components/schemas/PaymentMatch"
         default:
           $ref: "#/components/responses/Error"
+  /payment-matches/{id}/confirm-replacing:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: confirmPaymentMatchReplacing
+      x-ledger-access: commitments:write
+      summary: Confirm a suggestion as the payment already recorded by hand
+      description: |
+        "This is the payment I recorded" (decision D45, ADR-0049): confirms a
+        suggested match and, in the same write, marks the listed manual
+        payments of the match's occurrence replaced by it. A replaced record
+        is kept and still listed (replaced_by_match_id) but stops counting as
+        payment evidence: the bank match pays the occurrence instead, so the
+        payment never counts twice. The confirmation's checks then run
+        against the evidence that remains: occurrence_overpaid unless
+        allow_overpayment, and the tolerance applies only when bank matches
+        alone remain (decision D41). The confirmation's history entry lists
+        replaced_manual_payment_ids. Audited as payment_match.confirmed and,
+        per record, manual_payment.replaced (with its amount).
+
+        It is an ordinary confirmation otherwise: unconfirm inside the undo
+        window (ADR-0045) makes it a suggestion again and the records count
+        again, exactly as before (manual_payment.restored); so does an
+        unmatch; a reversal leaves them replaced.
+
+        Each record must be of the match's occurrence (409
+        manual_payment_other_occurrence), in its currency (400
+        validation_failed), not deleted and not already replaced by a match
+        (409 manual_payment_not_replaceable); an unknown identifier is 400
+        validation_failed. The match must be a suggestion (409
+        invalid_match_state).
+      tags: [payment-matches]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [manual_payment_ids]
+              properties:
+                manual_payment_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  uniqueItems: true
+                  items:
+                    $ref: "#/components/schemas/ID"
+                  description: The manual payments of the match's occurrence that this bank payment is.
+                allow_overpayment:
+                  type: boolean
+                  default: false
+                  description: Allow the occurrence's remaining payment evidence to exceed its amount; the excess shows as overpaid_amount.
+                reason:
+                  $ref: "#/components/schemas/MatchReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The match after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMatch"
+        default:
+          $ref: "#/components/responses/Error"
   /bank-applications:
     get:
       operationId: listBankApplications
@@ -3967,7 +4042,7 @@ components:
     ManualPayment:
       type: object
       description: A payment recorded by hand for one occurrence (ADR-0031). User data, never a bank fact.
-      required: [id, occurrence_id, amount, paid_on, note, version, created_at, updated_at]
+      required: [id, occurrence_id, amount, paid_on, note, version, created_at, updated_at, replaced_by_match_id]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -3987,6 +4062,15 @@ components:
         updated_at:
           type: string
           format: date-time
+        replaced_by_match_id:
+          description: |
+            The confirmed payment match that replaces this record now (the
+            person confirmed the bank payment "as the payment I recorded",
+            ADR-0049): the record is kept and listed but does not count as
+            payment evidence; the match does. Null when none.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
     ManualPaymentInput:
       type: object
       additionalProperties: false
@@ -4085,7 +4169,7 @@ components:
           format: int64
           description: |
             The occurrence's new version. Present on the responses of create
-            and of the confirm, reject, unmatch, correct, reverse and unconfirm actions;
+            and of the confirm, reject, unmatch, correct, reverse, unconfirm and confirm-replacing actions;
             absent on reads.
         created_by:
           $ref: "#/components/schemas/MatchActor"
@@ -4123,6 +4207,16 @@ components:
               at:
                 type: string
                 format: date-time
+              replaced_manual_payment_ids:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ID"
+                description: Manual payments this confirmation marked replaced by the match (ADR-0049). Omitted when none.
+              restored_manual_payment_ids:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ID"
+                description: Manual payments this unconfirm or unmatch made count again (ADR-0049). Omitted when none.
         version:
           $ref: "#/components/schemas/Version"
         created_at:
@@ -5000,6 +5094,8 @@ components:
             - invalid_match_state
             - match_undo_not_decider
             - match_undo_window_closed
+            - manual_payment_other_occurrence
+            - manual_payment_not_replaceable
             - password_sign_in_disabled
             - rates_refresh_unavailable
         message:

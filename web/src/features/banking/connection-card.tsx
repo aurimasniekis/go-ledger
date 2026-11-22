@@ -60,9 +60,9 @@ const ACCOUNT_BADGE: Record<AccountState, { status: Status; label?: string }> = 
   disconnected: { status: 'disconnected', label: 'Bank disconnected' },
 }
 
-function AccountRow({ a }: { a: BankAccount }) {
+function AccountRow({ a, reconnected }: { a: BankAccount; reconnected: boolean }) {
   const f = a.freshness
-  const state = accountState(a)
+  const state = accountState(a, reconnected)
   return (
     <li className="space-y-2 rounded-md border border-border p-3" data-account-state={state}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -109,7 +109,7 @@ function AccountRow({ a }: { a: BankAccount }) {
           </div>
         )}
       </dl>
-      {f.last_error && state !== 'fresh' && (
+      {f.last_error && state !== 'fresh' && !(reconnected && f.last_error.kind === 'reconnect_required') && (
         <p className="text-xs">
           Last error: {KIND_TEXT[f.last_error.kind]}
           {code(f.last_error)}. The figures above are from the last successful refresh.
@@ -184,6 +184,17 @@ function DiagnosisPanel({ c, d }: { c: BankConnection; d: Diagnosis }) {
           </p>
         </div>
       )
+    case 'reconnected':
+      return (
+        <div data-diagnosis="reconnected" className="space-y-1 rounded-md border border-border-control p-3">
+          <StatusBadge status="stale" label="Reconnected, not refreshed yet" />
+          <p className="text-sm">
+            Bank access is approved again and this connection is connected. Data last refreshed{' '}
+            {d.lastRefreshedAt ? <time dateTime={d.lastRefreshedAt}>{formatInstant(d.lastRefreshedAt)}</time> : 'never'}: nothing has been fetched since reconnecting, so the figures
+            below are not confirmed as current. Use Refresh now to fetch them.
+          </p>
+        </div>
+      )
     case 'ok':
       return d.partial ? (
         <p data-diagnosis="partial" className="text-sm">
@@ -255,7 +266,7 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
       {c.accounts.length > 0 ? (
         <ul aria-label={`Accounts at ${c.institution.name}`} className="space-y-2">
           {c.accounts.map((a) => (
-            <AccountRow key={a.id} a={a} />
+            <AccountRow key={a.id} a={a} reconnected={d.kind === 'reconnected'} />
           ))}
         </ul>
       ) : (
@@ -287,7 +298,7 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
             </Button>
           )}
           {canRefresh && (
-            <Button variant={d.kind === 'temporary' ? 'default' : 'outline'} disabled={busy} onClick={() => doRefresh.mutate()}>
+            <Button variant={d.kind === 'temporary' || d.kind === 'reconnected' ? 'default' : 'outline'} disabled={busy} onClick={() => doRefresh.mutate()}>
               {doRefresh.isPending || running ? 'Refreshing…' : d.kind === 'temporary' ? 'Try again' : 'Refresh now'}
             </Button>
           )}

@@ -69,11 +69,20 @@ type manualPaymentJSON struct {
 	Version      int64         `json:"version"`
 	CreatedAt    time.Time     `json:"created_at"`
 	UpdatedAt    time.Time     `json:"updated_at"`
+	// ReplacedByMatchID is the confirmed payment match that replaces the
+	// record now (ADR-0049): the record is kept but does not count. Null when
+	// none.
+	ReplacedByMatchID *string `json:"replaced_by_match_id"`
 }
 
 func toManualPaymentJSON(p payments.ManualPayment) manualPaymentJSON {
-	return manualPaymentJSON{ID: p.ID, OccurrenceID: p.OccurrenceID, Amount: p.Amount, PaidOn: p.PaidOn, Note: p.Note,
+	out := manualPaymentJSON{ID: p.ID, OccurrenceID: p.OccurrenceID, Amount: p.Amount, PaidOn: p.PaidOn, Note: p.Note,
 		Version: p.Version, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+	if p.ReplacedByMatchID != "" {
+		id := p.ReplacedByMatchID
+		out.ReplacedByMatchID = &id
+	}
+	return out
 }
 
 // paymentError maps the payments package's errors to API errors.

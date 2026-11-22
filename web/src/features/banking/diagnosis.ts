@@ -14,6 +14,7 @@ export type Diagnosis =
   | { kind: 'disconnected' }
   | { kind: 'temporary'; error: BankError; rateLimited: boolean; nextAttemptAt: string | null }
   | { kind: 'rejected'; error: BankError }
+  | { kind: 'reconnected'; lastRefreshedAt: string | null }
   | { kind: 'ok'; partial: boolean }
 
 export function diagnose(c: BankConnection): Diagnosis {
@@ -30,6 +31,11 @@ export function diagnose(c: BankConnection): Diagnosis {
   const run = c.last_refresh_run
   const err = run?.error
   if (err && run.outcome !== 'succeeded') {
+    // A reconnect error from a refresh that began before the current consent was granted is superseded: the user has
+    // reconnected since. The card says so, offers a refresh, and does not call the data fresh until one succeeds.
+    if (err.kind === 'reconnect_required' && c.consent_granted_at && Date.parse(run.started_at) < Date.parse(c.consent_granted_at)) {
+      return { kind: 'reconnected', lastRefreshedAt: lastRefreshedAt(c) }
+    }
     if (err.kind === 'reconnect_required') return { kind: 'reconnect', error: err }
     if (err.kind === 'permanent') return { kind: 'rejected', error: err }
     const next = c.schedule && ['backoff', 'rate_limited', 'budget_exhausted'].includes(c.schedule.state) ? c.schedule.next_attempt_at : null
@@ -38,11 +44,23 @@ export function diagnose(c: BankConnection): Diagnosis {
   return { kind: 'ok', partial: run?.outcome === 'partial' }
 }
 
+/** The newest successful refresh across a connection's accounts, or null when none ever succeeded. */
+export function lastRefreshedAt(c: BankConnection): string | null {
+  let best: string | null = null
+  for (const a of c.accounts) {
+    const t = a.freshness.last_success_at
+    if (t && (best === null || Date.parse(t) > Date.parse(best))) best = t
+  }
+  return best
+}
+
 /** What one account's badge says. An account failure never claims a reconnect unless its error kind says so. */
 export type AccountState = 'fresh' | 'stale' | 'never' | 'reconnect' | 'temporary' | 'rejected' | 'disconnected'
 
-export function accountState(a: BankAccount): AccountState {
+export function accountState(a: BankAccount, reconnected = false): AccountState {
   const f = a.freshness
+  // After a reconnect the old "reconnect needed" no longer applies, but nothing has been refreshed yet: stale, never fresh.
+  if (reconnected && (f.state === 'reconnect_required' || f.last_error?.kind === 'reconnect_required')) return 'stale'
   switch (f.state) {
     case 'fresh':
       return 'fresh'

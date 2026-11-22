@@ -44,6 +44,12 @@ const (
 	// CodeUndoWindowClosed (409): the undo window of a confirmation has
 	// closed; unmatch instead (ADR-0045).
 	CodeUndoWindowClosed Code = "match_undo_window_closed"
+	// CodeManualPaymentOtherOccurrence (409): a manual payment to replace
+	// belongs to another occurrence than the match (ADR-0049).
+	CodeManualPaymentOtherOccurrence Code = "manual_payment_other_occurrence"
+	// CodeManualPaymentNotReplaceable (409): a manual payment to replace was
+	// deleted or another match already replaces it (ADR-0049).
+	CodeManualPaymentNotReplaceable Code = "manual_payment_not_replaceable"
 )
 
 type deciderJSON struct {
@@ -93,6 +99,11 @@ type matchEventJSON struct {
 	By     deciderJSON    `json:"by"`
 	Reason *string        `json:"reason"`
 	At     time.Time      `json:"at"`
+	// ReplacedManualPaymentIDs are the manual payments a confirmation "as
+	// the payment I recorded" marked replaced; RestoredManualPaymentIDs those
+	// an unconfirm or unmatch made count again (ADR-0049). Omitted when none.
+	ReplacedManualPaymentIDs []string `json:"replaced_manual_payment_ids,omitempty"`
+	RestoredManualPaymentIDs []string `json:"restored_manual_payment_ids,omitempty"`
 }
 
 // paymentMatchJSON is the API representation of a payment match. It keeps
@@ -158,7 +169,8 @@ func toPaymentMatchJSON(m matches.Match, bankText bool) paymentMatchJSON {
 		out.DecidedBy = &d
 	}
 	for i, e := range m.History {
-		out.History[i] = matchEventJSON{Action: e.Action, State: e.State, Amount: e.Amount, By: toDeciderJSON(e.By), Reason: e.Reason, At: e.At}
+		out.History[i] = matchEventJSON{Action: e.Action, State: e.State, Amount: e.Amount, By: toDeciderJSON(e.By), Reason: e.Reason, At: e.At,
+			ReplacedManualPaymentIDs: e.Replaced, RestoredManualPaymentIDs: e.Restored}
 	}
 	return out
 }
@@ -198,6 +210,12 @@ func matchError(err error) error {
 		return &Error{Status: http.StatusForbidden, Code: CodeUndoNotDecider, Message: err.Error(), Cause: err}
 	case errors.Is(err, matches.ErrUndoWindow):
 		return conflict(CodeUndoWindowClosed, "")
+	case errors.Is(err, matches.ErrReplaceNotFound), errors.Is(err, matches.ErrReplaceCurrency):
+		return Validation("manual_payment_ids", err.Error())
+	case errors.Is(err, matches.ErrReplaceOtherOccurrence):
+		return conflict(CodeManualPaymentOtherOccurrence, "manual_payment_ids")
+	case errors.Is(err, matches.ErrReplaceUnavailable):
+		return conflict(CodeManualPaymentNotReplaceable, "manual_payment_ids")
 	}
 	return err
 }
@@ -256,6 +274,7 @@ type matchBody struct {
 	allowOverpayment            bool
 	reason                      *string
 	version                     *int64
+	manualPaymentIDs            []string
 }
 
 // decodeMatchBody decodes the members allowed (and required) for one
@@ -307,6 +326,14 @@ func decodeMatchBody(doc map[string]json.RawMessage, allowed, required []string)
 			fail("reason", "reason", "reason must be a string")
 		} else {
 			b.reason = &s
+		}
+	}
+	if raw, ok := doc["manual_payment_ids"]; ok && !isJSONNull(raw) && has(allowed, "manual_payment_ids") {
+		var ids []string
+		if json.Unmarshal(raw, &ids) != nil || slices.ContainsFunc(ids, func(id string) bool { return !resource.ValidID(id) }) {
+			fail("manual_payment_ids", "manual_payment_ids", "manual_payment_ids must be an array of manual payment identifiers")
+		} else {
+			b.manualPaymentIDs = ids
 		}
 	}
 	if raw, ok := doc["version"]; ok && !isJSONNull(raw) && has(allowed, "version") {
@@ -449,6 +476,10 @@ func registerMatches(s *Server, st matches.Store) {
 	})
 	action("unconfirm", nil, nil, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {
 		return st.Unconfirm(r.Context(), matchActor(r), id, v, b.reason)
+	})
+	// Confirm "as the payment I recorded" (decision D45, ADR-0049).
+	action("confirm-replacing", []string{"manual_payment_ids", "allow_overpayment"}, []string{"manual_payment_ids"}, func(r *http.Request, id string, v int64, b matchBody) (matches.Change, error) {
+		return st.ConfirmReplacing(r.Context(), matchActor(r), id, v, matches.Replacement{ManualPaymentIDs: b.manualPaymentIDs, AllowOverpayment: b.allowOverpayment, Reason: b.reason})
 	})
 }
 
