@@ -3665,7 +3665,7 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [merchant, moved, kept]
+                required: [merchant, moved, kept, replaced]
                 properties:
                   merchant:
                     $ref: "#/components/schemas/MerchantRecord"
@@ -3693,6 +3693,10 @@ paths:
                     type: integer
                     minimum: 0
                     description: Assignments of the merged merchant not moved because this one had its own for the slot.
+                  replaced:
+                    type: integer
+                    minimum: 0
+                    description: Automatic (rule or model) assignments of this merchant dropped because the merged merchant had the person's own for the slot.
         "409":
           description: version_conflict or merchant_archived.
           content:

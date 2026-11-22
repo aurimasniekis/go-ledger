@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +81,7 @@ func TestMerchantRecordsAPI(t *testing.T) {
 		t.Errorf("stale merge: %d %v", code, m)
 	}
 	code, m, _ = admin.do("POST", "/api/v1/merchants/"+mid+"/merge", `{"merchant_id":"`+oid+`"}`, "If-Match", `"3"`)
-	if code != 200 || asMap(t, m["moved"])["aliases"] != float64(2) || len(asList(t, asMap(t, m["merchant"])["aliases"])) != 5 {
+	if code != 200 || asMap(t, m["moved"])["aliases"] != float64(2) || len(asList(t, asMap(t, m["merchant"])["aliases"])) != 5 || m["replaced"] != float64(0) {
 		t.Fatalf("merge: %d %v", code, m)
 	}
 	if code, m, _ = admin.do("GET", "/api/v1/merchants/"+oid, ""); code != 200 || m["merged_into"] != mid || m["archived"] != true {
@@ -95,6 +97,15 @@ func TestMerchantRecordsAPI(t *testing.T) {
 	}
 	if code, m, _ = admin.do("DELETE", "/api/v1/merchants/"+mid, "", "If-Match", `"4"`); code != 409 || m["code"] != "merchant_in_use" {
 		t.Errorf("deleting a used merchant: %d %v", code, m)
+	}
+
+	// A merged merchant cannot be deleted either, and the message says why.
+	if code, m, _ = admin.do("GET", "/api/v1/merchants/"+oid, ""); code != 200 {
+		t.Fatalf("merged merchant: %d %v", code, m)
+	}
+	code, m, _ = admin.do("DELETE", "/api/v1/merchants/"+oid, "", "If-Match", fmt.Sprintf("\"%d\"", int64(m["version"].(float64))))
+	if msg, _ := m["message"].(string); code != 409 || m["code"] != "merchant_in_use" || !strings.Contains(msg, "merged into another merchant") {
+		t.Errorf("deleting a merged merchant: %d %v", code, m)
 	}
 
 	// The audit: merchant ids, counts, never a name.
