@@ -202,6 +202,62 @@ describe('bank connections page', () => {
     expect(c.getAllByText(BALANCE).length).toBeGreaterThan(0)
   })
 
+  it('disables Refresh during the cooldown, says how long, and enables it when it ends (D-B6c)', async () => {
+    const user = userEvent.setup()
+    installApi({
+      ...signedIn(),
+      ...list([connection({ as_of: '2026-11-22T09:00:00Z', refresh_available_at: '2026-11-22T09:04:10Z' })]),
+    })
+    renderApp('/connections')
+    const c = await card('Fake Bank')
+    // 4 min 10 s left rounds up: never "0 min" while it is still refused.
+    const btn = c.getByRole('button', { name: 'Refreshed just now, try again in 5 min' })
+    expect(btn).toBeDisabled()
+    expect(c.queryByRole('button', { name: 'Refresh now' })).toBeNull()
+    await user.click(btn) // a disabled button sends nothing
+  })
+
+  it('counts the cooldown in whole minutes, rounded up, from the server clock', async () => {
+    const { cooldownMinutes } = await import('./connection-card')
+    const c = { as_of: '2026-11-22T09:00:00Z', refresh_available_at: '2026-11-22T09:05:00Z' }
+    expect(cooldownMinutes(c, 0)).toBe(5)
+    expect(cooldownMinutes(c, 60_000)).toBe(4)
+    expect(cooldownMinutes(c, 4 * 60_000 + 59_000)).toBe(1)
+    expect(cooldownMinutes(c, 5 * 60_000)).toBe(0)
+    expect(cooldownMinutes({ ...c, refresh_available_at: null }, 0)).toBe(0)
+  })
+
+  it('re-enables Refresh once the cooldown has run out on the page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      installApi({
+        ...signedIn(),
+        ...list([connection({ as_of: '2026-11-22T09:00:00Z', refresh_available_at: '2026-11-22T09:01:00Z' })]),
+      })
+      renderApp('/connections')
+      const c = await card('Fake Bank')
+      expect(c.getByRole('button', { name: 'Refreshed just now, try again in 1 min' })).toBeDisabled()
+      await vi.advanceTimersByTimeAsync(61_000)
+      await waitFor(() => expect(c.getByRole('button', { name: 'Refresh now' })).toBeEnabled())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('explains a refresh refused by the cooldown without calling it a failure', async () => {
+    const user = userEvent.setup()
+    installApi({
+      ...signedIn(),
+      ...list(),
+      'POST /api/v1/bank-connections/01JD3Y4C8V9M2Q7W5R6T0XZC01/refresh': fail(429, 'refresh_cooldown', 'this connection was refreshed a moment ago; a refresh on request is allowed again in 3 min'),
+    })
+    renderApp('/connections')
+    const c = await card('Fake Bank')
+    await user.click(c.getByRole('button', { name: 'Refresh now' }))
+    expect(await c.findByRole('alert')).toHaveTextContent('refreshed a moment ago')
+    expect(c.getAllByText(BALANCE).length).toBeGreaterThan(0)
+  })
+
   it('starts a reconnect and sends the browser to the bank', async () => {
     const user = userEvent.setup()
     const calls = installApi({

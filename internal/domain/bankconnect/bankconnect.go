@@ -42,6 +42,7 @@ var (
 	ErrUnknownConsent = errors.New("bankconnect: no consent is waiting for this redirect")
 	// ErrNotActive: a refresh needs an active connection.
 	ErrNotActive = errors.New("bankconnect: the connection is not active")
+
 	// ErrPending: the connection's first consent has not completed.
 	ErrPending = errors.New("bankconnect: the connection's consent has not completed")
 	// ErrNoRedirect: no redirect URL is configured, so consent cannot start.
@@ -97,6 +98,12 @@ type Service struct {
 	// deadline the run is NOT cancelled: it goes on in the background and the
 	// answer says it is still running (D40.4). Zero waits until it ends.
 	RefreshTimeout time.Duration
+	// RefreshCooldown is how long after a refresh of a connection finished
+	// (by any trigger, any outcome) another refresh on request is refused
+	// with *CooldownError (decision D-B6c, banking.refresh.request_cooldown).
+	// The background scheduler does not use the service and is never held
+	// back. Zero switches the cooldown off.
+	RefreshCooldown time.Duration
 	// Log receives housekeeping failures that are not the caller's error; nil
 	// uses slog.Default.
 	Log *slog.Logger
@@ -110,6 +117,26 @@ type Service struct {
 	base   context.Context
 	cancel context.CancelFunc
 }
+
+// ErrRefreshCooldown is matched (errors.Is) by every *CooldownError: a refresh
+// on request finished less than Service.RefreshCooldown ago (decision D-B6c).
+var ErrRefreshCooldown = errors.New("bankconnect: a refresh of this connection finished a moment ago")
+
+// CooldownError is returned by Refresh while the connection's cooldown after
+// its last finished refresh has not ended. Nothing was started or recorded.
+type CooldownError struct {
+	// Until is when a refresh on request is allowed again (UTC).
+	Until time.Time
+	// RetryAfter is how long from now that is, always positive.
+	RetryAfter time.Duration
+}
+
+func (e *CooldownError) Error() string {
+	return fmt.Sprintf("bankconnect: the connection was refreshed a moment ago; a refresh on request is allowed again in %s", e.RetryAfter.Round(time.Second))
+}
+
+// Is makes errors.Is(err, ErrRefreshCooldown) true.
+func (e *CooldownError) Is(target error) bool { return target == ErrRefreshCooldown }
 
 // ErrShuttingDown is returned by Refresh once shutdown began (Wait was
 // called): no new detached run may start.
@@ -500,6 +527,8 @@ func (s *Service) Wait(ctx context.Context) error {
 // refresh that fails is not an error of this call: the run says how it ended
 // and last good data stays. ErrRefreshInProgress (banking) means a refresh is
 // already running; the caller should show that and try again later.
+// *CooldownError (errors.Is ErrRefreshCooldown) means the last refresh of the
+// connection finished less than RefreshCooldown ago: nothing starts.
 // ErrShuttingDown means Wait has been called (shutdown began): no run starts,
 // and the HTTP API answers 503 dependency_unavailable.
 func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.ConnectionID) (View, error) {
@@ -521,6 +550,18 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 	p, err := s.provider(conn.Application)
 	if err != nil {
 		return View{}, err
+	}
+	if s.RefreshCooldown > 0 {
+		runs, err := s.Facts.RefreshRuns(ctx, id, 1)
+		if err != nil {
+			return View{}, err
+		}
+		if len(runs) > 0 {
+			now := s.now()
+			if end := s.cooldownEnd(&runs[0]); end.After(now) {
+				return View{}, &CooldownError{Until: end, RetryAfter: end.Sub(now)}
+			}
+		}
 	}
 	// The run is detached from the request: a client that gives up, or the
 	// deadline below, never cancels a refresh half way (it would be recorded
@@ -659,6 +700,19 @@ type View struct {
 	// RefreshRunning is set when a refresh requested now outlived the wait and
 	// goes on in the background (a run still marked running also counts).
 	RefreshRunning bool
+	// RefreshAvailableAt is when a refresh on request is allowed again; zero
+	// when it is allowed now (no cooldown, none running down, or a run is
+	// still going, which the engine refuses by itself).
+	RefreshAvailableAt time.Time
+}
+
+// cooldownEnd returns when the cooldown after run ends, and zero when run
+// does not hold one back (still running, or the cooldown is off).
+func (s *Service) cooldownEnd(run *banking.RefreshRun) time.Time {
+	if s.RefreshCooldown <= 0 || run == nil || run.Outcome == banking.RefreshRunning || run.FinishedAt.IsZero() {
+		return time.Time{}
+	}
+	return run.FinishedAt.UTC().Add(s.RefreshCooldown)
 }
 
 // ConsentWarnDays is how far ahead an expiring consent is called out.
@@ -704,6 +758,9 @@ func (s *Service) view(ctx context.Context, c banking.Connection, sched map[bank
 		v.Schedule = &st
 	}
 	v.RefreshRunning = v.LastRun != nil && v.LastRun.Outcome == banking.RefreshRunning
+	if end := s.cooldownEnd(v.LastRun); end.After(v.AsOf) {
+		v.RefreshAvailableAt = end
+	}
 	return v, nil
 }
 

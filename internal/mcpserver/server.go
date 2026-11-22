@@ -330,6 +330,9 @@ func (s *server) result(t *boundTool, resp Response) *mcp.CallToolResult {
 	if msg == "" {
 		msg = http.StatusText(resp.Status)
 	}
+	if n, err := strconv.Atoi(resp.RetryAfter); err == nil && n > 0 {
+		msg += fmt.Sprintf(" (retry after %d seconds)", n)
+	}
 	return errorResult(codeOr(env.Code, "error"), fmt.Sprintf("%s failed (HTTP %d, %s): %s", t.Name, resp.Status, codeOr(env.Code, "error"), msg), json.RawMessage(resp.Body))
 }
 
