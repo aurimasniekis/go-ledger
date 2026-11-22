@@ -34,6 +34,23 @@ func TestBankRefreshDefaultsAndValidation(t *testing.T) {
 	wantProblem(t, got, "banking.refresh.max_backoff")
 }
 
+func TestBankRefreshRequestCooldown(t *testing.T) {
+	res, err := load(t, okEnv(nil), nil, nil, "")
+	if err != nil || res.Config.Banking.Refresh.RequestCooldown != 5*time.Minute {
+		t.Fatalf("default: %v %v", err, res.Config.Banking.Refresh.RequestCooldown)
+	}
+	for in, want := range map[string]time.Duration{"30s": 30 * time.Second, "0s": 0, "24h": 24 * time.Hour} {
+		res, err := load(t, okEnv(env{"LEDGER_BANKING_REFRESH_REQUEST_COOLDOWN": in}), nil, nil, "")
+		if err != nil || res.Config.Banking.Refresh.RequestCooldown != want {
+			t.Errorf("%s: %v %v", in, err, res.Config.Banking.Refresh.RequestCooldown)
+		}
+	}
+	for _, bad := range []string{"-1m", "25h", "soon"} {
+		_, err := load(t, okEnv(env{"LEDGER_BANKING_REFRESH_REQUEST_COOLDOWN": bad}), nil, nil, "")
+		wantProblem(t, problems(t, err), "banking.refresh.request_cooldown")
+	}
+}
+
 func TestBankStaleAfter(t *testing.T) {
 	res, err := load(t, okEnv(nil), nil, nil, "")
 	if err != nil || res.Config.Banking.StaleAfter != 24*time.Hour {

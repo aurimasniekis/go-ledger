@@ -206,6 +206,10 @@ func (p Plan) Missed(st payments.State, today calendar.Date) bool {
 		return false
 	}
 	switch {
+	case st.Timing != payments.StatusOverdue:
+		// Not overdue (for example the due day was moved later after the
+		// plan was made): a plan date cannot be missed before the occurrence is.
+		return false
 	case st.Status == payments.StatusCancelled, st.Status == payments.StatusPaid, st.Timing == payments.StatusNotRecorded:
 		return false
 	}

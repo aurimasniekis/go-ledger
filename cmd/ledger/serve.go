@@ -244,7 +244,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		})
 	}
 	connSvc := &bankconnect.Service{Facts: facts, Providers: providerMap(bankProviders), Engine: engine, Audit: auditLog, RedirectURL: cfg.Banking.RedirectURL,
-		ConsentTTL: cfg.Banking.ConsentTTL, StaleAfter: cfg.Banking.StaleAfter, Log: log, RefreshTimeout: refreshTimeout(cfg.HTTP.WriteTimeout)}
+		ConsentTTL: cfg.Banking.ConsentTTL, StaleAfter: cfg.Banking.StaleAfter, Log: log, RefreshTimeout: refreshTimeout(cfg.HTTP.WriteTimeout), RefreshCooldown: cfg.Banking.Refresh.RequestCooldown}
 	if sched != nil {
 		connSvc.Schedule = sched.Status
 	}

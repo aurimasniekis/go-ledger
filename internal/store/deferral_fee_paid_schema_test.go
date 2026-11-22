@@ -17,6 +17,19 @@ func init() {
 			if n := queryInt(t, tx, "SELECT count(*) FROM deferral_plan_adjustments WHERE paid_at IS NOT NULL OR paid_actor_kind IS NOT NULL OR paid_actor_user IS NOT NULL OR paid_via IS NOT NULL"); n != 0 {
 				t.Errorf("%d adjustments are paid after the upgrade, want none", n)
 			}
+			// The rows the v28 fixture holds survive the rebuild: one plan, a live and
+			// a removed adjustment (still removed), and four history rows in order.
+			for q, want := range map[string]int{
+				"SELECT count(*) FROM deferral_plans":                                                                         1,
+				"SELECT count(*) FROM deferral_plan_adjustments":                                                              2,
+				"SELECT count(*) FROM deferral_plan_adjustments WHERE removed_at IS NOT NULL":                                 1,
+				"SELECT count(*) FROM deferral_plan_events":                                                                   4,
+				"SELECT count(*) FROM deferral_plan_events WHERE action = 'adjustment_removed' AND adjustment_id IS NOT NULL": 1,
+			} {
+				if n := queryInt(t, tx, q); n != want {
+					t.Errorf("%s = %d after the upgrade, want %d", q, n, want)
+				}
+			}
 			var ddl string
 			if err := tx.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'deferral_plan_events'").Scan(&ddl); err != nil {
 				return err

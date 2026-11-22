@@ -61,7 +61,7 @@ adjustment entries, and a creditor-approved change is a distinct plan type.
    alternative, undoing and keeping orphaned fees on a plan that can no longer change, has no place to mark them paid.)
    **A missed plan is visible** (D-DF 1). `missed` is true on the plan (and so on a month row's `deferral`, in
    `carried_in` rows, in the list and in the MCP tools) while the plan is active, its planned date is before today in the
-   reporting zone and the occurrence still owes something ("plan date passed, still owed"; `deferrals.Plan.Missed`). It is
+   reporting zone, the occurrence is overdue (its own due date has passed, so a due day moved later keeps it from being missed early) and it still owes something ("plan date passed, still owed"; `deferrals.Plan.Missed`). It is
    derived on every read from the plan and the occurrence's evidence, never stored and not payment state: it clears when
    the occurrence is paid, when the plan is revised to a later date and when the plan is undone, and a plan dated today is
    not missed yet. A plan never marks the occurrence paid or changes its overdue status, and a fee that is still planned
@@ -105,8 +105,8 @@ All nine recommendations were accepted. Items 7 and 8 are decided and built by l
    existing evidence (manual payment or allocation, D14 a / D8 a); the remainder stays planned on the plan's date.
    Instalments are not built in the initial build.
 5. Undo ends the plan; it does not step back one revision, and the history keeps every revision.
-6. A revision is refused once the occurrence owes nothing; an undo is allowed on an active plan, with the narrowing in
-   point 6 (a fee that is still planned is settled first).
+6. A revision is refused once the occurrence owes nothing; an undo is allowed on an active plan, with a narrowing:
+   undo is refused while a fee is still planned (Decision point 6 above), so the person settles it first.
 7. Automatic matching also accepts the planned date, plus or minus 3 days, for auto-confirm, in addition to the D9
    due-date window. Not built by this task.
 8. The outlook follows plans, showing deferred amounts separately as "deferred in". Not built by this task.

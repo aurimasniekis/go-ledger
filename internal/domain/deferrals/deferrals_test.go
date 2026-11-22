@@ -153,6 +153,19 @@ func TestMissedIsDerivedFromDateAndWhatIsStillOwed(t *testing.T) {
 			t.Errorf("%s: Missed = %v, want %v", c.name, got, c.want)
 		}
 	}
+	// The due-day move probe: due day 2, plan 2026-10-20, then the due day is
+	// moved to the 28th. On 2026-10-25 the plan date has passed but the
+	// occurrence is not overdue, so the plan is not missed; once it is overdue
+	// (and the plan date is past) it is.
+	moved := occ()
+	moved.DueDate = d("2026-10-28")
+	probe := deferrals.Plan{ID: "p", OccurrenceID: moved.ID, PlannedDate: d("2026-10-20"), Type: deferrals.TypePersonal}
+	if probe.Missed(state(moved, "", d("2026-10-25")), d("2026-10-25")) {
+		t.Error("the occurrence is not overdue yet (due day moved to the 28th): not missed")
+	}
+	if !probe.Missed(state(moved, "", d("2026-10-29")), d("2026-10-29")) {
+		t.Error("overdue and past the plan date: missed")
+	}
 	undone := plan("2026-11-19")
 	at := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
 	undone.UndoneAt = &at

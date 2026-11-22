@@ -389,6 +389,9 @@ func (m *mgmt) report(err error) {
 		return
 	}
 	say(m.stderr, "ledger: "+printable(ae.Error()))
+	if ae.RetryAfter > 0 {
+		say(m.stderr, fmt.Sprintf("retry after %d seconds", int((ae.RetryAfter+time.Second-1)/time.Second)))
+	}
 	switch {
 	case ledgerclient.IsVersionConflict(err) && ae.Reconciliation != nil:
 		say(m.stderr, fmt.Sprintf("someone else changed this object: its version is now %d. Read it again (get), check the change, and retry with --version %d.", ae.Reconciliation.CurrentVersion, ae.Reconciliation.CurrentVersion))

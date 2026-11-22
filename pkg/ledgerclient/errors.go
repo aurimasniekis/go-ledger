@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Error codes of the API's error envelope (ADR-0006, ADR-0011, ADR-0015).
@@ -59,6 +60,9 @@ type APIError struct {
 	Field     string       `json:"field,omitempty"`
 	Errors    []FieldError `json:"errors,omitempty"`
 	RequestID string       `json:"request_id"`
+	// RetryAfter is the Retry-After header of the answer (0 when absent), set
+	// for 429 and some 409/503 answers.
+	RetryAfter time.Duration `json:"-"`
 	// Reconciliation is set on a version_conflict only.
 	Reconciliation *Reconciliation `json:"reconciliation,omitempty"`
 }
