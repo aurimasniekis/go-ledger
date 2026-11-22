@@ -349,6 +349,14 @@ func (s *Store) Delete(ctx context.Context, actor audit.Actor, id string, expect
 			if _, err := store.UpdateVersioned(ctx, tx, table, "deleted_at = ?, updated_at = ?", id, expected, store.Timestamp{Time: now}, store.Timestamp{Time: now}); err != nil {
 				return err
 			}
+			// The kept row is invisible to reads, so what the person filed it
+			// under goes now (a hard delete does this by cascade): no
+			// bucket, category or label may refer to a commitment no read shows.
+			for _, q := range []string{"bucket_members", "category_assignments", "label_assignments"} {
+				if _, err := tx.ExecContext(ctx, "DELETE FROM "+q+" WHERE object_type = 'commitment' AND object_id = ?", id); err != nil {
+					return err
+				}
+			}
 		} else if err := store.DeleteVersioned(ctx, tx, table, id, expected); err != nil {
 			if isForeignKey(err) {
 				return commitments.ErrInUse
