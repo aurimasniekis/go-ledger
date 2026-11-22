@@ -684,6 +684,8 @@ describe('ambiguity and reasons in plain words', () => {
     start()
     const cards = await screen.findAllByRole('article', { name: 'Rent' })
     expect(cards).toHaveLength(2)
+    // Identical-looking competitors stay distinguishable by a short transaction reference.
+    expect(cards.map((c) => within(c).getByTestId('bank-ref').textContent)).toEqual([expect.stringContaining('…tx-a'), expect.stringContaining('…tx-b')])
     for (const card of cards) {
       expect(within(card).getByTestId('competing')).toHaveTextContent('2 suggestions compete for this occurrence')
       expect(card).toHaveTextContent('2 bank transactions could pay this occurrence, so a person has to choose.')
