@@ -157,6 +157,10 @@ var registry = func() []Group {
 		group("pulse", Singleton, GrantIntegrations, "events.pulse", sensitive("enabled", "url", "source", "name")),
 		group("mcp", Singleton, GrantSettings, "mcp", plain("enabled", "requests_per_minute", "burst", "max_request_bytes")),
 		group("logging", Singleton, GrantSettings, "log", plain("level")),
+		// The alert keys (task L6, ADR-0065) arrived after ADR-0066 was
+		// written; by its point 1 they are runtime settings. channels is
+		// sensitive because it lets alert events leave the machine (point 19).
+		group("alerts", Singleton, GrantSettings, "alerts", sensitive("channels"), plain("consent_horizon_days", "interval")),
 	}
 	for _, p := range decisionProviders {
 		specs := [][]memberSpec{{secret("api_key")}}

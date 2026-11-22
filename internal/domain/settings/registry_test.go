@@ -36,7 +36,7 @@ func TestRegistryShape(t *testing.T) {
 		}
 	}
 	// The sensitive members of the mixed groups are the ones point 8 names.
-	for group, want := range map[string]string{"banking": "redirect_url,enable_banking.base_url", "rates": "base_url", "reporting": "", "mcp": "", "logging": ""} {
+	for group, want := range map[string]string{"banking": "redirect_url,enable_banking.base_url", "rates": "base_url", "alerts": "channels", "reporting": "", "mcp": "", "logging": ""} {
 		g, _ := Lookup(group)
 		var got []string
 		for _, m := range g.Members {
