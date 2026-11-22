@@ -48,6 +48,7 @@ Two separate axes, separate types (`CommitmentStatus`, `DataState`), so a data s
 | Data state | Reconnect needed (bank consent ended; retrying cannot help) | link off | strong |
 | Data state | Temporary problem (bank unreachable; retry can help) | cloud off | default |
 | Data state | Waiting for the bank (consent started, not completed) | key | default |
+| Data state | Plan date passed (a deferral plan's date has passed and something planned is still unpaid; DF3) | calendar X | default |
 | Data state | Not fetched yet (connected, never refreshed) | question circle | quiet |
 | Data state | Up to date (refreshed within 24 h) | badge check | quiet, no hue |
 

@@ -2,6 +2,8 @@
 // decimal strings with their currency: the UI displays them and never does
 // arithmetic on them (ADR-0005).
 
+import type { DeferralPlan } from '@/features/deferrals/types'
+
 export interface Money {
   amount: string
   currency: string
@@ -44,6 +46,8 @@ export interface MonthItem {
   amount: Money
   version: number
   payment: PaymentState
+  /** The occurrence's active deferral plan (ADR-0050); null when it has none. It never changes the payment state beside it. */
+  deferral?: DeferralPlan | null
 }
 
 export interface MonthTotals {
@@ -56,12 +60,22 @@ export interface MonthTotals {
   occurrence_count: number
   overdue_count: number
   unconverted_evidence_count: number
+  /** What is planned to be paid this month: outstanding − deferred_out + carried_in + adjustments (ADR-0050). Absent from older servers. */
+  planned?: Money
+  /** The part of outstanding whose plan falls in a later month. */
+  deferred_out?: Money
+  /** Outstanding of earlier months' occurrences planned into this month. */
+  carried_in?: Money
+  /** Fees and charges still planned this month (not removed, not marked paid). */
+  adjustments?: Money
 }
 
 export interface MonthSummary {
   month: string
   as_of: string
   items: MonthItem[]
+  /** Occurrences of earlier months whose active plan falls in this month; they keep their own month and due date. */
+  carried_in?: MonthItem[]
   totals: MonthTotals[]
   freshness: {
     computed_at: string
