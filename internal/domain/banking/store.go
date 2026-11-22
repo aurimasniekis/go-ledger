@@ -169,11 +169,14 @@ type FactStore interface {
 	// error kind and provider code of cause (nil clears them).
 	SetConnectionStatus(ctx context.Context, id ConnectionID, status ConnectionStatus, cause error, at time.Time) (Connection, error)
 	// SetConnectionStatusForSession is SetConnectionStatus for a run that
-	// started with session: inside the same transaction it changes nothing
-	// when the connection has since been re-authorised (its session differs),
-	// so a stale failure cannot undo a reconnect. It returns the stored
-	// connection and whether the change was applied.
-	SetConnectionStatusForSession(ctx context.Context, id ConnectionID, session Sensitive, status ConnectionStatus, cause error, at time.Time) (Connection, bool, error)
+	// started with session and grantedAt (the connection's ConsentGrantedAt):
+	// inside the same transaction it changes nothing when the connection has
+	// since been re-authorised (either differs) or disconnected, so a stale
+	// failure cannot undo a reconnect or a disconnect. It never touches the
+	// consent state of a reconnect in flight. When nothing is applied, ev (may
+	// be nil) is written in that transaction. It returns the stored connection
+	// and whether the change was applied.
+	SetConnectionStatusForSession(ctx context.Context, id ConnectionID, session Sensitive, grantedAt time.Time, status ConnectionStatus, cause error, at time.Time, ev AuditFunc) (Connection, bool, error)
 
 	UpsertAccounts(ctx context.Context, id ConnectionID, accounts []Account, seenAt time.Time) ([]AccountUpsert, error)
 	Accounts(ctx context.Context, id ConnectionID) ([]StoredAccount, error)

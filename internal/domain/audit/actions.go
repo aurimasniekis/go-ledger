@@ -71,7 +71,12 @@ const (
 	// ADR-0039). The matches it wrote are audited one by one as
 	// payment_match.* with the system as actor. The target is the run
 	// (target ID "run"). Details: the counts.
-	PaymentMatchingRun Action = "payment_matching.run" // Details: confirmed, suggested, dropped, skipped
+	// A refresh that failed with reconnect-required (or similar) after the
+	// connection was re-authorised or disconnected left the connection as it
+	// is. Details: provider, application, kind (the failure's), status (the
+	// status it would have set).
+	BankStatusUpdateSkipped Action = "bank_connection.status_update_skipped"
+	PaymentMatchingRun      Action = "payment_matching.run" // Details: confirmed, suggested, dropped, skipped
 	// A person asked for an exchange-rate refresh through the API (FX2c,
 	// ADR-0048). The target is the refresh (target type "rates", ID "refresh").
 	// Details: the outcome, the number of currencies refreshed and, on failure,
@@ -190,6 +195,7 @@ var Definitions = map[Action][]Field{
 	BankConnectionDisconnected:     {f("provider"), f("application")},
 	BankRefreshRequested:           {f("provider"), f("application"), f("outcome", refreshOutcomes...)},
 	BankSessionEndFailed:           {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled")},
+	BankStatusUpdateSkipped:        {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled"), f("status", "reconnect_required", "failed")},
 	PaymentMatchingRun:             {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
 	RatesRefreshRequested:          {f("outcome", "succeeded", "partial", "failed"), f("refreshed"), f("error_kind", "unavailable", "rate_limited", "permanent", "internal"), f("error_code")},
 }

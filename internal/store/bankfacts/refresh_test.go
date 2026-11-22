@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking/bankingtest"
@@ -103,6 +104,103 @@ func TestStaleRunFailureDoesNotUndoReconnect(t *testing.T) {
 	}
 	if c.Status != banking.ConnectionActive || c.Session.Equal(oldSession) || c.LastErrorKind != "" {
 		t.Errorf("reconnect undone by a stale run: status %s, error kind %q", c.Status, c.LastErrorKind)
+	}
+}
+
+type recordedAudit struct{ events []audit.Event }
+
+func (r *recordedAudit) WriteAudit(_ context.Context, _ *sql.Tx, ev audit.Event) error {
+	r.events = append(r.events, ev)
+	return nil
+}
+
+func staleStatus(e *engineEnv, sess banking.Sensitive, granted time.Time, ev banking.AuditFunc) (banking.Connection, bool) {
+	e.t.Helper()
+	c, applied, err := e.facts.SetConnectionStatusForSession(e.ctx, e.conn.ID, sess, granted, banking.ConnectionReconnectRequired,
+		&banking.Error{Kind: banking.KindReconnectRequired, Code: "session_expired"}, e.clock.now, ev)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return c, applied
+}
+
+// A stale failure of the current session while a reconnect is still in flight
+// must not clear the reconnect's consent state: its callback still claims it
+// and activates the connection.
+func TestStaleFailureKeepsReconnectInFlight(t *testing.T) {
+	e := newEngineEnv(t, banking.ModeApp)
+	conn, err := e.facts.Connection(e.ctx, e.conn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.p.StartConsent(e.ctx, banking.ConsentRequest{Institution: bankingtest.Standard().Institutions[0], RedirectURL: "https://ledger.example/cb", State: "s2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.facts.BeginReconnectBy(e.ctx, e.conn.ID, "s2", "user", e.clock.now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, applied := staleStatus(e, conn.Session, conn.ConsentGrantedAt, nil); !applied {
+		t.Fatal("a failure of the current session was not recorded")
+	}
+	claim, err := e.facts.ClaimConsent(e.ctx, "s2", "user", e.clock.now, time.Hour)
+	if err != nil {
+		t.Fatalf("claim after a stale failure: %v", err)
+	}
+	sess, err := e.p.CompleteConsent(e.ctx, banking.ConsentCompletion{State: "s2", Code: bankingtest.AuthorizationCode("s2")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := e.facts.ActivateClaimed(e.ctx, claim, sess, e.clock.now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Status != banking.ConnectionActive || c.LastErrorKind != "" {
+		t.Errorf("after activation: status %s, error kind %q", c.Status, c.LastErrorKind)
+	}
+}
+
+// A refresh failing after a disconnect must not bring the connection back as
+// reconnect-required, and a different grant time with the same session
+// reference is a different authorisation. Each skip is recorded.
+func TestStaleFailureSkips(t *testing.T) {
+	e := newEngineEnv(t, banking.ModeApp)
+	rec := &recordedAudit{}
+	e.facts.WithAudit(rec)
+	conn, err := e.facts.Connection(e.ctx, e.conn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := func(c banking.Connection) audit.Event {
+		return audit.Event{Action: audit.BankStatusUpdateSkipped, Actor: audit.System, TargetType: "bank_connection", TargetID: string(c.ID), At: e.clock.now,
+			Details: map[string]string{"provider": c.Provider, "application": c.Application, "kind": "reconnect_required", "status": "reconnect_required"}}
+	}
+
+	// Same reference, re-granted later.
+	e.clock.now = e.clock.now.Add(time.Minute)
+	if _, err := e.facts.ActivateConnection(e.ctx, e.conn.ID, banking.Session{Reference: conn.Session, ValidUntil: conn.ConsentValidUntil}, e.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, applied := staleStatus(e, conn.Session, conn.ConsentGrantedAt, ev); applied {
+		t.Error("a failure of an earlier grant with a reused session reference was applied")
+	}
+	if len(rec.events) != 1 {
+		t.Fatalf("audit events %d, want 1", len(rec.events))
+	}
+
+	// Disconnected.
+	cur, err := e.facts.Connection(e.ctx, e.conn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.facts.DisconnectConnection(e.ctx, e.conn.ID, cur.Version, e.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	c, applied := staleStatus(e, cur.Session, cur.ConsentGrantedAt, ev)
+	if applied || c.Status != banking.ConnectionDisconnected {
+		t.Errorf("after a disconnect: applied %v, status %s", applied, c.Status)
+	}
+	if len(rec.events) != 2 {
+		t.Errorf("audit events %d, want 2", len(rec.events))
 	}
 }
 
