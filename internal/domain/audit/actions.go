@@ -265,7 +265,7 @@ var Definitions = map[Action][]Field{
 	MerchantDeleted:                  {f("via", matchVias...)},
 	MerchantAliasAdded:               {f("via", matchVias...)},
 	MerchantAliasRemoved:             {f("via", matchVias...)},
-	MerchantMerged:                   {f("via", matchVias...), f("merged_from"), f("aliases"), f("decisions"), f("categories"), f("labels"), f("kept")},
+	MerchantMerged:                   {f("via", matchVias...), f("merged_from"), f("aliases"), f("decisions"), f("categories"), f("labels"), f("kept"), f("enrichments"), f("replaced")},
 	OrganisationDefinitionCreated:    definitionFields(),
 	OrganisationDefinitionUpdated:    definitionFields(f("fields")),
 	OrganisationDefinitionArchived:   definitionFields(),

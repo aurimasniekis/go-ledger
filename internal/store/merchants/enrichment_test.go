@@ -225,6 +225,45 @@ func TestPendingOrdersNewRowsThenOldestRechecks(t *testing.T) {
 	}
 }
 
+// A none answer older than the watermark is listed once; a failed re-lookup
+// backs it off for the recheck interval instead of listing it again at once.
+func TestWatermarkRecheckBacksOffAfterAFailedLookup(t *testing.T) {
+	f := newFixture(t)
+	ctx := f.ctx
+	id := f.tx("COFFEE KIOSK").ID
+	f.now = t0
+	f.record(id, merchants.Answer{Status: merchants.StatusNone, Source: "local"})
+	watermark := t0.Add(time.Hour)
+	cutoff := func(now time.Time) time.Time { return now.Add(-24 * time.Hour) }
+	has := func(now time.Time, recheckNone bool) bool {
+		got, err := f.ms.Pending(ctx, 100, cutoff(now), recheckNone, watermark)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range got {
+			if c.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(t0.Add(2*time.Hour), false) {
+		t.Fatal("a none answer older than the watermark is not listed")
+	}
+	f.now = t0.Add(2 * time.Hour)
+	f.record(id, merchants.Answer{Status: merchants.StatusUnavailable, Source: "remote"})
+	f.now = t0.Add(2*time.Hour + time.Minute)
+	if has(f.now, false) || has(f.now, true) {
+		t.Fatal("the row is listed again a minute after its failed re-lookup")
+	}
+	if has(t0.Add(25*time.Hour), true) {
+		t.Fatal("the row is listed before the recheck interval passed")
+	}
+	if !has(t0.Add(27*time.Hour), true) {
+		t.Fatal("the row is not listed once the recheck interval passed")
+	}
+}
+
 func sortedTail(ids []banking.TransactionID, n int) []banking.TransactionID {
 	head := append([]banking.TransactionID(nil), ids[:len(ids)-n]...)
 	sort.Slice(head, func(i, j int) bool { return head[i] < head[j] })

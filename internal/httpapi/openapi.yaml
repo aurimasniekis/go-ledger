@@ -3442,7 +3442,8 @@ paths:
       summary: Delete a merchant record
       description: |
         Deletes a merchant that no decision, organisation assignment or merged merchant refers to,
-        with its aliases (409 merchant_in_use otherwise: archive or merge it). Enrichment answers that
+        with its aliases. A merchant that was itself merged into another cannot be deleted either, so
+        merged ids keep resolving (409 merchant_in_use in both cases: archive or merge instead). Enrichment answers that
         resolved to it lose the reference (they are derived data). Requires If-Match. Audited
         (merchant.deleted).
       tags: [merchants]
@@ -3637,7 +3638,8 @@ paths:
         with merged_into set to this one; merchants merged into it earlier now point here. This
         merchant must be active (409 merchant_archived) and at the If-Match version; the other may be
         archived but not merged (409 merchant_archived). Merging a merchant into itself is a 400.
-        Audited (merchant.merged with merged_from and the counts).
+        Audited (merchant.merged with merged_from and the counts: aliases, decisions, enrichments,
+        categories, labels, kept, and replaced automatic assignments).
       tags: [merchants]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
