@@ -2,12 +2,16 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/decisions"
+	"github.com/aurimasniekis/go-ledger/internal/domain/decisiontasks"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	decstore "github.com/aurimasniekis/go-ledger/internal/store/decisions"
+	organisationstore "github.com/aurimasniekis/go-ledger/internal/store/organisation"
 )
 
 // decisionAdapters are the decision-provider adapters built into this
@@ -55,4 +59,25 @@ func buildDecisions(cfg config.Decisions, db *store.DB, aw store.AuditWriter, no
 		return nil, fmt.Errorf("%w (this version has no decision-provider adapters yet; switch the decisions.tasks.* off)", err)
 	}
 	return svc, nil
+}
+
+// buildDecisionTrigger returns what asks the decision tasks about the
+// transactions a bank refresh stored (L6d, ADR-0065), or nil when svc is nil
+// (no task enabled). It never fails an import: the import engine calls it after
+// the refresh was stored, and every failure is logged. No merchant lookup is
+// given: nothing classifies a merchant as a transfer yet (ADR-0060 note N4), so
+// the merchant name is never sent rather than sent for a transfer.
+func buildDecisionTrigger(svc *decisions.Service, cfg config.Decisions, db *store.DB, aw store.AuditWriter, now func() time.Time, facts banking.FactStore, org *organisationstore.Store, log *slog.Logger) *decisiontasks.Trigger {
+	if svc == nil {
+		return nil
+	}
+	dc, _ := cfg.Domain()
+	st := decstore.New(db, aw, now, nil)
+	st.UseCategoryResetter(org)
+	return &decisiontasks.Trigger{
+		Tasks:   decisiontasks.New(svc, st, org),
+		Source:  facts,
+		Enabled: func(n decisions.TaskName) bool { return dc.Tasks[n].Enabled },
+		Log:     log,
+	}
 }
