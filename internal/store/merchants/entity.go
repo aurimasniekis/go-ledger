@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -334,7 +335,8 @@ func count(ctx context.Context, tx *sql.Tx, q string, args ...any) (int, error) 
 }
 
 // DeleteEntity deletes a merchant that no decision, organisation assignment
-// or merged merchant refers to (merchants.ErrInUse otherwise), with its
+// or merged merchant refers to, and that was not itself merged into another
+// (merchants.ErrInUse otherwise: merged ids keep resolving), with its
 // aliases. Answers that resolved to it lose the reference (they are derived
 // data).
 func (s *Store) DeleteEntity(ctx context.Context, actor audit.Actor, id string, expected int64) error {
@@ -346,6 +348,10 @@ func (s *Store) DeleteEntity(ctx context.Context, actor audit.Actor, id string, 
 		}
 		if err := checkVersion(e, expected); err != nil {
 			return err
+		}
+		if e.MergedInto != "" {
+			// Merged ids keep resolving to the merchant they were merged into.
+			return fmt.Errorf("%w: it was merged into another merchant and its id still resolves to it", merchants.ErrInUse)
 		}
 		n, err := count(ctx, tx, "SELECT (SELECT count(*) FROM merchant_reviews WHERE merchant_id = ?1) + (SELECT count(*) FROM category_assignments WHERE merchant_id = ?1)"+
 			" + (SELECT count(*) FROM label_assignments WHERE merchant_id = ?1) + (SELECT count(*) FROM merchants WHERE merged_into_id = ?1)", id)
@@ -494,7 +500,8 @@ func (s *Store) Merge(ctx context.Context, actor audit.Actor, into string, expec
 			return err
 		}
 		// The category slot: the person's own outranks an automatic one.
-		if _, err = exec("DELETE FROM category_assignments WHERE object_type = 'merchant' AND merchant_id = ? AND origin <> 'user'"+
+		replaced := 0
+		if replaced, err = exec("DELETE FROM category_assignments WHERE object_type = 'merchant' AND merchant_id = ? AND origin <> 'user'"+
 			" AND EXISTS (SELECT 1 FROM category_assignments f WHERE f.object_type = 'merchant' AND f.merchant_id = ? AND f.origin = 'user')", into, from); err != nil {
 			return err
 		}
@@ -508,10 +515,12 @@ func (s *Store) Merge(ctx context.Context, actor audit.Actor, into string, expec
 			return err
 		}
 		// Labels, per label, the same way.
-		if _, err = exec("DELETE FROM label_assignments WHERE object_type = 'merchant' AND merchant_id = ? AND origin <> 'user'"+
-			" AND EXISTS (SELECT 1 FROM label_assignments f WHERE f.object_type = 'merchant' AND f.merchant_id = ? AND f.label_id = label_assignments.label_id AND f.origin = 'user')", into, from); err != nil {
+		dropped, err := exec("DELETE FROM label_assignments WHERE object_type = 'merchant' AND merchant_id = ? AND origin <> 'user'"+
+			" AND EXISTS (SELECT 1 FROM label_assignments f WHERE f.object_type = 'merchant' AND f.merchant_id = ? AND f.label_id = label_assignments.label_id AND f.origin = 'user')", into, from)
+		if err != nil {
 			return err
 		}
+		replaced += dropped
 		if kept, err = exec("DELETE FROM label_assignments WHERE object_type = 'merchant' AND merchant_id = ?"+
 			" AND EXISTS (SELECT 1 FROM label_assignments i WHERE i.object_type = 'merchant' AND i.merchant_id = ? AND i.label_id = label_assignments.label_id)", from, into); err != nil {
 			return err
@@ -530,7 +539,7 @@ func (s *Store) Merge(ctx context.Context, actor audit.Actor, into string, expec
 			return err
 		}
 		details := map[string]string{"merged_from": from}
-		for k, v := range map[string]int{"aliases": res.Aliases, "decisions": res.Decisions, "categories": res.Categories, "labels": res.Labels, "kept": res.Kept} {
+		for k, v := range map[string]int{"aliases": res.Aliases, "decisions": res.Decisions, "categories": res.Categories, "labels": res.Labels, "kept": res.Kept, "enrichments": res.Enrichments, "replaced": replaced} {
 			details[k] = strconv.Itoa(v)
 		}
 		if err := s.entityEvent(ctx, tx, audit.MerchantMerged, actor, into, at, details); err != nil {

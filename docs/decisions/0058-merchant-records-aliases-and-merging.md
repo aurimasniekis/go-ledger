@@ -55,17 +55,19 @@ batch.
 7. **Management API** (grants `merchants:read`/`merchants:write`, administrator-only like the rest of the merchant
    routes): `GET/POST /merchants`, `GET/PATCH/DELETE /merchants/{id}`, `POST /merchants/{id}/archive|unarchive`,
    `POST /merchants/{id}/aliases`, `DELETE /merchants/{id}/aliases/{alias_id}`, `POST /merchants/{id}/merge`;
-   versions with If-Match as everywhere. Delete only when no decision, assignment or merged merchant refers to it (409
-   `merchant_in_use`). The transaction merchant read, the review and the enrichment gain `merchant_id`; the review
+   versions with If-Match as everywhere. Delete only when no decision, assignment or merged merchant refers to it, and never a merchant that was itself
+   merged (409 `merchant_in_use`; merged ids keep resolving). The transaction merchant read, the review and the enrichment gain `merchant_id`; the review
    request accepts `merchant_id`. Audit actions `merchant.created|updated|archived|unarchived|deleted|alias_added|
-   alias_removed|merged` carry ids and counts, never a name or an alias; decision events gain `merchant_id`.
+   alias_removed|merged` carry ids and counts (a merge: aliases, decisions, enrichments, categories, labels, kept, and the
+   replaced automatic assignments), never a name or an alias; decision events gain `merchant_id`.
 8. **Re-resolution per merchant** (PR #124 review). A decision (or clearing one) about a transaction flags
    (`merchant_enrichments.recheck`) the identified answers of other, undecided transactions of the same merchant (same
    record, or the same name when it has none); the next enrichment pass looks them up first after never-looked-up
    rows, and any recorded answer clears the flag. **Rechecks of none reach every row**: the service keeps a watermark
    (when the person's confirmations last changed, or the first pass after a start) and every none or ambiguous answer
    older than it is listed, batch after batch over as many passes as it takes; rows answered since are not asked
-   about again. The 24-hour recheck with a remote source is unchanged.
+   about again, and a row whose re-lookup failed is not listed again until the recheck interval has passed since the
+   failure (the backoff of any failed lookup). The 24-hour recheck with a remote source is unchanged.
 
 ## Migration 0030 (forward-only, deterministic)
 

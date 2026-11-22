@@ -18,7 +18,9 @@ var _ enrichment.Store = (*Store)(nil)
 // same merchant changed (task M1); then those whose answer is "unavailable",
 // or "none" when recheckNone is set, and was last tried before recheckBefore,
 // and those whose "none" or "ambiguous" answer is older than changedBefore
-// (the person's confirmations changed since; zero means never), oldest
+// (the person's confirmations changed since; zero means never) and whose last
+// failed re-lookup, if any, is also before recheckBefore (a failure backs the
+// row off for the recheck interval, like any other), oldest
 // attempt first, so a small batch reaches every row over several passes.
 // Transactions that a booking replaced are left out.
 func (s *Store) Pending(ctx context.Context, limit int, recheckBefore time.Time, recheckNone bool, changedBefore time.Time) ([]enrichment.Candidate, error) {
@@ -36,9 +38,9 @@ WHERE t.superseded_by IS NULL AND t.booking_status <> 'cancelled'
   AND (e.transaction_id IS NULL
        OR e.recheck = 1
        OR ((e.status = 'unavailable' OR (e.status = 'none' AND ?)) AND coalesce(e.last_failed_at, e.retrieved_at) < ?)
-       OR (? AND e.status IN ('none', 'ambiguous') AND e.retrieved_at < ?))
+       OR (? AND e.status IN ('none', 'ambiguous') AND coalesce(e.last_failed_at, e.retrieved_at) < ? AND (e.last_failed_at IS NULL OR e.last_failed_at < ?)))
 ORDER BY CASE WHEN e.transaction_id IS NULL THEN 0 WHEN e.recheck = 1 THEN 1 ELSE 2 END, coalesce(e.last_failed_at, e.retrieved_at), t.imported_at DESC, t.id DESC LIMIT ?`,
-			recheckNone, store.Timestamp{Time: recheckBefore.UTC()}, !changedBefore.IsZero(), store.Timestamp{Time: since.UTC()}, limit)
+			recheckNone, store.Timestamp{Time: recheckBefore.UTC()}, !changedBefore.IsZero(), store.Timestamp{Time: since.UTC()}, store.Timestamp{Time: recheckBefore.UTC()}, limit)
 		if err != nil {
 			return err
 		}

@@ -280,6 +280,9 @@ func TestMergeMovesEverythingAtomically(t *testing.T) {
 			if e.TargetType != merchants.EntityTargetType || e.Details["merged_from"] == "" {
 				t.Fatalf("merge event: %+v", e)
 			}
+			if merged == 1 && (e.Details["enrichments"] != "1" || e.Details["replaced"] != "2") {
+				t.Fatalf("the first merge's audit counts: %+v", e.Details)
+			}
 		}
 	}
 	if merged != 2 {
@@ -334,6 +337,34 @@ func TestDeleteMerchantOnlyWhenUnused(t *testing.T) {
 	list, err := f.ms.ListEntities(f.ctx, merchants.EntityFilter{Limit: 10})
 	if err != nil || len(list) != 1 || list[0].ID != used {
 		t.Fatalf("list: %+v %v", list, err)
+	}
+}
+
+// A merged merchant, and one others were merged into, cannot be deleted: the
+// merged ids keep resolving to the merchant they point at.
+func TestDeleteRefusesMergedMerchants(t *testing.T) {
+	f := newFixture(t)
+	a, err := f.ms.CreateEntity(f.ctx, alice, "Into", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.ms.CreateEntity(f.ctx, alice, "From", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ms.Merge(f.ctx, alice, a.ID, a.Version, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	a, _ = f.ms.GetEntity(f.ctx, a.ID)
+	b, _ = f.ms.GetEntity(f.ctx, b.ID)
+	if err := f.ms.DeleteEntity(f.ctx, alice, a.ID, a.Version); !errors.Is(err, merchants.ErrInUse) {
+		t.Fatalf("deleting the merchant others were merged into: %v", err)
+	}
+	if err := f.ms.DeleteEntity(f.ctx, alice, b.ID, b.Version); !errors.Is(err, merchants.ErrInUse) {
+		t.Fatalf("deleting a merged merchant: %v", err)
+	}
+	if got, err := f.ms.GetEntity(f.ctx, b.ID); err != nil || got.MergedInto != a.ID {
+		t.Fatalf("merged id after the refusals: %+v %v", got, err)
 	}
 }
 
