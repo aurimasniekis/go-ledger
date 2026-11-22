@@ -44,8 +44,8 @@ a (simulated) bank, record commitments, read the month, match, correct, reload, 
   `active` with `needs_reconnect: false`; the card used to keep showing "Reconnect needed" with no "Refresh now". It now
   says "Reconnected, not refreshed yet", and an account's reconnect error is superseded per account (its last attempt is
   before the consent was granted), so accounts stay Stale and are never called fresh. The journey asserts this in the UI.
-- **Finding, not fixed: the month view says "No bank data connected yet"** even when a bank is connected and imported
-  (the API reports `freshness.bank.available` false by design for now, see `internal/httpapi/occurrences.go`).
+- **Finding, fixed by U5 (PR #100): the month view said "No bank data connected yet"** even when a bank was connected and
+  imported (the API reported `freshness.bank.available` false by design at the time). The month view now reads the bank state.
 - **No paging.** The double answers every transactions request with one page and no continuation key, so the adapter's
   paging is not exercised by this journey; it is covered by the in-package fake in `internal/providers/enablebanking/fake_test.go`.
 - **No JWT verification.** The double does not verify the adapter's JWT signature, so a wrong key would not fail here.
