@@ -1,12 +1,16 @@
 package matches_test
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking/bankingtest"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
@@ -599,5 +603,130 @@ func TestRestoreSkipsADeletedRecord(t *testing.T) {
 	}
 	if st := f.state(o); st.Status == payments.StatusPaid || st.EvidenceCount != 0 {
 		t.Errorf("the deleted record does not count: %+v", st)
+	}
+}
+
+// reReport makes the bank report the payment of old again under a new
+// transaction identifier: old stops being reported and the same payment is
+// reported as a new transaction. It returns the new transaction.
+func (f *fixture) reReport(old banking.StoredTransaction) banking.StoredTransaction {
+	f.t.Helper()
+	if err := f.db.WriteTx(f.ctx, func(ctx context.Context, sqlTx *sql.Tx) error {
+		// Let the next refresh reach early October again (ADR-0020 resumes a week before the cursor).
+		_, err := sqlTx.ExecContext(ctx, "UPDATE bank_account_sync SET transactions_through = '2026-09-30'")
+		return err
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+	f.p.Mutate(func(ds *bankingtest.Dataset) {
+		ds.Accounts[0].Transactions = append(ds.Accounts[0].Transactions, banking.Transaction{
+			Status: banking.StatusBooked, ProviderStatus: "BOOK", Amount: money.MustParse("-12.99", "EUR"),
+			BookingDate: d("2026-10-06"), ValueDate: d("2026-10-06"), Description: "STREAMING SERVICE RE-SENT",
+		})
+	})
+	f.refresh()
+	f.markGone(old)
+	return f.tx("STREAMING SERVICE RE-SENT")
+}
+
+// reReported sets up the re-reported payment: the old match replaces record p
+// and is held once the bank stops reporting its transaction; the same payment
+// is then suggested again as a new transaction, next.
+func reReported(t *testing.T) (f *fixture, old, next matches.Match, o occurrences.Occurrence, p payments.ManualPayment) {
+	t.Helper()
+	f = newFixture(t)
+	s, occ := f.suggestion()
+	p = f.record(occ, "13.49")
+	ch, err := f.replacing(alice, s, false, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nx, err := f.match(f.reReport(f.tx("STREAMING SERVICE")), occ, "12.99", matches.OriginAutoRule, matches.StateSuggested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f, ch.Match, nx.Match, occ, p
+}
+
+// TestReReportedPaymentReplacedAfterUnmatch (X5e, ADR-0049 amendment A): the
+// bank re-reports a replaced payment under a new transaction identifier. The
+// old match is held, so its record counts again and the new transaction cannot
+// take the record. The documented path: unmatch the old match, which restores
+// the record, then confirm the new transaction as replacing it.
+func TestReReportedPaymentReplacedAfterUnmatch(t *testing.T) {
+	f, old, next, o, p := reReported(t)
+	if _, err := f.replacing(alice, next, false, p.ID); !errors.Is(err, matches.ErrReplaceUnavailable) {
+		t.Fatalf("the held match still replaces the record: %v", err)
+	}
+	if st := f.state(o); st.Status != payments.StatusPaid || st.Paid.String() != "13.49 EUR" || st.Overpaid.Sign() != 0 {
+		t.Fatalf("held: the record pays the occurrence: %+v", st)
+	}
+
+	if _, err := f.ms.Unmatch(f.ctx, alice, old.ID, old.Version, reason("the bank re-reported it")); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.manual(o); got[p.ID] != "" {
+		t.Errorf("unmatch did not restore the record: %v", got)
+	}
+	if st := f.state(o); st.Paid.String() != "13.49 EUR" || st.Overpaid.Sign() != 0 || st.EvidenceCount != 1 {
+		t.Errorf("restored record pays the occurrence once: %+v", st)
+	}
+	if m, err := f.ms.Get(f.ctx, old.ID); err != nil || m.CountsAsEvidence() || m.State == matches.StateConfirmed {
+		t.Errorf("the old match after unmatch: %+v %v", m, err)
+	}
+
+	ch, err := f.replacing(alice, next, false, p.ID)
+	if err != nil {
+		t.Fatalf("confirm the new transaction as replacing the record: %v", err)
+	}
+	st := f.state(o)
+	if st.Status != payments.StatusPaid || st.Paid.String() != "12.99 EUR" || st.Shortfall.String() != "0.50 EUR" ||
+		st.Overpaid.Sign() != 0 || st.EvidenceCount != 1 {
+		t.Errorf("paid by the new transaction within the tolerance: %+v", st)
+	}
+	if want := string(payments.EvidenceBankTransaction) + ":" + ch.Match.ID; strings.Join(f.evidenceKinds(o), ",") != want {
+		t.Errorf("evidence after the replacement: %v, want %s", f.evidenceKinds(o), want)
+	}
+	if got := f.manual(o); got[p.ID] != ch.Match.ID {
+		t.Errorf("the record is replaced by the new match: %v", got)
+	}
+}
+
+// TestAllowOverpaymentCountsTheHeldRecordToo (X5e): the route the error hint
+// and the MCP description warn against. With allow_overpayment the held record
+// and the new match both count, and the second payment shows as overpaid.
+func TestAllowOverpaymentCountsTheHeldRecordToo(t *testing.T) {
+	f, _, next, o, _ := reReported(t)
+	if _, err := f.ms.Confirm(f.ctx, alice, next.ID, next.Version, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.state(o); st.Paid.String() != "26.48 EUR" || st.Overpaid.String() != "12.99 EUR" {
+		t.Errorf("held record and new match both count: %+v", st)
+	}
+}
+
+// TestHoldShowsOverpaymentTheCheckAccepts (X5e item 2, ADR-0049 amendment E):
+// during a hold the overpayment check counts the replacing match's amount (12.99)
+// while the state counts the held record's amount (13.49). So a 0.50 payment the
+// check accepts shows as overpaid 0.50 until the transaction is reported again.
+// This pins the documented behaviour; the check is not aligned to the record.
+func TestHoldShowsOverpaymentTheCheckAccepts(t *testing.T) {
+	f := newFixture(t)
+	s, o := f.suggestion()
+	p := f.record(o, "13.49")
+	if _, err := f.replacing(alice, s, false, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	streaming := f.tx("STREAMING SERVICE")
+	f.markGone(streaming)
+	if _, err := f.match(f.tx("RENT 2026-10"), o, "0.50", matches.OriginUser, matches.StateConfirmed); err != nil {
+		t.Fatalf("the check accepts 12.99 + 0.50 against 13.49: %v", err)
+	}
+	if st := f.state(o); st.Paid.String() != "13.99 EUR" || st.Overpaid.String() != "0.50 EUR" {
+		t.Errorf("during the hold the record counts at its amount: %+v", st)
+	}
+	f.markReported(streaming)
+	if st := f.state(o); st.Paid.String() != "13.49 EUR" || st.Overpaid.Sign() != 0 {
+		t.Errorf("reported again, nothing is overpaid: %+v", st)
 	}
 }

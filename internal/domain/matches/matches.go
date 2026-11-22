@@ -305,7 +305,7 @@ var (
 	// ErrOverpaid refuses a confirmation that would take the occurrence's
 	// payment evidence past its amount, unless overpayment is explicitly
 	// allowed.
-	ErrOverpaid = errors.New("this would pay the occurrence more than its amount; allow overpayment explicitly if that is what happened")
+	ErrOverpaid = errors.New("this would pay the occurrence more than its amount; allow overpayment only if the payment really is larger than the amount due. If the bank re-reported a payment that an earlier match already replaces, unmatch that earlier match first (this restores the manual record it replaced), then confirm the new transaction as replacing that record")
 	// ErrScale refuses an allocation with more decimal places than the
 	// transaction's amount: it would leave an unpayable sub-unit remainder.
 	ErrScale = errors.New("the allocation has more decimal places than the bank transaction's amount")

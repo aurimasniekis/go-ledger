@@ -98,6 +98,14 @@ A. **A replacement is on hold while its match does not count (proposed default).
    Alternative considered: keep the records replaced and only flag the occurrence for review. That leaves the month
    view showing an unpaid (or overdue) commitment the person paid and recorded, because of the bank's reporting.
    Because the hold is derived, the record's version does not change when the bank's reporting changes (point C).
+
+**Re-reported payment (X5e).** When the bank re-reports the same payment under a new transaction identifier, the old
+match is held and its record keeps counting, so the new transaction cannot take that record: confirming it as
+replacing the record is refused (409 `manual_payment_not_replaceable`). Confirming it with `allow_overpayment` is not
+the way out: the held record and the new match then both count, and the second payment shows as `overpaid_amount`. The
+path is: **unmatch the old match** (final; point 4 applies, so it restores the record and changes nothing else), then
+**confirm the new transaction as replacing that record**. The same path is named in the `occurrence_overpaid` message
+and in the MCP description of `confirm_payment_match_replacing`. Test: `TestReReportedPaymentReplacedAfterUnmatch`.
 B. **Unmatch restores without an overpayment check (documented).** Restoring can take an occurrence past its amount
    when the person recorded another payment after the replacement (record 13.49 replaced by a 12.99 bank match, then a
    0.50 record, then unmatch: 13.99 paid). These are the person's own records, each counted once; manual payments are
@@ -113,5 +121,17 @@ D. **No restoration entry for a deleted record.** A record deleted while replace
    unmatch: its replacement row is still closed (so the match's history lists it under `restored_manual_payment_ids`
    and nothing is left active), but no `manual_payment.restored` audit entry is written and its version is left alone.
 
+
+E. **Overpayment shown during a hold (X5e, documented; not changed).** While a match is held (point A) the state counts
+   the held record at its own amount, but the overpayment check counts the replacing match at its amount, because every
+   confirmed match counts there (ADR-0035). When the two amounts differ, a payment the check accepts can show as
+   overpaid until the transaction is reported again. Example: an occurrence of 13.49, a record of 13.49 replaced by a
+   12.99 match, then a 0.50 match added during the hold. The check accepts it (12.99 + 0.50 fits 13.49) while the state
+   shows 13.99 paid and 0.50 overpaid. Reported again, the record stops counting and the state shows 13.49 paid with
+   nothing overpaid. The check is not aligned to the record's amount: that would make a refusal depend on whether the
+   bank reports the transaction at that moment, which point A keeps out of the check. Test:
+   `TestHoldShowsOverpaymentTheCheckAccepts`. Anything that shows `overpaid_amount` during a hold should expect this.
+
 Tests: `internal/store/matches/replace_test.go` (`TestReplacementOnHoldWhileTheMatchDoesNotCount`,
-`TestUnmatchRestoreCanOverpayVisibly`, `TestReplacementChangesTheRecordsVersion`, `TestRestoreSkipsADeletedRecord`).
+`TestUnmatchRestoreCanOverpayVisibly`, `TestReplacementChangesTheRecordsVersion`, `TestRestoreSkipsADeletedRecord`,
+`TestReReportedPaymentReplacedAfterUnmatch`, `TestHoldShowsOverpaymentTheCheckAccepts`).
