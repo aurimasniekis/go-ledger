@@ -99,9 +99,17 @@ func TestMCPOrganisationJourney(t *testing.T) {
 	if r := call(t, rc, "list_labels", nil); r.IsError {
 		t.Errorf("read: %s", resultText(r))
 	}
+	// Every tool that removes, deletes or resets organisation data is marked destructive.
+	byName := map[string]mcpserver.Tool{}
 	for _, tl := range mcpserver.Tools() {
-		if strings.Contains(tl.Name, "organisation") && tl.Kind == mcpserver.KindWrite {
-			t.Errorf("%s: unexpected write tool", tl.Name)
+		byName[tl.Name] = tl
+	}
+	for _, name := range []string{"delete_category", "delete_label", "delete_bucket", "remove_bucket_member", "reset_object_category", "remove_object_label"} {
+		tl, ok := byName[name]
+		if !ok {
+			t.Errorf("%s: no such tool", name)
+		} else if tl.Kind != mcpserver.KindDestructive {
+			t.Errorf("%s: kind %v, want destructive", name, tl.Kind)
 		}
 	}
 }

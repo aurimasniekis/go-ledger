@@ -2,6 +2,7 @@ package ledgerclient
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"net/url"
 )
@@ -108,21 +109,27 @@ type DefinitionDeleted struct {
 
 type definitionOps struct{ list, create, get, update, archive, unarchive, del operation }
 
-func opsOf(kind string) definitionOps {
+func opsOf(kind string) (definitionOps, error) {
 	switch kind {
+	case KindCategory:
+		return definitionOps{opListCategories, opCreateCategory, opGetCategory, opUpdateCategory, opArchiveCategory, opUnarchiveCategory, opDeleteCategory}, nil
 	case KindLabel:
-		return definitionOps{opListLabels, opCreateLabel, opGetLabel, opUpdateLabel, opArchiveLabel, opUnarchiveLabel, opDeleteLabel}
+		return definitionOps{opListLabels, opCreateLabel, opGetLabel, opUpdateLabel, opArchiveLabel, opUnarchiveLabel, opDeleteLabel}, nil
 	case KindBucket:
-		return definitionOps{opListBuckets, opCreateBucket, opGetBucket, opUpdateBucket, opArchiveBucket, opUnarchiveBucket, opDeleteBucket}
+		return definitionOps{opListBuckets, opCreateBucket, opGetBucket, opUpdateBucket, opArchiveBucket, opUnarchiveBucket, opDeleteBucket}, nil
 	}
-	return definitionOps{opListCategories, opCreateCategory, opGetCategory, opUpdateCategory, opArchiveCategory, opUnarchiveCategory, opDeleteCategory}
+	return definitionOps{}, fmt.Errorf("ledgerclient: unknown definition kind %q (want %q, %q or %q)", kind, KindCategory, KindLabel, KindBucket)
 }
 
 // ListDefinitions returns one page of categories, labels or buckets (kind is
 // KindCategory, KindLabel or KindBucket; needs organisation:read).
 func (c *Client) ListDefinitions(ctx context.Context, kind string, f DefinitionFilter) (Page[Definition], error) {
 	var p Page[Definition]
-	err := c.do(ctx, request{op: opsOf(kind).list, query: f.query(kind)}, &p)
+	ops, err := opsOf(kind)
+	if err != nil {
+		return p, err
+	}
+	err = c.do(ctx, request{op: ops.list, query: f.query(kind)}, &p)
 	return p, err
 }
 
@@ -137,7 +144,11 @@ func (c *Client) AllDefinitions(ctx context.Context, kind string, f DefinitionFi
 // CreateDefinition creates a category, label or bucket (needs organisation:write).
 func (c *Client) CreateDefinition(ctx context.Context, kind string, in NewDefinition) (*Definition, error) {
 	var d Definition
-	if err := c.do(ctx, request{op: opsOf(kind).create, body: in}, &d); err != nil {
+	ops, err := opsOf(kind)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.do(ctx, request{op: ops.create, body: in}, &d); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -146,7 +157,11 @@ func (c *Client) CreateDefinition(ctx context.Context, kind string, in NewDefini
 // GetDefinition returns one definition.
 func (c *Client) GetDefinition(ctx context.Context, kind, id string) (*Definition, error) {
 	var d Definition
-	if err := c.do(ctx, request{op: opsOf(kind).get, pathID: id}, &d); err != nil {
+	ops, err := opsOf(kind)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.do(ctx, request{op: ops.get, pathID: id}, &d); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -156,7 +171,11 @@ func (c *Client) GetDefinition(ctx context.Context, kind, id string) (*Definitio
 // to the definition whose current version is version.
 func (c *Client) UpdateDefinition(ctx context.Context, kind, id string, version int64, patch MergePatch) (*Definition, error) {
 	var d Definition
-	if err := c.do(ctx, request{op: opsOf(kind).update, pathID: id, version: version, body: patch}, &d); err != nil {
+	ops, err := opsOf(kind)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.do(ctx, request{op: ops.update, pathID: id, version: version, body: patch}, &d); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -166,7 +185,11 @@ func (c *Client) UpdateDefinition(ctx context.Context, kind, id string, version 
 // new use.
 func (c *Client) ArchiveDefinition(ctx context.Context, kind, id string, version int64) (*Definition, error) {
 	var d Definition
-	if err := c.do(ctx, request{op: opsOf(kind).archive, pathID: id, version: version, body: struct{}{}}, &d); err != nil {
+	ops, err := opsOf(kind)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.do(ctx, request{op: ops.archive, pathID: id, version: version, body: struct{}{}}, &d); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -175,7 +198,11 @@ func (c *Client) ArchiveDefinition(ctx context.Context, kind, id string, version
 // UnarchiveDefinition makes an archived definition usable again.
 func (c *Client) UnarchiveDefinition(ctx context.Context, kind, id string, version int64) (*Definition, error) {
 	var d Definition
-	if err := c.do(ctx, request{op: opsOf(kind).unarchive, pathID: id, version: version, body: struct{}{}}, &d); err != nil {
+	ops, err := opsOf(kind)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.do(ctx, request{op: ops.unarchive, pathID: id, version: version, body: struct{}{}}, &d); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -187,7 +214,11 @@ func (c *Client) DeleteDefinition(ctx context.Context, kind, id string, version 
 	q := url.Values{}
 	setIf(q, "reassign_to", reassignTo)
 	var out DefinitionDeleted
-	if err := c.do(ctx, request{op: opsOf(kind).del, pathID: id, version: version, query: q}, &out); err != nil {
+	ops, err := opsOf(kind)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.do(ctx, request{op: ops.del, pathID: id, version: version, query: q}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

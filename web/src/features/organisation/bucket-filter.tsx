@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/input'
 import { Field } from '@/components/field'
 import { holds, useMe } from '@/lib/auth'
@@ -39,12 +40,16 @@ export function useBucketFilter(): {
     </Field>
   )
   if (!bucketId) return { control }
-  if (members.isError && !members.data) {
+  // A failure on the first page, or on a later one (the first page alone would hide the rest): the filter cannot be applied.
+  if ((members.isError && !members.data) || members.isFetchNextPageError) {
     return {
       control,
       note: () => (
         <p role="alert" className="text-sm text-status-error">
-          The members of {bucket?.name ?? 'the bucket'} could not be loaded, so the filter is not applied and every occurrence is shown.
+          The members of {bucket?.name ?? 'the bucket'} could not be loaded, so the filter is not applied and every occurrence is shown.{' '}
+          <Button variant="outline" size="sm" onClick={() => void (members.data ? members.fetchNextPage() : members.refetch())}>
+            Try again
+          </Button>
         </p>
       ),
     }

@@ -54,7 +54,7 @@ describe('shell while signed in', () => {
     expect(groups[0]).toHaveAccessibleName('Your account')
     expect(within(groups[0]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Security', 'Sessions', 'Your API tokens'])
     expect(groups[1]).toHaveAccessibleName('Organise')
-    expect(within(groups[1]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Categories, labels, buckets'])
+    expect(within(groups[1]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Categories, labels, buckets', 'Organise commitments'])
     expect(groups[2]).toHaveAccessibleName('Reference')
     expect(within(groups[2]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Exchange rates'])
     expect(groups[3]).toHaveAccessibleName('Administration')

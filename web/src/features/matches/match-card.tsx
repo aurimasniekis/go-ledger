@@ -484,7 +484,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           </div>
         </div>
       )}
-      <OrganiseDisclosure objectType="transaction" objectId={t.id} subject="this bank transaction" />
+      <OrganiseDisclosure objectType="transaction" objectId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}${name.data ? ` matched to ${name.data}` : ''}`} />
     </article>
   )
 }

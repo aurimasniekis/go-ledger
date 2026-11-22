@@ -82,9 +82,12 @@ describe('Organise control', () => {
     await user.click(within(panel).getByRole('button', { name: 'Set category' }))
     // Pending: not yet saved, and nothing claims it is.
     expect(await within(panel).findByText('Saving…', { selector: 'p' })).toHaveAttribute('role', 'status')
+    // Only the control that was pressed reads Saving; the others keep their names.
+    expect(within(panel).getByRole('button', { name: 'Saving…' })).toBeInTheDocument()
+    expect(within(panel).getByRole('button', { name: 'Add label' })).toBeInTheDocument()
     expect(within(panel).queryByText(/^Saved:/)).toBeNull()
     release()
-    expect(await within(panel).findByText('Saved: Food › Groceries is your choice for Rent a.')).toBeInTheDocument()
+    expect(await within(panel).findByText('Saved: Food › Groceries is your choice for Rent a.')).toHaveFocus()
     expect(within(panel).getByText(/Your choice/)).toBeInTheDocument()
     await user.click(within(panel).getByRole('button', { name: 'Hand back to automatic' }))
     expect(await within(panel).findByText('Saved: Rent a is back to automatic assignment.')).toBeInTheDocument()
@@ -209,6 +212,57 @@ describe('Organise control', () => {
   })
 })
 
+describe('focus after a change', () => {
+  const statusOf = (panel: HTMLElement) => panel.querySelector('p[role="status"][tabindex="-1"]') as HTMLElement
+
+  it('goes to the status line after Remove label and Put back, whose buttons are replaced by the answer', async () => {
+    const user = userEvent.setup()
+    const state = { a: assignments({ labels: [labelAssignment(TAX)] }) }
+    start(state, {
+      ['DELETE ' + OBJ + '/labels/' + TAX.id]: () => {
+        state.a = assignments({ removed_labels: [labelAssignment(TAX)] })
+        return ok(state.a)
+      },
+      ['PUT ' + OBJ + '/labels/' + TAX.id]: () => {
+        state.a = assignments({ labels: [labelAssignment(TAX)] })
+        return ok(state.a)
+      },
+    })
+    const panel = await openPanel(user)
+    await user.click(await within(panel).findByRole('button', { name: 'Remove label Tax from Rent a' }))
+    await within(panel).findByRole('button', { name: 'Put label Tax back on Rent a' })
+    await waitFor(() => expect(statusOf(panel)).toHaveFocus())
+    expect(statusOf(panel)).toHaveTextContent('Saved: Tax was removed from Rent a')
+    await user.click(within(panel).getByRole('button', { name: 'Put label Tax back on Rent a' }))
+    await within(panel).findByRole('button', { name: 'Remove label Tax from Rent a' })
+    await waitFor(() => expect(statusOf(panel)).toHaveFocus())
+    expect(statusOf(panel)).toHaveTextContent('Saved: Tax is on Rent a again.')
+  })
+
+  it('goes to the status line after Hand back to automatic and after taking a commitment out of a bucket', async () => {
+    const user = userEvent.setup()
+    const state = { a: assignments({ category: catAssignment(GROC), buckets: [HOUSEHOLD] }) }
+    start(state, {
+      ['DELETE ' + OBJ + '/category']: () => {
+        state.a = assignments({ buckets: state.a.buckets })
+        return ok(state.a)
+      },
+      ['DELETE /api/v1/buckets/' + HOUSEHOLD.id + '/members/commitment/c-a']: () => {
+        state.a = assignments({ category: state.a.category })
+        return none()
+      },
+    })
+    const panel = await openPanel(user)
+    await user.click(await within(panel).findByRole('button', { name: 'Hand back to automatic' }))
+    await within(panel).findByText(/No category yet/)
+    await waitFor(() => expect(statusOf(panel)).toHaveFocus())
+    await user.click(within(panel).getByRole('button', { name: 'Take Rent a out of bucket Household' }))
+    await within(panel).findByText('In no bucket.')
+    await waitFor(() => expect(statusOf(panel)).toHaveFocus())
+    expect(statusOf(panel)).toHaveTextContent('Saved: Rent a is out of Household.')
+  })
+})
+
 describe('bucket filter on the monthly view', () => {
   it('narrows the occurrences to a bucket, says the totals still cover the month, and never shows every row while loading', async () => {
     const user = userEvent.setup()
@@ -240,4 +294,25 @@ describe('bucket filter on the monthly view', () => {
     expect(await screen.findByText(/could not be loaded, so the filter is not applied/, undefined, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText('Rent a')).toBeInTheDocument()
   }, 10000)
+
+  it('treats a failure on a later page of members like a failed load: alert, every row, and a retry', async () => {
+    const user = userEvent.setup()
+    let later = true
+    start({ a: assignments() }, {
+      ['GET /api/v1/buckets/' + HOUSEHOLD.id + '/members']: (r) =>
+        r.query.get('cursor')
+          ? later
+            ? fail(500, 'internal', 'boom')
+            : page([{ object_type: 'commitment', object_id: 'c-b', added_by: {}, added_at: '2026-11-21T10:00:00Z' }])
+          : ok({ items: [{ object_type: 'commitment', object_id: 'c-a', added_by: {}, added_at: '2026-11-21T10:00:00Z' }], next_cursor: 'p2' }),
+    })
+    await user.selectOptions(await screen.findByLabelText('Show only commitments in bucket'), HOUSEHOLD.id)
+    expect(await screen.findByRole('alert', undefined, { timeout: 5000 })).toHaveTextContent(/could not be loaded, so the filter is not applied/)
+    expect(screen.queryByText(/Loading the members/)).toBeNull()
+    expect(screen.getByText('Rent a')).toBeInTheDocument()
+    expect(screen.getByText('Rent b')).toBeInTheDocument()
+    later = false
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText(/Showing 2 of 2 occurrences/, undefined, { timeout: 5000 })).toBeInTheDocument()
+  }, 15000)
 })

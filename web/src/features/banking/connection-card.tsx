@@ -91,11 +91,11 @@ function AccountRow({ a, superseded }: { a: BankAccount; superseded: boolean }) 
                 as obtained <time dateTime={b.obtained_at}>{formatInstant(b.obtained_at)}</time>
                 {b.reference_date && <> (bank date {formatDate(b.reference_date)})</>}
               </span>
-            <OrganiseDisclosure objectType="account" objectId={a.id} subject={a.name || 'this account'} />
-    </li>
+            </li>
           ))}
         </ul>
       )}
+      <OrganiseDisclosure objectType="account" objectId={a.id} subject={a.name || 'this account'} />
       <dl className="grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
         <div>
           <dt className="inline">Last successful refresh: </dt>

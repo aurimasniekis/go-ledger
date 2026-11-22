@@ -46,6 +46,20 @@ describe('bank connections page', () => {
     expect(c.getByText(/several currencies/)).toBeInTheDocument()
   })
 
+  it('offers one Organise control per account, also for an account with several balances or none', async () => {
+    installApi({
+      ...signedIn(),
+      ...list([connection({ accounts: [account({ name: 'Everyday' }), account({ id: '01JD3Y4C8V9M2Q7W5R6T0XZA02', name: 'Savings', balances: [] })] })]),
+    })
+    renderApp('/connections')
+    const c = await card('Fake Bank')
+    // Everyday reports two balances (booked, available): still one control, outside the balance list.
+    expect(c.getAllByRole('button', { name: 'Organise Everyday' })).toHaveLength(1)
+    expect(within(c.getByRole('list', { name: 'Balances of Everyday' })).queryByRole('button')).toBeNull()
+    // Savings has no balance at all and can still be organised.
+    expect(c.getAllByRole('button', { name: 'Organise Savings' })).toHaveLength(1)
+  })
+
   it('makes reconnect and retry visibly and functionally distinct', async () => {
     installApi({
       ...signedIn(),

@@ -1,5 +1,5 @@
 import { QueryClient } from '@tanstack/react-query'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { setCsrfToken } from '@/lib/api'
@@ -138,6 +138,76 @@ describe('organisation page', () => {
     await user.click(await screen.findByRole('button', { name: 'Archive Tax' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot archive right now')
     expect(screen.queryByText(/is archived\./)).toBeNull()
+  })
+
+  it('moves keyboard focus to the notice after Archive, so Undo is announced and reachable, and after a failed Undo', async () => {
+    const user = userEvent.setup()
+    let archived = false
+    let refuseUndo = false
+    installApi(
+      routes({
+        'GET /api/v1/labels': (r) => page(archived && r.query.get('archived') === 'false' ? [] : [{ ...TAX, archived, version: archived ? 2 : 1 }]),
+        ['POST /api/v1/labels/' + TAX.id + '/archive']: () => {
+          archived = true
+          return ok({ ...TAX, archived: true, version: 2 })
+        },
+        ['POST /api/v1/labels/' + TAX.id + '/unarchive']: () => (refuseUndo ? fail(409, 'conflict', 'cannot undo right now') : ok({ ...TAX, version: 3 })),
+      }),
+    )
+    renderApp('/organisation')
+    await user.click(await screen.findByRole('button', { name: 'Archive Tax' }))
+    const notice = (await screen.findByText(/Tax is archived/)).closest('[role="status"]') as HTMLElement
+    // The row (and the button that had focus) is gone; focus is on the notice, not on the page body.
+    expect(screen.queryByRole('button', { name: 'Archive Tax' })).toBeNull()
+    await waitFor(() => expect(notice).toHaveFocus())
+    expect(within(notice).getByRole('button', { name: 'Undo' })).toBeInTheDocument()
+    refuseUndo = true
+    await user.click(within(notice).getByRole('button', { name: 'Undo' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('cannot undo right now')
+    await waitFor(() => expect(alert).toHaveFocus())
+    expect(document.body).not.toHaveFocus()
+  })
+
+  it('moves keyboard focus to the notice after Delete, whose row and button are gone', async () => {
+    const user = userEvent.setup()
+    let gone = false
+    installApi(
+      routes({
+        'GET /api/v1/categories': () => page(gone ? [FOOD, GROC] : [FOOD, GROC, HOME]),
+        ['DELETE /api/v1/categories/' + HOME.id]: () => {
+          gone = true
+          return ok({ reassigned: 0 })
+        },
+      }),
+    )
+    renderApp('/organisation')
+    await user.click(await screen.findByRole('button', { name: 'Delete Home' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Delete Home' })
+    await user.click(within(dlg).getByRole('button', { name: 'Delete Home' }))
+    const notice = (await screen.findByText(/Home was deleted/)).closest('[role="status"]') as HTMLElement
+    await waitFor(() => expect(notice).toHaveFocus())
+  })
+
+  it('still says a category has children when the list is filtered by name or hides archived children', async () => {
+    const user = userEvent.setup()
+    const kid = def('category', 'F02', 'Dining', { parent_id: FOOD.id, archived: true })
+    installApi(
+      routes({
+        'GET /api/v1/categories': (r) => {
+          const all = [FOOD, GROC, kid, HOME]
+          const prefix = (r.query.get('name[prefix]') ?? '').toLowerCase()
+          return page(all.filter((c) => (r.query.get('archived') !== 'false' || !c.archived) && c.name.toLowerCase().startsWith(prefix)))
+        },
+      }),
+    )
+    renderApp('/organisation')
+    await user.type(await screen.findByLabelText('Find a category by name'), 'Food')
+    const list = await screen.findByRole('list', { name: 'categories' })
+    await waitFor(() => expect(within(list).queryByText('Home')).toBeNull())
+    await user.click(within(list).getByRole('button', { name: 'Rename Food' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Rename Food' })
+    expect(within(dlg).getByLabelText('Parent category')).toBeDisabled()
   })
 
   it('refuses to delete a definition in use until a replacement is chosen, then moves the assignments', async () => {

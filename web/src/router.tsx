@@ -13,6 +13,7 @@ import { MonthPage } from '@/features/month/month-page'
 import { MatchesPage } from '@/features/matches/matches-page'
 import { isMonth, monthOf } from '@/features/month/month'
 import { OutlookPage } from '@/features/outlook/outlook-page'
+import { CommitmentsPage } from '@/features/organisation/commitments-page'
 import { OrganisationPage } from '@/features/organisation/organisation-page'
 import { RatesPage } from '@/features/rates/rates-page'
 import { RequireSession } from '@/features/auth/require-session'
@@ -129,6 +130,7 @@ const routeTree = rootRoute.addChildren([
     outlookRoute,
     child('/rates', RatesPage),
     child('/organisation', OrganisationPage),
+    child('/commitments', CommitmentsPage),
     child('/account/security', SecurityPage),
     child('/account/sessions', SessionsPage),
     child('/account/tokens', MyTokensPage),

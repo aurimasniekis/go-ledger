@@ -1236,6 +1236,9 @@ describe('the Closed list: rejected and reversed matches, read only', () => {
     expect(gym).toHaveTextContent('Reversed by an MCP client (not this screen).')
     expect(gym).toHaveTextContent('Via MCP')
     expect(within(gym).queryAllByRole('button').filter((b) => !(b.getAttribute('aria-label') ?? '').startsWith('Organise'))).toHaveLength(0)
+    const names = within(list).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '').filter((n) => n.startsWith('Organise'))
+    expect(names).toHaveLength(2)
+    expect(new Set(names).size).toBe(2) // each card's control says which transaction it is
     const get = calls.find((c) => c.method === 'GET' && c.path.endsWith('/payment-matches') && c.query.getAll('state').length === 2)!
     expect(get.query.getAll('state')).toEqual(['rejected', 'reversed'])
   })

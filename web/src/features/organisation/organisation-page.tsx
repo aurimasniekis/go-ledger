@@ -1,4 +1,4 @@
-import { useDeferredValue, useState } from 'react'
+import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiError, NetworkError, splitErrors } from '@/lib/api'
 import { holds, useMe } from '@/lib/auth'
@@ -72,6 +72,18 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
   const [deleting, setDeleting] = useState<Definition | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [rowError, setRowError] = useState<string>()
+  const noticeBox = useRef<HTMLDivElement>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
+  // A row that was archived or deleted takes the focused button with it: focus follows the change to its notice (which holds Undo).
+  // After a Delete the dialog hands focus back to the page a moment after it closes; the notice takes it once that has happened.
+  useEffect(() => {
+    if (!notice) return
+    noticeBox.current?.focus()
+    const t = setTimeout(() => noticeBox.current?.focus(), 50)
+    return () => clearTimeout(t)
+  }, [notice])
+  // Children for the parent hint come from the whole list, not the filtered one: archived children and a name filter must not hide them.
+  const everyCategory = useAllDefinitions('category', undefined, kind === 'category')
   const refresh = () => qc.invalidateQueries({ queryKey: orgKey })
 
   // Archiving is reversible, so it needs no confirmation: it says what happened and offers Undo. The notice appears only
@@ -133,7 +145,7 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
   return (
     <section aria-labelledby={`org-${kind}`} className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id={`org-${kind}`} className="text-xl font-semibold capitalize">
+        <h2 id={`org-${kind}`} ref={heading} tabIndex={-1} className="text-xl font-semibold capitalize outline-none">
           {names.many}
         </h2>
         {canWrite && <Button onClick={() => setEditing('new')}>Add {names.one}</Button>}
@@ -149,7 +161,7 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
       </div>
       <FormError message={rowError} />
       {notice && (
-        <p role="status" className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted p-3 text-sm">
+        <div ref={noticeBox} tabIndex={-1} role="status" className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted p-3 text-sm">
           {notice.text}
           {notice.undo && (
             <Button
@@ -165,10 +177,17 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
               Undo
             </Button>
           )}
-          <Button variant="ghost" size="sm" onClick={() => setNotice(null)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setNotice(null)
+              heading.current?.focus()
+            }}
+          >
             Dismiss
           </Button>
-        </p>
+        </div>
       )}
       <QueryState query={list} label={names.many}>
         {() =>
@@ -200,7 +219,7 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
             <DefinitionForm
               kind={kind}
               definition={editing === 'new' ? undefined : editing}
-              hasChildren={editing !== 'new' && childrenOf(editing.id).length > 0}
+              hasChildren={editing !== 'new' && everyCategory.items.some((c) => c.parent_id === editing.id)}
               onDone={async (d, created) => {
                 setEditing(null)
                 await refresh()

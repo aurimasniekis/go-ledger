@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/input'
@@ -75,8 +75,13 @@ export function OrganisePanel({ objectType, objectId, subject, canWrite }: { obj
 function Assignments({ a, objectType, objectId, subject, canWrite }: { a: ObjectAssignments; objectType: ObjectType; objectId: string; subject: string; canWrite: boolean }) {
   const qc = useQueryClient()
   const [saved, setSaved] = useState<string>()
+  const status = useRef<HTMLParagraphElement>(null)
+  // The button that was pressed is replaced when the answer arrives, so keyboard focus goes to the status line, which says what was saved.
+  useEffect(() => {
+    if (saved) status.current?.focus()
+  }, [saved])
   const change = useMutation({
-    mutationFn: (c: { run: () => Promise<ObjectAssignments | void>; done: string }) => c.run(),
+    mutationFn: (c: { run: () => Promise<ObjectAssignments | void>; done: string; control: string }) => c.run(),
     onMutate: () => setSaved(undefined),
     onSuccess: async (next, c) => {
       if (next) qc.setQueryData(objectKey(objectType, objectId), next)
@@ -85,19 +90,20 @@ function Assignments({ a, objectType, objectId, subject, canWrite }: { a: Object
       setSaved(c.done)
     },
   })
-  const run = (done: string, fn: () => Promise<ObjectAssignments | void>) => change.mutate({ run: fn, done })
+  const run = (done: string, fn: () => Promise<ObjectAssignments | void>, control: string) => change.mutate({ run: fn, done, control })
   const busy = change.isPending
+  const pending = busy ? change.variables?.control : undefined
   const bucketable = objectType !== 'transaction'
 
   return (
     <>
       <FormError message={change.isError ? problemText(change.error) : undefined} />
-      <p role="status" className="text-xs font-medium">
+      <p ref={status} tabIndex={-1} role="status" className="text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {busy ? 'Saving…' : saved}
       </p>
-      <CategoryPart a={a} canWrite={canWrite} busy={busy} subject={subject} run={run} objectType={objectType} objectId={objectId} />
-      <LabelsPart a={a} canWrite={canWrite} busy={busy} subject={subject} run={run} objectType={objectType} objectId={objectId} />
-      {bucketable && <BucketsPart a={a} canWrite={canWrite} busy={busy} subject={subject} run={run} objectType={objectType} objectId={objectId} />}
+      <CategoryPart a={a} canWrite={canWrite} busy={busy} pending={pending} subject={subject} run={run} objectType={objectType} objectId={objectId} />
+      <LabelsPart a={a} canWrite={canWrite} busy={busy} pending={pending} subject={subject} run={run} objectType={objectType} objectId={objectId} />
+      {bucketable && <BucketsPart a={a} canWrite={canWrite} busy={busy} pending={pending} subject={subject} run={run} objectType={objectType} objectId={objectId} />}
     </>
   )
 }
@@ -106,10 +112,12 @@ interface PartProps {
   a: ObjectAssignments
   canWrite: boolean
   busy: boolean
+  /** The control whose change is in flight: only it reads Saving. */
+  pending?: string
   subject: string
   objectType: ObjectType
   objectId: string
-  run: (done: string, fn: () => Promise<ObjectAssignments | void>) => void
+  run: (done: string, fn: () => Promise<ObjectAssignments | void>, control: string) => void
 }
 
 function Part({ title, children }: { title: string; children: ReactNode }) {
@@ -138,7 +146,7 @@ function categoryOptions(all: Definition[]): { id: string; label: string }[] {
 
 const NONE = '__none__'
 
-function CategoryPart({ a, canWrite, busy, subject, run, objectType, objectId }: PartProps) {
+function CategoryPart({ a, canWrite, busy, pending, subject, run, objectType, objectId }: PartProps) {
   const cats = useAllDefinitions('category', 'false', canWrite)
   const allCats = useAllDefinitions('category', undefined)
   const cur = a.category
@@ -188,14 +196,14 @@ function CategoryPart({ a, canWrite, busy, subject, run, objectType, objectId }:
             onClick={() => {
               const target = choice === NONE ? null : choice
               const label = target ? (categoryOptions(cats.items).find((o) => o.id === target)?.label ?? 'the category') : 'no category'
-              run(`Saved: ${label} is your choice for ${subject}.`, () => setObjectCategory(objectType, objectId, target))
+              run(`Saved: ${label} is your choice for ${subject}.`, () => setObjectCategory(objectType, objectId, target), 'category')
               setChoice('')
             }}
           >
-            {busy ? 'Saving…' : 'Set category'}
+            {pending === 'category' ? 'Saving…' : 'Set category'}
           </Button>
           {cur && cur.origin === 'user' && !cur.inherited && (
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => run(`Saved: ${subject} is back to automatic assignment.`, () => resetObjectCategory(objectType, objectId))}>
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => run(`Saved: ${subject} is back to automatic assignment.`, () => resetObjectCategory(objectType, objectId), 'reset')}>
               Hand back to automatic
             </Button>
           )}
@@ -206,7 +214,7 @@ function CategoryPart({ a, canWrite, busy, subject, run, objectType, objectId }:
   )
 }
 
-function LabelsPart({ a, canWrite, busy, subject, run, objectType, objectId }: PartProps) {
+function LabelsPart({ a, canWrite, busy, pending, subject, run, objectType, objectId }: PartProps) {
   const labels = useAllDefinitions('label', 'false', canWrite)
   const [pick, setPick] = useState('')
   const free = labels.items.filter((l) => !a.labels.some((x) => x.label.id === l.id))
@@ -225,7 +233,7 @@ function LabelsPart({ a, canWrite, busy, subject, run, objectType, objectId }: P
                 <Origin a={l} />
               </span>
               {canWrite && (
-                <Button variant="outline" size="sm" disabled={busy} aria-label={`Remove label ${l.label.name} from ${subject}`} onClick={() => run(`Saved: ${l.label.name} was removed from ${subject}; automatic runs will not add it back.`, () => removeObjectLabel(objectType, objectId, l.label.id))}>
+                <Button variant="outline" size="sm" disabled={busy} aria-label={`Remove label ${l.label.name} from ${subject}`} onClick={() => run(`Saved: ${l.label.name} was removed from ${subject}; automatic runs will not add it back.`, () => removeObjectLabel(objectType, objectId, l.label.id), 'remove-label')}>
                   Remove
                 </Button>
               )}
@@ -241,7 +249,7 @@ function LabelsPart({ a, canWrite, busy, subject, run, objectType, objectId }: P
               <li key={l.label.id} className="flex flex-wrap items-center justify-between gap-2">
                 <span>{l.label.name}</span>
                 {canWrite && !l.label.archived && (
-                  <Button variant="outline" size="sm" disabled={busy} aria-label={`Put label ${l.label.name} back on ${subject}`} onClick={() => run(`Saved: ${l.label.name} is on ${subject} again.`, () => addObjectLabel(objectType, objectId, l.label.id))}>
+                  <Button variant="outline" size="sm" disabled={busy} aria-label={`Put label ${l.label.name} back on ${subject}`} onClick={() => run(`Saved: ${l.label.name} is on ${subject} again.`, () => addObjectLabel(objectType, objectId, l.label.id), 'put-back')}>
                     Put back
                   </Button>
                 )}
@@ -266,10 +274,10 @@ function LabelsPart({ a, canWrite, busy, subject, run, objectType, objectId }: P
           </Field>
           <Button size="sm" disabled={busy || pick === ''} onClick={() => {
             const l = free.find((x) => x.id === pick)
-            run(`Saved: ${l?.name ?? 'the label'} is on ${subject}.`, () => addObjectLabel(objectType, objectId, pick))
+            run(`Saved: ${l?.name ?? 'the label'} is on ${subject}.`, () => addObjectLabel(objectType, objectId, pick), 'label')
             setPick('')
           }}>
-            {busy ? 'Saving…' : 'Add label'}
+            {pending === 'label' ? 'Saving…' : 'Add label'}
           </Button>
         </div>
       )}
@@ -277,7 +285,7 @@ function LabelsPart({ a, canWrite, busy, subject, run, objectType, objectId }: P
   )
 }
 
-function BucketsPart({ a, canWrite, busy, subject, run, objectType, objectId }: PartProps) {
+function BucketsPart({ a, canWrite, busy, pending, subject, run, objectType, objectId }: PartProps) {
   const buckets = useAllDefinitions('bucket', 'false', canWrite)
   const [pick, setPick] = useState('')
   const type = objectType as 'commitment' | 'account'
@@ -295,7 +303,7 @@ function BucketsPart({ a, canWrite, busy, subject, run, objectType, objectId }: 
                 {b.archived && ARCHIVED}
               </span>
               {canWrite && (
-                <Button variant="outline" size="sm" disabled={busy} aria-label={`Take ${subject} out of bucket ${b.name}`} onClick={() => run(`Saved: ${subject} is out of ${b.name}.`, () => removeBucketMember(b.id, type, objectId))}>
+                <Button variant="outline" size="sm" disabled={busy} aria-label={`Take ${subject} out of bucket ${b.name}`} onClick={() => run(`Saved: ${subject} is out of ${b.name}.`, () => removeBucketMember(b.id, type, objectId), 'remove-bucket')}>
                   Remove
                 </Button>
               )}
@@ -319,10 +327,10 @@ function BucketsPart({ a, canWrite, busy, subject, run, objectType, objectId }: 
           </Field>
           <Button size="sm" disabled={busy || pick === ''} onClick={() => {
             const b = free.find((x) => x.id === pick)
-            run(`Saved: ${subject} is in ${b?.name ?? 'the bucket'}.`, () => addBucketMember(pick, type, objectId))
+            run(`Saved: ${subject} is in ${b?.name ?? 'the bucket'}.`, () => addBucketMember(pick, type, objectId), 'bucket')
             setPick('')
           }}>
-            {busy ? 'Saving…' : 'Add to bucket'}
+            {pending === 'bucket' ? 'Saving…' : 'Add to bucket'}
           </Button>
         </div>
       )}
