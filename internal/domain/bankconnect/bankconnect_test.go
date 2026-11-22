@@ -73,6 +73,17 @@ func (m *memStore) SetConnectionStatus(_ context.Context, _ banking.ConnectionID
 	return m.conn, nil
 }
 
+func (m *memStore) FailClaimed(_ context.Context, c banking.ConsentClaim, st banking.ConnectionStatus, cause error, _ time.Time) (banking.Connection, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.conn.Version != c.Connection.Version || m.conn.Status == banking.ConnectionDisconnected {
+		return m.conn, false, nil
+	}
+	m.conn.Status, m.conn.LastErrorKind = st, banking.Classify(cause)
+	m.conn.Version++
+	return m.conn, true, nil
+}
+
 func (m *memStore) Connection(context.Context, banking.ConnectionID) (banking.Connection, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -479,4 +490,53 @@ type cancelAwareEngine struct{}
 func (cancelAwareEngine) Refresh(ctx context.Context, _ banking.ConnectionID, _ banking.Provider) (bankimport.Result, error) {
 	<-ctx.Done()
 	return bankimport.Result{Run: banking.RefreshRun{ID: "run-1", Outcome: banking.RefreshInterrupted}}, ctx.Err()
+}
+
+// B5c: a permanent failure of the authorise call must not overwrite what
+// changed while the provider call was in flight.
+func TestConsentFailureDoesNotOverwriteALaterChange(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(m *memStore)
+		want   banking.ConnectionStatus
+	}{
+		{"another consent completed", func(m *memStore) {
+			m.conn.Status, m.conn.Session = banking.ConnectionActive, banking.NewSensitive("newer-session")
+			m.conn.Version++
+		}, banking.ConnectionActive},
+		{"disconnected", func(m *memStore) {
+			m.conn.Status = banking.ConnectionDisconnected
+			m.conn.Version++
+		}, banking.ConnectionDisconnected},
+		{"a newer reconnect started", func(m *memStore) {
+			m.state = "state-newer"
+			m.conn.Version++
+		}, banking.ConnectionReconnectRequired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSetup(t, banking.ConnectionReconnectRequired, banking.NewSensitive("old-session"))
+			s.prov.entered = make(chan struct{}, 1)
+			s.prov.release = make(chan struct{})
+			s.fake.FailNext(bankingtest.OpCompleteConsent, bankingtest.Failure(bankingtest.OpCompleteConsent, banking.KindPermanent, "", "BAD", 0))
+			done := make(chan error, 1)
+			go func() {
+				_, err := s.svc.Complete(context.Background(), alice, redirect(waiting))
+				done <- err
+			}()
+			<-s.prov.entered
+			s.mem.mu.Lock()
+			tc.mutate(s.mem)
+			s.mem.mu.Unlock()
+			close(s.prov.release)
+			if err := <-done; banking.Classify(err) != banking.KindPermanent {
+				t.Fatalf("= %v", err)
+			}
+			if s.mem.conn.Status != tc.want || s.mem.conn.LastErrorKind != "" {
+				t.Errorf("status %s, error kind %q: the stale failure must not be written", s.mem.conn.Status, s.mem.conn.LastErrorKind)
+			}
+			if tc.name == "a newer reconnect started" && s.mem.state != "state-newer" {
+				t.Errorf("consent state = %q, the newer one must stay claimable", s.mem.state)
+			}
+		})
+	}
 }

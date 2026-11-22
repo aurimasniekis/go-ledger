@@ -90,6 +90,41 @@ func (s *Store) ReleaseConsent(ctx context.Context, claim banking.ConsentClaim) 
 	})
 }
 
+// FailClaimed implements [banking.ConsentStore]. The comparison and the
+// update share one transaction. ClaimConsent changes no version, so the
+// version the claim saw still identifies the connection it claimed.
+func (s *Store) FailClaimed(ctx context.Context, claim banking.ConsentClaim, status banking.ConnectionStatus, cause error, at time.Time) (banking.Connection, bool, error) {
+	if !status.Valid() || status == banking.ConnectionActive || status == banking.ConnectionPending || status == banking.ConnectionDisconnected {
+		return banking.Connection{}, false, fmt.Errorf("bankfacts: FailClaimed cannot set %q", status)
+	}
+	if err := requireTime("status change", at); err != nil {
+		return banking.Connection{}, false, err
+	}
+	kind, code := banking.Classify(cause), ""
+	if e, ok := errors.AsType[*banking.Error](cause); ok {
+		code = e.Code
+	}
+	id := claim.Connection.ID
+	var out banking.Connection
+	applied := false
+	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			"UPDATE bank_connections SET status = ?, last_error_kind = ?, last_error_code = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ? AND status <> 'disconnected'",
+			status, kind, code, ts(at), id, claim.Connection.Version)
+		if err != nil {
+			return fmt.Errorf("bankfacts: fail claimed consent %s: %w", id, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		applied = n > 0
+		out, err = connectionTx(ctx, tx, "id = ?", id)
+		return err
+	})
+	return out, applied && err == nil, err
+}
+
 // ActivateClaimed implements [banking.ConsentStore].
 func (s *Store) ActivateClaimed(ctx context.Context, claim banking.ConsentClaim, sess banking.Session, at time.Time, ev banking.AuditFunc) (banking.Connection, error) {
 	if sess.Reference.IsZero() {

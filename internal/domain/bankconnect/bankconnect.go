@@ -465,11 +465,13 @@ func (s *Service) consentFailed(ctx context.Context, claim banking.ConsentClaim,
 		return
 	}
 	c := claim.Connection
+	// Conditional on what the claim saw: a consent completed, a disconnect or
+	// a newer reconnect since then is left as it is.
 	switch c.Status {
 	case banking.ConnectionPending:
-		_, _ = s.Facts.SetConnectionStatus(ctx, c.ID, banking.ConnectionFailed, cause, s.now())
+		_, _, _ = s.Facts.FailClaimed(ctx, claim, banking.ConnectionFailed, cause, s.now())
 	case banking.ConnectionReconnectRequired, banking.ConnectionFailed:
-		_, _ = s.Facts.SetConnectionStatus(ctx, c.ID, c.Status, cause, s.now())
+		_, _, _ = s.Facts.FailClaimed(ctx, claim, c.Status, cause, s.now())
 	}
 }
 

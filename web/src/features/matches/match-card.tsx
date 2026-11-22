@@ -277,7 +277,9 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           {m.state === 'rejected' && !wasUnmatched(m) ? <>Amount proposed <Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction; it did not count as payment</>
             : wasUnmatched(m) ? <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction no longer counts: unmatched</>
             : m.state === 'reversed' ? <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction no longer counts: payment reversed</>
-            : <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction pays this occurrence</>}
+            : m.state === 'suggested' ? <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction would pay this occurrence if you confirm it; it does not count yet</>
+            : m.counts_as_evidence ? <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction pays this occurrence</>
+            : <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction does not count as payment right now</>}
         </dd>
         {shortfall && (
           <>

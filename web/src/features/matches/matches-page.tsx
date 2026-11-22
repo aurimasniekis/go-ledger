@@ -53,9 +53,14 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
       void qc.invalidateQueries({ queryKey: ['occurrences'] })
     },
   })
-  useEffect(() => box.current?.focus(), [undo.isSuccess])
   // After these refusals the undo can never work on this match: the button goes, so it is not offered again.
-  const undoGone = undo.isError && UNDO_FINAL.includes(undo.error instanceof ApiError ? undo.error.code : '')
+  // A version conflict is one of them: the notice holds the version it saved, which is stale now, and resending it cannot work.
+  const undoGone = undo.isError && (isVersionConflict(undo.error) || UNDO_FINAL.includes(undo.error instanceof ApiError ? undo.error.code : ''))
+  useEffect(() => box.current?.focus(), [undo.isSuccess])
+  // When the refusal takes the Undo button away, focus moves to the notice: a removed button would leave focus on <body>.
+  useEffect(() => {
+    if (undoGone) box.current?.focus()
+  }, [undoGone])
   return (
     <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3 text-sm">
       {undo.isSuccess ? (
@@ -107,7 +112,8 @@ function undoErrorText(e: Error, action: MatchAction): string {
   if (action === 'confirm' && code === 'match_undo_window_closed') return 'Undo is no longer possible: something else changed this match or occurrence since. The match stays confirmed. If it is wrong, use Unmatch in the Confirmed list (final).'
   if (action === 'confirm' && code === 'match_undo_not_decider') return 'Only the person who confirmed this match can undo it. The match stays confirmed.'
   if (action === 'confirm' && code === 'invalid_match_state') return 'This match was not a suggestion before, so it cannot go back to one. Use Unmatch in the Confirmed list (final).'
-  if (isVersionConflict(e)) return 'Something else changed this match since you saved it, so the undo was not applied. The match stays as it is now; reload the list to see its current state.'
+  if (action === 'correct' && code === 'invalid_match_state') return 'This match is no longer confirmed, so its amount cannot be put back. The match stays as it is now; reload the list to see its current state.'
+  if (isVersionConflict(e)) return 'Something else changed this match since you saved it, so the undo was not applied and is no longer offered here. The match stays as it is now; reload the list to see its current state and change it from there.'
   return e.message
 }
 
@@ -176,9 +182,9 @@ export function MatchesPage() {
         <Link to="/month" className="underline">record a payment manually from the monthly view</Link>.
       </p>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div role="group" aria-label="Show" className="flex flex-wrap gap-2">
+        <div role="group" aria-label="Show" className="flex min-w-0 flex-wrap gap-2">
           {VIEWS.map((v) => (
-            <Button key={v.state} variant={v.state === state ? 'default' : 'outline'} size="sm" aria-pressed={v.state === state} onClick={() => setState(v.state)}>
+            <Button key={v.state} variant={v.state === state ? 'default' : 'outline'} size="sm" className="h-auto min-h-8 whitespace-normal px-2 py-1" aria-pressed={v.state === state} onClick={() => setState(v.state)}>
               {v.label}
             </Button>
           ))}
