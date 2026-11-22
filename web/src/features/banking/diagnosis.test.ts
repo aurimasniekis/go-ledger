@@ -20,6 +20,20 @@ describe('diagnose', () => {
     const c = connection({ last_refresh_run: run({ outcome: 'failed', error: { kind: 'reconnect_required', code: 'X' } }) })
     expect(diagnose(c).kind).toBe('reconnect')
   })
+  it('after a reconnect the old reconnect error no longer asks for a reconnect, and the data is not called fresh', () => {
+    const stale = reconnectRequired()
+    // Server state right after a successful reconnect: active again, consent newer than the failed run.
+    const c = { ...stale, status: 'active' as const, needs_reconnect: false, consent_granted_at: '2026-11-21T10:00:00Z' }
+    expect(diagnose(c)).toEqual({ kind: 'reconnected', lastRefreshedAt: '2026-11-21T08:00:00Z' })
+    expect(accountState(c.accounts[0]!, true)).toBe('stale')
+    expect(accountState(c.accounts[0]!)).toBe('reconnect')
+    // A reconnect error from a run after the consent still asks for a reconnect.
+    expect(diagnose({ ...c, consent_granted_at: '2026-11-21T07:00:00Z' }).kind).toBe('reconnect')
+    // Once a refresh after the consent succeeds, it is plain ok.
+    expect(diagnose({ ...c, last_refresh_run: run({ started_at: '2026-11-21T10:05:00Z' }) })).toEqual({ kind: 'ok', partial: false })
+    // Never refreshed before the reconnect: says so.
+    expect(diagnose({ ...c, accounts: [] })).toEqual({ kind: 'reconnected', lastRefreshedAt: null })
+  })
   it('maps statuses that are not active', () => {
     expect(diagnose(connection({ status: 'pending' })).kind).toBe('pending')
     expect(diagnose(connection({ status: 'failed' })).kind).toBe('consent_failed')
