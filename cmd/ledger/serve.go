@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
+	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	moneypkg "github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/health"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
@@ -30,6 +31,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
+	deferralstore "github.com/aurimasniekis/go-ledger/internal/store/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/store/fxrates"
 	"github.com/aurimasniekis/go-ledger/internal/web"
 )
@@ -436,6 +438,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 	// The reporting zone dates commitment creation (D38 1a, ADR-0042).
 	parts.payments = parts.payments.WithZone(zone)
 	parts.matches = parts.matches.WithZone(zone)
+	parts.deferrals = parts.deferrals.WithZone(zone)
 	matching := parts.matching
 	if matching == nil {
 		matching = newMatcher(parts.db, al, parts.matches, zone, now, nil)
@@ -451,6 +454,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Payments:    parts.payments,
 		Matches:     parts.matches,
 		Merchants:   parts.merchants,
+		Deferrals:   deferralsDep(parts.deferrals),
 		Banking:     parts.banking,
 		Matching:    matching,
 		Audit:       al,
@@ -471,6 +475,15 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Zone:              zone,
 		Now:               now,
 	})
+}
+
+// deferralsDep keeps a missing deferral store a nil interface, so the API
+// leaves the plan routes out instead of calling a nil store.
+func deferralsDep(s *deferralstore.Store) deferrals.Store {
+	if s == nil {
+		return nil
+	}
+	return s
 }
 
 // registerOps adds /metrics, /healthz and /readyz.

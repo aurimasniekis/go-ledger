@@ -32,7 +32,7 @@ func TestTotalsOfSkipsCancelledRows(t *testing.T) {
 	cancelled := row("cancelled", payments.State{Status: payments.StatusCancelled, Derived: payments.StatusCancelled,
 		Paid: eur("0.00"), Outstanding: eur("0.00"), Overpaid: eur("0.00")})
 
-	totals, latest := totalsOf([]Row{live, cancelled})
+	totals, latest := totalsOf(month, []Row{live, cancelled}, nil)
 	if len(totals) != 1 {
 		t.Fatalf("totals %d, want 1 currency", len(totals))
 	}

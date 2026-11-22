@@ -114,12 +114,16 @@ func fieldErrors(errs []commitments.FieldError) *Error {
 func commitmentError(err error) error {
 	var ve *commitments.ValidationError
 	var pt *occurrences.PendingTermsError
+	var cc *occurrences.CurrencyChangePlanError
 	switch {
 	case errors.As(err, &ve) && len(ve.Errors) > 0:
 		return fieldErrors(ve.Errors)
 	case errors.As(err, &pt):
 		return &Error{Status: http.StatusConflict, Code: CodePendingTerms, Field: "effective_from", Cause: err,
 			Message: fmt.Sprintf("a terms change effective %s is pending; effective_from must be %s or later", pt.Pending, pt.Pending)}
+	case errors.As(err, &cc):
+		return &Error{Status: http.StatusConflict, Code: CodeDeferralCurrency, Field: "amount", Cause: err,
+			Message: fmt.Sprintf("the occurrence %s has the active deferral plan %s, so its currency cannot change; undo the plan first", cc.OccurrenceID, cc.PlanID)}
 	case errors.Is(err, commitments.ErrInUse):
 		return Conflict(commitments.ErrInUse.Error())
 	}

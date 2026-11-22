@@ -667,3 +667,94 @@ func (c *Client) DisconnectBankConnection(ctx context.Context, id string, versio
 	}
 	return &b, nil
 }
+
+// DeferralPlanFilter filters ListDeferralPlans; each list matches any of its
+// values. PlannedMonth (YYYY-MM) keeps plans planned in that month.
+type DeferralPlanFilter struct {
+	ListOptions
+	OccurrenceIDs []string
+	CommitmentIDs []string
+	States        []string
+	PlannedMonth  string
+}
+
+func (f DeferralPlanFilter) query() url.Values {
+	q := url.Values{}
+	f.apply(q)
+	addAll(q, "occurrence_id", f.OccurrenceIDs)
+	addAll(q, "commitment_id", f.CommitmentIDs)
+	addAll(q, "state", f.States)
+	if f.PlannedMonth != "" {
+		q.Set("planned_month", f.PlannedMonth)
+	}
+	return q
+}
+
+// ListDeferralPlans returns one page of deferral plans, oldest first.
+func (c *Client) ListDeferralPlans(ctx context.Context, f DeferralPlanFilter) (Page[DeferralPlan], error) {
+	var p Page[DeferralPlan]
+	err := c.do(ctx, request{op: opListDeferrals, query: f.query()}, &p)
+	return p, err
+}
+
+// AllDeferralPlans walks every deferral plan matching f (its Cursor is
+// ignored).
+func (c *Client) AllDeferralPlans(ctx context.Context, f DeferralPlanFilter) iter.Seq2[DeferralPlan, error] {
+	return Walk(ctx, func(ctx context.Context, cur string) (Page[DeferralPlan], error) {
+		f.Cursor = cur
+		return c.ListDeferralPlans(ctx, f)
+	})
+}
+
+func (c *Client) deferral(ctx context.Context, req request) (*DeferralPlan, error) {
+	var p DeferralPlan
+	if err := c.do(ctx, req, &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// CreateDeferralPlan defers an outstanding occurrence. It never marks
+// anything paid; the occurrence stays outstanding (and overdue past its due
+// date) while its amount is planned in the planned date's month.
+func (c *Client) CreateDeferralPlan(ctx context.Context, in NewDeferralPlan) (*DeferralPlan, error) {
+	return c.deferral(ctx, request{op: opCreateDeferral, body: in})
+}
+
+// GetDeferralPlan returns one deferral plan.
+func (c *Client) GetDeferralPlan(ctx context.Context, id string) (*DeferralPlan, error) {
+	return c.deferral(ctx, request{op: opGetDeferral, pathID: id})
+}
+
+// ReviseDeferralPlan applies a merge patch (plan_type, planned_date, reason)
+// to the active plan whose current version is version.
+func (c *Client) ReviseDeferralPlan(ctx context.Context, id string, version int64, patch MergePatch) (*DeferralPlan, error) {
+	return c.deferral(ctx, request{op: opReviseDeferral, pathID: id, version: version, body: patch})
+}
+
+// UndoDeferralPlan ends the active plan whose current version is version;
+// the occurrence's amount is planned in its own month again.
+func (c *Client) UndoDeferralPlan(ctx context.Context, id string, version int64, in DeferralUndo) (*DeferralPlan, error) {
+	return c.deferral(ctx, request{op: opUndoDeferral, pathID: id, version: version, body: in})
+}
+
+// ListDeferralPlanHistory returns one page of a plan's history, oldest first.
+func (c *Client) ListDeferralPlanHistory(ctx context.Context, id string, o ListOptions) (Page[DeferralPlanEvent], error) {
+	q := url.Values{}
+	o.apply(q)
+	var p Page[DeferralPlanEvent]
+	err := c.do(ctx, request{op: opDeferralHistory, pathID: id, query: q}, &p)
+	return p, err
+}
+
+// AddDeferralAdjustment records an explicit fee or charge on the active plan
+// whose current version is version.
+func (c *Client) AddDeferralAdjustment(ctx context.Context, id string, version int64, in NewDeferralAdjustment) (*DeferralPlan, error) {
+	return c.deferral(ctx, request{op: opAddDeferralAdjust, pathID: id, version: version, body: in})
+}
+
+// RemoveDeferralAdjustment removes an adjustment of the active plan whose
+// current version is version; it stays in the plan as history.
+func (c *Client) RemoveDeferralAdjustment(ctx context.Context, id, adjustmentID string, version int64) (*DeferralPlan, error) {
+	return c.deferral(ctx, request{op: opRemoveDeferralAdjust, pathID: id, pathID2: adjustmentID, version: version})
+}

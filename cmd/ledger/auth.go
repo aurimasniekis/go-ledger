@@ -29,6 +29,7 @@ import (
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	deferralstore "github.com/aurimasniekis/go-ledger/internal/store/deferrals"
 	matchstore "github.com/aurimasniekis/go-ledger/internal/store/matches"
 	merchantstore "github.com/aurimasniekis/go-ledger/internal/store/merchants"
 	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
@@ -65,6 +66,7 @@ type apiParts struct {
 	payments    *paymentstore.Store
 	matches     *matchstore.Store
 	merchants   *merchantstore.Store
+	deferrals   *deferralstore.Store
 	// matching is the automatic payment matching (ADR-0039); registerAPI
 	// builds one when ledger serve has not.
 	matching *automatch.Engine
@@ -111,7 +113,7 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.
 		return apiParts{}, err
 	}
 	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil),
-		matches: matchstore.New(db, al, now, nil), merchants: merchantstore.New(db, al, now), auth: svc, db: db,
+		matches: matchstore.New(db, al, now, nil), merchants: merchantstore.New(db, al, now), deferrals: deferralstore.New(db, al, now, nil), auth: svc, db: db,
 		tokens: tokens.NewService(tokenstore.New(db, al), us, tokens.Options{Now: now})}, nil
 }
 

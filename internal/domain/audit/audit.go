@@ -140,6 +140,18 @@ const (
 	OccurrenceStatusOverrideUndone Action = "occurrence.status_override_undone" // Details: undone, restored (none, paid, unpaid)
 )
 
+// Deferral plans (DF1, ADR-0050). The target is the plan. Details:
+// occurrence_id, plan_type, planned_date, currency, via and, for a revision,
+// fields (the changed field names); for an adjustment, adjustment_id and
+// kind. Never a reason, a note or an amount.
+const (
+	DeferralPlanCreated       Action = "deferral_plan.created"
+	DeferralPlanRevised       Action = "deferral_plan.revised"
+	DeferralPlanUndone        Action = "deferral_plan.undone"
+	DeferralAdjustmentAdded   Action = "deferral_plan.adjustment_added"
+	DeferralAdjustmentRemoved Action = "deferral_plan.adjustment_removed"
+)
+
 // Event is one audited change.
 type Event struct {
 	Action     Action

@@ -602,6 +602,23 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 			return "DELETE", "/occurrences/" + fakeID + "/manual-payments/" + fakeID, ""
 		},
 
+		"list_deferral_plans":        func() (string, string, string) { return "GET", "/deferral-plans", "" },
+		"get_deferral_plan":          func() (string, string, string) { return "GET", "/deferral-plans/" + fakeID, "" },
+		"list_deferral_plan_history": func() (string, string, string) { return "GET", "/deferral-plans/" + fakeID + "/history", "" },
+		"create_deferral_plan": func() (string, string, string) {
+			return "POST", "/deferral-plans", `{"occurrence_id":"` + fakeID + `","plan_type":"personal","planned_date":"2026-12-01"}`
+		},
+		"revise_deferral_plan": func() (string, string, string) {
+			return "PATCH", "/deferral-plans/" + fakeID, `{"version":1,"planned_date":"2026-12-02"}`
+		},
+		"undo_deferral_plan": func() (string, string, string) { return "POST", "/deferral-plans/" + fakeID + "/undo", `{"version":1}` },
+		"add_deferral_adjustment": func() (string, string, string) {
+			return "POST", "/deferral-plans/" + fakeID + "/adjustments", `{"version":1,"kind":"fee","amount":{"amount":"1.00","currency":"EUR"}}`
+		},
+		"remove_deferral_adjustment": func() (string, string, string) {
+			return "DELETE", "/deferral-plans/" + fakeID + "/adjustments/" + fakeID, ""
+		},
+
 		"list_bank_applications": func() (string, string, string) { return "GET", "/bank-applications", "" },
 		"list_bank_institutions": func() (string, string, string) {
 			return "GET", "/bank-applications/fake-app/institutions?country=FI", ""
@@ -635,6 +652,15 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"run_payment_matching":            nil,
 		"record_manual_payment":           {"id": fakeID, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}, "paid_on": "2026-11-01"},
 		"delete_manual_payment":           {"id": fakeID, "payment_id": fakeID, "version": 1},
+
+		"list_deferral_plans":        nil,
+		"get_deferral_plan":          {"id": fakeID},
+		"list_deferral_plan_history": {"id": fakeID},
+		"create_deferral_plan":       {"occurrence_id": fakeID, "plan_type": "personal", "planned_date": "2026-12-01"},
+		"revise_deferral_plan":       {"id": fakeID, "version": 1, "planned_date": "2026-12-02"},
+		"undo_deferral_plan":         {"id": fakeID, "version": 1},
+		"add_deferral_adjustment":    {"id": fakeID, "version": 1, "kind": "fee", "amount": map[string]any{"amount": "1.00", "currency": "EUR"}},
+		"remove_deferral_adjustment": {"id": fakeID, "adjustment_id": fakeID, "version": 1},
 
 		"list_bank_applications":  nil,
 		"list_bank_institutions":  {"application": "fake-app", "country": "FI"},

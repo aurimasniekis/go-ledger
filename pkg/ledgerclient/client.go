@@ -143,7 +143,7 @@ func isLoopback(host string) bool {
 type request struct {
 	op      operation
 	pathID  string
-	pathID2 string // the second path parameter, {payment_id}
+	pathID2 string // the second path parameter, {payment_id} or {adjustment_id}
 	query   url.Values
 	body    any
 	version int64 // If-Match when > 0
@@ -160,6 +160,7 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 	}
 	if req.pathID2 != "" {
 		path = strings.Replace(path, "{payment_id}", url.PathEscape(req.pathID2), 1)
+		path = strings.Replace(path, "{adjustment_id}", url.PathEscape(req.pathID2), 1)
 	}
 	u := c.base + APIPath + path
 	if len(req.query) > 0 {
