@@ -36,7 +36,10 @@ import (
 // the database also refuses to drop a paid occurrence.
 var DefaultEvidence = []string{
 	// A manual payment replaced by a bank match (D45, ADR-0049) does not
-	// count itself: the confirmed match below does.
+	// count itself: the confirmed (or reversed) match below keeps the
+	// occurrence instead, whether its transaction counts or not, so the
+	// replacement being on hold (X5c, payments.EvidenceSources) changes
+	// nothing here.
 	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id AND mp.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM manual_payment_replacements r WHERE r.manual_payment_id = mp.id AND r.restored_at IS NULL))",
 	// Payment matches (X1, ADR-0035): a confirmed match keeps its occurrence
 	// even while its transaction does not count (no longer reported), and a

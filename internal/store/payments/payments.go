@@ -37,16 +37,27 @@ import (
 // checks the two agree.
 var EvidenceSources = []string{
 	// Manual payments that are not deleted (D26-3a) and not replaced by a
-	// confirmed bank match (D45, ADR-0049): a replaced record is kept, but
-	// the match counts instead, so the payment never counts twice.
+	// bank match (D45, ADR-0049): a replaced record is kept, but the match
+	// counts instead, so the payment never counts twice. While the replacing
+	// match is confirmed but its transaction does not count (the provider no
+	// longer reports it, or it was superseded), the replacement is on hold
+	// and the record counts again (ADR-0049 amendment, X5c): exactly one of
+	// the two counts at any time, and the person's record is never lost from
+	// the occurrence's evidence because of the bank.
 	"SELECT occurrence_id AS occurrence_id, '" + string(payments.EvidenceManual) + "' AS kind, id AS id, amount AS amount, currency AS currency, paid_on AS evidence_date FROM manual_payments WHERE deleted_at IS NULL" +
-		" AND NOT EXISTS (SELECT 1 FROM manual_payment_replacements r WHERE r.manual_payment_id = manual_payments.id AND r.restored_at IS NULL)",
+		" AND NOT EXISTS (SELECT 1 FROM manual_payment_replacements r JOIN payment_matches m ON m.id = r.match_id JOIN bank_transactions t ON t.id = m.transaction_id" +
+		" WHERE r.manual_payment_id = manual_payments.id AND r.restored_at IS NULL AND NOT (m.state = 'confirmed' AND NOT (" + countableTransaction + ")))",
 	// Confirmed payment matches (X1, ADR-0035) on a countable transaction:
 	// booked, still reported and not superseded (ADR-0020 point 7).
 	"SELECT m.occurrence_id AS occurrence_id, '" + string(payments.EvidenceBankTransaction) + "' AS kind, m.id AS id, m.amount AS amount, m.currency AS currency," +
 		" coalesce(t.booking_date, t.value_date, t.transaction_date) AS evidence_date FROM payment_matches m JOIN bank_transactions t ON t.id = m.transaction_id" +
-		" WHERE m.state = 'confirmed' AND t.booking_status = 'booked' AND t.no_longer_reported_at IS NULL AND t.superseded_by IS NULL",
+		" WHERE m.state = 'confirmed' AND " + countableTransaction,
 }
+
+// countableTransaction is the SQL condition, on bank_transactions aliased t,
+// under which a confirmed match's transaction counts as payment evidence:
+// booked, still reported and not superseded (ADR-0020 point 7, ADR-0035).
+const countableTransaction = "t.booking_status = 'booked' AND t.no_longer_reported_at IS NULL AND t.superseded_by IS NULL"
 
 // Store implements [payments.Store] on a [store.DB].
 type Store struct {
