@@ -14,10 +14,13 @@ CLI, MCP read tool, UI) without making the optional rate provider a dependency.
 
 ## Decision
 
-1. **Grant.** A new resource `rates` with `rates:read` and `rates:write`. Reading is not administrator-only: the rates
-   are public reference data and the read-only role holds `rates:read` (so the UI's rates page and the MCP read tools
-   work for them). Writing, which asks the provider for fresh rates, is held by administrators only (the read-only role
-   never holds a write; a token holds it only if its owner does). Reusing `commitments:write` was rejected: refreshing
+1. **Grant.** A new resource `rates` with `rates:read` and `rates:write`. **Amended by decision D-FX-R (task FX4):
+   both are administrator-only.** The read-only role no longer holds `rates:read`, so the rates list and status
+   endpoints, the `/rates` page and its navigation entry, the MCP read tools and the CLI read commands are for
+   administrators (a token holds a grant only if its owner's role does). Converted totals in the outlook and month views
+   carry their own rates, dates and ages on the view endpoints and stay visible to roles that can read those views.
+   Originally reading was open to the read-only role; writing, which asks the provider for fresh rates, was always held
+   by administrators only. Reusing `commitments:write` was rejected: refreshing
    rates has nothing to do with editing commitments, and `connections:write` is for bank access.
 2. **Read API.** `GET /api/v1/rates` lists the cache in the Management API's conventions (ADR-0011): `limit`, an
    opaque `cursor`, and equality filters `provider`, `source`, `base`, `quote` plus `date[gte]` and `date[lte]`
@@ -62,8 +65,11 @@ CLI, MCP read tool, UI) without making the optional rate provider a dependency.
    (provider and source, whether it is off, the stale rule, the last refresh and, after a failure, the last full
    success) and a table of the cached rates with exact values, ISO rate dates (D38), retrieval time in UTC, provider and
    source, and a stale badge with its reason. Loading, empty (with the provider-off explanation), failed and
-   load-more states are shown. It has no refresh button: refreshing is an administrator action through the CLI or API,
-   and the page is for seeing what the outlook converts with.
+   load-more states are shown. The page is for seeing what the outlook converts with. (Amended, decision D-FX-R 3b, task FX4:
+   administrators, who alone can open the page, also get a "Refresh now" button, which calls the same rate-limited and
+   single-flight refresh API as the CLI: it is disabled with the reason when no refresh can run, it keeps keyboard
+   focus while a request is pending or a Retry-After wait runs (aria-disabled, not disabled), and each outcome, a
+   refused one included, is said in words. It never deletes a cached rate.)
 9. **PR #92 follow-ups.** (N1) When the outlook's conversion deadline passes, a currency whose rate is already cached
    still converts: the outlook asks `fx.Service.ConvertCached` (cache only, same freshness rules) before it excludes the
    currency as `conversion_timed_out`. Only a currency that needs the provider and has no usable cached rate is

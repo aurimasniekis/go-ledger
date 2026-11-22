@@ -6,6 +6,7 @@ import { StatusBadge, type Status } from '@/components/status-badge'
 import { DisconnectedState, EmptyState, FailedState, LoadingState } from '@/components/state-panels'
 import { Amount, DateText } from '@/components/formatted'
 import { isNetworkError, useOnline } from '@/lib/connection'
+import { holds, useMe } from '@/lib/auth'
 import { STALE_AFTER_MS } from '@/features/month/month-board'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from '@/features/month/month'
 import type { Money } from '@/features/month/types'
@@ -92,6 +93,8 @@ const EXCLUDED_REASON: Record<string, string> = {
 export function OutlookPage({ through, currency }: { through?: string; currency?: string }) {
   const navigate = useNavigate()
   const q = useOutlook(through, currency)
+  // The rates page is administrator-only (D-FX-R): the totals above carry their own rates, so only the link depends on the grant.
+  const canSeeRates = holds(useMe().data?.grants, 'rates:read')
   const online = useOnline()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -163,7 +166,7 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
               staleAfter={q.data.balances.stale_after_seconds}
             />
           )}
-          {q.data.converted && (
+          {q.data.converted && canSeeRates && (
             <p className="text-sm text-muted-foreground" data-testid="outlook-rates-link">
               Every rate used above shows its date and age. See all{' '}
               <Link to="/rates" className="underline">

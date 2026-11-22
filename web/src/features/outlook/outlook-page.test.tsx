@@ -78,6 +78,20 @@ describe('Outlook page', () => {
     expect(calls.find((c) => c.path === PATH)!.query.toString()).toBe('')
   })
 
+  it('shows the converted totals without calling a rates endpoint, and links to the rates page only with rates:read', async () => {
+    responder = () => ({ status: 200, json: outlook() })
+    // A role without rates:read (D-FX-R): the totals carry their own rates, so nothing here needs the rates API.
+    calls = installApi({ ...signedIn(undefined, ['commitments:read', 'connections:read']), ['GET ' + PATH]: (r) => responder(r) })
+    const first = renderApp('/outlook?currency=EUR')
+    expect(await screen.findByRole('region', { name: 'Converted to EUR (secondary)' })).toBeInTheDocument()
+    expect(screen.queryByTestId('outlook-rates-link')).toBeNull()
+    expect(calls.some((c) => c.path.startsWith('/api/v1/rates'))).toBe(false)
+    first.unmount()
+    calls = installApi({ ...signedIn(), ['GET ' + PATH]: (r) => responder(r) })
+    renderApp('/outlook?currency=EUR')
+    expect(await screen.findByTestId('outlook-rates-link')).toBeInTheDocument()
+  })
+
   it('flags the converted aggregate as incomplete and secondary, with the excluded rate', async () => {
     // GBP converts (a rate is used) while a third currency cannot: the figures are shown, with the exclusion beside them.
     const base = outlook()

@@ -312,8 +312,11 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 		return p, nil
 	})
 	// Real session cookies first, then the test header.
+	// The audit recorder is wired as ledger serve wires it: a token's
+	// state-changing request is refused without one (ADR-0029).
 	f.srv = httpapi.New(config.HTTP{MaxBodyBytes: 1 << 16, ShutdownTimeout: time.Second}, log,
-		httpapi.WithAuthenticators(httpapi.NewSessionAuth(parts.auth), testAuthn{authn}), httpapi.WithRecentAuth(testRecent(parts.auth)))
+		httpapi.WithAuthenticators(httpapi.NewSessionAuth(parts.auth), testAuthn{authn}), httpapi.WithRecentAuth(testRecent(parts.auth)),
+		httpapi.WithAuditRecorder(al, nil))
 	registerAPI(f.srv, al, parts, zone, clock)
 
 	mk := func(name string, role authz.Role) users.User {
