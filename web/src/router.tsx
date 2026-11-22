@@ -49,14 +49,15 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/sign-in',
-  validateSearch: (s: Record<string, unknown>): { redirect?: string; oidc_error?: string; recovery_error?: string } => ({
+  validateSearch: (s: Record<string, unknown>): { redirect?: string; oidc_error?: string; recovery_error?: string; notice?: string } => ({
     redirect: typeof s.redirect === 'string' ? s.redirect : undefined,
+    notice: s.notice === 'bank_incomplete' ? s.notice : undefined,
     oidc_error: typeof s.oidc_error === 'string' ? s.oidc_error : undefined,
     recovery_error: typeof s.recovery_error === 'string' ? s.recovery_error : undefined,
   }),
   component: function SignIn() {
     const s = signInRoute.useSearch()
-    return <SignInPage redirect={s.redirect} oidcError={s.oidc_error} recoveryError={s.recovery_error} />
+    return <SignInPage redirect={s.redirect} oidcError={s.oidc_error} recoveryError={s.recovery_error} notice={s.notice} />
   },
 })
 const designRoute = createRoute({ getParentRoute: () => rootRoute, path: '/design', component: DesignPage })
