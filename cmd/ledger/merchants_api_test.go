@@ -134,10 +134,12 @@ func TestMerchantAPI(t *testing.T) {
 		t.Fatalf("clear: %d %v", code, m)
 	}
 
-	// Audit: who, what and how, never the name.
+	// Audit: who, what and how, and the merchant record's id (ADR-0058), never
+	// the name.
 	for _, action := range []string{"merchant.confirmed", "merchant.corrected", "merchant.rejected", "merchant.review_cleared"} {
 		e := f.auditAction(t, action)
-		if e["via"] != "session" || e["from"] == "" || len(e) != 2 {
+		_, hasMerchant := e["merchant_id"]
+		if e["via"] != "session" || e["from"] == "" || len(e) != 2 && (len(e) != 3 || !hasMerchant) {
 			t.Errorf("%s audit entry: %v", action, e)
 		}
 	}

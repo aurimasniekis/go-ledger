@@ -1,4 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { MerchantDisclosure } from '@/features/merchants/transaction-merchant'
+import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
@@ -92,7 +94,7 @@ export function subjectText(s: Subject): string {
 
 /** The last characters of a transaction id: enough to tell apart identical-looking transactions on one screen. */
 export function shortRef(id: string): string {
-  return id.slice(-8)
+  return id.length <= 8 ? id : `…${id.slice(-8)}`
 }
 
 export const OFFLINE_NOTE_ID = 'matches-offline-note'
@@ -306,7 +308,11 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
             {booked ? <span className="text-xs text-muted-foreground">booked</span> : <StatusBadge status="pending" label="Pending at the bank" />}
           </span>
           <span className="block text-xs text-muted-foreground">
-            Ledger transaction id <span className="font-mono" data-testid="bank-ref" title={t.id}>…{shortRef(t.id)}</span>
+            Ledger transaction id{' '}
+            <span className="font-mono" data-testid="bank-ref" title={t.id}>
+              <span aria-hidden>{shortRef(t.id)}</span>
+              <span className="sr-only">{t.id}</span>
+            </span>
           </span>
           {m.bank_text_redacted ? (
             <span className="block text-xs text-muted-foreground">Bank description hidden: it needs the banking:read grant.</span>
@@ -491,6 +497,10 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           </div>
         </div>
       )}
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-1">
+      <MerchantDisclosure inline transactionId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}`} />
+      <OrganiseDisclosure inline objectType="transaction" objectId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}${name.data ? ` matched to ${name.data}` : ''}`} />
+      </div>
     </article>
   )
 }

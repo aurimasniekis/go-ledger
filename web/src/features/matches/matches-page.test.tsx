@@ -7,6 +7,7 @@ import { fail, installApi, ok, renderApp, signedIn, type Handler, type Req } fro
 import { match, occurrence } from './fixtures'
 import { replacedIds } from './replace-manual'
 import type { PaymentMatch } from './types'
+import { shortRef } from './match-card'
 
 let calls: Req[]
 let store: PaymentMatch[]
@@ -685,7 +686,7 @@ describe('ambiguity and reasons in plain words', () => {
     const cards = await screen.findAllByRole('article', { name: 'Rent' })
     expect(cards).toHaveLength(2)
     // Identical-looking competitors stay distinguishable by a short transaction reference.
-    expect(cards.map((c) => within(c).getByTestId('bank-ref').textContent)).toEqual([expect.stringContaining('…tx-a'), expect.stringContaining('…tx-b')])
+    expect(cards.map((c) => within(c).getByTestId('bank-ref').textContent)).toEqual([expect.stringMatching(/^tx-a/), expect.stringMatching(/^tx-b/)])
     for (const card of cards) {
       expect(within(card).getByTestId('competing')).toHaveTextContent('2 suggestions compete for this occurrence')
       expect(card).toHaveTextContent('2 bank transactions could pay this occurrence, so a person has to choose.')
@@ -696,7 +697,7 @@ describe('ambiguity and reasons in plain words', () => {
     }
   })
 
-  it('shows the short transaction id in mono with the full id on hover, and says the bank reported separate transactions', async () => {
+  it('shows the short transaction id in mono, exposes the full id as text for keyboard, screen reader and touch, and says the bank reported separate transactions', async () => {
     const base = match('a').transaction
     const longId = 'bank-tx-0000111122223333'
     const other = 'bank-tx-0000111144445555'
@@ -709,9 +710,18 @@ describe('ambiguity and reasons in plain words', () => {
     expect(refB).toHaveTextContent('…44445555')
     expect(refA).toHaveClass('font-mono')
     expect(refA).toHaveAttribute('title', longId)
+    // The full id is real text (visually hidden), not only a title attribute.
+    expect(within(refA).getByText(longId)).toHaveClass('sr-only')
+    expect(refB).toHaveTextContent(other)
     expect(refB).toHaveAttribute('title', other)
     expect(within(a!).getByTestId('competing')).toHaveTextContent('The bank reported these as separate transactions')
     expect(a).not.toHaveTextContent('same text')
+  })
+
+  it('shortens only ids longer than eight characters', () => {
+    expect(shortRef('tx-a')).toBe('tx-a')
+    expect(shortRef('12345678')).toBe('12345678')
+    expect(shortRef('012345678')).toBe('…12345678')
   })
 
   it('does not call a single suggestion ambiguous', async () => {
@@ -1250,11 +1260,15 @@ describe('the Closed list: rejected and reversed matches, read only', () => {
     const list = await screen.findByRole('list', { name: 'Closed matches' })
     const rent = await within(list).findByRole('article', { name: 'Rent' })
     expect(rent).toHaveTextContent('Rejected by you.')
-    expect(rent.querySelectorAll('button:not(summary)')).toHaveLength(0)
+    // A closed match offers no action on the match; Organise and Merchant are the separate disclosures of the bank transaction's category, labels and merchant.
+    expect(Array.from(rent.querySelectorAll('button:not(summary)')).filter((b) => !/^(Organise|Merchant of)/.test(b.getAttribute('aria-label') ?? ''))).toHaveLength(0)
     const gym = await within(list).findByRole('article', { name: 'Gym' })
     expect(gym).toHaveTextContent('Reversed by an MCP client (not this screen).')
     expect(gym).toHaveTextContent('Via MCP')
-    expect(within(gym).queryByRole('button')).not.toBeInTheDocument()
+    expect(within(gym).queryAllByRole('button').filter((b) => !/^(Organise|Merchant of)/.test(b.getAttribute('aria-label') ?? ''))).toHaveLength(0)
+    const names = within(list).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '').filter((n) => n.startsWith('Organise'))
+    expect(names).toHaveLength(2)
+    expect(new Set(names).size).toBe(2) // each card's control says which transaction it is
     const get = calls.find((c) => c.method === 'GET' && c.path.endsWith('/payment-matches') && c.query.getAll('state').length === 2)!
     expect(get.query.getAll('state')).toEqual(['rejected', 'reversed'])
   })

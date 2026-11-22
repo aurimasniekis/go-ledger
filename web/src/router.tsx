@@ -13,6 +13,10 @@ import { MonthPage } from '@/features/month/month-page'
 import { MatchesPage } from '@/features/matches/matches-page'
 import { isMonth, monthOf } from '@/features/month/month'
 import { OutlookPage } from '@/features/outlook/outlook-page'
+import { CommitmentsPage } from '@/features/organisation/commitments-page'
+import { OrganisationPage } from '@/features/organisation/organisation-page'
+import { MerchantsPage } from '@/features/merchants/merchants-page'
+import { MerchantDetailPage } from '@/features/merchants/merchant-detail'
 import { RatesPage } from '@/features/rates/rates-page'
 import { RequireSession } from '@/features/auth/require-session'
 import { SignInPage } from '@/features/auth/sign-in'
@@ -49,14 +53,15 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 const signInRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/sign-in',
-  validateSearch: (s: Record<string, unknown>): { redirect?: string; oidc_error?: string; recovery_error?: string } => ({
+  validateSearch: (s: Record<string, unknown>): { redirect?: string; oidc_error?: string; recovery_error?: string; notice?: string } => ({
     redirect: typeof s.redirect === 'string' ? s.redirect : undefined,
+    notice: s.notice === 'bank_incomplete' ? s.notice : undefined,
     oidc_error: typeof s.oidc_error === 'string' ? s.oidc_error : undefined,
     recovery_error: typeof s.recovery_error === 'string' ? s.recovery_error : undefined,
   }),
   component: function SignIn() {
     const s = signInRoute.useSearch()
-    return <SignInPage redirect={s.redirect} oidcError={s.oidc_error} recoveryError={s.recovery_error} />
+    return <SignInPage redirect={s.redirect} oidcError={s.oidc_error} recoveryError={s.recovery_error} notice={s.notice} />
   },
 })
 const designRoute = createRoute({ getParentRoute: () => rootRoute, path: '/design', component: DesignPage })
@@ -102,17 +107,27 @@ const connectionsCallbackRoute = createRoute({
   },
 })
 
-// The outlook (FX3): ?through=YYYY-MM and ?currency=XXX are optional; the server defaults them.
+// The outlook (FX3): ?through=YYYY-MM and ?currency=XXX are optional; the server defaults them. ?bucket=<id> slices it by a bucket (O3).
 const outlookRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/outlook',
-  validateSearch: (s: Record<string, unknown>): { through?: string; currency?: string } => ({
+  validateSearch: (s: Record<string, unknown>): { through?: string; currency?: string; bucket?: string } => ({
     ...(isMonth(s.through) ? { through: s.through } : {}),
     ...(typeof s.currency === 'string' && /^[A-Z]{3}$/.test(s.currency) ? { currency: s.currency } : {}),
+    ...(typeof s.bucket === 'string' && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(s.bucket) ? { bucket: s.bucket } : {}),
   }),
   component: function OutlookRoute() {
-    const { through, currency } = outlookRoute.useSearch()
-    return <OutlookPage through={through} currency={currency} />
+    const { through, currency, bucket } = outlookRoute.useSearch()
+    return <OutlookPage through={through} currency={currency} bucket={bucket} />
+  },
+})
+
+// Merchant records (E3): /merchants lists them, /merchants/<id> is one record.
+const merchantRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/merchants/$id',
+  component: function MerchantRoute() {
+    return <MerchantDetailPage id={merchantRoute.useParams().id} />
   },
 })
 
@@ -126,7 +141,11 @@ const routeTree = rootRoute.addChildren([
     connectionsRoute,
     connectionsCallbackRoute,
     outlookRoute,
+    child('/merchants', MerchantsPage),
+    merchantRoute,
     child('/rates', RatesPage),
+    child('/organisation', OrganisationPage),
+    child('/commitments', CommitmentsPage),
     child('/account/security', SecurityPage),
     child('/account/sessions', SessionsPage),
     child('/account/tokens', MyTokensPage),

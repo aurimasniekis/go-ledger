@@ -5,6 +5,8 @@ local curated mapping plus the person's confirmations, offline; confirmed mappin
 adapter exists but is disabled; an identity is shown only for a confirmed or high-confidence association. This increment
 builds the model and the person's corrections; the curated mapping, the reuse of confirmations and the disabled remote
 adapter follow (task E2). See "What remains".
+Amended (2026-11-22) by [ADR-0058](0058-merchant-records-aliases-and-merging.md): decisions attach to a merchant record (see
+the amendment at the end).
 
 ## Context
 
@@ -42,7 +44,7 @@ This task builds the model and the person's corrections so that any source, or n
    found along the `superseded_by` chain (bounded depth; a tie goes to the lower transaction ID) and marks it
    `review_inherited`; a decision on the booking replaces it (and clearing that decision makes the inherited one apply
    again). The inherited decision is cleared on the pending transaction only: clearing it on the booking is refused
-   (409 `review_inherited`, which names the pending transaction). Nothing is copied or rewritten, so
+   (409 `review_inherited`; the pending transaction is the one in `review.transaction_id` of the merchant read, the error body only says the decision is inherited). Nothing is copied or rewritten, so
    nothing can go stale. An inherited confirmation is checked against the booking's own enrichment like any other
    (decision 7). Corrections and rejections carry over unchanged.
 6. **What is shown.** `Resolve` returns a name and logo only when the person confirmed or corrected it, or an unreviewed
@@ -68,7 +70,8 @@ This task builds the model and the person's corrections so that any source, or n
 
 - **Reliability threshold.** 800 permille (`merchants.DefaultThreshold`) is a documented named default, not a decision
   of D15. The store takes it as an option (`WithThreshold`); there is no configuration key until one is needed.
-- **Reuse of confirmed mappings** (D15: confirmed mappings are reused as suggestions). Not built here: what counts as
+- **Reuse of confirmed mappings** (D15: confirmed mappings are reused as suggestions). Built in task E2, see
+  [ADR-0054](0054-merchant-enrichment-sources.md). Originally not built here: what counts as
   similar is task E2's design. The model does not presuppose it: a reused mapping is written as an enrichment answer
   with its own source (for instance `local_mapping`) and a confidence, so it is shown or held back by the same
   threshold and never outranks a person's decision on that transaction.
@@ -77,3 +80,13 @@ This task builds the model and the person's corrections so that any source, or n
 - **UI** (task E3), and a list or batch read for the transaction list; the Go client method, CLI command and MCP tool
   (P-MCP2 for this slice): the routes are usable through the client's raw call until then.
 - **Optional concurrency check** (If-Match on the review) if D17 chooses it for user decisions.
+
+## Amendment: decisions attach to merchant records (task M1, operator decision D-MER 1a, ADR-0058)
+
+A confirmation or correction now also records the merchant record it attaches to (`merchant_reviews.merchant_id`),
+found through the name's alias key or created with the name as its first alias; a rejection attaches to none. A
+correction may name a record by `merchant_id`. The resolved merchant shows the record's current display name, and a
+confirmation stays applied when the source reports another spelling of the same record (point 7 otherwise unchanged:
+another merchant still makes it outdated). An identified answer resolves to a record through its alias
+(`merchant_enrichments.merchant_id`), keeping its source and confidence. Decision audit events gain `merchant_id`
+(an identifier, never a name). Everything else here stands.

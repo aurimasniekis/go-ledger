@@ -64,7 +64,7 @@ test('the outlook shows each balance with its date, the payments after it and th
   await expect(page.getByTestId('outlook-after-EUR')).toContainText('1 payment')
   await expect(page.getByTestId('outlook-after-EUR')).toContainText('already off "still due" but may not be in the bank balance yet')
   await expect(card.getByText('1 of 1 balance not refreshed in 24 h')).toBeVisible()
-  await expect(page.getByTestId('outlook-not-recorded')).toContainText('2 occurrences due before tracking started are not counted')
+  await expect(page.getByTestId('outlook-not-recorded')).toContainText('2 occurrences were due before the commitments they belong to were created')
   // Nothing besides EUR converts: only the explanation, no repeated figures.
   const converted = page.getByRole('region', { name: 'Converted to EUR (secondary)' })
   await expect(converted).toContainText('no other currency could be converted')

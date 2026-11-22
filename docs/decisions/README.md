@@ -55,6 +55,15 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0051: Merchant model and corrections](0051-merchant-model-and-corrections.md)
 - [ADR-0052: Commitment leeway and priority](0052-commitment-leeway.md)
 - [ADR-0053: Organisation model: categories, labels, buckets and their assignments](0053-organisation-model.md)
+- [ADR-0054: Merchant enrichment sources](0054-merchant-enrichment-sources.md)
 - [ADR-0055: Cooldown for bank refresh on request](0055-bank-refresh-request-cooldown.md)
+- [ADR-0056: Deferral planning UI and the outlook's planned outflows](0056-deferral-planning-ui.md)
+- [ADR-0057: Organisation UI and MCP tools](0057-organisation-ui-and-mcp.md)
+- [ADR-0058: Merchant records, aliases and merging](0058-merchant-records-aliases-and-merging.md)
+- [ADR-0059: Outlook slice by bucket and category/label list filters](0059-outlook-bucket-slice-and-organisation-filters.md)
+- [ADR-0060: Decision-provider layer and policy enforcement](0060-decision-provider-layer.md)
+- [ADR-0061: Merchant screens and the merchant client](0061-merchant-ui.md)
+- [ADR-0062: Organising merchants: UI and MCP](0062-merchant-organisation-ui-and-mcp.md)
+- [ADR-0064: Primary navigation and the mobile menu](0064-primary-navigation.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

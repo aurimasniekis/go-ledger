@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/domain/fx"
 	"github.com/aurimasniekis/go-ledger/internal/domain/fx/fxtest"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
@@ -838,5 +839,135 @@ func TestBankStaleAfterIsReportedWithBalances(t *testing.T) {
 	}
 	if o, _ = s.Build(context.Background(), outlook.Request{}); o.BankStaleAfter != 0 {
 		t.Errorf("without balances the threshold is not reported: %v", o.BankStaleAfter)
+	}
+}
+
+// planStore serves fixed deferral plans to the monthly view.
+type planStore struct{ plans []deferrals.Plan }
+
+func (f planStore) Active(_ context.Context, ids []string) (map[string]deferrals.Plan, error) {
+	out := map[string]deferrals.Plan{}
+	for _, p := range f.plans {
+		for _, id := range ids {
+			if p.Active() && p.OccurrenceID == id {
+				out[id] = p
+			}
+		}
+	}
+	return out, nil
+}
+
+func (f planStore) PlannedIn(_ context.Context, month calendar.YearMonth) ([]deferrals.Plan, error) {
+	var out []deferrals.Plan
+	for _, p := range f.plans {
+		if p.Active() && p.PlannedMonth() == month {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+type occGetter struct{ occReader }
+
+func (f occGetter) Get(_ context.Context, id string) (occurrences.Occurrence, error) {
+	for _, o := range f.items {
+		if o.ID == id {
+			return o, nil
+		}
+	}
+	return occurrences.Occurrence{}, resource.ErrNotFound
+}
+
+// In a truncated window an amount deferred into it from before it is not in
+// still_due, so it is in none of the planned principal figures: deferred_beyond
+// is not understated or negative and total keeps the identity (ADR-0050). A
+// plan whose date passed unpaid is counted as missed.
+func TestPlannedFiguresCountOnlyTheWindowsOwnOccurrencesWhenTruncated(t *testing.T) {
+	occ := func(id, due, amount string) occurrences.Occurrence {
+		dd := d(t, due)
+		return occurrences.Occurrence{ID: id, CommitmentID: "c", Month: dd.YearMonth(), DueDate: dd, Amount: m(t, amount, "EUR"), Version: 1, UpdatedAt: t0.Add(-time.Hour)}
+	}
+	before, deferredBeyond, missed := occ("x", "2006-11-15", "100.00"), occ("y", "2026-10-05", "50.00"), occ("z", "2026-11-05", "30.00")
+	plan := func(o occurrences.Occurrence, planned string) deferrals.Plan {
+		return deferrals.Plan{ID: "p" + o.ID, OccurrenceID: o.ID, CommitmentID: "c", Type: deferrals.TypePersonal, PlannedDate: d(t, planned),
+			OriginalDueDate: o.DueDate, OriginalAmount: o.Amount, OutstandingWhenPlanned: o.Amount, Version: 1}
+	}
+	view := monthview.Service{
+		Occurrences: occGetter{occReader{items: []occurrences.Occurrence{before, deferredBeyond, missed}}},
+		Payments:    factStore{},
+		Deferrals: planStore{plans: []deferrals.Plan{
+			plan(before, "2006-12-20"),         // from before the window into its first month
+			plan(deferredBeyond, "2026-12-10"), // after the window
+			plan(missed, "2026-11-10"),         // date passed, still unpaid
+		}},
+	}
+	cs := commitmentList{{ID: "c", Fields: commitments.Fields{StartDate: d(t, "1990-01-01")}}}
+	o, err := outlook.Service{Months: view, Commitments: cs, Today: func() (calendar.Date, error) { return d(t, "2026-11-16"), nil }}.Build(context.Background(), outlook.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Truncated || o.From != ym(t, "2006-12") {
+		t.Fatalf("window %s truncated=%v", o.From, o.Truncated)
+	}
+	p := lineOf(t, o, "EUR").Planned
+	got := fmt.Sprintf("total=%s in=%s beyond=%s fees=%s missed=%d/%s", p.Total, p.DeferredIn, p.DeferredBeyond, p.Adjustments, p.MissedCount, p.MissedOutstanding)
+	if want := "total=30.00 EUR in=0.00 EUR beyond=50.00 EUR fees=0.00 EUR missed=1/30.00 EUR"; got != want {
+		t.Errorf("planned figures %s, want %s (still due %s)", got, want, lineOf(t, o, "EUR").StillDue)
+	}
+}
+
+func planWithFee(t *testing.T, o occurrences.Occurrence, planned, fee string) deferrals.Plan {
+	t.Helper()
+	return deferrals.Plan{ID: "p" + o.ID, OccurrenceID: o.ID, CommitmentID: o.CommitmentID, Type: deferrals.TypePersonal, PlannedDate: d(t, planned),
+		OriginalDueDate: o.DueDate, OriginalAmount: o.Amount, OutstandingWhenPlanned: o.Amount, Version: 1,
+		Adjustments: []deferrals.Adjustment{{ID: "a" + o.ID, PlanID: "p" + o.ID, Kind: deferrals.AdjustmentFee, Amount: m(t, fee, o.Amount.Currency().Code()), CreatedAt: t0}}}
+}
+
+// A cancelled occurrence owes no principal, but a fee still planned on its
+// plan after the plan date is missed (D-DF-b 2a), as the monthly view says.
+func TestMissedCountIncludesCancelledOccurrenceWithUnpaidFee(t *testing.T) {
+	cancelledAt := t0.Add(-time.Hour)
+	o := occurrences.Occurrence{ID: "x", CommitmentID: "c", Month: ym(t, "2026-11"), DueDate: d(t, "2026-11-05"), Amount: m(t, "30.00", "EUR"), Version: 1,
+		UpdatedAt: t0.Add(-time.Hour), CancelledAt: &cancelledAt, CancelledReason: occurrences.CancelTermsChange}
+	view := monthview.Service{
+		Occurrences: occGetter{occReader{items: []occurrences.Occurrence{o}}},
+		Payments:    factStore{},
+		Deferrals:   planStore{plans: []deferrals.Plan{planWithFee(t, o, "2026-11-10", "5.00")}},
+	}
+	cs := commitmentList{{ID: "c", Fields: commitments.Fields{StartDate: d(t, "2026-11-01")}}}
+	out, err := outlook.Service{Months: view, Commitments: cs, Today: func() (calendar.Date, error) { return d(t, "2026-11-16"), nil }}.Build(context.Background(), outlook.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := lineOf(t, out, "EUR").Planned
+	got := fmt.Sprintf("total=%s fees=%s missed=%d/%s", p.Total, p.Adjustments, p.MissedCount, p.MissedOutstanding)
+	if want := "total=5.00 EUR fees=5.00 EUR missed=1/0.00 EUR"; got != want {
+		t.Errorf("planned figures %s, want %s", got, want)
+	}
+}
+
+// The converted planned total uses the line's single rate and one rounding,
+// like the rest of the converted aggregate: 25.55 USD at 0.9200 is 23.506,
+// 23.51 EUR (half-even), not the sum of separately rounded parts.
+func TestConvertedPlannedTotalUsesTheLinesRateAndRounding(t *testing.T) {
+	e := newEnv(t)
+	e.seedRate(t, "USD/EUR", "0.9200", "2026-11-13", t0.Add(-2*time.Hour))
+	o := occurrences.Occurrence{ID: "u", CommitmentID: "cusd", Month: ym(t, "2026-11"), DueDate: d(t, "2026-11-20"), Amount: m(t, "20.00", "USD"), Version: 1, UpdatedAt: t0.Add(-time.Hour)}
+	s := e.service(t, true)
+	s.Months = monthview.Service{
+		Occurrences: occGetter{occReader{items: []occurrences.Occurrence{o}}},
+		Payments:    factStore{},
+		Deferrals:   planStore{plans: []deferrals.Plan{planWithFee(t, o, "2026-11-18", "5.55")}},
+	}
+	out, err := s.Build(context.Background(), outlook.Request{Currency: money.MustParseCurrency("EUR")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lineOf(t, out, "USD").Planned.Total.String(); got != "25.55 USD" {
+		t.Fatalf("planned total %s", got)
+	}
+	c := out.Converted
+	if c == nil || c.PlannedTotal.String() != "23.51 EUR" || c.StillDue.String() != "18.40 EUR" {
+		t.Errorf("converted %+v, want planned total 23.51 EUR and still due 18.40 EUR", c)
 	}
 }

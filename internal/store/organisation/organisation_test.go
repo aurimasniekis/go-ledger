@@ -23,6 +23,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	merchantstore "github.com/aurimasniekis/go-ledger/internal/store/merchants"
 	orgstore "github.com/aurimasniekis/go-ledger/internal/store/organisation"
 )
 
@@ -925,7 +926,7 @@ func TestBucketsHoldCommitmentsAndAccountsOnly(t *testing.T) {
 	if err := f.os.AddToBucket(f.ctx, alice, bucket.ID, acc); err != nil {
 		t.Fatal(err)
 	}
-	for _, o := range []org.ObjectRef{txRef(f.tx("COFFEE KIOSK")), {Type: org.ObjectMerchant, ID: "acme"}} {
+	for _, o := range []org.ObjectRef{txRef(f.tx("COFFEE KIOSK")), {Type: org.ObjectMerchant, ID: resource.NewID()}} {
 		if err := f.os.AddToBucket(f.ctx, alice, bucket.ID, o); !errors.Is(err, org.ErrNotApplicable) {
 			t.Fatalf("a %s in a bucket: %v", o.Type, err)
 		}
@@ -975,9 +976,17 @@ func TestBucketsHoldCommitmentsAndAccountsOnly(t *testing.T) {
 	})
 }
 
-func TestMerchantsAreAssignableByKey(t *testing.T) {
+// Merchant assignments key on the merchant record's id (task M1, ADR-0058):
+// renaming the merchant or adding a spelling keeps them, a name is no object
+// id, an archived merchant gets nothing new, and the audit target is the id.
+func TestMerchantsAreAssignableByID(t *testing.T) {
 	f := newFixture(t)
-	obj := org.ObjectRef{Type: org.ObjectMerchant, ID: "acme shop"}
+	ms := merchantstore.New(f.db, f.rec, func() time.Time { return f.now })
+	m, err := ms.CreateEntity(f.ctx, alice, "Acme Shop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := org.ObjectRef{Type: org.ObjectMerchant, ID: m.ID}
 	cat, lbl := f.def(org.KindCategory, "Shopping", nil), f.def(org.KindLabel, "Online", nil)
 	if _, err := f.os.SetCategory(f.ctx, alice, obj, &cat.ID); err != nil {
 		t.Fatal(err)
@@ -985,19 +994,48 @@ func TestMerchantsAreAssignableByKey(t *testing.T) {
 	if _, err := f.os.AddLabel(f.ctx, alice, obj, lbl.ID); err != nil {
 		t.Fatal(err)
 	}
+	if m, err = ms.RenameEntity(f.ctx, alice, m.ID, m.Version, "ACME Online"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ms.AddAlias(f.ctx, alice, m.ID, "Acme Shop Vilnius"); err != nil {
+		t.Fatal(err)
+	}
 	got, err := f.os.Get(f.ctx, obj)
-	if err != nil || got.Category.Category.ID != cat.ID || len(got.Labels) != 1 {
-		t.Fatalf("merchant = %+v %v", got, err)
+	if err != nil || got.Category == nil || got.Category.Category == nil || got.Category.Category.ID != cat.ID || len(got.Labels) != 1 {
+		t.Fatalf("merchant after rename and a new alias = %+v %v", got, err)
 	}
 	var ve *commitments.ValidationError
-	if _, err := f.os.SetCategory(f.ctx, alice, org.ObjectRef{Type: org.ObjectMerchant, ID: "Acme Shop"}, &cat.ID); !errors.As(err, &ve) {
-		t.Fatalf("a merchant name that is not a key: %v", err)
+	if _, err := f.os.SetCategory(f.ctx, alice, org.ObjectRef{Type: org.ObjectMerchant, ID: "acme shop"}, &cat.ID); !errors.As(err, &ve) {
+		t.Fatalf("a merchant name as object id: %v", err)
 	}
-	// The audit log never carries the merchant's name or key.
+	if _, err := f.os.SetCategory(f.ctx, alice, org.ObjectRef{Type: org.ObjectMerchant, ID: resource.NewID()}, &cat.ID); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("an unknown merchant: %v", err)
+	}
+	m, _ = ms.GetEntity(f.ctx, m.ID)
+	if _, err := ms.SetEntityArchived(f.ctx, alice, m.ID, m.Version, true); err != nil {
+		t.Fatal(err)
+	}
+	other := f.def(org.KindLabel, "Weekly", nil)
+	if _, err := f.os.AddLabel(f.ctx, alice, obj, other.ID); !errors.Is(err, org.ErrObjectArchived) {
+		t.Fatalf("a label on an archived merchant: %v", err)
+	}
+	if got, err := f.os.Get(f.ctx, obj); err != nil || len(got.Labels) != 1 {
+		t.Fatalf("an archived merchant keeps its assignments: %+v %v", got, err)
+	}
+	if _, err := f.os.RemoveLabel(f.ctx, alice, obj, lbl.ID); err != nil {
+		t.Fatalf("removing a label from an archived merchant: %v", err)
+	}
+	found := false
 	for _, e := range f.rec.events {
-		if e.TargetType == "merchant" && strings.Contains(e.TargetID, "acme") {
-			t.Fatalf("audit target holds the merchant key: %+v", e)
+		if e.Action == audit.OrganisationAssignmentChanged && e.TargetType == "merchant" {
+			found = true
+			if e.TargetID != m.ID {
+				t.Fatalf("audit target = %q, want the merchant id", e.TargetID)
+			}
 		}
+	}
+	if !found {
+		t.Fatal("no assignment event for the merchant")
 	}
 }
 
@@ -1147,5 +1185,121 @@ func TestSchemaEnforcesTheRules(t *testing.T) {
 	// The category cannot be deleted from under an assignment.
 	if err := exec("DELETE FROM categories WHERE id = ?", a.ID); err == nil {
 		t.Error("the database deleted an assigned category")
+	}
+}
+
+func TestSelectRefusesMoreThanTheCap(t *testing.T) {
+	f := newFixture(t)
+	a, b := f.tx("CARD PURCHASE BOOKSHOP"), f.tx("COFFEE KIOSK")
+	keep := f.def(org.KindLabel, "Keep", nil)
+	food := f.def(org.KindCategory, "Food", nil)
+	for _, tx := range []banking.StoredTransaction{a, b} {
+		if _, err := f.os.AddLabel(f.ctx, alice, txRef(tx), keep.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.os.SetCategory(f.ctx, alice, txRef(tx), &food.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer orgstore.SetMaxSelected(2)()
+	for name, fl := range map[string]org.Filter{"label": {LabelIDs: []string{keep.ID}}, "category": {CategoryIDs: []string{food.ID}}} {
+		if ids, err := f.os.Select(f.ctx, org.ObjectTransaction, fl); err != nil || len(ids) != 2 {
+			t.Fatalf("%s at the cap: %v %v", name, ids, err)
+		}
+	}
+	restore := orgstore.SetMaxSelected(1)
+	defer restore()
+	for name, fl := range map[string]org.Filter{"label": {LabelIDs: []string{keep.ID}}, "category": {CategoryIDs: []string{food.ID}}} {
+		if ids, err := f.os.Select(f.ctx, org.ObjectTransaction, fl); !errors.Is(err, org.ErrTooManyObjects) || ids != nil {
+			t.Fatalf("%s over the cap: %v %v", name, ids, err)
+		}
+	}
+}
+
+func TestSelectAndMemberIDs(t *testing.T) {
+	f := newFixture(t)
+	pending := f.tx("CARD PURCHASE BOOKSHOP")
+	booked := f.tx("CARD PURCHASE LONDON")
+	other := f.tx("COFFEE KIOSK")
+	food := f.def(org.KindCategory, "Food", nil)
+	snacks := f.def(org.KindCategory, "Snacks", &food.ID)
+	fun := f.def(org.KindCategory, "Fun", nil)
+	keep := f.def(org.KindLabel, "Keep", nil)
+	sel := func(typ org.ObjectType, fl org.Filter) []string {
+		t.Helper()
+		ids, err := f.os.Select(f.ctx, typ, fl)
+		if err != nil {
+			t.Fatalf("select %+v: %v", fl, err)
+		}
+		return ids
+	}
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(pending), &snacks.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.AddLabel(f.ctx, alice, txRef(pending), keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(other), &fun.ID); err != nil {
+		t.Fatal(err)
+	}
+	// A parent matches its child; a transaction matches through the pending
+	// row it superseded once linked, and an own decision outranks it.
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{food.ID}}); !slices.Equal(got, []string{string(pending.ID)}) {
+		t.Fatalf("before the link: %v", got)
+	}
+	f.link(pending.ID, booked.ID)
+	want := []string{string(pending.ID), string(booked.ID)}
+	slices.Sort(want)
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{food.ID}}); !slices.Equal(got, want) {
+		t.Fatalf("inherited: %v, want %v", got, want)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{food.ID}, LabelIDs: []string{keep.ID}}); !slices.Equal(got, want) {
+		t.Fatalf("category and label: %v", got)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{fun.ID}, LabelIDs: []string{keep.ID}}); len(got) != 0 {
+		t.Fatalf("both must hold: %v", got)
+	}
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(booked), &fun.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{food.ID}}); !slices.Equal(got, []string{string(pending.ID)}) {
+		t.Fatalf("own decision outranks the inherited one: %v", got)
+	}
+	// A label removed on the booking no longer matches there.
+	if _, err := f.os.RemoveLabel(f.ctx, alice, txRef(booked), keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{LabelIDs: []string{keep.ID}}); !slices.Equal(got, []string{string(pending.ID)}) {
+		t.Fatalf("removed label: %v", got)
+	}
+	// Unknown definitions are refused; an explicit "no category" matches nothing.
+	var unknown *org.UnknownDefinitionError
+	if _, err := f.os.Select(f.ctx, org.ObjectTransaction, org.Filter{LabelIDs: []string{"01JZ0000000000000000000999"}}); !errors.As(err, &unknown) || unknown.Kind != org.KindLabel {
+		t.Fatalf("unknown label: %v", err)
+	}
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(other), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{fun.ID}}); !slices.Equal(got, []string{string(booked.ID)}) {
+		t.Fatalf("explicitly uncategorised: %v", got)
+	}
+
+	// Buckets: members by type, sorted; an unknown bucket is not found.
+	c, cref := f.commitment("Rent")
+	acct := f.account()
+	b := f.def(org.KindBucket, "Home", nil)
+	for _, o := range []org.ObjectRef{cref, acct} {
+		if err := f.os.AddToBucket(f.ctx, alice, b.ID, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ids, err := f.os.MemberIDs(f.ctx, b.ID, org.ObjectCommitment); err != nil || !slices.Equal(ids, []string{c.ID}) {
+		t.Fatalf("commitment members: %v %v", ids, err)
+	}
+	if ids, err := f.os.MemberIDs(f.ctx, b.ID, org.ObjectAccount); err != nil || !slices.Equal(ids, []string{acct.ID}) {
+		t.Fatalf("account members: %v %v", ids, err)
+	}
+	if _, err := f.os.MemberIDs(f.ctx, "01JZ0000000000000000000999", org.ObjectAccount); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("unknown bucket: %v", err)
 	}
 }

@@ -8,6 +8,7 @@ import { defineConfig, devices } from '@playwright/test'
 // Run: E2E_LEDGER_BIN=../bin/ledger pnpm test:e2e
 const port = 18080
 const journeyPort = 18081 // journey-server.mjs
+const deferralPort = 18083 // journey-server.mjs, deferral scenario (its bank double is on the next port)
 // Opt-in for sandboxed hosts where Chromium crashes: PLAYWRIGHT_SINGLE_PROCESS=1
 // starts it with --single-process. Off by default; see CONTRIBUTING.md.
 const singleProcess = process.env.PLAYWRIGHT_SINGLE_PROCESS === '1'
@@ -46,6 +47,14 @@ export default defineConfig({
     {
       command: `node e2e/journey-server.mjs ${process.env.E2E_LEDGER_BIN ?? '../bin/ledger'}`,
       url: `http://127.0.0.1:${journeyPort}/`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+    // The deferral journey (DF3, e2e/deferral.spec.ts): its own instance, ports, simulated bank data and database.
+    {
+      command: `node e2e/journey-server.mjs ${process.env.E2E_LEDGER_BIN ?? '../bin/ledger'}`,
+      env: { JOURNEY_LEDGER_PORT: String(deferralPort), JOURNEY_BANK_PORT: String(deferralPort + 1), JOURNEY_SCENARIO: 'deferral' },
+      url: `http://127.0.0.1:${deferralPort}/`,
       reuseExistingServer: false,
       timeout: 30_000,
     },

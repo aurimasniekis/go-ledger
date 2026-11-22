@@ -330,6 +330,80 @@ rates:
   # Environment: LEDGER_RATES_TIMEOUT  Flag: --rates.timeout
   timeout: "15s"
 
+merchants:
+
+  enrichment:
+
+    remote:
+
+      # Ask a remote merchant-identification service about transactions the
+      # local curated mapping and your confirmations cannot identify. Off by
+      # default and no service is approved (decision D15). Turning it on sends
+      # one cleaned merchant string per transaction: the counterparty name
+      # only, never the description, with every word that holds a digit
+      # removed and the words iban, bic, swift and account removed (text is
+      # split at white space and at , / . and ;), at most 100 characters.
+      # Nothing is sent unless the name starts or ends, as a whole word in any
+      # case, with one of the company forms uab, mb, sia, ltd, limited, llc,
+      # gmbh, inc, plc, corp, srl, sarl, kft, oü next to at least one other
+      # word. The short forms as, co, sa, ab, ag, sp, oy, nv and bv never
+      # count, a bare form or a form plus punctuation sends nothing, and so do
+      # names of people, transfers (transfer words such as sepa or transfer)
+      # and everything else. Merchants your own confirmations or rejections
+      # already cover are not asked about. If
+      # merchants.enrichment.remote.country is set, that country code is sent
+      # too. Never amounts, dates, IBANs, account holders or balances. Needs
+      # url, and you are responsible for the service's terms: see attribution,
+      # store_logo_ref and retention.
+      # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_ENABLED  Flag: --merchants.enrichment.remote.enabled
+      enabled: false
+
+      # Lookup endpoint of the remote service (POST, JSON; see ADR-0054 for
+      # the contract). https only (plain http only for a loopback test
+      # server), no credentials or query. Required when enabled.
+      # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_URL  Flag: --merchants.enrichment.remote.url
+      url: ""
+
+      # Path of a file with the bearer key for the remote service (trailing
+      # newlines ignored). The key is read at startup, sent only to the
+      # configured URL and never logged. Optional.
+      # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_API_KEY_FILE  Flag: --merchants.enrichment.remote.api_key_file
+      api_key_file: ""
+
+      # Optional ISO 3166-1 alpha-2 country code sent with each lookup as a
+      # hint, for example LT. Empty means no country is sent.
+      # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_COUNTRY  Flag: --merchants.enrichment.remote.country
+      country: ""
+
+      # Time limit for one lookup (1s to 1m). A failure or timeout leaves the
+      # transaction without a remote answer and never delays or fails an
+      # import.
+      # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_TIMEOUT  Flag: --merchants.enrichment.remote.timeout
+      timeout: "10s"
+
+      # Attribution text the service's licence requires, for example 'Logos by
+      # Example Service'. Shown with identities that came from it (GET
+      # /api/v1/merchants/sources). Up to 200 characters.
+      # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_ATTRIBUTION  Flag: --merchants.enrichment.remote.attribution
+      attribution: ""
+
+      # Keep the logo reference the service returns. Leave false unless its
+      # licence allows storing or linking its logos: Ledger then shows the
+      # name with a neutral icon. Logos are never downloaded or copied by
+      # Ledger.
+      # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_STORE_LOGO_REF  Flag: --merchants.enrichment.remote.store_logo_ref
+      store_logo_ref: false
+
+      # How long answers from the remote service are kept (the longest a
+      # licence usually allows is 30 days, the default; 24h to 8760h, or 0 to
+      # keep them until replaced). Older answers are deleted, so the
+      # transaction is looked up again; your confirmations and corrections are
+      # never deleted. The limit still applies after the remote source is
+      # turned off: answers it cached are deleted when they pass it (0 keeps
+      # them until replaced, which never happens once it is off).
+      # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_RETENTION  Flag: --merchants.enrichment.remote.retention
+      retention: "720h"
+
 auth:
 
   password:
@@ -503,3 +577,363 @@ mcp:
   # well.
   # Environment: LEDGER_MCP_MAX_REQUEST_BYTES  Flag: --mcp.max_request_bytes
   max_request_bytes: 262144
+
+      # Secret decisions.providers.openrouter.api_key: OpenRouter API key. Secret:
+      # environment only, never in the YAML file and never a flag. Set this or
+      # api_key_file. Required when an enabled decision task (or its fallback)
+      # uses OpenRouter.
+
+decisions:
+
+  providers:
+
+    openrouter:
+
+      # Path of a file that contains the OpenRouter API key. Alternative to
+      # the api_key variable; trailing newlines are ignored.
+      # Environment: LEDGER_DECISIONS_PROVIDERS_OPENROUTER_API_KEY_FILE  Flag: --decisions.providers.openrouter.api_key_file
+      api_key_file: ""
+
+      # Upstream providers OpenRouter may forward Ledger's requests to (a list
+      # in YAML, comma separated in the variable), for example anthropic.
+      # Empty (the default) means downstream sharing is disabled and no task
+      # may use OpenRouter (decision D13). Consent for another provider never
+      # covers an upstream reached through OpenRouter.
+      # Environment: LEDGER_DECISIONS_PROVIDERS_OPENROUTER_ALLOWED_UPSTREAMS  Flag: --decisions.providers.openrouter.allowed_upstreams
+      allowed_upstreams: []
+
+      # Secret decisions.providers.openai.api_key: API key of this decision
+      # provider. Secret: environment only, never in the YAML file and never a
+      # flag. Set this or api_key_file. Required when an enabled decision task (or
+      # its fallback) uses the provider; never logged or sent anywhere but to the
+      # provider.
+
+    openai:
+
+      # Path of a file that contains the API key of this decision provider.
+      # Alternative to the api_key variable; trailing newlines are ignored.
+      # Only the path is configuration; the key is never logged.
+      # Environment: LEDGER_DECISIONS_PROVIDERS_OPENAI_API_KEY_FILE  Flag: --decisions.providers.openai.api_key_file
+      api_key_file: ""
+
+      # Secret decisions.providers.anthropic.api_key: API key of this decision
+      # provider. Secret: environment only, never in the YAML file and never a
+      # flag. Set this or api_key_file. Required when an enabled decision task (or
+      # its fallback) uses the provider; never logged or sent anywhere but to the
+      # provider.
+
+    anthropic:
+
+      # Path of a file that contains the API key of this decision provider.
+      # Alternative to the api_key variable; trailing newlines are ignored.
+      # Only the path is configuration; the key is never logged.
+      # Environment: LEDGER_DECISIONS_PROVIDERS_ANTHROPIC_API_KEY_FILE  Flag: --decisions.providers.anthropic.api_key_file
+      api_key_file: ""
+
+      # Secret decisions.providers.typesafe.api_key: API key of this decision
+      # provider. Secret: environment only, never in the YAML file and never a
+      # flag. Set this or api_key_file. Required when an enabled decision task (or
+      # its fallback) uses the provider; never logged or sent anywhere but to the
+      # provider.
+
+    typesafe:
+
+      # Path of a file that contains the API key of this decision provider.
+      # Alternative to the api_key variable; trailing newlines are ignored.
+      # Only the path is configuration; the key is never logged.
+      # Environment: LEDGER_DECISIONS_PROVIDERS_TYPESAFE_API_KEY_FILE  Flag: --decisions.providers.typesafe.api_key_file
+      api_key_file: ""
+
+  tasks:
+
+    categorisation:
+
+      # Ask a decision provider for suggestions for this task. Off by default.
+      # Even when on, nothing is sent until consent for this provider and this
+      # purpose is recorded; consent for one provider or purpose never covers
+      # another. Suggestions are kept apart from bank facts and are only
+      # suggestions: a failure never changes anything.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_ENABLED  Flag: --decisions.tasks.categorisation.enabled
+      enabled: false
+
+      # Decision provider for this task: openrouter, openai, anthropic or
+      # typesafe. Required when the task is enabled. typesafe serves decide
+      # tasks only (categorisation, label_suggestion, payment_matching), not
+      # alerts.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_PROVIDER  Flag: --decisions.tasks.categorisation.provider
+      provider: ""
+
+      # Model identifier at the provider. Required when the task is enabled.
+      # The model the provider reports is recorded with every suggestion.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_MODEL  Flag: --decisions.tasks.categorisation.model
+      model: ""
+
+      # Capability the task needs: decide (a choice among candidates:
+      # categorisation, label_suggestion, payment_matching) or generate (free
+      # text: alerts). Empty means the task's own; any other value than the
+      # task's is refused.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_CAPABILITY  Flag: --decisions.tasks.categorisation.capability
+      capability: ""
+
+      # Time limit for one run of the task on one provider, retries included
+      # (1s to 2m). A run that exceeds it ends without a suggestion and
+      # changes nothing.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_TIMEOUT  Flag: --decisions.tasks.categorisation.timeout
+      timeout: "30s"
+
+      # Most requests the task may send per calendar month (UTC), every
+      # attempt counted, retries and fallback providers included (1 to
+      # 1000000). Once reached, the task makes no suggestions until the next
+      # month. The default of 500 is a proposal awaiting the operator.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_MONTHLY_REQUESTS  Flag: --decisions.tasks.categorisation.monthly_requests
+      monthly_requests: 500
+
+      # Retries of a request the provider refused before generating anything
+      # (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A
+      # response that was generated, even a broken one, is never retried.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_RETRIES  Flag: --decisions.tasks.categorisation.retries
+      retries: 2
+
+      # Mark suggestions for automatic application instead of review. Allowed
+      # for categorisation only (decision D13); an applied suggestion is
+      # always reversible and never replaces a person's choice.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_AUTO_APPLY  Flag: --decisions.tasks.categorisation.auto_apply
+      auto_apply: false
+
+      # Fields this task may send to its provider (a list in YAML, comma
+      # separated in the variable), from description, amount, currency,
+      # booking_date, merchant_name and candidate_names. Empty means the
+      # provider's default: all of them for openrouter, openai and anthropic
+      # (generate tasks have no candidates); description, merchant_name and
+      # candidate_names for typesafe. iban, account_number, counterparty_name
+      # and balance are never sent and are refused here. A decide task needs
+      # candidate_names. Applies to the main provider; fallback providers use
+      # their defaults.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_FIELDS  Flag: --decisions.tasks.categorisation.fields
+      fields: []
+
+      # Explicit fallback providers, as provider:model entries tried in order
+      # only when the one before had an outage (a list in YAML, comma
+      # separated in the variable). Empty (the default) means no fallback:
+      # there is never an automatic one. Each needs its own consent and key.
+      # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_FALLBACK  Flag: --decisions.tasks.categorisation.fallback
+      fallback: []
+
+    label_suggestion:
+
+      # Ask a decision provider for suggestions for this task. Off by default.
+      # Even when on, nothing is sent until consent for this provider and this
+      # purpose is recorded; consent for one provider or purpose never covers
+      # another. Suggestions are kept apart from bank facts and are only
+      # suggestions: a failure never changes anything.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_ENABLED  Flag: --decisions.tasks.label_suggestion.enabled
+      enabled: false
+
+      # Decision provider for this task: openrouter, openai, anthropic or
+      # typesafe. Required when the task is enabled. typesafe serves decide
+      # tasks only (categorisation, label_suggestion, payment_matching), not
+      # alerts.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_PROVIDER  Flag: --decisions.tasks.label_suggestion.provider
+      provider: ""
+
+      # Model identifier at the provider. Required when the task is enabled.
+      # The model the provider reports is recorded with every suggestion.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_MODEL  Flag: --decisions.tasks.label_suggestion.model
+      model: ""
+
+      # Capability the task needs: decide (a choice among candidates:
+      # categorisation, label_suggestion, payment_matching) or generate (free
+      # text: alerts). Empty means the task's own; any other value than the
+      # task's is refused.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_CAPABILITY  Flag: --decisions.tasks.label_suggestion.capability
+      capability: ""
+
+      # Time limit for one run of the task on one provider, retries included
+      # (1s to 2m). A run that exceeds it ends without a suggestion and
+      # changes nothing.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_TIMEOUT  Flag: --decisions.tasks.label_suggestion.timeout
+      timeout: "30s"
+
+      # Most requests the task may send per calendar month (UTC), every
+      # attempt counted, retries and fallback providers included (1 to
+      # 1000000). Once reached, the task makes no suggestions until the next
+      # month. The default of 500 is a proposal awaiting the operator.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_MONTHLY_REQUESTS  Flag: --decisions.tasks.label_suggestion.monthly_requests
+      monthly_requests: 500
+
+      # Retries of a request the provider refused before generating anything
+      # (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A
+      # response that was generated, even a broken one, is never retried.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_RETRIES  Flag: --decisions.tasks.label_suggestion.retries
+      retries: 2
+
+      # Mark suggestions for automatic application instead of review. Allowed
+      # for categorisation only (decision D13); an applied suggestion is
+      # always reversible and never replaces a person's choice.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_AUTO_APPLY  Flag: --decisions.tasks.label_suggestion.auto_apply
+      auto_apply: false
+
+      # Fields this task may send to its provider (a list in YAML, comma
+      # separated in the variable), from description, amount, currency,
+      # booking_date, merchant_name and candidate_names. Empty means the
+      # provider's default: all of them for openrouter, openai and anthropic
+      # (generate tasks have no candidates); description, merchant_name and
+      # candidate_names for typesafe. iban, account_number, counterparty_name
+      # and balance are never sent and are refused here. A decide task needs
+      # candidate_names. Applies to the main provider; fallback providers use
+      # their defaults.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_FIELDS  Flag: --decisions.tasks.label_suggestion.fields
+      fields: []
+
+      # Explicit fallback providers, as provider:model entries tried in order
+      # only when the one before had an outage (a list in YAML, comma
+      # separated in the variable). Empty (the default) means no fallback:
+      # there is never an automatic one. Each needs its own consent and key.
+      # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_FALLBACK  Flag: --decisions.tasks.label_suggestion.fallback
+      fallback: []
+
+    alerts:
+
+      # Ask a decision provider for suggestions for this task. Off by default.
+      # Even when on, nothing is sent until consent for this provider and this
+      # purpose is recorded; consent for one provider or purpose never covers
+      # another. Suggestions are kept apart from bank facts and are only
+      # suggestions: a failure never changes anything.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_ENABLED  Flag: --decisions.tasks.alerts.enabled
+      enabled: false
+
+      # Decision provider for this task: openrouter, openai, anthropic or
+      # typesafe. Required when the task is enabled. typesafe serves decide
+      # tasks only (categorisation, label_suggestion, payment_matching), not
+      # alerts.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_PROVIDER  Flag: --decisions.tasks.alerts.provider
+      provider: ""
+
+      # Model identifier at the provider. Required when the task is enabled.
+      # The model the provider reports is recorded with every suggestion.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_MODEL  Flag: --decisions.tasks.alerts.model
+      model: ""
+
+      # Capability the task needs: decide (a choice among candidates:
+      # categorisation, label_suggestion, payment_matching) or generate (free
+      # text: alerts). Empty means the task's own; any other value than the
+      # task's is refused.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_CAPABILITY  Flag: --decisions.tasks.alerts.capability
+      capability: ""
+
+      # Time limit for one run of the task on one provider, retries included
+      # (1s to 2m). A run that exceeds it ends without a suggestion and
+      # changes nothing.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_TIMEOUT  Flag: --decisions.tasks.alerts.timeout
+      timeout: "30s"
+
+      # Most requests the task may send per calendar month (UTC), every
+      # attempt counted, retries and fallback providers included (1 to
+      # 1000000). Once reached, the task makes no suggestions until the next
+      # month. The default of 500 is a proposal awaiting the operator.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_MONTHLY_REQUESTS  Flag: --decisions.tasks.alerts.monthly_requests
+      monthly_requests: 500
+
+      # Retries of a request the provider refused before generating anything
+      # (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A
+      # response that was generated, even a broken one, is never retried.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_RETRIES  Flag: --decisions.tasks.alerts.retries
+      retries: 2
+
+      # Mark suggestions for automatic application instead of review. Allowed
+      # for categorisation only (decision D13); an applied suggestion is
+      # always reversible and never replaces a person's choice.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_AUTO_APPLY  Flag: --decisions.tasks.alerts.auto_apply
+      auto_apply: false
+
+      # Fields this task may send to its provider (a list in YAML, comma
+      # separated in the variable), from description, amount, currency,
+      # booking_date, merchant_name and candidate_names. Empty means the
+      # provider's default: all of them for openrouter, openai and anthropic
+      # (generate tasks have no candidates); description, merchant_name and
+      # candidate_names for typesafe. iban, account_number, counterparty_name
+      # and balance are never sent and are refused here. A decide task needs
+      # candidate_names. Applies to the main provider; fallback providers use
+      # their defaults.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_FIELDS  Flag: --decisions.tasks.alerts.fields
+      fields: []
+
+      # Explicit fallback providers, as provider:model entries tried in order
+      # only when the one before had an outage (a list in YAML, comma
+      # separated in the variable). Empty (the default) means no fallback:
+      # there is never an automatic one. Each needs its own consent and key.
+      # Environment: LEDGER_DECISIONS_TASKS_ALERTS_FALLBACK  Flag: --decisions.tasks.alerts.fallback
+      fallback: []
+
+    payment_matching:
+
+      # Ask a decision provider for suggestions for this task. Off by default.
+      # Even when on, nothing is sent until consent for this provider and this
+      # purpose is recorded; consent for one provider or purpose never covers
+      # another. Suggestions are kept apart from bank facts and are only
+      # suggestions: a failure never changes anything.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_ENABLED  Flag: --decisions.tasks.payment_matching.enabled
+      enabled: false
+
+      # Decision provider for this task: openrouter, openai, anthropic or
+      # typesafe. Required when the task is enabled. typesafe serves decide
+      # tasks only (categorisation, label_suggestion, payment_matching), not
+      # alerts.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_PROVIDER  Flag: --decisions.tasks.payment_matching.provider
+      provider: ""
+
+      # Model identifier at the provider. Required when the task is enabled.
+      # The model the provider reports is recorded with every suggestion.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_MODEL  Flag: --decisions.tasks.payment_matching.model
+      model: ""
+
+      # Capability the task needs: decide (a choice among candidates:
+      # categorisation, label_suggestion, payment_matching) or generate (free
+      # text: alerts). Empty means the task's own; any other value than the
+      # task's is refused.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_CAPABILITY  Flag: --decisions.tasks.payment_matching.capability
+      capability: ""
+
+      # Time limit for one run of the task on one provider, retries included
+      # (1s to 2m). A run that exceeds it ends without a suggestion and
+      # changes nothing.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_TIMEOUT  Flag: --decisions.tasks.payment_matching.timeout
+      timeout: "30s"
+
+      # Most requests the task may send per calendar month (UTC), every
+      # attempt counted, retries and fallback providers included (1 to
+      # 1000000). Once reached, the task makes no suggestions until the next
+      # month. The default of 500 is a proposal awaiting the operator.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_MONTHLY_REQUESTS  Flag: --decisions.tasks.payment_matching.monthly_requests
+      monthly_requests: 500
+
+      # Retries of a request the provider refused before generating anything
+      # (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A
+      # response that was generated, even a broken one, is never retried.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_RETRIES  Flag: --decisions.tasks.payment_matching.retries
+      retries: 2
+
+      # Mark suggestions for automatic application instead of review. Allowed
+      # for categorisation only (decision D13); an applied suggestion is
+      # always reversible and never replaces a person's choice.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_AUTO_APPLY  Flag: --decisions.tasks.payment_matching.auto_apply
+      auto_apply: false
+
+      # Fields this task may send to its provider (a list in YAML, comma
+      # separated in the variable), from description, amount, currency,
+      # booking_date, merchant_name and candidate_names. Empty means the
+      # provider's default: all of them for openrouter, openai and anthropic
+      # (generate tasks have no candidates); description, merchant_name and
+      # candidate_names for typesafe. iban, account_number, counterparty_name
+      # and balance are never sent and are refused here. A decide task needs
+      # candidate_names. Applies to the main provider; fallback providers use
+      # their defaults.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_FIELDS  Flag: --decisions.tasks.payment_matching.fields
+      fields: []
+
+      # Explicit fallback providers, as provider:model entries tried in order
+      # only when the one before had an outage (a list in YAML, comma
+      # separated in the variable). Empty (the default) means no fallback:
+      # there is never an automatic one. Each needs its own consent and key.
+      # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_FALLBACK  Flag: --decisions.tasks.payment_matching.fallback
+      fallback: []

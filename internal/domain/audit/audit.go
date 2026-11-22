@@ -150,6 +150,8 @@ const (
 	DeferralPlanUndone        Action = "deferral_plan.undone"
 	DeferralAdjustmentAdded   Action = "deferral_plan.adjustment_added"
 	DeferralAdjustmentRemoved Action = "deferral_plan.adjustment_removed"
+	DeferralAdjustmentPaid    Action = "deferral_plan.adjustment_paid"
+	DeferralAdjustmentUnpaid  Action = "deferral_plan.adjustment_unpaid"
 )
 
 // Event is one audited change.

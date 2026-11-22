@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, apiFetch, setCsrfToken } from '@/lib/api'
 import { navigation } from '@/lib/oidc'
 import { ReauthProvider } from '@/features/auth/reauth'
+import { splitOutcome } from '@/features/auth/require-session'
 import { fail, installApi, none, ok, renderApp, session, signedIn } from '@/test/fake-api'
 
 const signedOut = { 'GET /api/v1/auth/session': fail(401, 'unauthenticated', 'sign in required') }
@@ -191,6 +192,38 @@ describe('provider outcomes on any page', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('different identity')
     expect(alert).not.toHaveTextContent('identity_mismatch')
+  })
+})
+
+describe('an outcome carried into sign-in', () => {
+  it('keeps the provider outcome on the sign-in page, out of the redirect', () => {
+    expect(splitOutcome('/account/tokens?oidc_error=session_ended')).toEqual({ redirect: '/account/tokens', oidcError: 'session_ended' })
+    expect(splitOutcome('/month?month=2026-11&oidc=reauthenticated&oidc_error=access_denied#top')).toEqual({
+      redirect: '/month?month=2026-11#top',
+      oidcError: 'access_denied',
+    })
+    expect(splitOutcome('/account/tokens?oidc=reauthenticated')).toEqual({ redirect: '/account/tokens', oidcError: undefined })
+    expect(splitOutcome('/rates')).toEqual({ redirect: '/rates', oidcError: undefined })
+  })
+
+  it('shows an outcome from a signed-out visit on sign-in, and not again after signing in', async () => {
+    const user = userEvent.setup()
+    let signed = false
+    installApi({
+      'GET /api/v1/auth/session': () => (signed ? ok(session()) : fail(401, 'unauthenticated', 'sign in required')),
+      'GET /api/v1/auth/methods': ok({ password: { enabled: true }, oidc: { enabled: false, name: null, authorize_url: null } }),
+      'POST /api/v1/auth/sign-in': () => {
+        signed = true
+        return ok(session())
+      },
+    })
+    renderApp('/account/tokens?oidc_error=session_ended')
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your Ledger session ended before the provider answered')
+    await user.type(screen.getByLabelText('Username'), 'alice')
+    await user.type(screen.getByLabelText('Password'), 'pw{Enter}')
+    expect(await screen.findByRole('heading', { name: 'API tokens' })).toBeInTheDocument()
+    expect(screen.queryByText(/session ended/)).not.toBeInTheDocument()
   })
 })
 

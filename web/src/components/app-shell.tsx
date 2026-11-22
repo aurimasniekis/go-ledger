@@ -26,10 +26,10 @@ export function AppShell() {
           Skip to content
         </a>
         <header className="relative border-b border-border bg-surface">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-2 gap-y-2 px-4 py-2 sm:gap-x-4">
             <Link to="/" className="font-semibold">Ledger</Link>
             <PrimaryNav />
-            <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-2 sm:gap-x-3">
               <AccountMenu />
               <ThemeSelect />
             </div>

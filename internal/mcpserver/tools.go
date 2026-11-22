@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
+	"github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 )
 
 // Kind classifies what a tool does, for the MCP tool annotations and for
@@ -54,6 +56,10 @@ type Tool struct {
 	Method string
 	Path   string
 	Grant  authz.Grant
+	// ObjectGrants names a grant needed in addition to Grant when the
+	// object_type argument has the given value (a merchant's assignments need
+	// the admin-only merchants grant, as the route requires).
+	ObjectGrants map[string]authz.Grant
 	// IfMatchArg names the top-level argument sent as the If-Match version
 	// (such as "version"); empty when the operation takes none. It must be a
 	// required integer argument and is not part of the body.
@@ -94,6 +100,15 @@ func versionArg(what string) map[string]any {
 		"description": "The version of the " + what + " this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one."}
 }
 
+// organisedFilterArgs are the category and label filters of the lists that show
+// organised objects (task O3): the arguments of one object type are those of
+// its owner, named in what.
+func organisedFilterArgs(props map[string]any, what string) map[string]any {
+	props["category_id"] = map[string]any{"type": "array", "items": idArg("category"), "description": "Only " + what + " in these categories or their child categories (any of them). Categories group; they allocate no money. Needs the organisation:read grant too."}
+	props["label_id"] = map[string]any{"type": "array", "items": idArg("label"), "description": "Only " + what + " with these labels (any of them). Combined with category_id, both must hold. Needs the organisation:read grant too."}
+	return props
+}
+
 func pagingArgs(props map[string]any) map[string]any {
 	props["limit"] = map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "description": "Page size (default 50)."}
 	props["cursor"] = str("The next_cursor of the previous page; valid only with the same filters.")
@@ -124,7 +139,7 @@ var grantCommitmentsRead = authz.G(authz.ResourceCommitments, authz.ActionRead)
 var grantCommitmentsWrite = authz.G(authz.ResourceCommitments, authz.ActionWrite)
 
 func registry() []Tool {
-	return slices.Concat(coreTools(), matchTools(), deferralTools(), bankTools(), rateTools())
+	return slices.Concat(coreTools(), matchTools(), deferralTools(), bankTools(), rateTools(), organisationTools())
 }
 
 func coreTools() []Tool {
@@ -133,11 +148,11 @@ func coreTools() []Tool {
 			Name: "list_commitments", Title: "List commitments", Method: "GET", Path: "/commitments",
 			Grant: grantCommitmentsRead, Kind: KindRead,
 			Description: "List recurring commitment definitions (name, kind, amount with currency, schedule, dates, priority), oldest first, one page at a time. Filters combine; a repeated filter accepts any of its values.",
-			Schema: object(pagingArgs(map[string]any{
+			Schema: object(organisedFilterArgs(pagingArgs(map[string]any{
 				"kind":     map[string]any{"type": "array", "items": enum("", commitments.Kinds()), "description": "Only these kinds."},
 				"priority": map[string]any{"type": "array", "items": enum("", commitments.Priorities()), "description": "Only these priorities."},
 				"currency": map[string]any{"type": "array", "items": map[string]any{"type": "string", "pattern": "^[A-Z]{3}$"}, "description": "Only these currencies (ISO 4217)."},
-			})),
+			}), "commitments")),
 		},
 		{
 			Name: "get_commitment", Title: "Get a commitment", Method: "GET", Path: "/commitments/{id}",
@@ -149,17 +164,27 @@ func coreTools() []Tool {
 			Name: "list_occurrences", Title: "List occurrences of a month", Method: "GET", Path: "/occurrences",
 			Grant: grantCommitmentsRead, Kind: KindRead,
 			Description: "List the dated occurrences of recurring commitments in one reporting month, each with its derived payment state (paid, upcoming, overdue ...). Payment state comes from recorded manual payments and confirmed matches, not from a guess. Cancelled occurrences are left out unless asked for. Months more than 60 months ahead are refused.",
-			Schema: object(pagingArgs(map[string]any{
+			Schema: object(organisedFilterArgs(pagingArgs(map[string]any{
 				"month":             monthArg("The reporting month, such as 2026-11."),
 				"commitment_id":     map[string]any{"type": "array", "items": idArg("commitment"), "description": "Only occurrences of these commitments."},
 				"include_cancelled": map[string]any{"type": "boolean", "description": "Include cancelled occurrences (default false)."},
-			}), "month"),
+			}), "occurrences of commitments"), "month"),
 		},
 		{
 			Name: "get_month_summary", Title: "Get the monthly view", Method: "GET", Path: "/occurrences/summary",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.",
-			Schema:      object(map[string]any{"month": monthArg("The reporting month, such as 2026-11.")}, "month"),
+			Description: "The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed and missed_reason (plan date passed: principal still owed, or a fee still planned). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is. With category_id or label_id the month is restricted to the matching commitments: the filter member says so, and the items and the totals then cover only those commitments, not the whole month.",
+			Schema:      object(organisedFilterArgs(map[string]any{"month": monthArg("The reporting month, such as 2026-11.")}, "occurrences of commitments"), "month"),
+		},
+		{
+			Name: "get_outlook", Title: "Get the outlook against recorded commitments", Method: "GET", Path: "/outlook",
+			Grant: grantCommitmentsRead, Kind: KindRead,
+			Description: "Compare bank balances with the commitments Ledger has recorded as still due, per currency (never summed across currencies), with an optional secondary total converted into one reporting currency only where an acceptable rate exists (excluded currencies are listed with the reason). It is an outlook against recorded commitments: not a forecast and never a statement of money that is safe to spend. Balances and each account's data freshness need the connections:read grant too; without it only commitments are compared. With bucket the outlook is a slice: only the commitments and accounts in that bucket are counted, the slice member says so, and a balance is still the whole balance of an account in the bucket because a bucket allocates no money. Slicing needs the organisation:read grant too.",
+			Schema: object(map[string]any{
+				"through":  monthArg("The last month whose commitments count (default the current month; at most 60 months ahead)."),
+				"currency": map[string]any{"type": "string", "pattern": "^[A-Z]{3}$", "description": "Reporting currency of the converted aggregate (ISO 4217); default is the configured reporting currency."},
+				"bucket":   idArg("bucket"),
+			}),
 		},
 		{
 			Name: "get_occurrence", Title: "Get an occurrence", Method: "GET", Path: "/occurrences/{id}",
@@ -222,12 +247,12 @@ func matchTools() []Tool {
 			Name: "list_payment_matches", Title: "List payment matches", Method: "GET", Path: "/payment-matches",
 			Grant: grantCommitmentsRead, Kind: KindRead,
 			Description: "List links between bank transactions and commitment occurrences, one page at a time. state=suggested is the review queue: proposals that do not count as payment until a person confirms them. Each match keeps apart the bank fact (transaction), who proposed it (origin), the decision (state, decided_by) and whether it counts as payment now (counts_as_evidence). A similarity score in a reason is a hint, never proof. The bank's description and counterparty are null (bank_text_redacted) unless the token holds banking:read.",
-			Schema: object(pagingArgs(map[string]any{
+			Schema: object(organisedFilterArgs(pagingArgs(map[string]any{
 				"state":          map[string]any{"type": "array", "items": enum("", matches.States()), "description": "Only these states."},
 				"origin":         map[string]any{"type": "array", "items": enum("", matches.Origins()), "description": "Only these origins."},
 				"occurrence_id":  map[string]any{"type": "array", "items": idArg("occurrence"), "description": "Only matches of these occurrences."},
 				"transaction_id": map[string]any{"type": "array", "items": idArg("bank transaction"), "description": "Only matches of these bank transactions."},
-			})),
+			}), "matches whose bank transaction is")),
 		},
 		{
 			Name: "get_payment_match", Title: "Get a payment match", Method: "GET", Path: "/payment-matches/{id}",
@@ -316,7 +341,7 @@ func deferralTools() []Tool {
 		{
 			Name: "list_deferral_plans", Title: "List deferral plans", Method: "GET", Path: "/deferral-plans",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees, the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). Filters combine; a repeated filter accepts any of its values.",
+			Description: "List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees (each with its paid marker), the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). missed is true when the plan's date has passed while the occurrence is overdue and still owes something (missed_reason principal) or while a recorded fee is still planned, even when the principal is paid (missed_reason fee); it is derived when read, is not payment state and clears when the occurrence is paid and every fee is paid or removed, or the plan is revised or undone. Filters combine; a repeated filter accepts any of its values.",
 			Schema: object(pagingArgs(map[string]any{
 				"occurrence_id": map[string]any{"type": "array", "items": idArg("occurrence"), "description": "Only plans of these occurrences."},
 				"commitment_id": map[string]any{"type": "array", "items": idArg("commitment"), "description": "Only plans of these commitments' occurrences."},
@@ -327,13 +352,13 @@ func deferralTools() []Tool {
 		{
 			Name: "get_deferral_plan", Title: "Get a deferral plan", Method: "GET", Path: "/deferral-plans/{id}",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "Get one deferral plan, including its version (needed to revise or undo it) and its adjustments.",
+			Description: "Get one deferral plan, including its version (needed to revise or undo it), its adjustments with their paid markers, and missed and missed_reason (plan date passed: principal still owed, or a fee still planned).",
 			Schema:      object(map[string]any{"id": idArg("deferral plan")}, "id"),
 		},
 		{
 			Name: "list_deferral_plan_history", Title: "List a deferral plan's history", Method: "GET", Path: "/deferral-plans/{id}/history",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "Every change of a deferral plan, oldest first: created, revised, adjustments added or removed, undone, each with the type and planned date after it, who made it and how, and the reason recorded with it.",
+			Description: "Every change of a deferral plan, oldest first: created, revised, adjustments added, removed, marked paid or unpaid, undone, each with the type and planned date after it, who made it and how, and the reason recorded with it.",
 			Schema:      object(pagingArgs(map[string]any{"id": idArg("deferral plan")}), "id"),
 		},
 		{
@@ -362,13 +387,13 @@ func deferralTools() []Tool {
 		{
 			Name: "undo_deferral_plan", Title: "Undo a deferral plan", Method: "POST", Path: "/deferral-plans/{id}/undo",
 			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindDestructive,
-			Description: "End an active plan: the occurrence's outstanding amount is planned in its own month again. Nothing about the occurrence or its payments changes; the plan is kept as history and cannot be revised afterwards (a new plan can be made). Destructive; confirm with the person first.",
+			Description: "End an active plan: the occurrence's outstanding amount is planned in its own month again. Refused while a fee is still planned (deferral_adjustments_unpaid): mark it paid or remove it first. Nothing about the occurrence or its payments changes; the plan is kept as history and cannot be revised afterwards (a new plan can be made). Destructive; confirm with the person first.",
 			Schema:      object(map[string]any{"id": idArg("deferral plan"), "version": versionArg("deferral plan"), "reason": reason}, "id", "version"),
 		},
 		{
 			Name: "add_deferral_adjustment", Title: "Record a fee on a deferral plan", Method: "POST", Path: "/deferral-plans/{id}/adjustments",
 			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindWrite,
-			Description: "Record an explicit fee, interest or other charge the person states for an active plan, in the plan's currency. It adds to the planned total of the plan's month while the occurrence still owes something; it never changes the occurrence's amount. Never infer a fee. Not idempotent: calling it twice records two charges.",
+			Description: "Record an explicit fee, interest or other charge the person states for an active plan, in the plan's currency. It adds to the planned total of the plan's month, under its own currency, and stays planned until it is marked paid (mark_deferral_adjustment_paid) or removed, even after the occurrence's principal is paid; it never changes the occurrence's amount and is never payment evidence for it. Never infer a fee. Not idempotent: calling it twice records two charges.",
 			Schema: object(map[string]any{
 				"id":      idArg("deferral plan"),
 				"version": versionArg("deferral plan"),
@@ -381,6 +406,26 @@ func deferralTools() []Tool {
 			Name: "remove_deferral_adjustment", Title: "Remove a fee from a deferral plan", Method: "DELETE", Path: "/deferral-plans/{id}/adjustments/{adjustment_id}",
 			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindDestructive,
 			Description: "Remove an adjustment of an active plan; it is kept as history and no longer counts. Destructive; confirm with the person first.",
+			Schema: object(map[string]any{
+				"id":            idArg("deferral plan"),
+				"adjustment_id": idArg("adjustment"),
+				"version":       versionArg("deferral plan"),
+			}, "id", "adjustment_id", "version"),
+		},
+		{
+			Name: "mark_deferral_adjustment_paid", Title: "Mark a deferral plan fee paid", Method: "POST", Path: "/deferral-plans/{id}/adjustments/{adjustment_id}/paid",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindWrite,
+			Description: "Record that the person paid a fee, interest or other adjustment of an active plan, so it is no longer planned. Only on the person's statement. It is not payment evidence for the occurrence and does not touch its principal. Reversible with unmark_deferral_adjustment_paid; marking an already paid adjustment is refused (deferral_adjustment_paid).",
+			Schema: object(map[string]any{
+				"id":            idArg("deferral plan"),
+				"adjustment_id": idArg("adjustment"),
+				"version":       versionArg("deferral plan"),
+			}, "id", "adjustment_id", "version"),
+		},
+		{
+			Name: "unmark_deferral_adjustment_paid", Title: "Clear a deferral plan fee's paid marker", Method: "POST", Path: "/deferral-plans/{id}/adjustments/{adjustment_id}/unpaid",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindWrite,
+			Description: "Reverse mark_deferral_adjustment_paid: the adjustment is planned again. Refused when it is not marked paid (deferral_adjustment_not_paid).",
 			Schema: object(map[string]any{
 				"id":            idArg("deferral plan"),
 				"adjustment_id": idArg("adjustment"),
@@ -508,8 +553,133 @@ func Doc() string {
 	var b strings.Builder
 	for _, t := range registry() {
 		fmt.Fprintf(&b, "### `%s`\n\n%s\n\n- Kind: %s\n- Operation: `%s /api/v1%s`\n- Grant: `%s`\n", t.Name, t.Description, t.Kind, t.Method, t.Path, t.Grant)
+		for _, ot := range slices.Sorted(maps.Keys(t.ObjectGrants)) {
+			fmt.Fprintf(&b, "- Also needs `%s` when object_type is `%s`\n", t.ObjectGrants[ot], ot)
+		}
 		schema, _ := json.MarshalIndent(t.Schema, "", "  ")
 		fmt.Fprintf(&b, "\n<details><summary>Input schema</summary>\n\n```json\n%s\n```\n\n</details>\n\n", schema)
 	}
 	return b.String()
+}
+
+var (
+	grantOrganisationRead  = authz.G(authz.ResourceOrganisation, authz.ActionRead)
+	grantOrganisationWrite = authz.G(authz.ResourceOrganisation, authz.ActionWrite)
+)
+
+var (
+	grantMerchantsRead  = authz.G(authz.ResourceMerchants, authz.ActionRead)
+	grantMerchantsWrite = authz.G(authz.ResourceMerchants, authz.ActionWrite)
+)
+
+// merchantObjectGrants is the extra grant a tool needs for object_type
+// merchant (task O5, ADR-0062): the merchants grant of the route's own gate.
+func merchantObjectGrants(g authz.Grant) map[string]authz.Grant {
+	return map[string]authz.Grant{string(organisation.ObjectMerchant): g}
+}
+
+func orgObjectTypes() []string {
+	var out []string
+	for _, t := range organisation.ObjectTypes() {
+		out = append(out, string(t))
+	}
+	return out
+}
+func objectArgs(extra map[string]any, required ...string) map[string]any {
+	props := map[string]any{
+		"object_type": map[string]any{"type": "string", "enum": orgObjectTypes(), "description": "What the object is: transaction, commitment, account or merchant. A merchant also needs the merchants:read grant (reads) or merchants:write (changes)."},
+		"object_id":   idArg("transaction, commitment, account or merchant record"),
+	}
+	for k, v := range extra {
+		props[k] = v
+	}
+	return object(props, append([]string{"object_type", "object_id"}, required...)...)
+}
+
+// organisationTools are categories, labels and buckets and their assignments
+// (task O2, ADR-0053): each is a typed call of the Management API route, so
+// the HTTP validation, grants, archive and reassign rules and audit apply
+// unchanged. Assignments made here are the person's (origin user).
+func organisationTools() []Tool {
+	var out []Tool
+	for _, d := range []struct{ kind, one, many, path, gloss string }{
+		{"category", "category", "categories", "/categories", "A category is single-valued per object and has two levels: a top-level category and its children."},
+		{"label", "label", "labels", "/labels", "A label is many-valued and flat."},
+		{"bucket", "bucket", "buckets", "/buckets", "A bucket groups commitments and accounts to slice the outlook; it holds and allocates no money."},
+	} {
+		isCat := d.kind == "category"
+		listProps := map[string]any{
+			"archived":     map[string]any{"type": "boolean", "description": "Only archived (true) or only active (false) ones; omit for both."},
+			"name[prefix]": str("Only names starting with this text, ignoring case."),
+		}
+		if isCat {
+			listProps["parent_id"] = str("Only the children of this category (its identifier), or none for the top-level categories.")
+		}
+		writable := map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": organisation.MaxName, "description": "The name: trimmed, unique ignoring case (among siblings for a category), archived ones included. Free text, never an identifier."}}
+		if isCat {
+			writable["parent_id"] = map[string]any{"type": []string{"string", "null"}, "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$", "description": "The parent category, which must be an active top-level category; null for a top-level category."}
+		}
+		patch := map[string]any{"id": idArg(d.one), "version": versionArg(d.one)}
+		for k, v := range writable {
+			patch[k] = v
+		}
+		item := d.path + "/{id}"
+		out = append(out,
+			Tool{Name: "list_" + d.many, Title: "List " + d.many, Method: "GET", Path: d.path, Grant: grantOrganisationRead, Kind: KindRead,
+				Description: "List " + d.many + ", one page at a time, with their version (needed to change one) and whether each is archived. " + d.gloss + " Archived ones are included unless archived is false.",
+				Schema:      object(pagingArgs(listProps))},
+			Tool{Name: "get_" + d.one, Title: "Get a " + d.one, Method: "GET", Path: item, Grant: grantOrganisationRead, Kind: KindRead,
+				Description: "Get one " + d.one + " with its version (needed to rename, archive or delete it).",
+				Schema:      object(map[string]any{"id": idArg(d.one)}, "id")},
+			Tool{Name: "create_" + d.one, Title: "Create a " + d.one, Method: "POST", Path: d.path, Grant: grantOrganisationWrite, Kind: KindWrite,
+				Description: "Create a " + d.one + ". " + d.gloss + " The same validation as the HTTP API applies. Not idempotent for a retry after an unclear answer: list " + d.many + " by name first (a duplicate name is refused as duplicate_name).",
+				Schema:      object(writable, "name")},
+			Tool{Name: "update_" + d.one, Title: "Rename a " + d.one, Method: "PATCH", Path: item, Grant: grantOrganisationWrite, Kind: KindWrite, IfMatchArg: "version",
+				Description: "Rename a " + d.one + (map[bool]string{true: " or move it under another top-level category (parent_id)", false: ""})[isCat] + ". Only the members given change. The identifier never changes, so a rename reaches every assignment. A stale version is refused with a conflict that names the current one.",
+				Schema:      object(patch, "id", "version")},
+			Tool{Name: "archive_" + d.one, Title: "Archive a " + d.one, Method: "POST", Path: item + "/archive", Grant: grantOrganisationWrite, Kind: KindWrite, IfMatchArg: "version",
+				Description: "Archive a " + d.one + ": it and every assignment to it are kept and shown as archived, and nothing new may use it. Reversible with unarchive_" + d.one + "." + (map[bool]string{true: " A category is archived after its children.", false: ""})[isCat],
+				Schema:      object(map[string]any{"id": idArg(d.one), "version": versionArg(d.one)}, "id", "version")},
+			Tool{Name: "unarchive_" + d.one, Title: "Unarchive a " + d.one, Method: "POST", Path: item + "/unarchive", Grant: grantOrganisationWrite, Kind: KindWrite, IfMatchArg: "version",
+				Description: "Make an archived " + d.one + " usable again by the person, rules and models." + (map[bool]string{true: " A child category is unarchived after its parent.", false: ""})[isCat],
+				Schema:      object(map[string]any{"id": idArg(d.one), "version": versionArg(d.one)}, "id", "version")},
+			Tool{Name: "delete_" + d.one, Title: "Delete a " + d.one, Method: "DELETE", Path: item, Grant: grantOrganisationWrite, Kind: KindDestructive, IfMatchArg: "version",
+				Description: "Delete a " + d.one + " that nothing is assigned to. Prefer archive_" + d.one + ", which keeps history. One that is still assigned is refused (definition_in_use, with the count) unless reassign_to names an active " + d.one + " the assignments move to." + (map[bool]string{true: " A category with children is never deleted.", false: ""})[isCat],
+				Schema: object(map[string]any{"id": idArg(d.one), "version": versionArg(d.one),
+					"reassign_to": withDescription(idArg("active "+d.one+" the assignments move to"), "The active "+d.one+" the assignments move to, in the same transaction.")}, "id", "version")},
+		)
+	}
+	bucketMember := map[string]any{
+		"id":          idArg("bucket"),
+		"object_type": map[string]any{"type": "string", "enum": []string{string(organisation.ObjectCommitment), string(organisation.ObjectAccount)}, "description": "commitment or account: the only objects a bucket holds."},
+		"object_id":   idArg("commitment or account"),
+	}
+	out = append(out,
+		Tool{Name: "list_bucket_members", Title: "List the members of a bucket", Method: "GET", Path: "/buckets/{id}/members", Grant: grantOrganisationRead, Kind: KindRead,
+			Description: "List the commitments and accounts in a bucket, one page at a time. An archived bucket keeps its members.",
+			Schema:      object(pagingArgs(map[string]any{"id": idArg("bucket")}), "id")},
+		Tool{Name: "add_bucket_member", Title: "Put an object in a bucket", Method: "PUT", Path: "/buckets/{id}/members/{object_type}/{object_id}", Grant: grantOrganisationWrite, Kind: KindWrite,
+			Description: "Put a commitment or account in an active bucket. Idempotent. A bucket holds no money: this only groups.",
+			Schema:      object(bucketMember, "id", "object_type", "object_id")},
+		Tool{Name: "remove_bucket_member", Title: "Take an object out of a bucket", Method: "DELETE", Path: "/buckets/{id}/members/{object_type}/{object_id}", Grant: grantOrganisationWrite, Kind: KindDestructive,
+			Description: "Take a commitment or account out of a bucket. Reversible with add_bucket_member.",
+			Schema:      object(bucketMember, "id", "object_type", "object_id")},
+		Tool{Name: "get_object_organisation", Title: "Get what is assigned to an object", Method: "GET", Path: "/organisation/{object_type}/{object_id}", Grant: grantOrganisationRead, ObjectGrants: merchantObjectGrants(grantMerchantsRead), Kind: KindRead,
+			Description: "Read the category, labels (and the labels the person removed) and buckets of a transaction, commitment, account or merchant. Every category and label says its origin (user, rule or model: the person's word outranks a rule's, which outranks a model's), who set it, when, and whether it is inherited from the pending transaction this booking superseded.",
+			Schema:      objectArgs(nil)},
+		Tool{Name: "set_object_category", Title: "Set the category of an object", Method: "PUT", Path: "/organisation/{object_type}/{object_id}/category", Grant: grantOrganisationWrite, ObjectGrants: merchantObjectGrants(grantMerchantsWrite), Kind: KindWrite,
+			Description: "Set the category of a transaction, commitment, account or merchant as the person's choice: it is never replaced by a rule, a model or a bank refresh. category_id null records that the person chose no category. An archived category is refused (definition_archived). Last write wins; the audit log keeps the history.",
+			Schema: objectArgs(map[string]any{"category_id": map[string]any{"type": []string{"string", "null"}, "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+				"description": "The category identifier, or null for no category. Required: send null explicitly."}}, "category_id")},
+		Tool{Name: "reset_object_category", Title: "Hand the category back to automatic assignment", Method: "DELETE", Path: "/organisation/{object_type}/{object_id}/category", Grant: grantOrganisationWrite, ObjectGrants: merchantObjectGrants(grantMerchantsWrite), Kind: KindDestructive,
+			Description: "Remove the person's category decision (a chosen category or a chosen none), so a rule or model may assign one again. A category that is only inherited from a pending transaction is refused (review_inherited): reset it on the pending transaction.",
+			Schema:      objectArgs(nil)},
+		Tool{Name: "add_object_label", Title: "Put a label on an object", Method: "PUT", Path: "/organisation/{object_type}/{object_id}/labels/{label_id}", Grant: grantOrganisationWrite, ObjectGrants: merchantObjectGrants(grantMerchantsWrite), Kind: KindWrite,
+			Description: "Put an active label on a transaction, commitment, account or merchant (by merchant record id) as the person's choice. Idempotent; it undoes an earlier removal of the same label.",
+			Schema:      objectArgs(map[string]any{"label_id": idArg("label")}, "label_id")},
+		Tool{Name: "remove_object_label", Title: "Take a label off an object", Method: "DELETE", Path: "/organisation/{object_type}/{object_id}/labels/{label_id}", Grant: grantOrganisationWrite, ObjectGrants: merchantObjectGrants(grantMerchantsWrite), Kind: KindDestructive,
+			Description: "Take a label off an object as the person's choice; rules and models do not add it back. Reversible with add_object_label.",
+			Schema:      objectArgs(map[string]any{"label_id": idArg("label")}, "label_id")},
+	)
+	return out
 }

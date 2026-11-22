@@ -33,8 +33,10 @@ type Config struct {
 	Events    Events    `cfg:"events"`
 	Banking   Banking   `cfg:"banking"`
 	Rates     Rates     `cfg:"rates"`
+	Merchants Merchants `cfg:"merchants"`
 	Auth      Auth      `cfg:"auth"`
 	MCP       MCP       `cfg:"mcp"`
+	Decisions Decisions `cfg:"decisions"`
 }
 
 // MCP configures the Model Context Protocol endpoint, POST /api/v1/mcp
@@ -165,6 +167,31 @@ type Rates struct {
 	Timeout         time.Duration `cfg:"timeout" default:"15s" desc:"Time limit for one request to Frankfurter (1s to 2m). A request that exceeds it counts as an outage: cached rates stay in use."`
 }
 
+// Merchants configures merchant identification (E2, ADR-0054). Decision D15:
+// the baseline is a local curated mapping plus the person's confirmations, fully
+// offline; the remote source is off and none is approved.
+type Merchants struct {
+	Enrichment MerchantEnrichment `cfg:"enrichment"`
+}
+
+// MerchantEnrichment configures the lookups that identify a merchant from bank text.
+type MerchantEnrichment struct {
+	Remote MerchantRemote `cfg:"remote"`
+}
+
+// MerchantRemote configures the optional remote merchant source. The adapter is
+// provider-neutral; it speaks the small JSON contract in ADR-0054.
+type MerchantRemote struct {
+	Enabled      bool          `cfg:"enabled" default:"false" desc:"Ask a remote merchant-identification service about transactions the local curated mapping and your confirmations cannot identify. Off by default and no service is approved (decision D15). Turning it on sends one cleaned merchant string per transaction: the counterparty name only, never the description, with every word that holds a digit removed and the words iban, bic, swift and account removed (text is split at white space and at , / . and ;), at most 100 characters. Nothing is sent unless the name starts or ends, as a whole word in any case, with one of the company forms uab, mb, sia, ltd, limited, llc, gmbh, inc, plc, corp, srl, sarl, kft, oü next to at least one other word. The short forms as, co, sa, ab, ag, sp, oy, nv and bv never count, a bare form or a form plus punctuation sends nothing, and so do names of people, transfers (transfer words such as sepa or transfer) and everything else. Merchants your own confirmations or rejections already cover are not asked about. If merchants.enrichment.remote.country is set, that country code is sent too. Never amounts, dates, IBANs, account holders or balances. Needs url, and you are responsible for the service's terms: see attribution, store_logo_ref and retention."`
+	URL          string        `cfg:"url" desc:"Lookup endpoint of the remote service (POST, JSON; see ADR-0054 for the contract). https only (plain http only for a loopback test server), no credentials or query. Required when enabled."`
+	APIKeyFile   string        `cfg:"api_key_file" desc:"Path of a file with the bearer key for the remote service (trailing newlines ignored). The key is read at startup, sent only to the configured URL and never logged. Optional."`
+	Country      string        `cfg:"country" desc:"Optional ISO 3166-1 alpha-2 country code sent with each lookup as a hint, for example LT. Empty means no country is sent."`
+	Timeout      time.Duration `cfg:"timeout" default:"10s" desc:"Time limit for one lookup (1s to 1m). A failure or timeout leaves the transaction without a remote answer and never delays or fails an import."`
+	Attribution  string        `cfg:"attribution" desc:"Attribution text the service's licence requires, for example 'Logos by Example Service'. Shown with identities that came from it (GET /api/v1/merchants/sources). Up to 200 characters."`
+	StoreLogoRef bool          `cfg:"store_logo_ref" default:"false" desc:"Keep the logo reference the service returns. Leave false unless its licence allows storing or linking its logos: Ledger then shows the name with a neutral icon. Logos are never downloaded or copied by Ledger."`
+	Retention    time.Duration `cfg:"retention" default:"720h" desc:"How long answers from the remote service are kept (the longest a licence usually allows is 30 days, the default; 24h to 8760h, or 0 to keep them until replaced). Older answers are deleted, so the transaction is looked up again; your confirmations and corrections are never deleted. The limit still applies after the remote source is turned off: answers it cached are deleted when they pass it (0 keeps them until replaced, which never happens once it is off)."`
+}
+
 // Banking configures banking-data providers.
 type Banking struct {
 	// RedirectURL is where a bank sends the user back after consent.
@@ -220,4 +247,56 @@ func (e EnableBanking) Slots() []struct {
 type KEK struct {
 	Value string `cfg:"value" secret:"true" desc:"Key-encryption key for stored credentials (TOTP secrets are encrypted with a key derived from it). Use a long random value, for example 32 random bytes in base64. Changing it makes enrolled authenticators unusable: users then sign in with a recovery code, or the host resets their two-factor authentication. Required unless LEDGER_KEK_FILE is set. Secret: environment only, never in the YAML file and never a flag."`
 	File  string `cfg:"file" desc:"Path of a file that contains the key-encryption key. Alternative to LEDGER_KEK_VALUE; trailing newlines are ignored."`
+}
+
+// Decisions configures the model-assisted decision layer (L1, ADR-0060,
+// decision D13). Every task is off by default and nothing is sent anywhere
+// while it is off.
+type Decisions struct {
+	Providers DecisionProviders `cfg:"providers"`
+	Tasks     DecisionTasks     `cfg:"tasks"`
+}
+
+// DecisionProviders holds each decision provider's credentials.
+type DecisionProviders struct {
+	OpenRouter DecisionOpenRouter `cfg:"openrouter"`
+	OpenAI     DecisionProvider   `cfg:"openai"`
+	Anthropic  DecisionProvider   `cfg:"anthropic"`
+	TypeSafe   DecisionProvider   `cfg:"typesafe"`
+}
+
+// DecisionProvider is a provider's API key.
+type DecisionProvider struct {
+	APIKey     string `cfg:"api_key" secret:"true" desc:"API key of this decision provider. Secret: environment only, never in the YAML file and never a flag. Set this or api_key_file. Required when an enabled decision task (or its fallback) uses the provider; never logged or sent anywhere but to the provider."`
+	APIKeyFile string `cfg:"api_key_file" desc:"Path of a file that contains the API key of this decision provider. Alternative to the api_key variable; trailing newlines are ignored. Only the path is configuration; the key is never logged."`
+}
+
+// DecisionOpenRouter is OpenRouter's key and the upstream providers it may
+// forward to.
+type DecisionOpenRouter struct {
+	APIKey           string   `cfg:"api_key" secret:"true" desc:"OpenRouter API key. Secret: environment only, never in the YAML file and never a flag. Set this or api_key_file. Required when an enabled decision task (or its fallback) uses OpenRouter."`
+	APIKeyFile       string   `cfg:"api_key_file" desc:"Path of a file that contains the OpenRouter API key. Alternative to the api_key variable; trailing newlines are ignored."`
+	AllowedUpstreams []string `cfg:"allowed_upstreams" desc:"Upstream providers OpenRouter may forward Ledger's requests to (a list in YAML, comma separated in the variable), for example anthropic. Empty (the default) means downstream sharing is disabled and no task may use OpenRouter (decision D13). Consent for another provider never covers an upstream reached through OpenRouter."`
+}
+
+// DecisionTasks holds one slot per decision task.
+type DecisionTasks struct {
+	Categorisation  DecisionTask `cfg:"categorisation"`
+	LabelSuggestion DecisionTask `cfg:"label_suggestion"`
+	Alerts          DecisionTask `cfg:"alerts"`
+	PaymentMatching DecisionTask `cfg:"payment_matching"`
+}
+
+// DecisionTask is one task's provider, model and limits (decision D13).
+type DecisionTask struct {
+	Enabled         bool          `cfg:"enabled" default:"false" desc:"Ask a decision provider for suggestions for this task. Off by default. Even when on, nothing is sent until consent for this provider and this purpose is recorded; consent for one provider or purpose never covers another. Suggestions are kept apart from bank facts and are only suggestions: a failure never changes anything."`
+	Provider        string        `cfg:"provider" desc:"Decision provider for this task: openrouter, openai, anthropic or typesafe. Required when the task is enabled. typesafe serves decide tasks only (categorisation, label_suggestion, payment_matching), not alerts."`
+	Model           string        `cfg:"model" desc:"Model identifier at the provider. Required when the task is enabled. The model the provider reports is recorded with every suggestion."`
+	Capability      string        `cfg:"capability" desc:"Capability the task needs: decide (a choice among candidates: categorisation, label_suggestion, payment_matching) or generate (free text: alerts). Empty means the task's own; any other value than the task's is refused."`
+	Timeout         time.Duration `cfg:"timeout" default:"30s" desc:"Time limit for one run of the task on one provider, retries included (1s to 2m). A run that exceeds it ends without a suggestion and changes nothing."`
+	MonthlyRequests int           `cfg:"monthly_requests" default:"500" desc:"Most requests the task may send per calendar month (UTC), every attempt counted, retries and fallback providers included (1 to 1000000). Once reached, the task makes no suggestions until the next month. The default of 500 is a proposal awaiting the operator."`
+	Retries         int           `cfg:"retries" default:"2" desc:"Retries of a request the provider refused before generating anything (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A response that was generated, even a broken one, is never retried."`
+	AutoApply       bool          `cfg:"auto_apply" default:"false" desc:"Mark suggestions for automatic application instead of review. Allowed for categorisation only (decision D13); an applied suggestion is always reversible and never replaces a person's choice."`
+	Fields          []string      `cfg:"fields" desc:"Fields this task may send to its provider (a list in YAML, comma separated in the variable), from description, amount, currency, booking_date, merchant_name and candidate_names. Empty means the provider's default: all of them for openrouter, openai and anthropic (generate tasks have no candidates); description, merchant_name and candidate_names for typesafe. iban, account_number, counterparty_name and balance are never sent and are refused here. A decide task needs candidate_names. Applies to the main provider; fallback providers use their defaults."`
+	Fallback        []string      `cfg:"fallback" desc:"Explicit fallback providers, as provider:model entries tried in order only when the one before had an outage (a list in YAML, comma separated in the variable). Empty (the default) means no fallback: there is never an automatic one. Each needs its own consent and key."`
 }

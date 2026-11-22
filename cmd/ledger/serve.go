@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
@@ -89,6 +91,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// through the redactor, which knows the configured secrets.
 	eb := cfg.Banking.EnableBanking
 	redact.Default().Add(cfg.KEK.Value, eb.App.PrivateKey, eb.Developer.PrivateKey, eb.App.AppID, eb.Developer.AppID, cfg.Auth.OIDC.ClientSecret)
+	for _, p := range decisionProviderNames {
+		redact.Default().Add(cfg.Decisions.APIKey(p))
+	}
 	log, err := logging.New(stderr, cfg.Log.Level, cfg.Log.Format, redact.Default())
 	if err != nil {
 		say(stderr, "ledger: "+err.Error())
@@ -231,12 +236,33 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// Bank connections (B4, ADR-0040) and the background refresh (B6, ADR-0028)
 	// share one engine, so one connection is never refreshed twice at once.
 	facts := bankfacts.New(db, nil).WithAudit(auditLog)
-	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(ctx context.Context, _ bankimport.Result) {
+	enricher, merchantSources, enrichKey, err := buildEnrichment(cfg.Merchants.Enrichment.Remote, parts.merchants, log)
+	if err != nil {
+		say(stderr, "ledger: "+err.Error())
+		return 1
+	}
+	redact.Default().Add(enrichKey)
+	parts.enricher, parts.merchantSources = enricher, merchantSources
+	var enrichRunning atomic.Bool
+	var enrichWG sync.WaitGroup
+	// enrichCtx ends where stop() runs (below), so a pass ends with the servers
+	// and none starts afterwards; the shutdown waits for it after the refreshes.
+	enrichCtx, enrichStop := context.WithCancel(ctx)
+	defer enrichStop()
+	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(refreshCtx context.Context, _ bankimport.Result) {
 		// A failed run is retried after the next refresh, or on request.
-		if _, err := parts.matching.Run(ctx); err != nil && ctx.Err() == nil {
+		if _, err := parts.matching.Run(refreshCtx); err != nil && refreshCtx.Err() == nil {
 			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
 		}
+		// Merchant identification is presentation only and runs after the
+		// import is stored; its failure never affects the import (E2).
+		// It runs in the background under the application's context, bounded
+		// by enrichmentBudget, and never delays the refresh.
+		enrichInBackground(enrichCtx, parts.enricher, log, &enrichRunning, &enrichWG)
 	}})
+	// One pass at startup also purges remote answers past their retention when
+	// the remote source has been turned off since.
+	enrichInBackground(enrichCtx, parts.enricher, log, &enrichRunning, &enrichWG)
 	var sched *bankimport.Scheduler
 	if cfg.Banking.Refresh.Enabled {
 		sched = bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
@@ -265,6 +291,13 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		return 1
 	}
 	parts.rates = rateSvc
+	// Decision providers (L1, ADR-0060): nothing runs them yet (L6), but an
+	// enabled task must be servable, so a misconfiguration stops startup.
+	if _, err := buildDecisions(cfg.Decisions, db, auditLog, time.Now); err != nil {
+		log.Error("invalid decision-provider settings", "error", err.Error())
+		_ = ln.Close()
+		return 1
+	}
 	// The rates routes (FX2c, ADR-0048) list the cache and trigger a refresh. The
 	// provider is optional, so its state is reported (status route, metrics)
 	// and never gates readiness.
@@ -374,6 +407,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 			code = 1
 		}
 		stop()
+		enrichStop()
 	}
 	<-retentionDone // before the database closes
 	// A refresh on request that outlived its request is waited for too (bounded,
@@ -395,6 +429,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	if refreshDone != nil {
 		<-refreshDone
 	}
+	// Last of the refresh paths: one of them may have started a pass just before
+	// it ended. enrichStop already ran, so none starts now; a running one needs
+	// the database, so it is waited for before the database closes.
+	enrichWG.Wait()
 	if ratesDone != nil {
 		<-ratesDone
 	}
@@ -448,22 +486,23 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		banks = bankfacts.New(parts.db, nil)
 	}
 	httpapi.RegisterAPI(srv, httpapi.Deps{
-		Users:        parts.users,
-		Commitments:  parts.commitments,
-		Grace:        parts.commitments.Grace(),
-		Occurrences:  parts.commitments.Occurrences(),
-		Payments:     parts.payments,
-		Matches:      parts.matches,
-		Merchants:    parts.merchants,
-		Organisation: parts.organisation,
-		Deferrals:    deferralsDep(parts.deferrals),
-		Banking:      parts.banking,
-		Matching:     matching,
-		Audit:        al,
-		Auth:         parts.auth,
-		Tokens:       parts.tokens,
-		OIDC:         parts.oidc,
-		MCP:          parts.mcp,
+		Users:           parts.users,
+		Commitments:     parts.commitments,
+		Grace:           parts.commitments.Grace(),
+		Occurrences:     parts.commitments.Occurrences(),
+		Payments:        parts.payments,
+		Matches:         parts.matches,
+		Merchants:       parts.merchants,
+		MerchantSources: parts.merchantSources,
+		Organisation:    parts.organisation,
+		Deferrals:       deferralsDep(parts.deferrals),
+		Banking:         parts.banking,
+		Matching:        matching,
+		Audit:           al,
+		Auth:            parts.auth,
+		Tokens:          parts.tokens,
+		OIDC:            parts.oidc,
+		MCP:             parts.mcp,
 		// The outlook (ADR-0044) reads stored bank facts. Rates is the cached
 		// rate service (FX2, ADR-0046); without one only amounts already in
 		// the reporting currency convert and the rest are excluded and
