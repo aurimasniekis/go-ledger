@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
+	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
@@ -45,5 +46,24 @@ func TestTotalsOfSkipsCancelledRows(t *testing.T) {
 	}
 	if latest == nil || !latest.Equal(upd) {
 		t.Errorf("latest change %v, want %v", latest, upd)
+	}
+}
+
+// TestTotalsOfCountsPlannedFeeOfCancelledOccurrence: a cancelled occurrence
+// owes nothing, but a fee recorded on its plan is still planned until it is
+// marked paid or removed (D-DF 2); it adds to no occurrence figure.
+func TestTotalsOfCountsPlannedFeeOfCancelledOccurrence(t *testing.T) {
+	month, _ := calendar.ParseYearMonth("2026-11")
+	due, _ := calendar.ParseDate("2026-11-03")
+	eur := func(s string) money.Money { return money.MustParse(s, "EUR") }
+	paidAt := time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
+	plan := &deferrals.Plan{ID: "p", OccurrenceID: "x", PlannedDate: due, Version: 1, OriginalAmount: eur("10.00"), Adjustments: []deferrals.Adjustment{
+		{ID: "a", Amount: eur("1.25")}, {ID: "b", Amount: eur("9.00"), PaidAt: &paidAt}}}
+	r := Row{Occurrence: occurrences.Occurrence{ID: "x", CommitmentID: "c", Month: month, DueDate: due, Amount: eur("10.00"), Version: 1},
+		State:    payments.State{Status: payments.StatusCancelled, Derived: payments.StatusCancelled, Paid: eur("0.00"), Outstanding: eur("0.00"), Overpaid: eur("0.00")},
+		Deferral: plan}
+	totals, _ := totalsOf(month, []Row{r}, nil)
+	if len(totals) != 1 || totals[0].Adjustments.String() != "1.25 EUR" || totals[0].Planned.String() != "1.25 EUR" || totals[0].Occurrences != 0 || totals[0].Due.String() != "0.00 EUR" {
+		t.Errorf("totals %+v, want only the unpaid 1.25 fee planned and no occurrence counted", totals)
 	}
 }

@@ -162,6 +162,26 @@ func TestPaymentMatchRequests(t *testing.T) {
 	}
 }
 
+func TestDeferralAdjustmentPaidMarkerRequests(t *testing.T) {
+	var got []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path+" if-match="+r.Header.Get("If-Match"))
+		writeJSON(w, 200, DeferralPlan{ID: "p1", Missed: true, Version: 5, Adjustments: []DeferralAdjustment{{ID: "a1", PaidAt: new("2026-11-06T09:00:00Z")}}})
+	})
+	ctx := context.Background()
+	p, err := c.MarkDeferralAdjustmentPaid(ctx, "p1", "a1", 3)
+	if err != nil || !p.Missed || p.Adjustments[0].PaidAt == nil {
+		t.Fatalf("mark paid: %+v %v", p, err)
+	}
+	if _, err := c.UnmarkDeferralAdjustmentPaid(ctx, "p1", "a1", 4); err != nil {
+		t.Fatal(err)
+	}
+	want := "POST /api/v1/deferral-plans/p1/adjustments/a1/paid if-match=\"3\"\nPOST /api/v1/deferral-plans/p1/adjustments/a1/unpaid if-match=\"4\""
+	if strings.Join(got, "\n") != want {
+		t.Errorf("requests:\n%s\nwant\n%s", strings.Join(got, "\n"), want)
+	}
+}
+
 func TestPathIDIsEscaped(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.EscapedPath() != "/api/v1/users/a%2Fb%3Fc" {

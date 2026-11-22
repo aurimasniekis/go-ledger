@@ -129,3 +129,39 @@ func TestPlannedMonthAndTotals(t *testing.T) {
 		t.Errorf("no adjustments: %s", got)
 	}
 }
+
+func TestMissedIsDerivedFromDateAndWhatIsStillOwed(t *testing.T) {
+	o := occ() // due 2026-10-15, 50.00 EUR
+	plan := func(planned string) deferrals.Plan {
+		return deferrals.Plan{ID: "p", OccurrenceID: o.ID, PlannedDate: d(planned), Type: deferrals.TypePersonal}
+	}
+	today := d("2026-11-20")
+	cases := []struct {
+		name string
+		p    deferrals.Plan
+		st   payments.State
+		want bool
+	}{
+		{"date passed, still owed", plan("2026-11-19"), state(o, "", today), true},
+		{"partly paid, rest still owed", plan("2026-11-19"), state(o, "10.00", today), true},
+		{"date is today: not missed yet", plan("2026-11-20"), state(o, "", today), false},
+		{"date ahead (revised later)", plan("2026-12-01"), state(o, "", today), false},
+		{"paid clears it", plan("2026-11-19"), state(o, "50.00", today), false},
+	}
+	for _, c := range cases {
+		if got := c.p.Missed(c.st, today); got != c.want {
+			t.Errorf("%s: Missed = %v, want %v", c.name, got, c.want)
+		}
+	}
+	undone := plan("2026-11-19")
+	at := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	undone.UndoneAt = &at
+	if undone.Missed(state(o, "", today), today) {
+		t.Error("an undone plan is never missed")
+	}
+	cancelled := state(o, "", today)
+	cancelled.Status = payments.StatusCancelled
+	if plan("2026-11-19").Missed(cancelled, today) {
+		t.Error("a cancelled occurrence owes nothing, so its plan is not missed")
+	}
+}

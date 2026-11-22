@@ -100,8 +100,12 @@ func States() []State { return []State{StateActive, StateUndone} }
 func (s State) Valid() bool { return slices.Contains(States(), s) }
 
 // Adjustment is a fee, interest or other charge the user recorded on a plan.
-// It is a positive amount in the plan's currency. A removed adjustment is
-// kept as history and no longer counts.
+// It is a positive amount in the plan's currency. It stays planned (in the
+// plan's month, under its own currency) until the person marks it paid or
+// removes it: paying the occurrence's principal never settles it, and it is
+// never payment evidence for the occurrence (D-DF 2). A removed adjustment is
+// kept as history and no longer counts; so is a paid one, which counts as
+// paid, and the marker can be cleared again.
 type Adjustment struct {
 	ID        string
 	PlanID    string
@@ -110,7 +114,18 @@ type Adjustment struct {
 	Note      *string
 	CreatedAt time.Time
 	RemovedAt *time.Time
+	// PaidAt and PaidBy are when and by whom the adjustment was marked paid;
+	// both nil while it is still owed.
+	PaidAt *time.Time
+	PaidBy *By
 }
+
+// Paid reports whether the adjustment was marked paid.
+func (a Adjustment) Paid() bool { return a.PaidAt != nil }
+
+// Planned reports whether the adjustment still counts as planned: neither
+// removed nor marked paid.
+func (a Adjustment) Planned() bool { return a.RemovedAt == nil && a.PaidAt == nil }
 
 // Plan is a deferral plan.
 type Plan struct {
@@ -161,6 +176,40 @@ func (p Plan) AdjustmentTotal() money.Money {
 		}
 	}
 	return total
+}
+
+// UnpaidAdjustmentTotal sums the adjustments that are still planned (neither
+// removed nor marked paid), in the plan's currency.
+func (p Plan) UnpaidAdjustmentTotal() money.Money {
+	total, _ := money.Zero(p.OriginalAmount.Currency(), p.OriginalAmount.Amount().Scale())
+	for _, a := range p.Adjustments {
+		if a.Planned() {
+			total, _ = total.Add(a.Amount)
+		}
+	}
+	return total
+}
+
+// HasUnpaidAdjustments reports whether any adjustment is still planned.
+func (p Plan) HasUnpaidAdjustments() bool {
+	return slices.ContainsFunc(p.Adjustments, Adjustment.Planned)
+}
+
+// Missed reports whether the plan's date has passed while the occurrence, in
+// payment state st, still owes something: the person planned to pay by
+// PlannedDate and has not. It is derived when read (from the plan and the
+// occurrence's evidence) and never stored, and it is not payment state: it
+// clears when the occurrence is paid, when the plan is revised to a later date
+// and when the plan is undone. A plan whose date is today is not missed yet.
+func (p Plan) Missed(st payments.State, today calendar.Date) bool {
+	if !p.Active() || !today.After(p.PlannedDate) {
+		return false
+	}
+	switch {
+	case st.Status == payments.StatusCancelled, st.Status == payments.StatusPaid, st.Timing == payments.StatusNotRecorded:
+		return false
+	}
+	return st.Outstanding.Sign() > 0
 }
 
 // GraceUntil is the last day of a documented grace period: the planned date
@@ -301,6 +350,8 @@ const (
 	ActionUndone            Action = "undone"
 	ActionAdjustmentAdded   Action = "adjustment_added"
 	ActionAdjustmentRemoved Action = "adjustment_removed"
+	ActionAdjustmentPaid    Action = "adjustment_paid"
+	ActionAdjustmentUnpaid  Action = "adjustment_unpaid"
 )
 
 // By is who made a change and how (decision D42 3a).
@@ -339,6 +390,15 @@ var (
 	ErrUndone = errors.New("the deferral plan was undone; it is history and cannot change")
 	// ErrAdjustmentRemoved refuses removing an adjustment twice.
 	ErrAdjustmentRemoved = errors.New("the adjustment was already removed")
+	// ErrAdjustmentPaid refuses marking an adjustment paid twice.
+	ErrAdjustmentPaid = errors.New("the adjustment is already marked paid")
+	// ErrAdjustmentNotPaid refuses clearing the paid marker of an adjustment
+	// that is not marked paid.
+	ErrAdjustmentNotPaid = errors.New("the adjustment is not marked paid")
+	// ErrUnpaidAdjustments refuses undoing a plan while it has a fee that is
+	// still planned: a recorded fee never silently drops out of the planned
+	// totals, so it is marked paid or removed first.
+	ErrUnpaidAdjustments = errors.New("the plan has fees or interest that are still planned; mark each paid or remove it before undoing the plan")
 	// ErrNoChange refuses a revision that changes nothing.
 	ErrNoChange = errors.New("the revision changes nothing")
 	// ErrOccurrenceNotFound means a new plan names an occurrence that does
@@ -392,6 +452,22 @@ func AdjustmentRemovedEvent(a audit.Actor, p Plan, adj Adjustment, at time.Time)
 	return e
 }
 
+// AdjustmentPaidEvent is the audit event for marking an adjustment paid, like
+// the other adjustment events without amount or note.
+func AdjustmentPaidEvent(a audit.Actor, p Plan, adj Adjustment, at time.Time) audit.Event {
+	e := AdjustmentAddedEvent(a, p, adj, at)
+	e.Action = audit.DeferralAdjustmentPaid
+	return e
+}
+
+// AdjustmentUnpaidEvent is the audit event for clearing an adjustment's paid
+// marker.
+func AdjustmentUnpaidEvent(a audit.Actor, p Plan, adj Adjustment, at time.Time) audit.Event {
+	e := AdjustmentAddedEvent(a, p, adj, at)
+	e.Action = audit.DeferralAdjustmentUnpaid
+	return e
+}
+
 // ListFilter selects plans. Each list matches any of its values; empty
 // matches all. PlannedMonth, when not zero, keeps plans planned in that month.
 // Implementations return up to Limit plans after the identifier After,
@@ -440,4 +516,11 @@ type Store interface {
 	AddAdjustment(ctx context.Context, actor audit.Actor, id string, expected int64, in NewAdjustment) (Plan, Adjustment, error)
 	// RemoveAdjustment removes an adjustment of an active plan.
 	RemoveAdjustment(ctx context.Context, actor audit.Actor, id, adjustmentID string, expected int64) (Plan, error)
+	// MarkAdjustmentPaid records that the person paid an adjustment of an
+	// active plan, whether or not the occurrence's principal is paid. It is
+	// never payment evidence for the occurrence.
+	MarkAdjustmentPaid(ctx context.Context, actor audit.Actor, id, adjustmentID string, expected int64) (Plan, error)
+	// UnmarkAdjustmentPaid clears the paid marker: the adjustment is planned
+	// again.
+	UnmarkAdjustmentPaid(ctx context.Context, actor audit.Actor, id, adjustmentID string, expected int64) (Plan, error)
 }

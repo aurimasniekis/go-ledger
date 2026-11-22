@@ -247,7 +247,7 @@ List the dated occurrences of recurring commitments in one reporting month, each
 
 ### `get_month_summary`
 
-The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.
+The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed (plan date passed, still owed). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.
 
 - Kind: read
 - Operation: `GET /api/v1/occurrences/summary`
@@ -1206,7 +1206,7 @@ Remove a manual payment record (the undo of record_manual_payment): the occurren
 
 ### `list_deferral_plans`
 
-List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees, the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). Filters combine; a repeated filter accepts any of its values.
+List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees (each with its paid marker), the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). missed is true when the plan's date has passed while the occurrence still owes something (plan date passed, still owed); it is derived when read, is not payment state and clears when the occurrence is paid or the plan is revised or undone. Filters combine; a repeated filter accepts any of its values.
 
 - Kind: read
 - Operation: `GET /api/v1/deferral-plans`
@@ -1272,7 +1272,7 @@ List plans to pay outstanding occurrences later, oldest first, one page at a tim
 
 ### `get_deferral_plan`
 
-Get one deferral plan, including its version (needed to revise or undo it) and its adjustments.
+Get one deferral plan, including its version (needed to revise or undo it), its adjustments with their paid markers, and missed (plan date passed, occurrence still owes something).
 
 - Kind: read
 - Operation: `GET /api/v1/deferral-plans/{id}`
@@ -1301,7 +1301,7 @@ Get one deferral plan, including its version (needed to revise or undo it) and i
 
 ### `list_deferral_plan_history`
 
-Every change of a deferral plan, oldest first: created, revised, adjustments added or removed, undone, each with the type and planned date after it, who made it and how, and the reason recorded with it.
+Every change of a deferral plan, oldest first: created, revised, adjustments added, removed, marked paid or unpaid, undone, each with the type and planned date after it, who made it and how, and the reason recorded with it.
 
 - Kind: read
 - Operation: `GET /api/v1/deferral-plans/{id}/history`
@@ -1452,7 +1452,7 @@ Change an active plan's type, planned date or reason (send only what changes; nu
 
 ### `undo_deferral_plan`
 
-End an active plan: the occurrence's outstanding amount is planned in its own month again. Nothing about the occurrence or its payments changes; the plan is kept as history and cannot be revised afterwards (a new plan can be made). Destructive; confirm with the person first.
+End an active plan: the occurrence's outstanding amount is planned in its own month again. Refused while a fee is still planned (deferral_adjustments_unpaid): mark it paid or remove it first. Nothing about the occurrence or its payments changes; the plan is kept as history and cannot be revised afterwards (a new plan can be made). Destructive; confirm with the person first.
 
 - Kind: destructive
 - Operation: `POST /api/v1/deferral-plans/{id}/undo`
@@ -1496,7 +1496,7 @@ End an active plan: the occurrence's outstanding amount is planned in its own mo
 
 ### `add_deferral_adjustment`
 
-Record an explicit fee, interest or other charge the person states for an active plan, in the plan's currency. It adds to the planned total of the plan's month while the occurrence still owes something; it never changes the occurrence's amount. Never infer a fee. Not idempotent: calling it twice records two charges.
+Record an explicit fee, interest or other charge the person states for an active plan, in the plan's currency. It adds to the planned total of the plan's month, under its own currency, and stays planned until it is marked paid (mark_deferral_adjustment_paid) or removed, even after the occurrence's principal is paid; it never changes the occurrence's amount and is never payment evidence for it. Never infer a fee. Not idempotent: calling it twice records two charges.
 
 - Kind: write
 - Operation: `POST /api/v1/deferral-plans/{id}/adjustments`
@@ -1575,6 +1575,88 @@ Remove an adjustment of an active plan; it is kept as history and no longer coun
 
 - Kind: destructive
 - Operation: `DELETE /api/v1/deferral-plans/{id}/adjustments/{adjustment_id}`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "adjustment_id": {
+      "description": "The adjustment identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "id": {
+      "description": "The deferral plan identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the deferral plan this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "adjustment_id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `mark_deferral_adjustment_paid`
+
+Record that the person paid a fee, interest or other adjustment of an active plan, so it is no longer planned. Only on the person's statement. It is not payment evidence for the occurrence and does not touch its principal. Reversible with unmark_deferral_adjustment_paid; marking an already paid adjustment is refused (deferral_adjustment_paid).
+
+- Kind: write
+- Operation: `POST /api/v1/deferral-plans/{id}/adjustments/{adjustment_id}/paid`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "adjustment_id": {
+      "description": "The adjustment identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "id": {
+      "description": "The deferral plan identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the deferral plan this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "adjustment_id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `unmark_deferral_adjustment_paid`
+
+Reverse mark_deferral_adjustment_paid: the adjustment is planned again. Refused when it is not marked paid (deferral_adjustment_not_paid).
+
+- Kind: write
+- Operation: `POST /api/v1/deferral-plans/{id}/adjustments/{adjustment_id}/unpaid`
 - Grant: `commitments:write`
 
 <details><summary>Input schema</summary>

@@ -618,6 +618,12 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"remove_deferral_adjustment": func() (string, string, string) {
 			return "DELETE", "/deferral-plans/" + fakeID + "/adjustments/" + fakeID, ""
 		},
+		"mark_deferral_adjustment_paid": func() (string, string, string) {
+			return "POST", "/deferral-plans/" + fakeID + "/adjustments/" + fakeID + "/paid", ""
+		},
+		"unmark_deferral_adjustment_paid": func() (string, string, string) {
+			return "POST", "/deferral-plans/" + fakeID + "/adjustments/" + fakeID + "/unpaid", ""
+		},
 
 		"list_bank_applications": func() (string, string, string) { return "GET", "/bank-applications", "" },
 		"list_bank_institutions": func() (string, string, string) {
@@ -661,6 +667,9 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"undo_deferral_plan":         {"id": fakeID, "version": 1},
 		"add_deferral_adjustment":    {"id": fakeID, "version": 1, "kind": "fee", "amount": map[string]any{"amount": "1.00", "currency": "EUR"}},
 		"remove_deferral_adjustment": {"id": fakeID, "adjustment_id": fakeID, "version": 1},
+
+		"mark_deferral_adjustment_paid":   {"id": fakeID, "adjustment_id": fakeID, "version": 1},
+		"unmark_deferral_adjustment_paid": {"id": fakeID, "adjustment_id": fakeID, "version": 1},
 
 		"list_bank_applications":  nil,
 		"list_bank_institutions":  {"application": "fake-app", "country": "FI"},

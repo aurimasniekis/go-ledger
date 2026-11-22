@@ -662,15 +662,19 @@ const (
 )
 
 // DeferralAdjustment is an explicit fee, interest or other charge recorded on
-// a deferral plan. RemovedAt is set once it was removed; it then no longer
-// counts.
+// a deferral plan. It stays planned until the person marks it paid (PaidAt
+// and PaidBy, reversible) or removes it (RemovedAt, after which it no longer
+// counts); paying the occurrence's principal does not settle it and it is never
+// payment evidence.
 type DeferralAdjustment struct {
-	ID        string  `json:"id"`
-	Kind      string  `json:"kind"`
-	Amount    Money   `json:"amount"`
-	Note      *string `json:"note"`
-	CreatedAt string  `json:"created_at"`
-	RemovedAt *string `json:"removed_at"`
+	ID        string      `json:"id"`
+	Kind      string      `json:"kind"`
+	Amount    Money       `json:"amount"`
+	Note      *string     `json:"note"`
+	CreatedAt string      `json:"created_at"`
+	RemovedAt *string     `json:"removed_at"`
+	PaidAt    *string     `json:"paid_at"`
+	PaidBy    *MatchActor `json:"paid_by"`
 }
 
 // DeferralPlan is a plan to pay an outstanding occurrence later than its due
@@ -679,28 +683,35 @@ type DeferralAdjustment struct {
 // OverdueSince stays the original due date while it is overdue. Original* and
 // OutstandingWhenPlanned are history from when the plan was made.
 type DeferralPlan struct {
-	ID                     string               `json:"id"`
-	OccurrenceID           string               `json:"occurrence_id"`
-	CommitmentID           string               `json:"commitment_id"`
-	PlanType               string               `json:"plan_type"`
-	State                  string               `json:"state"`
-	PlannedDate            string               `json:"planned_date"`
-	PlannedMonth           string               `json:"planned_month"`
-	Reason                 *string              `json:"reason"`
-	OriginalDueDate        string               `json:"original_due_date"`
-	OriginalAmount         Money                `json:"original_amount"`
-	OutstandingWhenPlanned Money                `json:"outstanding_when_planned"`
-	OccurrenceStatus       string               `json:"occurrence_status"`
-	OutstandingAmount      Money                `json:"outstanding_amount"`
-	OverdueSince           *string              `json:"overdue_since"`
-	GraceUntil             *string              `json:"grace_until"`
-	WithinGrace            bool                 `json:"within_grace"`
-	AdjustmentTotal        Money                `json:"adjustment_total"`
-	Adjustments            []DeferralAdjustment `json:"adjustments"`
-	Version                int64                `json:"version"`
-	CreatedAt              string               `json:"created_at"`
-	UpdatedAt              string               `json:"updated_at"`
-	UndoneAt               *string              `json:"undone_at"`
+	ID                     string  `json:"id"`
+	OccurrenceID           string  `json:"occurrence_id"`
+	CommitmentID           string  `json:"commitment_id"`
+	PlanType               string  `json:"plan_type"`
+	State                  string  `json:"state"`
+	PlannedDate            string  `json:"planned_date"`
+	PlannedMonth           string  `json:"planned_month"`
+	Reason                 *string `json:"reason"`
+	OriginalDueDate        string  `json:"original_due_date"`
+	OriginalAmount         Money   `json:"original_amount"`
+	OutstandingWhenPlanned Money   `json:"outstanding_when_planned"`
+	OccurrenceStatus       string  `json:"occurrence_status"`
+	OutstandingAmount      Money   `json:"outstanding_amount"`
+	OverdueSince           *string `json:"overdue_since"`
+	GraceUntil             *string `json:"grace_until"`
+	WithinGrace            bool    `json:"within_grace"`
+	// Missed is true while the plan is active, its planned date has passed
+	// and the occurrence still owes something. Derived on every read, never
+	// stored and not payment state.
+	Missed bool `json:"missed"`
+	// AdjustmentTotal sums the adjustments not removed, UnpaidAdjustmentTotal
+	// the ones still planned (not removed, not marked paid).
+	AdjustmentTotal       Money                `json:"adjustment_total"`
+	UnpaidAdjustmentTotal Money                `json:"unpaid_adjustment_total"`
+	Adjustments           []DeferralAdjustment `json:"adjustments"`
+	Version               int64                `json:"version"`
+	CreatedAt             string               `json:"created_at"`
+	UpdatedAt             string               `json:"updated_at"`
+	UndoneAt              *string              `json:"undone_at"`
 }
 
 // DeferralPlanEvent is one change in a plan's history, with the plan's type

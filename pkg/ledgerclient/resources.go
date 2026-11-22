@@ -753,6 +753,19 @@ func (c *Client) AddDeferralAdjustment(ctx context.Context, id string, version i
 	return c.deferral(ctx, request{op: opAddDeferralAdjust, pathID: id, version: version, body: in})
 }
 
+// MarkDeferralAdjustmentPaid records that the person paid an adjustment of the
+// active plan whose current version is version. It is not payment evidence for
+// the occurrence and is reversible with UnmarkDeferralAdjustmentPaid.
+func (c *Client) MarkDeferralAdjustmentPaid(ctx context.Context, id, adjustmentID string, version int64) (*DeferralPlan, error) {
+	return c.deferral(ctx, request{op: opMarkAdjustmentPaid, pathID: id, pathID2: adjustmentID, version: version})
+}
+
+// UnmarkDeferralAdjustmentPaid clears an adjustment's paid marker: it is
+// planned again.
+func (c *Client) UnmarkDeferralAdjustmentPaid(ctx context.Context, id, adjustmentID string, version int64) (*DeferralPlan, error) {
+	return c.deferral(ctx, request{op: opUnmarkAdjustmentPaid, pathID: id, pathID2: adjustmentID, version: version})
+}
+
 // RemoveDeferralAdjustment removes an adjustment of the active plan whose
 // current version is version; it stays in the plan as history.
 func (c *Client) RemoveDeferralAdjustment(ctx context.Context, id, adjustmentID string, version int64) (*DeferralPlan, error) {

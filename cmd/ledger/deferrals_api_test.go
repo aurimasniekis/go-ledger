@@ -23,9 +23,16 @@ type deferralResp struct {
 	OutstandingAmount      struct{ Amount string } `json:"outstanding_amount"`
 	OutstandingWhenPlanned struct{ Amount string } `json:"outstanding_when_planned"`
 	AdjustmentTotal        struct{ Amount string } `json:"adjustment_total"`
+	UnpaidAdjustmentTotal  struct{ Amount string } `json:"unpaid_adjustment_total"`
+	Missed                 bool                    `json:"missed"`
 	Adjustments            []struct {
 		ID        string  `json:"id"`
 		RemovedAt *string `json:"removed_at"`
+		PaidAt    *string `json:"paid_at"`
+		PaidBy    *struct {
+			Kind string  `json:"kind"`
+			Via  *string `json:"via"`
+		} `json:"paid_by"`
 	} `json:"adjustments"`
 	Version int64 `json:"version"`
 }
@@ -346,17 +353,146 @@ func TestDeferralPlanMCP(t *testing.T) {
 		t.Fatalf("adjustment: %s", resultText(res))
 	}
 	adj := decodeDeferral(t, []byte(resultText(res))).Adjustments[0].ID
-	if res := call(t, c, "remove_deferral_adjustment", map[string]any{"id": p.ID, "adjustment_id": adj, "version": 3}); res.IsError {
+	res = call(t, c, "mark_deferral_adjustment_paid", map[string]any{"id": p.ID, "adjustment_id": adj, "version": 3})
+	if g := decodeDeferral(t, []byte(resultText(res))); res.IsError || g.Version != 4 || g.Adjustments[0].PaidAt == nil || g.UnpaidAdjustmentTotal.Amount != "0.00" {
+		t.Fatalf("mark paid: %s", resultText(res))
+	}
+	res = call(t, c, "unmark_deferral_adjustment_paid", map[string]any{"id": p.ID, "adjustment_id": adj, "version": 4})
+	if g := decodeDeferral(t, []byte(resultText(res))); res.IsError || g.Version != 5 || g.Adjustments[0].PaidAt != nil || g.UnpaidAdjustmentTotal.Amount != "0.40" {
+		t.Fatalf("unmark paid: %s", resultText(res))
+	}
+	if res := call(t, c, "undo_deferral_plan", map[string]any{"id": p.ID, "version": 5}); !res.IsError || !strings.Contains(resultText(res), "deferral_adjustments_unpaid") {
+		t.Fatalf("undo with a planned fee: %s", resultText(res))
+	}
+	if res := call(t, c, "remove_deferral_adjustment", map[string]any{"id": p.ID, "adjustment_id": adj, "version": 5}); res.IsError {
 		t.Fatalf("remove adjustment: %s", resultText(res))
 	}
-	if res := call(t, c, "undo_deferral_plan", map[string]any{"id": p.ID, "version": 4}); res.IsError || decodeDeferral(t, []byte(resultText(res))).State != "undone" {
+	if res := call(t, c, "undo_deferral_plan", map[string]any{"id": p.ID, "version": 6}); res.IsError || decodeDeferral(t, []byte(resultText(res))).State != "undone" {
 		t.Fatalf("undo: %s", resultText(res))
 	}
 	hist := resultText(call(t, c, "list_deferral_plan_history", map[string]any{"id": p.ID}))
-	if strings.Count(hist, `"via":"mcp"`) != 5 {
+	if strings.Count(hist, `"via":"mcp"`) != 7 {
 		t.Errorf("history does not record MCP provenance: %s", hist)
 	}
 	if list := resultText(call(t, c, "list_deferral_plans", map[string]any{"state": []string{"undone"}})); !strings.Contains(list, p.ID) {
 		t.Errorf("list: %s", list)
+	}
+}
+
+// TestDeferralMissedPlanAndFeePaidMarkerAPI is the DF1c journey over HTTP: a
+// plan whose date passed while the occurrence still owes something is flagged
+// (derived on read, on the plan and on the month row) and clears when the plan
+// is revised or the occurrence is paid; a fee stays planned after the principal
+// is paid until it is marked paid (reversibly, audited) or removed.
+func TestDeferralMissedPlanAndFeePaidMarkerAPI(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	admin := map[string]string{"X-Test-User": f.ids["alice"]}
+	reader := map[string]string{"X-Test-User": f.ids["bob"]}
+	id := f.createCommitmentAt(t, earlier, `{"name":"Gym","kind":"subscription","amount":{"amount":"50.00","currency":"EUR"},"schedule":{"version":1,"frequency":"monthly","interval":1,"day":15},"start_date":"2026-01-01"}`)
+	oct := f.occurrences(t, "month=2026-10&commitment_id="+id, "alice").Items[0]
+	rec := f.do("POST", "/api/v1/deferral-plans", `{"occurrence_id":"`+oct.ID+`","plan_type":"personal","planned_date":"2026-10-25"}`, admin)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	p := decodeDeferral(t, rec.Body.Bytes())
+	item := "/api/v1/deferral-plans/" + p.ID
+	get := func() deferralResp {
+		rec := f.do("GET", item, "", reader)
+		if rec.Code != 200 {
+			t.Fatalf("get: %d %s", rec.Code, rec.Body.String())
+		}
+		return decodeDeferral(t, rec.Body.Bytes())
+	}
+	if p.Missed {
+		t.Fatal("a plan whose date is ahead is flagged missed")
+	}
+
+	// The planned date passes while the occurrence still owes: flagged, on the
+	// plan and on the month row, and nothing is stored or paid.
+	f.now = time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	if g := get(); !g.Missed || g.OccurrenceStatus != "overdue" || g.OutstandingAmount.Amount != "50.00" || g.Version != p.Version {
+		t.Errorf("after the date passed: %+v", g)
+	}
+	if m := f.monthPlanned(t, "2026-10"); m.Items[0].Deferral == nil || !m.Items[0].Deferral.Missed {
+		t.Errorf("the month row does not flag the missed plan: %+v", m.Items[0].Deferral)
+	}
+	// Revising to a later date clears it.
+	rec = f.do("PATCH", item, `{"planned_date":"2026-11-05","version":1}`, admin)
+	if rec.Code != 200 || decodeDeferral(t, rec.Body.Bytes()).Missed {
+		t.Fatalf("revise: %d %s", rec.Code, rec.Body.String())
+	}
+	f.now = time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	if !get().Missed {
+		t.Error("the revised date passed and the plan is not flagged")
+	}
+
+	// A fee, then the principal is paid: the plan is no longer missed but the fee stays planned.
+	rec = f.do("POST", item+"/adjustments", `{"kind":"fee","amount":{"amount":"3.00","currency":"EUR"},"version":2}`, admin)
+	if rec.Code != 201 {
+		t.Fatalf("fee: %d %s", rec.Code, rec.Body.String())
+	}
+	fee := decodeDeferral(t, rec.Body.Bytes()).Adjustments[0].ID
+	if rec := f.do("POST", "/api/v1/occurrences/"+oct.ID+"/manual-payments", `{"amount":{"amount":"50.00","currency":"EUR"},"paid_on":"2026-11-06"}`, admin); rec.Code != 201 {
+		t.Fatalf("pay: %d %s", rec.Code, rec.Body.String())
+	}
+	g := get()
+	if g.Missed || g.OccurrenceStatus != "paid" || g.UnpaidAdjustmentTotal.Amount != "3.00" || g.Version != 3 {
+		t.Fatalf("after the principal is paid: %+v", g)
+	}
+	nov := f.monthPlanned(t, "2026-11")
+	if nov.Totals[0].Adjustments.Amount != "3.00" || len(nov.CarriedIn) != 1 || nov.CarriedIn[0].Deferral == nil || nov.CarriedIn[0].Deferral.Missed {
+		t.Errorf("November after the principal is paid: totals %+v carried in %+v", nov.Totals, nov.CarriedIn)
+	}
+	if rec := f.do("POST", item+"/undo", `{"version":3}`, admin); rec.Code != 409 || !strings.Contains(rec.Body.String(), "deferral_adjustments_unpaid") {
+		t.Errorf("undo with a planned fee: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Mark paid: needs the write grant and the version; it is audited and reversible.
+	paidURL, unpaidURL := item+"/adjustments/"+fee+"/paid", item+"/adjustments/"+fee+"/unpaid"
+	if rec := f.do("POST", paidURL, "", with(reader, "If-Match", `"3"`)); rec.Code != 403 {
+		t.Errorf("read-only user marked a fee paid: %d", rec.Code)
+	}
+	if rec := f.do("POST", paidURL, "", admin); rec.Code != 428 {
+		t.Errorf("mark paid without a version: %d", rec.Code)
+	}
+	if rec := f.do("POST", item+"/adjustments/not-an-id/paid", "", with(admin, "If-Match", `"3"`)); rec.Code != 400 {
+		t.Errorf("malformed adjustment id: %d", rec.Code)
+	}
+	rec = f.do("POST", paidURL, "", with(admin, "If-Match", `"3"`))
+	if rec.Code != 200 {
+		t.Fatalf("mark paid: %d %s", rec.Code, rec.Body.String())
+	}
+	g = decodeDeferral(t, rec.Body.Bytes())
+	a := g.Adjustments[0]
+	if g.Version != 4 || a.PaidAt == nil || a.PaidBy == nil || a.PaidBy.Kind != "user" || a.PaidBy.Via == nil || *a.PaidBy.Via != "session" || g.UnpaidAdjustmentTotal.Amount != "0.00" || g.AdjustmentTotal.Amount != "3.00" {
+		t.Fatalf("after marking paid: %+v", g)
+	}
+	if n := f.monthPlanned(t, "2026-11"); n.Totals[0].Adjustments.Amount != "0.00" {
+		t.Errorf("November after marking the fee paid: %+v", n.Totals[0])
+	}
+	if rec := f.do("POST", paidURL, "", with(admin, "If-Match", `"4"`)); rec.Code != 409 || !strings.Contains(rec.Body.String(), "deferral_adjustment_paid") {
+		t.Errorf("mark twice: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.do("POST", unpaidURL, "", with(admin, "If-Match", `"4"`))
+	g = decodeDeferral(t, rec.Body.Bytes())
+	if rec.Code != 200 || g.Adjustments[0].PaidAt != nil || g.Adjustments[0].PaidBy != nil || g.UnpaidAdjustmentTotal.Amount != "3.00" {
+		t.Fatalf("clear the marker: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do("POST", unpaidURL, "", with(admin, "If-Match", `"5"`)); rec.Code != 409 || !strings.Contains(rec.Body.String(), "deferral_adjustment_not_paid") {
+		t.Errorf("unmark an unpaid fee: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, a := range []string{"deferral_plan.adjustment_paid", "deferral_plan.adjustment_unpaid"} {
+		d := f.auditAction(t, a)
+		if d["occurrence_id"] != oct.ID || d["adjustment_id"] != fee || d["via"] != "session" {
+			t.Errorf("%s details %v", a, d)
+		}
+		if _, ok := d["amount"]; ok {
+			t.Errorf("%s carries an amount", a)
+		}
+	}
+	rec = f.do("GET", item+"/history", "", reader)
+	if !strings.Contains(rec.Body.String(), `"action":"adjustment_paid"`) || !strings.Contains(rec.Body.String(), `"action":"adjustment_unpaid"`) {
+		t.Errorf("history: %s", rec.Body.String())
 	}
 }
