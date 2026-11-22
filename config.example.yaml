@@ -937,3 +937,26 @@ decisions:
       # there is never an automatic one. Each needs its own consent and key.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_FALLBACK  Flag: --decisions.tasks.payment_matching.fallback
       fallback: []
+
+alerts:
+
+  # Channels that also receive a newly raised alert (a list in YAML, comma
+  # separated in the variable). Empty (the default) keeps alerts in the app
+  # only: nothing leaves this machine. The only channel is pulse, which
+  # records an alert.raised event in the outbox (kind, object type and id
+  # only, never the message or any amount) and needs events.pulse.enabled. A
+  # dismissed alert is never sent again.
+  # Environment: LEDGER_ALERTS_CHANNELS  Flag: --alerts.channels
+  channels: []
+
+  # Raise a consent-expiring alert when a bank connection's consent ends
+  # within this many days (1 to 365), or has ended.
+  # Environment: LEDGER_ALERTS_CONSENT_HORIZON_DAYS  Flag: --alerts.consent_horizon_days
+  consent_horizon_days: 14
+
+  # How often the alert detectors run (1m to 24h), besides after every bank
+  # refresh that stored something. They check bank consent expiry, commitment
+  # amount changes and overdue occurrences with no matching payment, and
+  # resolve an alert when its condition no longer holds.
+  # Environment: LEDGER_ALERTS_INTERVAL  Flag: --alerts.interval
+  interval: "1h"

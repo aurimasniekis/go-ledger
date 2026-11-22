@@ -167,15 +167,14 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		log.Error("cannot determine the reporting time zone", "error", err.Error())
 		return 1
 	}
-	// The outbox writer takes the events.pulse switch and source (N3). No feature
-	// registers events yet, so nothing calls it; features add definitions to the
-	// registry in their own change (docs/events.md).
-	ob, err := outbox.New(outbox.Config{Registry: outbox.NewRegistry(), Enabled: cfg.Events.Pulse.Enabled, Source: cfg.Events.Pulse.Source})
+	// The outbox writer takes the events.pulse switch and source (N3). Features
+	// add their definitions to the registry (docs/events.md); today the alert
+	// channel (L6) is the only one that enqueues.
+	ob, err := outbox.New(outbox.Config{Registry: outbox.NewRegistry(alertRaisedEvent), Enabled: cfg.Events.Pulse.Enabled, Source: cfg.Events.Pulse.Source})
 	if err != nil {
 		log.Error("invalid event settings", "error", err.Error())
 		return 1
 	}
-	_ = ob
 
 	ln, err := net.Listen("tcp", cfg.HTTP.Listen)
 	if err != nil {
@@ -249,7 +248,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// and none starts afterwards; the shutdown waits for it after the refreshes.
 	enrichCtx, enrichStop := context.WithCancel(ctx)
 	defer enrichStop()
+	// Alert detectors (L6, ADR-0065): after a refresh and on a schedule.
+	alertRun := newAlertRunner(cfg.Alerts, db, auditLog, ob, parts, facts, zone.Zone(), nil, log)
+	alertRun.done = app.JobDoneFor(alertJobName)
 	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(refreshCtx context.Context, _ bankimport.Result) {
+		alertRun.Run(refreshCtx)
 		// A failed run is retried after the next refresh, or on request.
 		if _, err := parts.matching.Run(refreshCtx); err != nil && refreshCtx.Err() == nil {
 			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
@@ -357,6 +360,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		defer close(retentionDone)
 		outbox.NewRetention(outbox.RetentionConfig{DB: db, Log: log, Meter: app, Publishing: cfg.Events.Pulse.Enabled}).Run(rctx)
 	}()
+	// Alert detectors on a schedule: consent expiry and overdue dates change with
+	// time, not only after a refresh. In-app only unless alerts.channels says
+	// otherwise; stops with rctx and is waited for before the database closes.
+	alertsDone := make(chan struct{})
+	go func() { defer close(alertsDone); alertRun.Loop(rctx, cfg.Alerts.Interval) }()
 	// Background refresh of bank connections (B6, ADR-0028). One engine is shared
 	// with every other trigger of a refresh (the connection API, B4), so one
 	// connection is never refreshed twice at once. It stops with rctx and is
@@ -410,6 +418,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		enrichStop()
 	}
 	<-retentionDone // before the database closes
+	<-alertsDone
 	// A refresh on request that outlived its request is waited for too (bounded,
 	// so a stuck provider cannot hold the shutdown): its audit entry needs the
 	// database.

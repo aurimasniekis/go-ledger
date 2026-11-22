@@ -37,6 +37,15 @@ type Config struct {
 	Auth      Auth      `cfg:"auth"`
 	MCP       MCP       `cfg:"mcp"`
 	Decisions Decisions `cfg:"decisions"`
+	Alerts    Alerts    `cfg:"alerts"`
+}
+
+// Alerts configures the alert detectors and the channels that carry a newly
+// raised alert beyond the app (task L6, ADR-0065, decision D13).
+type Alerts struct {
+	Channels           []string      `cfg:"channels" desc:"Channels that also receive a newly raised alert (a list in YAML, comma separated in the variable). Empty (the default) keeps alerts in the app only: nothing leaves this machine. The only channel is pulse, which records an alert.raised event in the outbox (kind, object type and id only, never the message or any amount) and needs events.pulse.enabled. A dismissed alert is never sent again."`
+	ConsentHorizonDays int           `cfg:"consent_horizon_days" default:"14" desc:"Raise a consent-expiring alert when a bank connection's consent ends within this many days (1 to 365), or has ended."`
+	Interval           time.Duration `cfg:"interval" default:"1h" desc:"How often the alert detectors run (1m to 24h), besides after every bank refresh that stored something. They check bank consent expiry, commitment amount changes and overdue occurrences with no matching payment, and resolve an alert when its condition no longer holds."`
 }
 
 // MCP configures the Model Context Protocol endpoint, POST /api/v1/mcp

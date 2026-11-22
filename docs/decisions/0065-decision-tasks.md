@@ -68,17 +68,40 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
    exact model-origin one), and accepting or correcting label suggestions adds all labels in one transaction
    (`AddLabels`). A wording failure is reported in the raise result (`WordingErr`) and never skips the channels.
 
+## Alert detectors, channels and Pulse (task L6e)
+
+11. **`alerts.Detector`** runs after every bank refresh that stored something and every `alerts.interval` (default 1h; first
+   pass at startup, passes never overlap). It only reads. Three detectors, each reconciling its kind: it raises what holds
+   and resolves the *open* alerts of the kind whose condition stopped holding (`Resolve`). A dismissed alert is never
+   raised again and never resolved (section 7).
+   - **Consent expiry:** connections that are active or reconnect-required and hold a consent end; raised within
+     `alerts.consent_horizon_days` (default 14) of that date in the reporting zone, or after it. Renewing changes the
+     expiry date, so the old alert resolves.
+   - **Commitment amount change:** the commitment's current amount differs from the amount of its most recent past,
+     non-cancelled occurrence (occurrences keep the amount they were generated with, so the difference is the edit; no
+     amount history is stored). It resolves by itself once an occurrence with the new amount has fallen due. A currency
+     change is reported as itself, never converted.
+   - **Overdue unmatched:** occurrences whose derived status is overdue with an outstanding amount, as the monthly view
+     derives it (a partially paid or deferred-but-paid one is not). Resolves when paid, matched, cancelled or removed.
+   The occurrence detectors read the current month and the 13 before it. An alert about an older occurrence is neither
+   raised nor resolved by a run. A detector that cannot read its data raises and resolves nothing of its kind and the run
+   reports the error.
+12. **Channels.** `alerts.channels` (default empty: in-app only) lists the channels that also receive a *newly raised*
+   alert. The only one is `pulse`, which needs `events.pulse.enabled` (startup is refused otherwise). It enqueues
+   `evt.ledger.alert.raised.<alert id>` (`ledger.alert.raised.v1`; kind, object type, object id only: no message, amount or
+   bank text) in the outbox, in its own transaction after the alert is stored: a failure is logged and never loses the
+   alert, and it is not retried for that alert (the alert exists, so a later run does not raise it again). See
+   [docs/events.md](../events.md).
+
 ## Limitations and what is not built (kept visible)
 
 - **No HTTP routes, CLI commands or UI** for suggestions or alerts, and so no OpenAPI change: they belong to L7 (review UI
   and settings) and the MCP and Terraform tasks. Grants for them are decided there.
-- **No runner calls these services yet.** Nothing in `serve` triggers `SuggestCategory`/`SuggestLabels` for new
-  transactions, nothing reads transaction facts and the merchant's transfer classification for them (the caller builds
-  `Facts`), and no detector scans bank connections, commitments or occurrences to feed `alerts.Service.Raise`. Wiring
+- **No runner calls the suggestion services yet.** Nothing in `serve` triggers `SuggestCategory`/`SuggestLabels` for new
+  transactions and nothing reads transaction facts and the merchant's transfer classification for them (the caller builds
+  `Facts`). (The alert detectors do run, see "Alert detectors" below.) Wiring
   these to a trigger (after import) and to the real data is a follow-up that needs L7's settings and the decision adapters
   (L2 to L5, none exist in this build, so an enabled decision task still stops startup as ADR-0060 says).
-- **No configuration key selects an alert channel.** The channel list is a constructor argument; the config key and the
-  Pulse event for alerts are not defined.
 - Retention of suggestions and alerts is not decided (ADR-0060 lists it as open).
 - Migration number 0032 may need renumbering if another branch merges a 0032 first.
 
