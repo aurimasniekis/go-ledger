@@ -558,7 +558,7 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 		}
 		if len(runs) > 0 {
 			now := s.now()
-			if end := s.cooldownEnd(&runs[0]); end.After(now) {
+			if end := s.cooldownEnd(&runs[0], conn.ConsentGrantedAt); end.After(now) {
 				return View{}, &CooldownError{Until: end, RetryAfter: end.Sub(now)}
 			}
 		}
@@ -707,9 +707,14 @@ type View struct {
 }
 
 // cooldownEnd returns when the cooldown after run ends, and zero when run
-// does not hold one back (still running, or the cooldown is off).
-func (s *Service) cooldownEnd(run *banking.RefreshRun) time.Time {
+// does not hold one back (still running, the cooldown is off, or the run
+// finished before the connection's current consent was granted: reconnecting
+// is a new start, C-B6c-reconnect).
+func (s *Service) cooldownEnd(run *banking.RefreshRun, consentGrantedAt time.Time) time.Time {
 	if s.RefreshCooldown <= 0 || run == nil || run.Outcome == banking.RefreshRunning || run.FinishedAt.IsZero() {
+		return time.Time{}
+	}
+	if run.FinishedAt.Before(consentGrantedAt) {
 		return time.Time{}
 	}
 	return run.FinishedAt.UTC().Add(s.RefreshCooldown)
@@ -758,7 +763,7 @@ func (s *Service) view(ctx context.Context, c banking.Connection, sched map[bank
 		v.Schedule = &st
 	}
 	v.RefreshRunning = v.LastRun != nil && v.LastRun.Outcome == banking.RefreshRunning
-	if end := s.cooldownEnd(v.LastRun); end.After(v.AsOf) {
+	if end := s.cooldownEnd(v.LastRun, c.ConsentGrantedAt); end.After(v.AsOf) {
 		v.RefreshAvailableAt = end
 	}
 	return v, nil

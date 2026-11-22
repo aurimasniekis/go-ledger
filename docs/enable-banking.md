@@ -145,7 +145,7 @@ are configurable; the daily fetch budget is fixed and not configurable. See [ADR
 
 A refresh *on request* (API, web UI, CLI, MCP) is refused for `banking.refresh.request_cooldown` (default 5 minutes, `0s` = off,
 at most 24h) after a refresh of that connection finished: HTTP 429 `refresh_cooldown` with `Retry-After`. The background
-refresh is not held back. See [ADR-0053](decisions/0053-bank-refresh-request-cooldown.md).
+refresh is not held back. See [ADR-0055](decisions/0055-bank-refresh-request-cooldown.md).
 
 ## What each mode changes
 

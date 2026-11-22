@@ -5,18 +5,32 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
+	"github.com/aurimasniekis/go-ledger/internal/logging"
 )
 
 // Grace returns the [payments.GraceFunc] backed by the commitments' recorded
 // leeway (task DF2, ADR-0052). It reads the commitment of each occurrence it is
-// asked about, so an edit shows at once. When the commitment cannot be read
-// (deleted, or a database error) it reports nothing recorded: that can only
-// make an overdue occurrence look like it has no known grace, never hide the
-// obligation or invent a date.
+// asked about, so an edit shows at once, and the read uses the caller's ctx.
+// When the commitment cannot be read (deleted, or a database error) it reports
+// nothing recorded: that can only make an overdue occurrence look like it has
+// no known grace, never hide the obligation or invent a date. A read the ctx has
+// stopped reports nothing recorded and logs nothing. Any other error is logged
+// to the ctx's logger with the identifiers only, never the leeway text.
 func (s *Store) Grace() payments.GraceFunc {
-	return func(o occurrences.Occurrence) payments.Grace {
-		c, err := s.Get(context.Background(), o.CommitmentID)
-		if err != nil || c.Leeway == nil {
+	return func(ctx context.Context, o occurrences.Occurrence) payments.Grace {
+		if ctx.Err() != nil {
+			return payments.Grace{}
+		}
+		c, err := s.Get(ctx, o.CommitmentID)
+		if err != nil {
+			if ctx.Err() != nil {
+				return payments.Grace{}
+			}
+			logging.FromContext(ctx).ErrorContext(ctx, "leeway not read: the commitment of an overdue occurrence could not be loaded; it is reported as not recorded",
+				"occurrence_id", o.ID, "commitment_id", o.CommitmentID, "error", err)
+			return payments.Grace{}
+		}
+		if c.Leeway == nil {
 			return payments.Grace{}
 		}
 		g := payments.Grace{Recorded: true, Kind: c.Leeway.Kind}

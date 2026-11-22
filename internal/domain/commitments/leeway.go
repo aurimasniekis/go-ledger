@@ -73,13 +73,13 @@ func (l Leeway) Validate() []FieldError {
 	case l.Kind == LeewayPeriod && (l.Days == nil || *l.Days < 1 || *l.Days > MaxLeewayDays):
 		errs = append(errs, FieldError{"leeway.days", fmt.Sprintf("days must be 1 to %d for a period; use kind none for no grace", MaxLeewayDays)})
 	case l.Kind != LeewayPeriod && l.Days != nil:
-		errs = append(errs, FieldError{"leeway.days", "days applies only to kind period"})
+		errs = append(errs, FieldError{"leeway.days", "days applies only to kind period; a patch that changes the kind must send days as null"})
 	}
 	switch {
 	case l.Kind == LeewayDeadline && (l.Until == nil || l.Until.IsZero()):
 		errs = append(errs, FieldError{"leeway.until", "until is required for a deadline"})
 	case l.Kind != LeewayDeadline && l.Until != nil:
-		errs = append(errs, FieldError{"leeway.until", "until applies only to kind deadline"})
+		errs = append(errs, FieldError{"leeway.until", "until applies only to kind deadline; a patch that changes the kind must send until as null"})
 	}
 	text := func(member string, s *string, max int) {
 		if s != nil && (!utf8.ValidString(*s) || strings.TrimSpace(*s) == "" || utf8.RuneCountInString(*s) > max) {

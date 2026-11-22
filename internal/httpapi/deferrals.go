@@ -265,7 +265,7 @@ func registerDeferrals(s *Server, st deferrals.Store, occ occurrences.Reader, pa
 			if err != nil {
 				return nil, err
 			}
-			out[i] = toDeferralPlanJSON(p, o.DueDate, payments.Derive(o, facts[o.ID], t, grace), t)
+			out[i] = toDeferralPlanJSON(p, o.DueDate, payments.Derive(r.Context(), o, facts[o.ID], t, grace), t)
 		}
 		return out, nil
 	}

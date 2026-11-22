@@ -138,6 +138,38 @@ func TestFailedRefreshStartsTheCooldownToo(t *testing.T) {
 	}
 }
 
+// C-B6c-reconnect: a run that finished before the current consent was granted
+// holds nothing back: after reconnecting, a refresh is allowed at once, and the
+// view says so.
+func TestReconnectResetsTheCooldown(t *testing.T) {
+	ctx := context.Background()
+	s, eng, _, clk := cooldownSetup(t, 5*time.Minute, banking.RefreshFailed)
+	if _, err := s.svc.Refresh(ctx, alice, "conn-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.svc.Refresh(ctx, alice, "conn-1"); !errors.Is(err, bankconnect.ErrRefreshCooldown) {
+		t.Fatalf("before reconnecting: %v", err)
+	}
+	clk.add(time.Minute)
+	s.mem.mu.Lock()
+	s.mem.conn.ConsentGrantedAt = clk.now() // the user reconnected
+	s.mem.mu.Unlock()
+	v, err := s.svc.View(ctx, "conn-1")
+	if err != nil || !v.RefreshAvailableAt.IsZero() {
+		t.Fatalf("view after reconnect: available at %s (%v), want allowed now", v.RefreshAvailableAt, err)
+	}
+	if _, err := s.svc.Refresh(ctx, alice, "conn-1"); err != nil {
+		t.Fatalf("refresh after reconnect: %v", err)
+	}
+	if eng.count() != 2 {
+		t.Fatalf("engine ran %d times, want 2", eng.count())
+	}
+	// The run after the reconnect holds the next one back as usual.
+	if _, err := s.svc.Refresh(ctx, alice, "conn-1"); !errors.Is(err, bankconnect.ErrRefreshCooldown) {
+		t.Fatalf("after the new run: %v", err)
+	}
+}
+
 // A run still going is for the engine to refuse (409 refresh_in_progress), not
 // the cooldown.
 func TestRunningRunIsNotACooldown(t *testing.T) {

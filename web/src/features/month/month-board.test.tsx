@@ -331,6 +331,13 @@ describe('MonthBoard content', () => {
     expect(screen.getByTestId('leeway-none')).toHaveTextContent('no grace period applies')
   })
 
+  it('says a recorded deadline that does not cover the occurrence grants no grace', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'overdue', timing: 'overdue', leeway: 'deadline' }) })]) })
+    expect(screen.getByTestId('leeway-deadline-uncovered')).toHaveTextContent('does not cover this occurrence, so no grace is assumed')
+    expect(screen.queryByTestId('leeway-unknown')).toBeNull()
+    expect(screen.queryByTestId('leeway-none')).toBeNull()
+  })
+
   it('adds no grace text when nothing was recorded', () => {
     board({ data: summary([item('a', { payment: payment({ status: 'overdue', timing: 'overdue', leeway: 'not_recorded' }) })]) })
     expect(screen.queryByTestId('leeway-unknown')).toBeNull()

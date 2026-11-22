@@ -1,4 +1,4 @@
-# ADR-0053: Cooldown for bank refresh on request
+# ADR-0055: Cooldown for bank refresh on request
 
 Status: Accepted (operator decision D-B6c, 2026-11-22: cooldown of 5 minutes, per connection, configurable). The design points
 below (what counts as a finished refresh, the error code, the zero value) are this ADR's choices within that decision.
@@ -34,6 +34,9 @@ the web UI, the CLI, and MCP including `ledger mcp stdio`) ends in one route, `P
 6. **Configuration.** `banking.refresh.request_cooldown` (env `LEDGER_BANKING_REFRESH_REQUEST_COOLDOWN`, YAML, `.env`), a duration
    from `0s` to `24h`, default `5m`. **`0s` switches the cooldown off.** Other values are rejected at startup with the key named.
    It is independent of `banking.refresh.enabled`.
+7. **Reconnecting resets it.** A run that finished before the connection's current consent was granted does not count: after a
+   failed run (for example the consent ended) and a reconnect, a refresh is allowed at once, and the connection's
+   `refresh_available_at` is empty. The same rule applies in the refusal and in the view (C-B6c-reconnect).
 
 ## Consequences
 

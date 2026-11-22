@@ -217,6 +217,18 @@ describe('bank connections page', () => {
     await user.click(btn) // a disabled button sends nothing
   })
 
+  it('enables Refresh in the reconnected state (the cooldown does not carry over a reconnect, C-B6c-reconnect)', async () => {
+    const failed = run({ outcome: 'failed', started_at: '2026-11-22T08:00:00Z', error: { kind: 'reconnect_required', code: 'EXPIRED_SESSION' } })
+    installApi({
+      ...signedIn(),
+      ...list([connection({ as_of: '2026-11-22T09:00:00Z', consent_granted_at: '2026-11-22T08:50:00Z', last_refresh_run: failed, refresh_available_at: null })]),
+    })
+    renderApp('/connections')
+    const c = await card('Fake Bank')
+    expect(c.getByText(/nothing has been fetched since reconnecting/)).toBeInTheDocument()
+    expect(c.getByRole('button', { name: 'Refresh now' })).toBeEnabled()
+  })
+
   it('counts the cooldown in whole minutes, rounded up, from the server clock', async () => {
     const { cooldownMinutes } = await import('./connection-card')
     const c = { as_of: '2026-11-22T09:00:00Z', refresh_available_at: '2026-11-22T09:05:00Z' }

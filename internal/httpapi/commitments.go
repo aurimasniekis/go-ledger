@@ -261,6 +261,10 @@ func decodeCommitment(doc map[string]json.RawMessage) (commitments.Fields, []com
 	return f, errs
 }
 
+// leewayMembers are the members a leeway object may carry (ADR-0052). The
+// OpenAPI request schema LeewayInput lists the same ones.
+var leewayMembers = []string{"kind", "days", "until", "conditions", "consequences", "source"}
+
 // decodeLeeway decodes the leeway object, naming the member that is wrong.
 // Members not given are null; the kind is required.
 func decodeLeeway(raw json.RawMessage, fail func(member, field, msg string)) *commitments.Leeway {
@@ -272,7 +276,7 @@ func decodeLeeway(raw json.RawMessage, fail func(member, field, msg string)) *co
 	}
 	var unknown []string
 	for k := range m {
-		if !slices.Contains([]string{"kind", "days", "until", "conditions", "consequences", "source"}, k) {
+		if !slices.Contains(leewayMembers, k) {
 			unknown = append(unknown, k)
 		}
 	}

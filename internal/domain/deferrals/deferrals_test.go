@@ -1,6 +1,7 @@
 package deferrals_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func state(o occurrences.Occurrence, paid string, today calendar.Date) payments.
 	if paid != "" {
 		f.Evidence = []payments.Evidence{{Kind: payments.EvidenceManual, ID: "m", OccurrenceID: o.ID, Amount: money.MustParse(paid, "EUR"), Date: today}}
 	}
-	return payments.Derive(o, f, today, nil)
+	return payments.Derive(context.Background(), o, f, today, nil)
 }
 
 func TestCheckOccurrence(t *testing.T) {
@@ -54,14 +55,14 @@ func TestCheckOccurrence(t *testing.T) {
 			t.Errorf("planned %s: %v", planned, err)
 		}
 	}
-	notRecorded := payments.Derive(o, payments.Facts{CommitmentCreatedOn: d("2026-10-18")}, today, nil)
+	notRecorded := payments.Derive(context.Background(), o, payments.Facts{CommitmentCreatedOn: d("2026-10-18")}, today, nil)
 	if err := deferrals.CheckOccurrence(o, notRecorded, d("2026-11-20"), today); !errors.Is(err, deferrals.ErrNothingOutstanding) {
 		t.Errorf("not recorded: %v", err)
 	}
 	at := time.Now()
 	c := o
 	c.CancelledAt = &at
-	if err := deferrals.CheckOccurrence(c, payments.Derive(c, payments.Facts{}, today, nil), d("2026-11-20"), today); !errors.Is(err, occurrences.ErrCancelled) {
+	if err := deferrals.CheckOccurrence(c, payments.Derive(context.Background(), c, payments.Facts{}, today, nil), d("2026-11-20"), today); !errors.Is(err, occurrences.ErrCancelled) {
 		t.Errorf("cancelled: %v", err)
 	}
 }

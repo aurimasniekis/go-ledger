@@ -289,7 +289,7 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 		}
 		out := make([]occurrenceJSON, len(items))
 		for i, o := range items {
-			out[i] = toOccurrenceJSON(o, payments.Derive(o, facts[o.ID], t, grace))
+			out[i] = toOccurrenceJSON(o, payments.Derive(r.Context(), o, facts[o.ID], t, grace))
 		}
 		WriteJSON(w, http.StatusOK, NewPage(out, q, func(o occurrenceJSON) string { return o.ID }))
 	}))
@@ -339,6 +339,6 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 			return
 		}
 		SetVersion(w, o.Version)
-		WriteJSON(w, http.StatusOK, toOccurrenceJSON(o, payments.Derive(o, facts[o.ID], t, grace)))
+		WriteJSON(w, http.StatusOK, toOccurrenceJSON(o, payments.Derive(r.Context(), o, facts[o.ID], t, grace)))
 	}))
 }

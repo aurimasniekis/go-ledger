@@ -64,6 +64,23 @@ const (
 	MerchantRejected      Action = "merchant.rejected"
 	MerchantReviewCleared Action = "merchant.review_cleared"
 
+	// Organisation (O1, ADR-0053). A definition event targets the category,
+	// label or bucket (target type "category", "label" or "bucket"); details:
+	// kind, via and, as the action says, fields (the members changed, never
+	// their values: names are free text) or reassigned (how many assignments
+	// moved to the replacement). An assignment event targets the object
+	// (target type "transaction", "commitment", "account" or "merchant"; a
+	// merchant is named by a hash of its key, never its name); details: kind,
+	// change, origin, from (the origin of what it replaced, or none), via. An
+	// automatic run records one event per object it changed.
+	OrganisationDefinitionCreated    Action = "organisation.definition_created"
+	OrganisationDefinitionUpdated    Action = "organisation.definition_updated"
+	OrganisationDefinitionArchived   Action = "organisation.definition_archived"
+	OrganisationDefinitionUnarchived Action = "organisation.definition_unarchived"
+	OrganisationDefinitionDeleted    Action = "organisation.definition_deleted"
+	OrganisationAssignmentChanged    Action = "organisation.assignment_changed"
+	OrganisationAutomaticApplied     Action = "organisation.automatic_applied"
+
 	// Bank connections (B4, ADR-0040). The target is the connection. Details:
 	// provider and application (names only: never a session, code, account or
 	// institution), reconnect (true when the consent renewed an existing
@@ -126,6 +143,10 @@ func deferralFields(extra ...Field) []Field {
 
 func matchFields() []Field {
 	return []Field{f("occurrence_id"), f("transaction_id"), f("origin", matchOrigins...), f("from", matchFromStates...), f("currency"), f("via", matchVias...)}
+}
+
+func definitionFields(extra ...Field) []Field {
+	return append([]Field{f("kind", "category", "label", "bucket"), f("via", matchVias...)}, extra...)
 }
 
 func merchantFields() []Field {
@@ -207,15 +228,23 @@ var Definitions = map[Action][]Field{
 	PaymentMatchReversed:    matchFields(),
 	PaymentMatchUnconfirmed: matchFields(),
 
-	MerchantConfirmed:         merchantFields(),
-	MerchantCorrected:         merchantFields(),
-	MerchantRejected:          merchantFields(),
-	MerchantReviewCleared:     merchantFields(),
-	DeferralPlanCreated:       deferralFields(),
-	DeferralPlanRevised:       deferralFields(f("fields")),
-	DeferralPlanUndone:        deferralFields(),
-	DeferralAdjustmentAdded:   deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
-	DeferralAdjustmentRemoved: deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
+	MerchantConfirmed:                merchantFields(),
+	MerchantCorrected:                merchantFields(),
+	MerchantRejected:                 merchantFields(),
+	MerchantReviewCleared:            merchantFields(),
+	OrganisationDefinitionCreated:    definitionFields(),
+	OrganisationDefinitionUpdated:    definitionFields(f("fields")),
+	OrganisationDefinitionArchived:   definitionFields(),
+	OrganisationDefinitionUnarchived: definitionFields(),
+	OrganisationDefinitionDeleted:    definitionFields(f("reassigned")),
+	OrganisationAssignmentChanged: {f("kind", "category", "label", "bucket"), f("change", "set", "none", "reset", "added", "removed"),
+		f("origin", "user", "rule", "model"), f("from", "none", "user", "rule", "model"), f("via", matchVias...)},
+	OrganisationAutomaticApplied: {f("origin", "rule", "model"), f("category", "true", "false"), f("labels"), f("via", matchVias...)},
+	DeferralPlanCreated:          deferralFields(),
+	DeferralPlanRevised:          deferralFields(f("fields")),
+	DeferralPlanUndone:           deferralFields(),
+	DeferralAdjustmentAdded:      deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
+	DeferralAdjustmentRemoved:    deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
 
 	BankConnectionStarted:          {f("provider"), f("application")},
 	BankConnectionReconnectStarted: {f("provider"), f("application")},

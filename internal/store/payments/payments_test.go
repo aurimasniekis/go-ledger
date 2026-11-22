@@ -15,11 +15,13 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	org "github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	occstore "github.com/aurimasniekis/go-ledger/internal/store/occurrences"
+	orgstore "github.com/aurimasniekis/go-ledger/internal/store/organisation"
 	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
 )
 
@@ -134,7 +136,7 @@ func (f *fixture) state(t *testing.T, o occurrences.Occurrence) payments.State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return payments.Derive(o, facts[o.ID], today, nil)
+	return payments.Derive(context.Background(), o, facts[o.ID], today, nil)
 }
 
 func (f *fixture) record(t *testing.T, occurrenceID, amount, paidOn string) (payments.ManualPayment, payments.Change) {
@@ -161,7 +163,7 @@ func TestManualPaymentsDecideStatusAndSurviveReload(t *testing.T) {
 	if ch.Occurrence.Version != o.Version+1 || p1.Version != 1 || *p1.Note != note {
 		t.Fatalf("after recording: occurrence v%d, payment %+v", ch.Occurrence.Version, p1)
 	}
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPartiallyPaid || st.Outstanding.String() != "30.00 EUR" || st.Timing != payments.StatusOverdue {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPartiallyPaid || st.Outstanding.String() != "30.00 EUR" || st.Timing != payments.StatusOverdue {
 		t.Fatalf("after 20.00: %+v", st)
 	}
 	f.record(t, o.ID, "30.00", "2026-03-15")
@@ -196,7 +198,7 @@ func TestManualPaymentsDecideStatusAndSurviveReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Derived != payments.StatusPartiallyPaid || ch.Occurrence.Version != o2.Version+1 {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Derived != payments.StatusPartiallyPaid || ch.Occurrence.Version != o2.Version+1 {
 		t.Fatalf("after delete: v%d %+v", ch.Occurrence.Version, st)
 	}
 	if _, err := g.ps.GetManual(ctx, o.ID, list[1].ID); !errors.Is(err, resource.ErrNotFound) {
@@ -267,7 +269,7 @@ func TestOverrideUndoRestoresPriorState(t *testing.T) {
 	}
 	_, ch = f.record(t, o.ID, "45.00", "2026-03-14") // the creditor accepted 45.00
 	v++
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusOverdue || st.Derived != payments.StatusPartiallyPaid {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusOverdue || st.Derived != payments.StatusPartiallyPaid {
 		t.Fatalf("unpaid override over partial evidence: %+v", st)
 	}
 	ch, err = f.ps.SetOverride(ctx, alice, o.ID, v, payments.OverridePaid, "creditor accepted 45.00")
@@ -275,7 +277,7 @@ func TestOverrideUndoRestoresPriorState(t *testing.T) {
 		t.Fatal(err)
 	}
 	v++
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || *st.Override.Previous != payments.OverrideUnpaid {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || *st.Override.Previous != payments.OverrideUnpaid {
 		t.Fatalf("paid override: %+v", st)
 	}
 
@@ -294,7 +296,7 @@ func TestOverrideUndoRestoresPriorState(t *testing.T) {
 		t.Fatal(err)
 	}
 	v++
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); ch.Facts.Override != nil || st.Status != payments.StatusPartiallyPaid {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); ch.Facts.Override != nil || st.Status != payments.StatusPartiallyPaid {
 		t.Fatalf("after the second undo: %+v", st)
 	}
 	if _, err := f.ps.UndoOverride(ctx, alice, o.ID, v); !errors.Is(err, payments.ErrNoOverride) {
@@ -454,7 +456,7 @@ func TestDeleteManualKeepsTheRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := payments.Derive(ch.Occurrence, ch.Facts, today, nil)
+	st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil)
 	if st.Paid.String() != "20.00 EUR" || st.EvidenceCount != 1 || st.Derived != payments.StatusPartiallyPaid {
 		t.Errorf("totals still count the deleted payment: %+v", st)
 	}
@@ -536,7 +538,7 @@ func TestPaidOverrideNeedsAnyEvidenceWhateverItsCurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("paid override with other-currency evidence: %v", err)
 	}
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || st.Paid.String() != "0.00 EUR" || !st.OverrideApplied {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || st.Paid.String() != "0.00 EUR" || !st.OverrideApplied {
 		t.Errorf("state: %+v", st)
 	}
 }
@@ -608,7 +610,7 @@ func TestNotRecordedUsesTheInjectedReportingZone(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return payments.Derive(march, facts[march.ID], today, nil)
+		return payments.Derive(context.Background(), march, facts[march.ID], today, nil)
 	}
 	if st := read(f.ps); st.Status != payments.StatusOverdue {
 		t.Fatalf("UTC: %+v", st)
@@ -620,5 +622,62 @@ func TestNotRecordedUsesTheInjectedReportingZone(t *testing.T) {
 	}
 	if got := read(f.ps); got.Status != payments.StatusOverdue {
 		t.Fatalf("WithZone must not change the original store: %+v", got)
+	}
+}
+
+// TestKeptCommitmentRowDropsItsOrganisation: when a commitment delete keeps the
+// row (D31: only deleted payments refer to an occurrence), the buckets,
+// category and labels it was filed under go with it, in the same transaction.
+// Otherwise a bucket would list, and a category refuse deletion over, a
+// commitment no read shows.
+func TestKeptCommitmentRowDropsItsOrganisation(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	c, o := f.commitment(t, "50.00", "2026-03")
+	p, _ := f.record(t, o.ID, "50.00", "2026-03-12")
+	os := orgstore.New(f.db, f.rec, func() time.Time { return clock }, nil)
+	mk := func(k org.Kind, name string) org.Definition {
+		t.Helper()
+		def, err := os.CreateDefinition(ctx, alice, k, org.Fields{Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return def
+	}
+	cat, lbl, bucket := mk(org.KindCategory, "Housing"), mk(org.KindLabel, "Fixed"), mk(org.KindBucket, "Essentials")
+	obj := org.ObjectRef{Type: org.ObjectCommitment, ID: c.ID}
+	if _, err := os.SetCategory(ctx, alice, obj, &cat.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.AddLabel(ctx, alice, obj, lbl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.AddToBucket(ctx, alice, bucket.ID, obj); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, p.ID, p.Version); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.cs.Get(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cs.Delete(ctx, alice, c.ID, got.Version); err != nil {
+		t.Fatal(err)
+	}
+	var kept int
+	if err := f.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM commitments WHERE id = ? AND deleted_at IS NOT NULL", c.ID).Scan(&kept)
+	}); err != nil || kept != 1 {
+		t.Fatalf("the commitment row was not kept (the path under test): %d %v", kept, err)
+	}
+	members, err := os.ListMembers(ctx, bucket.ID, org.MemberFilter{Limit: 10})
+	if err != nil || len(members) != 0 {
+		t.Errorf("a deleted commitment is still a bucket member: %+v %v", members, err)
+	}
+	for _, d := range []org.Definition{cat, lbl, bucket} {
+		if _, err := os.DeleteDefinition(ctx, alice, d.Kind, d.ID, d.Version, ""); err != nil {
+			t.Errorf("a %s is still held by the deleted commitment: %v", d.Kind, err)
+		}
 	}
 }
