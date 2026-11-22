@@ -75,12 +75,9 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
   const noticeBox = useRef<HTMLDivElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   // A row that was archived or deleted takes the focused button with it: focus follows the change to its notice (which holds Undo).
-  // After a Delete the dialog hands focus back to the page a moment after it closes; the notice takes it once that has happened.
+  // The Delete dialog does not hand focus back on close (onCloseAutoFocus below), so nothing competes with the notice.
   useEffect(() => {
-    if (!notice) return
-    noticeBox.current?.focus()
-    const t = setTimeout(() => noticeBox.current?.focus(), 50)
-    return () => clearTimeout(t)
+    if (notice) noticeBox.current?.focus()
   }, [notice])
   // Children for the parent hint come from the whole list, not the filtered one: archived children and a name filter must not hide them.
   const everyCategory = useAllDefinitions('category', undefined, kind === 'category')
@@ -233,6 +230,7 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
       </Dialog>
       <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
           title={`Delete ${deleting?.name ?? names.one}`}
           description={`Deleting cannot be undone. Archive it instead to keep the history. A ${names.one} that is still assigned is only deleted after you move its assignments to another.`}
         >

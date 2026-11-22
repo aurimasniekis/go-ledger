@@ -1,6 +1,7 @@
 import { usePagedList } from '@/lib/paged'
 import { QueryState } from '@/components/query-state'
 import { EmptyState } from '@/components/state-panels'
+import { Amount, DateText } from '@/components/formatted'
 import { Button } from '@/components/ui/button'
 import { useLoadAll } from './api'
 import { OrganiseDisclosure } from './organise-panel'
@@ -10,6 +11,17 @@ interface CommitmentRow {
   id: string
   name: string
   kind: string
+  amount?: { amount: string; currency: string }
+  schedule?: { frequency: string; interval: number; day: number; month: number }
+  start_date?: string
+  end_date?: string | null
+}
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+function scheduleText(s: NonNullable<CommitmentRow['schedule']>): string {
+  if (s.frequency === 'annual') return `Yearly on ${s.day} ${MONTHS[s.month - 1] ?? ''}`.trim()
+  return s.interval > 1 ? `Every ${s.interval} months on day ${s.day}` : `Monthly on day ${s.day}`
 }
 
 /**
@@ -48,6 +60,22 @@ export function CommitmentsPage() {
                 {items.map((c) => (
                   <li key={c.id} className="space-y-2 rounded-md border border-border bg-surface p-3">
                     <p className="font-medium break-words">{c.name}</p>
+                    {(c.amount || c.schedule || c.start_date) && (
+                      <p className="flex flex-wrap gap-x-3 text-sm text-muted-foreground">
+                        {c.amount && <Amount amount={c.amount.amount} currency={c.amount.currency} />}
+                        {c.schedule && <span>{scheduleText(c.schedule)}</span>}
+                        {c.start_date && (
+                          <span>
+                            From <DateText value={c.start_date} />
+                            {c.end_date ? (
+                              <>
+                                {' '}to <DateText value={c.end_date} />
+                              </>
+                            ) : null}
+                          </span>
+                        )}
+                      </p>
+                    )}
                     <OrganiseDisclosure objectType="commitment" objectId={c.id} subject={c.name} />
                   </li>
                 ))}

@@ -21,12 +21,13 @@ client needs the same operations with the same validation.
    admin-only merchants grant, which no organisation tool declares. The tools' `object_type` is
    `transaction|commitment|account`. This waits for the merchant entity.
 3. **The Go client** gains the 29 operations (`ListDefinitions`, `CreateDefinition`, `ArchiveDefinition`, `SetObjectCategory`, ...) keyed by
-   kind, and their `notImplemented` rows are gone; the OpenAPI contract tests cover the operations and the types. A CLI
-   command per operation is not part of this increment.
+   kind, and their `notImplemented` rows are gone; the OpenAPI contract tests cover the operations and the types. The CLI commands for the same operations were built in O4 (ADR-0053).
 4. **The UI** is `/organisation` (management of the three kinds: tree of categories with two levels, find by name, show
    archived, rename or move, archive with Undo and no confirmation, delete with a replacement chosen when the definition is still
    assigned, bucket members) and an **Organise** disclosure on an occurrence of the monthly view (a commitment), on a bank
-   account of the connections page and on the bank transaction of a payment match. The disclosure reads the object's
+   account of the connections page, on the bank transaction of a payment match, and on **/commitments**, a list of every
+   recorded commitment (name, amount with currency, schedule, validity; the API gives no next due date, so none is shown) shown
+   only with `organisation:read` and `commitments:read`, so a commitment with no occurrence in the month on screen can be organised. The disclosure reads the object's
    assignments only when opened, so a long list costs no request per row.
 5. **Visible origin and override.** Each category and label says whether it is the person's choice, automatic by a rule or by a model (with the source)
    and whether it is inherited from the pending transaction the booking replaced. Choosing a category makes it the person's
@@ -39,17 +40,15 @@ client needs the same operations with the same validation.
    are read exactly, not guessed). A bucket holds no money, so the totals keep covering the whole month and the note says
    so; while the members load no row is shown, and when they cannot load every row is shown with an alert.
 
-## Not built (traceable limitations)
+## Limits and the tasks that own them
 
-- **Category and label filters** of lists, and a category or label column: the API has no inverse query (which objects have
-  category X) and filtering by one request per row would be wrong at scale. A server filter on occurrences, commitments and
-  transactions is needed first.
-- **Slicing the outlook by bucket** is not specified beyond "used to slice the outlook" in D12 and the outlook API
-  has no bucket parameter; only the monthly view is filtered. It needs an outlook change and a rule on whether a bucket's
-  members in several currencies are shown per currency (they must never be added together).
-- **A commitments list** does not exist in the UI (commitments appear through their occurrences), so a commitment with no
-  occurrence in the month shown cannot be organised from the monthly view; an account is organised from the connections page.
-  Bulk assignment is not built.
-- **Merchants** (point 2), and the **CLI** commands.
-- Verified with a stateful fake of the API in component tests and a stubbed API in the browser; the screens were not run
+- **Category and label filters** of lists and a category or label column: the API had no inverse query. **O3** (ADR-0059) adds
+  the server filters and the list filters, so this limit moves there.
+- **Slicing the outlook by bucket**: **O3** (ADR-0059) adds the outlook bucket slice; only the monthly view is filtered in this
+  increment. Buckets in several currencies are never added together.
+- **Bulk assignment** is not built.
+- **Merchants** (point 2): merchant organisation is **O5**, on the merchant records of ADR-0058.
+- **CLI** commands: built in **O4** (ADR-0053).
+- Verified with a stateful fake of the API in component tests and a stubbed API in the browser. The journey spec
+  (`web/e2e/journey.spec.ts`) runs against the real binary with its embedded UI, not stubs. The screens were not run
   against a live bank, and no screenshot review by a person has happened.
