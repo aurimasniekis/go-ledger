@@ -11,6 +11,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
@@ -85,6 +86,13 @@ type monthTotalsJSON struct {
 	OccurrenceCount      int            `json:"occurrence_count"`
 	OverdueCount         int            `json:"overdue_count"`
 	UnconvertedEvidenceN int            `json:"unconverted_evidence_count"`
+	// Planned is what is planned to be paid this month (DF1, ADR-0050):
+	// outstanding - deferred_out + carried_in + adjustments. Each
+	// outstanding amount is planned in exactly one month.
+	Planned     money.Money `json:"planned"`
+	DeferredOut money.Money `json:"deferred_out"`
+	CarriedIn   money.Money `json:"carried_in"`
+	Adjustments money.Money `json:"adjustments"`
 }
 
 // monthFreshnessJSON says how current the view is. Bank data age is not part
@@ -170,12 +178,19 @@ func monthBank(ctx context.Context, banks outlook.Banks, at time.Time, staleAfte
 type monthItemJSON struct {
 	occurrenceJSON
 	CommitmentName string `json:"commitment_name"`
+	// Deferral is the occurrence's active deferral plan (DF1), null when
+	// none. It never changes the payment state beside it.
+	Deferral *deferralPlanJSON `json:"deferral"`
 }
 
 type monthSummaryJSON struct {
-	Month     calendar.YearMonth `json:"month"`
-	AsOf      calendar.Date      `json:"as_of"`
-	Items     []monthItemJSON    `json:"items"`
+	Month calendar.YearMonth `json:"month"`
+	AsOf  calendar.Date      `json:"as_of"`
+	Items []monthItemJSON    `json:"items"`
+	// CarriedIn are occurrences of earlier months whose active deferral plan
+	// falls in this month (DF1). They keep their own month and due date and
+	// count only in the planned figures.
+	CarriedIn []monthItemJSON    `json:"carried_in"`
 	Totals    []monthTotalsJSON  `json:"totals"`
 	Freshness monthFreshnessJSON `json:"freshness"`
 }
@@ -196,13 +211,25 @@ var bankNote = map[banking.FreshnessState]string{
 }
 
 func toMonthSummaryJSON(s monthview.Summary, now time.Time, bank monthBankJSON) monthSummaryJSON {
-	out := monthSummaryJSON{Month: s.Month, AsOf: s.AsOf, Items: make([]monthItemJSON, len(s.Rows)), Totals: make([]monthTotalsJSON, len(s.Totals))}
+	out := monthSummaryJSON{Month: s.Month, AsOf: s.AsOf, Items: make([]monthItemJSON, len(s.Rows)), CarriedIn: make([]monthItemJSON, len(s.CarriedIn)), Totals: make([]monthTotalsJSON, len(s.Totals))}
+	item := func(r monthview.Row) monthItemJSON {
+		it := monthItemJSON{occurrenceJSON: toOccurrenceJSON(r.Occurrence, r.State), CommitmentName: r.CommitmentName}
+		if r.Deferral != nil {
+			d := toDeferralPlanJSON(*r.Deferral, r.State, s.AsOf)
+			it.Deferral = &d
+		}
+		return it
+	}
 	for i, r := range s.Rows {
-		out.Items[i] = monthItemJSON{occurrenceJSON: toOccurrenceJSON(r.Occurrence, r.State), CommitmentName: r.CommitmentName}
+		out.Items[i] = item(r)
+	}
+	for i, r := range s.CarriedIn {
+		out.CarriedIn[i] = item(r)
 	}
 	for i, t := range s.Totals {
 		out.Totals[i] = monthTotalsJSON{Currency: t.Currency, Due: t.Due, Paid: t.Paid, Outstanding: t.Outstanding, Overdue: t.Overdue, Overpaid: t.Overpaid,
-			OccurrenceCount: t.Occurrences, OverdueCount: t.OverdueCount, UnconvertedEvidenceN: t.Unconverted}
+			OccurrenceCount: t.Occurrences, OverdueCount: t.OverdueCount, UnconvertedEvidenceN: t.Unconverted,
+			Planned: t.Planned, DeferredOut: t.DeferredOut, CarriedIn: t.CarriedIn, Adjustments: t.Adjustments}
 	}
 	out.Freshness.ComputedAt = now.UTC()
 	out.Freshness.OccurrencesChangedAt = s.LatestChange
@@ -212,7 +239,7 @@ func toMonthSummaryJSON(s monthview.Summary, now time.Time, bank monthBankJSON) 
 
 // Occurrences are derived from commitment definitions, so reading them needs
 // the commitments read grant; there is no separate occurrence grant.
-func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, cs commitments.Store, todayFn today, grace payments.GraceFunc, now func() time.Time, banks outlook.Banks, bankStaleAfter time.Duration) {
+func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, cs commitments.Store, plans deferrals.Reader, todayFn today, grace payments.GraceFunc, now func() time.Time, banks outlook.Banks, bankStaleAfter time.Duration) {
 	if now == nil {
 		now = time.Now
 	}
@@ -266,7 +293,7 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 		}
 		WriteJSON(w, http.StatusOK, NewPage(out, q, func(o occurrenceJSON) string { return o.ID }))
 	}))
-	view := monthview.Service{Occurrences: st, Payments: pay, Grace: grace, Commitments: cs, Today: todayFn}
+	view := monthview.Service{Occurrences: st, Payments: pay, Grace: grace, Commitments: cs, Today: todayFn, Deferrals: plans}
 	s.HandleAPI("GET "+OccurrencesSummaryPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for k := range r.URL.Query() {
 			if k != "month" {

@@ -56,6 +56,11 @@ var DefaultEvidence = []string{
 var DefaultReferences = []string{
 	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id)",
 	DefaultEvidence[1],
+	// Deferral plans (DF1, ADR-0050), active or undone, are planning history:
+	// an occurrence with one is cancelled instead of deleted, so the plan and
+	// its history stay readable. A plan is never evidence: it does not make
+	// the occurrence paid or keep it from being rewritten.
+	"EXISTS (SELECT 1 FROM deferral_plans dp WHERE dp.occurrence_id = o.id)",
 }
 
 // Options configures a [Store].

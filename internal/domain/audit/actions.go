@@ -110,6 +110,10 @@ var (
 	matchVias         = []string{string(ViaSession), string(ViaToken), string(ViaMCP), string(ViaSystem)}
 )
 
+func deferralFields(extra ...Field) []Field {
+	return append([]Field{f("occurrence_id"), f("plan_type", "personal", "creditor_agreed", "documented_grace"), f("planned_date"), f("currency"), f("via", matchVias...)}, extra...)
+}
+
 func matchFields() []Field {
 	return []Field{f("occurrence_id"), f("transaction_id"), f("origin", matchOrigins...), f("from", matchFromStates...), f("currency"), f("via", matchVias...)}
 }
@@ -188,6 +192,12 @@ var Definitions = map[Action][]Field{
 	PaymentMatchCorrected:   matchFields(),
 	PaymentMatchReversed:    matchFields(),
 	PaymentMatchUnconfirmed: matchFields(),
+
+	DeferralPlanCreated:       deferralFields(),
+	DeferralPlanRevised:       deferralFields(f("fields")),
+	DeferralPlanUndone:        deferralFields(),
+	DeferralAdjustmentAdded:   deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
+	DeferralAdjustmentRemoved: deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
 
 	BankConnectionStarted:          {f("provider"), f("application")},
 	BankConnectionReconnectStarted: {f("provider"), f("application")},

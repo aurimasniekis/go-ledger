@@ -1141,6 +1141,411 @@ Remove a manual payment record (the undo of record_manual_payment): the occurren
 
 </details>
 
+### `list_deferral_plans`
+
+List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees, the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). Filters combine; a repeated filter accepts any of its values.
+
+- Kind: read
+- Operation: `GET /api/v1/deferral-plans`
+- Grant: `commitments:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "commitment_id": {
+      "description": "Only plans of these commitments' occurrences.",
+      "items": {
+        "description": "The commitment identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "occurrence_id": {
+      "description": "Only plans of these occurrences.",
+      "items": {
+        "description": "The occurrence identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "planned_month": {
+      "description": "Only plans whose planned date is in this month, such as 2026-11.",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$",
+      "type": "string"
+    },
+    "state": {
+      "description": "active or undone.",
+      "items": {
+        "description": "",
+        "enum": [
+          "active",
+          "undone"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_deferral_plan`
+
+Get one deferral plan, including its version (needed to revise or undo it) and its adjustments.
+
+- Kind: read
+- Operation: `GET /api/v1/deferral-plans/{id}`
+- Grant: `commitments:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The deferral plan identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_deferral_plan_history`
+
+Every change of a deferral plan, oldest first: created, revised, adjustments added or removed, undone, each with the type and planned date after it, who made it and how, and the reason recorded with it.
+
+- Kind: read
+- Operation: `GET /api/v1/deferral-plans/{id}/history`
+- Grant: `commitments:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "id": {
+      "description": "The deferral plan identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `create_deferral_plan`
+
+Record the person's plan to pay an outstanding occurrence on a later date, in the same month or a later one. It is NOT a payment: the occurrence keeps its due date and amount and stays outstanding and, past its due date, overdue. The monthly view then plans its outstanding amount in the planned date's month instead of its own, never in both. Refused for an occurrence that owes nothing (nothing_outstanding), that already has an active plan (deferral_plan_exists: revise it instead) or for a planned date not after the due date. Fees are never added automatically: record them with add_deferral_adjustment only when the person states them. Not idempotent while no plan exists.
+
+- Kind: write
+- Operation: `POST /api/v1/deferral-plans`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "occurrence_id": {
+      "description": "The occurrence identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "plan_type": {
+      "description": "personal: the person's own plan; creditor_agreed: a later date the creditor agreed to; documented_grace: a grace period the creditor documents, ending on planned_date. Never record creditor_agreed or documented_grace unless the person says the creditor agreed or documents it.",
+      "enum": [
+        "personal",
+        "creditor_agreed",
+        "documented_grace"
+      ],
+      "type": "string"
+    },
+    "planned_date": {
+      "description": "The date the person plans to pay, YYYY-MM-DD, after the occurrence's due date.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; optional (null for none).",
+      "maxLength": 500,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "occurrence_id",
+    "plan_type",
+    "planned_date"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `revise_deferral_plan`
+
+Change an active plan's type, planned date or reason (send only what changes; null clears the reason). The previous values stay in the plan's history. Refused once the plan was undone or the occurrence owes nothing.
+
+- Kind: write
+- Operation: `PATCH /api/v1/deferral-plans/{id}`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The deferral plan identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "plan_type": {
+      "description": "personal: the person's own plan; creditor_agreed: a later date the creditor agreed to; documented_grace: a grace period the creditor documents, ending on planned_date. Never record creditor_agreed or documented_grace unless the person says the creditor agreed or documents it.",
+      "enum": [
+        "personal",
+        "creditor_agreed",
+        "documented_grace"
+      ],
+      "type": "string"
+    },
+    "planned_date": {
+      "description": "The new planned date, YYYY-MM-DD, after the occurrence's due date.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; optional (null for none).",
+      "maxLength": 500,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "description": "The version of the deferral plan this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `undo_deferral_plan`
+
+End an active plan: the occurrence's outstanding amount is planned in its own month again. Nothing about the occurrence or its payments changes; the plan is kept as history and cannot be revised afterwards (a new plan can be made). Destructive; confirm with the person first.
+
+- Kind: destructive
+- Operation: `POST /api/v1/deferral-plans/{id}/undo`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The deferral plan identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Why, in 1 to 500 characters; optional (null for none).",
+      "maxLength": 500,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "description": "The version of the deferral plan this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `add_deferral_adjustment`
+
+Record an explicit fee, interest or other charge the person states for an active plan, in the plan's currency. It adds to the planned total of the plan's month while the occurrence still owes something; it never changes the occurrence's amount. Never infer a fee. Not idempotent: calling it twice records two charges.
+
+- Kind: write
+- Operation: `POST /api/v1/deferral-plans/{id}/adjustments`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "amount": {
+      "additionalProperties": false,
+      "description": "The charge, greater than zero, in the plan's currency.",
+      "properties": {
+        "amount": {
+          "description": "A decimal string such as \"12.50\", never a number.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "type": "string"
+        },
+        "currency": {
+          "description": "ISO 4217 code, three upper-case letters.",
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "id": {
+      "description": "The deferral plan identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "kind": {
+      "description": "fee, interest or other.",
+      "enum": [
+        "fee",
+        "interest",
+        "other"
+      ],
+      "type": "string"
+    },
+    "note": {
+      "description": "Free-form note.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "description": "The version of the deferral plan this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "kind",
+    "amount"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `remove_deferral_adjustment`
+
+Remove an adjustment of an active plan; it is kept as history and no longer counts. Destructive; confirm with the person first.
+
+- Kind: destructive
+- Operation: `DELETE /api/v1/deferral-plans/{id}/adjustments/{adjustment_id}`
+- Grant: `commitments:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "adjustment_id": {
+      "description": "The adjustment identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "id": {
+      "description": "The deferral plan identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the deferral plan this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "adjustment_id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
 ### `list_bank_applications`
 
 List the configured bank-data provider applications with their mode (app or developer: the provider's own terms, not production versus sandbox), environment, which accounts they can reach and what they support. A capability of zero means not known, never none.

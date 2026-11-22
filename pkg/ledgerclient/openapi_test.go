@@ -292,11 +292,17 @@ func TestTypesMatchSchemas(t *testing.T) {
 		{"RatesRunError", reflect.TypeFor[RatesRunError](), get(ref("RatesRefreshRun"), "properties", "error", "oneOf").([]any)[0].(node), false},
 		{"RatesStatus", reflect.TypeFor[RatesStatus](), ref("RatesStatus"), false},
 		{"NewBankConnection", reflect.TypeFor[NewBankConnection](), body("/bank-connections", "post"), true},
+		{"DeferralPlan", reflect.TypeFor[DeferralPlan](), ref("DeferralPlan"), false},
+		{"DeferralAdjustment", reflect.TypeFor[DeferralAdjustment](), ref("DeferralAdjustment"), false},
+		{"DeferralPlanEvent", reflect.TypeFor[DeferralPlanEvent](), ref("DeferralPlanEvent"), false},
+		{"NewDeferralPlan", reflect.TypeFor[NewDeferralPlan](), body("/deferral-plans", "post"), true},
 	}
 	// Match action bodies also allow "version"; the client sends it as If-Match.
 	for path, typ := range map[string]reflect.Type{
-		"/payment-matches/{id}/confirm": reflect.TypeFor[MatchDecision](),
-		"/payment-matches/{id}/correct": reflect.TypeFor[MatchCorrection](),
+		"/payment-matches/{id}/confirm":    reflect.TypeFor[MatchDecision](),
+		"/payment-matches/{id}/correct":    reflect.TypeFor[MatchCorrection](),
+		"/deferral-plans/{id}/undo":        reflect.TypeFor[DeferralUndo](),
+		"/deferral-plans/{id}/adjustments": reflect.TypeFor[NewDeferralAdjustment](),
 	} {
 		mp, _ := schemaProps(doc, body(path, "post"))
 		delete(mp, "version")
@@ -362,6 +368,9 @@ func TestEnumsMatchSchemas(t *testing.T) {
 	check("OverrideStatus", OverridePaid, OverrideUnpaid)
 	check("MatchState", MatchSuggested, MatchConfirmed, MatchRejected, MatchReversed)
 	check("MatchOrigin", OriginAutoRule, OriginModel, OriginUser)
+	check("DeferralPlanType", DeferralPersonal, DeferralCreditorAgreed, DeferralDocumentedGrace)
+	check("DeferralPlanState", DeferralActive, DeferralUndone)
+	check("DeferralAdjustmentKind", AdjustmentFee, AdjustmentInterest, AdjustmentOther)
 	var ts []string
 	for _, v := range get(doc, "components", "schemas", "ApiToken", "properties", "status", "enum").([]any) {
 		ts = append(ts, v.(string))

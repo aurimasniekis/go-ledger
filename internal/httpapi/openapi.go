@@ -18,6 +18,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
@@ -71,6 +72,10 @@ type Deps struct {
 	// Matches stores payment matches between bank transactions and
 	// occurrences (ADR-0035).
 	Matches matches.Store
+	// Deferrals stores deferral plans (DF1, ADR-0050); nil leaves the
+	// monthly view without plans (the plan routes are registered regardless,
+	// like the other stores').
+	Deferrals deferrals.Store
 	// Banking is the bank connection service (ADR-0040); nil in tests that
 	// never call the routes.
 	Banking *bankconnect.Service
@@ -138,9 +143,14 @@ func RegisterAPI(s *Server, d Deps) {
 	registerTokens(s, d.Tokens)
 	todayFn := newToday(d.Zone, d.Now)
 	registerCommitments(s, d.Commitments, todayFn)
-	registerOccurrences(s, d.Occurrences, d.Payments, d.Commitments, todayFn, d.Grace, d.Now, d.Banks, d.BankStaleAfter)
+	var plans deferrals.Reader
+	if d.Deferrals != nil {
+		plans = d.Deferrals
+	}
+	registerOccurrences(s, d.Occurrences, d.Payments, d.Commitments, plans, todayFn, d.Grace, d.Now, d.Banks, d.BankStaleAfter)
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
+	registerDeferrals(s, d.Deferrals, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerBankConnections(s, d.Banking)
 	registerMatching(s, d.Matching)
 	registerRates(s, d.RateCache, d.Now)

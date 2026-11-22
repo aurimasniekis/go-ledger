@@ -461,21 +461,25 @@ func occurrenceReferenceProblems(t *testing.T, db *store.DB, evidence []string) 
 func TestOccurrenceReferencesAreEvidenceOrCascade(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t) // has test_payments (RESTRICT) beside the real evidence tables
-	evidence := append([]string{"EXISTS (SELECT 1 FROM test_payments p WHERE p.occurrence_id = o.id)"}, occstore.DefaultEvidence...)
+	evidence := append(append([]string{"EXISTS (SELECT 1 FROM test_payments p WHERE p.occurrence_id = o.id)"}, occstore.DefaultEvidence...), occstore.DefaultReferences...)
 	if p := occurrenceReferenceProblems(t, f.db, evidence); len(p) != 0 {
 		t.Fatalf("test fixture: %v", p)
 	}
-	// The real schema: every reference in use must be covered by DefaultEvidence.
+	// The real schema: every reference in use must be covered by DefaultEvidence,
+	// or by DefaultReferences for rows that are history about an occurrence but
+	// not payment evidence (deferral plans, ADR-0050): they keep the occurrence
+	// from being deleted (removeOrCancel, the only delete, checks them) without
+	// freezing it against a terms edit.
 	real, err := store.Open(ctx, filepath.Join(t.TempDir(), "real.db"), store.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = real.Close() })
-	if p := occurrenceReferenceProblems(t, real, occstore.DefaultEvidence); len(p) != 0 {
-		t.Fatalf("add the evidence expression to DefaultEvidence (or use ON DELETE CASCADE): %v", p)
+	if p := occurrenceReferenceProblems(t, real, append(append([]string{}, occstore.DefaultEvidence...), occstore.DefaultReferences...)); len(p) != 0 {
+		t.Fatalf("add the evidence expression to DefaultEvidence or DefaultReferences (or use ON DELETE CASCADE): %v", p)
 	}
 	// The check itself: an uncovered RESTRICT reference is reported.
-	if p := occurrenceReferenceProblems(t, f.db, occstore.DefaultEvidence); len(p) != 1 || !strings.HasPrefix(p[0], "test_payments.occurrence_id") {
+	if p := occurrenceReferenceProblems(t, f.db, append(append([]string{}, occstore.DefaultEvidence...), occstore.DefaultReferences...)); len(p) != 1 || !strings.HasPrefix(p[0], "test_payments.occurrence_id") {
 		t.Fatalf("uncovered reference not reported: %v", p)
 	}
 }
