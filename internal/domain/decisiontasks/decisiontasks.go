@@ -41,7 +41,9 @@ type Runner interface {
 type Suggestions interface {
 	Suggestion(ctx context.Context, id string) (decisions.Suggestion, error)
 	Decide(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action) (decisions.Suggestion, error)
-	RecordReversal(ctx context.Context, actor audit.Actor, id string) error
+	// RevertAutomatic resets the object's category (only while it is still the
+	// model's) and records the reversal in one transaction.
+	RevertAutomatic(ctx context.Context, actor audit.Actor, id string, obj organisation.ObjectRef, source, categoryID string) error
 	Declined(ctx context.Context, task decisions.TaskName, obj decisions.ObjectRef) (bool, error)
 	Pending(ctx context.Context, task decisions.TaskName, obj decisions.ObjectRef) (bool, error)
 }
@@ -52,7 +54,6 @@ type Organisation interface {
 	ListDefinitions(ctx context.Context, k organisation.Kind, f organisation.ListFilter) ([]organisation.Definition, error)
 	ApplyAutomatic(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, a organisation.Automatic) (organisation.AutomaticResult, error)
 	SetCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, categoryID *string) (organisation.Assignments, error)
-	ResetAutomaticCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, source, categoryID string) error
 	AddLabels(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, labelIDs []string) (organisation.Assignments, error)
 }
 
@@ -401,12 +402,8 @@ func (s *Service) Revert(ctx context.Context, actor audit.Actor, id string) erro
 		return decisions.ErrNotReversible
 	}
 	obj := organisation.ObjectRef{Type: organisation.ObjectType(sg.Object.Type), ID: sg.Object.ID}
-	// The check and the reset are one transaction in the organisation store:
-	// a decision made in between is never undone.
-	if err := s.org.ResetAutomaticCategory(ctx, actor, obj, SourceOf(sg), *sg.Decision.Choice); errors.Is(err, organisation.ErrAssignmentChanged) {
-		return decisions.ErrNotReversible
-	} else if err != nil {
-		return err
-	}
-	return s.sugg.RecordReversal(ctx, actor, id)
+	// The check, the reset and the reversal record are one transaction: a
+	// decision made in between is never undone, and a failed record leaves
+	// the category as it was, so the revert can be tried again.
+	return s.sugg.RevertAutomatic(ctx, actor, id, obj, SourceOf(sg), *sg.Decision.Choice)
 }

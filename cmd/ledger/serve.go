@@ -19,7 +19,9 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/auth"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankimport"
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
+	"github.com/aurimasniekis/go-ledger/internal/domain/decisiontasks"
 	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	moneypkg "github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/health"
@@ -249,7 +251,32 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// and none starts afterwards; the shutdown waits for it after the refreshes.
 	enrichCtx, enrichStop := context.WithCancel(ctx)
 	defer enrichStop()
-	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(refreshCtx context.Context, _ bankimport.Result) {
+	// The decision triggers (L6d) are set once the decision service exists,
+	// below; a refresh before that, or with no task enabled, asks nothing.
+	var decisionTrigger atomic.Pointer[decisiontasks.Trigger]
+	var decisionMu sync.Mutex
+	var decisionWG sync.WaitGroup
+	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(refreshCtx context.Context, res bankimport.Result) {
+		// Questions to a model take seconds each and are never part of the
+		// import: they run in the background, one pass at a time and in
+		// refresh order, and a failure only reaches the log.
+		if tr := decisionTrigger.Load(); tr != nil {
+			inserted := map[banking.AccountID][]banking.TransactionID{}
+			for _, a := range res.Accounts {
+				if len(a.Inserted) > 0 {
+					inserted[a.ID] = a.Inserted
+				}
+			}
+			if len(inserted) > 0 {
+				decisionWG.Add(1)
+				go func() {
+					defer decisionWG.Done()
+					decisionMu.Lock()
+					defer decisionMu.Unlock()
+					tr.AfterRefresh(enrichCtx, inserted)
+				}()
+			}
+		}
 		// A failed run is retried after the next refresh, or on request.
 		if _, err := parts.matching.Run(refreshCtx); err != nil && refreshCtx.Err() == nil {
 			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
@@ -293,11 +320,13 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	parts.rates = rateSvc
 	// Decision providers (L1, ADR-0060): nothing runs them yet (L6), but an
 	// enabled task must be servable, so a misconfiguration stops startup.
-	if _, err := buildDecisions(cfg.Decisions, db, auditLog, time.Now); err != nil {
+	decisionSvc, err := buildDecisions(cfg.Decisions, db, auditLog, time.Now)
+	if err != nil {
 		log.Error("invalid decision-provider settings", "error", err.Error())
 		_ = ln.Close()
 		return 1
 	}
+	decisionTrigger.Store(buildDecisionTrigger(decisionSvc, cfg.Decisions, db, auditLog, time.Now, facts, parts.organisation, log))
 	// The rates routes (FX2c, ADR-0048) list the cache and trigger a refresh. The
 	// provider is optional, so its state is reported (status route, metrics)
 	// and never gates readiness.
@@ -433,6 +462,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// it ended. enrichStop already ran, so none starts now; a running one needs
 	// the database, so it is waited for before the database closes.
 	enrichWG.Wait()
+	decisionWG.Wait()
 	if ratesDone != nil {
 		<-ratesDone
 	}
