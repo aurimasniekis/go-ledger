@@ -153,9 +153,13 @@ func TestMCPMerchantOrganisation(t *testing.T) {
 	if len(got.Labels) != 1 || got.Category == nil || len(got.Buckets) != 0 {
 		t.Fatalf("assignments: %+v", got)
 	}
-	// A name is no merchant identifier (the route answers 400).
+	// A merchant is named by its record id: a well-formed id that names no record is not found.
 	if r := call(t, c, "get_object_organisation", map[string]any{"object_type": "merchant", "object_id": fakeID}); !r.IsError || !strings.Contains(resultText(r), "not_found") {
 		t.Errorf("an unknown merchant id: %s", resultText(r))
+	}
+	// A name is no merchant identifier: the route answers 400, and the tool says the arguments are invalid.
+	if r := call(t, c, "get_object_organisation", map[string]any{"object_type": "merchant", "object_id": "Lidl"}); !r.IsError || !strings.Contains(resultText(r), "invalid") {
+		t.Errorf("a merchant named by its name: %s", resultText(r))
 	}
 	// A bucket holds commitments and accounts only.
 	if r := call(t, c, "add_bucket_member", map[string]any{"id": fakeID, "object_type": "merchant", "object_id": m.ID}); !r.IsError || !strings.Contains(resultText(r), "invalid arguments") {
