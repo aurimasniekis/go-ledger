@@ -15,15 +15,17 @@ const content =
  * Remembers the element focused when the dialog content mounted (it is still the opener at that moment).
  * It must run inside the portal: the DialogContent wrapper itself is mounted while the dialog is closed.
  */
-function useReturnFocus() {
+function useReturnFocus(custom?: () => boolean) {
   const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null))
   return (e: Event) => {
     e.preventDefault()
+    // A caller that has a better target (a notice the change produced) takes focus itself and says so by returning true.
+    if (custom?.()) return
     focusFirstUsable([opener])
   }
 }
-function ReturningContent(props: ComponentProps<typeof DialogPrimitive.Content>) {
-  const returnFocus = useReturnFocus()
+function ReturningContent({ focusInstead, ...props }: ComponentProps<typeof DialogPrimitive.Content> & { focusInstead?: () => boolean }) {
+  const returnFocus = useReturnFocus(focusInstead)
   return <DialogPrimitive.Content onCloseAutoFocus={returnFocus} {...props} />
 }
 function ReturningAlertContent(props: ComponentProps<typeof AlertPrimitive.Content>) {
@@ -39,12 +41,13 @@ export function DialogContent({
   description,
   children,
   className,
+  focusInstead,
   ...props
-}: { title: ReactNode; description?: ReactNode } & Omit<ComponentProps<typeof DialogPrimitive.Content>, 'title'>) {
+}: { title: ReactNode; description?: ReactNode; focusInstead?: () => boolean } & Omit<ComponentProps<typeof DialogPrimitive.Content>, 'title'>) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className={overlay} />
-      <ReturningContent className={cn(content, className)} {...props}>
+      <ReturningContent className={cn(content, className)} focusInstead={focusInstead} {...props}>
         <DialogPrimitive.Title className="text-lg font-semibold">{title}</DialogPrimitive.Title>
         {description ? (
           <DialogPrimitive.Description className="text-sm text-muted-foreground">{description}</DialogPrimitive.Description>

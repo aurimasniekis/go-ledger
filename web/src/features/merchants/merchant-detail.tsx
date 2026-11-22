@@ -57,6 +57,8 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [rowError, setRowError] = useState<string>()
   const noticeBox = useRef<HTMLDivElement>(null)
+  const pendingBox = useRef<HTMLParagraphElement>(null)
+  const undoing = useRef(false)
   const merged = m.merged_into !== null
   const active = !m.archived
 
@@ -64,6 +66,14 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
   useEffect(() => {
     if (notice) noticeBox.current?.focus()
   }, [notice])
+  // Undo removes the focused button while the server answers: focus the "Saving…" status so the wait is announced and focus is not on BODY.
+  // A refusal then lands on the error, an acceptance on the new notice.
+  // A dialog that produced a notice hands focus to it rather than back to the button that opened the dialog.
+  const toNotice = () => {
+    if (!noticeBox.current) return false
+    noticeBox.current.focus()
+    return true
+  }
 
   // Every accepted change replaces the cached record (the server's answer, with its new version) and reloads the lists.
   const accepted = (r: MerchantRecord) => {
@@ -92,7 +102,7 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
     onMutate: () => setRowError(undefined),
     onSuccess: async (r, v) => {
       await accepted(r)
-      setNotice('remove' in v ? { text: `The alias ${v.name} was removed. Transactions with that name no longer resolve to ${r.display_name}.`, undo: () => alias.mutate({ add: v.name }) } : { text: `The alias ${v.add} was added.` })
+      setNotice('remove' in v ? { text: `The alias ${v.name} was removed. Transactions with that name no longer resolve to ${r.display_name}. Undo adds it back as an alias you added, not with its earlier origin or date.`, undo: () => alias.mutate({ add: v.name }) } : { text: `The alias ${v.add} was added.` })
     },
     // A failed add is shown beside its field; a failed removal at the top.
     onError: (e, v) => {
@@ -100,6 +110,10 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
     },
   })
   const pending = archive.isPending || alias.isPending
+  useEffect(() => {
+    if (pending && undoing.current) pendingBox.current?.focus()
+    if (!pending) undoing.current = false
+  }, [pending])
 
   return (
     <div className="space-y-6">
@@ -133,6 +147,7 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
               disabled={pending}
               onClick={() => {
                 const u = notice.undo!
+                undoing.current = true
                 setNotice(null)
                 u()
               }}
@@ -143,7 +158,7 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
           <Button variant="ghost" size="sm" onClick={() => setNotice(null)}>Dismiss</Button>
         </div>
       )}
-      {pending && <p role="status" className="text-xs text-muted-foreground">Saving… this change is not saved until the server confirms it.</p>}
+      {pending && <p ref={pendingBox} tabIndex={-1} role="status" className="text-xs focus:outline-none text-muted-foreground">Saving… this change is not saved until the server confirms it.</p>}
 
       {canWrite && !merged && (
         <div className="flex flex-wrap gap-2">
@@ -160,35 +175,35 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
       <Aliases m={m} canWrite={canWrite && !merged} pending={pending} onAdd={(name) => alias.mutateAsync({ add: name })} onRemove={(a) => alias.mutate({ remove: a.id, name: a.name })} />
 
       <Dialog open={renaming} onOpenChange={setRenaming}>
-        <DialogContent title={`Rename ${m.display_name}`} description="The new name is also added as an alias. A name another merchant already has is refused: merge the two instead.">
+        <DialogContent focusInstead={toNotice} title={`Rename ${m.display_name}`} description="The new name is also added as an alias. A name another merchant already has is refused: merge the two instead.">
           {renaming && (
             <RenameForm
               m={m}
               onCancel={() => setRenaming(false)}
               onConflict={() => void qc.invalidateQueries({ queryKey: merchantKey(m.id) })}
               onDone={async (r) => {
-                setRenaming(false)
                 await accepted(r)
                 setNotice({ text: `Renamed to ${r.display_name}.` })
+                setRenaming(false)
               }}
             />
           )}
         </DialogContent>
       </Dialog>
       <Dialog open={merging} onOpenChange={setMerging}>
-        <DialogContent title={`Merge another merchant into ${m.display_name}`} description="Choose the merchant to absorb. Nothing changes until you confirm the merge.">
+        <DialogContent focusInstead={toNotice} title={`Merge another merchant into ${m.display_name}`} description="Choose the merchant to absorb. Nothing changes until you confirm the merge.">
           {merging && (
             <MergeForm
               into={m}
               onCancel={() => setMerging(false)}
               onConflict={() => void qc.invalidateQueries({ queryKey: merchantKey(m.id) })}
               onDone={async (r, fromName) => {
-                setMerging(false)
                 await accepted(r.merchant)
                 const mv = r.moved
                 setNotice({
                   text: `${fromName} was merged into ${r.merchant.display_name} and archived. Moved: ${mv.aliases} alias${mv.aliases === 1 ? '' : 'es'}, ${mv.decisions} decision${mv.decisions === 1 ? '' : 's'}, ${mv.enrichments} source answer${mv.enrichments === 1 ? '' : 's'}, ${mv.categories} category and ${mv.labels} label assignment${mv.labels === 1 ? '' : 's'}. Left where they were because ${r.merchant.display_name} already had one: ${r.kept}. This cannot be undone in place.`,
                 })
+                setMerging(false)
               }}
             />
           )}
@@ -210,6 +225,9 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
           qc.removeQueries({ queryKey: merchantKey(m.id) })
           await qc.invalidateQueries({ queryKey: merchantsKey })
           await navigate({ to: '/merchants' })
+          // The merchant's page is gone, so focus would fall to BODY or, once the closing dialog has been cleaned up, to the main region:
+          // land on the list's heading, after that cleanup.
+          setTimeout(() => document.getElementById('merchants-title')?.focus(), 0)
         }}
       />
     </div>

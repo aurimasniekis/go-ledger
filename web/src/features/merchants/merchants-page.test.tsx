@@ -45,6 +45,22 @@ describe('merchants list', () => {
     expect(within(list).queryByText('Maxima')).toBeNull()
   })
 
+  it('finds a name typed with different case, spacing or composition of accents, by name or alias', async () => {
+    const user = userEvent.setup()
+    const SKODA = merchant('S00', 'Škoda  Auto', { aliases: [alias('S01', 'Škoda Auto')] })
+    installApi(routes({ 'GET /api/v1/merchants': page([LIDL, SKODA]) }))
+    renderApp('/merchants')
+    await screen.findByRole('list', { name: 'merchants' })
+    const find = screen.getByLabelText('Find a merchant by name or alias')
+    for (const q of ['ŠKODA', 'S\u{30C}koda  auto', 'škoda']) {
+      await user.clear(find)
+      await user.type(find, q)
+      const list = screen.getByRole('list', { name: 'merchants' })
+      expect(within(list).getAllByRole('listitem')).toHaveLength(1)
+      expect(within(list).getByRole('link', { name: /Škoda/ })).toBeInTheDocument()
+    }
+  })
+
   it('offers no change without merchants:write, and no list without merchants:read', async () => {
     installApi(routes({}, ['merchants:read']))
     const { unmount } = renderApp('/merchants')
@@ -161,9 +177,72 @@ describe('merchant record', () => {
     )
     renderApp('/merchants/' + LIDL.id)
     await user.click(await screen.findByRole('button', { name: 'Remove the alias Lidl Vilnius' }))
-    expect(await screen.findByText(/The alias Lidl Vilnius was removed/)).toBeInTheDocument()
+    expect(await screen.findByText(/The alias Lidl Vilnius was removed.*Undo adds it back as an alias you added/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Undo' }))
     await vi.waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/aliases'))?.body).toEqual({ name: 'Lidl Vilnius' }))
+  })
+
+  it('moves focus to the notice after a rename, not back to the button that opened the dialog', async () => {
+    const user = userEvent.setup()
+    installApi(routes({ ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL), ['PATCH /api/v1/merchants/' + LIDL.id]: ok(rec({ display_name: 'Lidl Lietuva', version: 2 })) }))
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Rename' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Rename Lidl' })
+    await user.clear(within(dlg).getByLabelText('Display name'))
+    await user.type(within(dlg).getByLabelText('Display name'), 'Lidl Lietuva{Enter}')
+    const notice = (await screen.findByText('Renamed to Lidl Lietuva.')).closest('[role="status"]')!
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await vi.waitFor(() => expect(document.activeElement).toBe(notice))
+  })
+
+  it('returns focus to the opening button when a dialog is cancelled', async () => {
+    const user = userEvent.setup()
+    installApi(routes({ ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL) }))
+    renderApp('/merchants/' + LIDL.id)
+    const open = await screen.findByRole('button', { name: 'Rename' })
+    await user.click(open)
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await vi.waitFor(() => expect(document.activeElement).toBe(open))
+  })
+
+  it('keeps focus on the Saving status while an Undo is pending, then on the new notice', async () => {
+    const user = userEvent.setup()
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL),
+        ['POST /api/v1/merchants/' + LIDL.id + '/archive']: ok(rec({ archived: true, archived_at: '2026-11-22T10:00:00Z', version: 2 })),
+        ['POST /api/v1/merchants/' + LIDL.id + '/unarchive']: async () => {
+          await gate
+          return ok(LIDL)
+        },
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Archive' }))
+    await user.click(await screen.findByRole('button', { name: 'Undo' }))
+    const saving = await screen.findByText(/Saving… this change is not saved until the server confirms it/)
+    await vi.waitFor(() => expect(document.activeElement).toBe(saving))
+    release()
+    const notice = (await screen.findByText('Lidl is active again.')).closest('[role="status"]')!
+    await vi.waitFor(() => expect(document.activeElement).toBe(notice))
+  })
+
+  it('moves focus to the problem when an Undo is refused', async () => {
+    const user = userEvent.setup()
+    installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL),
+        ['POST /api/v1/merchants/' + LIDL.id + '/archive']: ok(rec({ archived: true, archived_at: '2026-11-22T10:00:00Z', version: 2 })),
+        ['POST /api/v1/merchants/' + LIDL.id + '/unarchive']: fail(409, 'merchant_archived', 'archived'),
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Archive' }))
+    await user.click(await screen.findByRole('button', { name: 'Undo' }))
+    const problem = await screen.findByText(/Nothing was changed/)
+    await vi.waitFor(() => expect(document.activeElement).toBe(problem.closest('[role="alert"]')))
   })
 
   it('archives with Undo, and only says so after the server answered', async () => {
@@ -203,7 +282,8 @@ describe('merchant record', () => {
     renderApp('/merchants/' + MAXIMA.id)
     await user.click(await screen.findByRole('button', { name: 'Delete' }))
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete Maxima' }))
-    expect(await screen.findByRole('heading', { name: 'Merchants', level: 1 })).toBeInTheDocument()
+    const heading = await screen.findByRole('heading', { name: 'Merchants', level: 1 })
+    await vi.waitFor(() => expect(document.activeElement).toBe(heading))
     expect(calls.find((c) => c.method === 'DELETE')!.headers).toMatchObject(etag(MAXIMA))
   })
 
@@ -239,6 +319,8 @@ describe('merchant record', () => {
     const req = calls.find((c) => c.method === 'POST' && c.path.endsWith('/merge'))!
     expect(req.headers['If-Match']).toBe('"1"')
     expect(req.body).toEqual({ merchant_id: MAXIMA.id })
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByText(/Maxima was merged into Lidl/).closest('[role="status"]')))
   })
 
   it('shows a merge refusal and moves nothing', async () => {

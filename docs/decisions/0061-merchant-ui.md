@@ -43,6 +43,9 @@ task's own, within those ADRs; none is an operator decision.
 
 - The merchant list filters by name and alias in the browser, over the records loaded so far (the API filters only by
   archived). It loads every page, so a very large merchant list is slow to filter.
+- The merchant list folds the search text like an alias key (NFC, white space collapsed, lower case; ADR-0058 defines no accent stripping, so "Skoda" does not find "Škoda"), for names and aliases alike.
+- Undoing an alias removal adds the name back as a new alias, as one you added: its earlier origin ("from a decision of yours" or "from an earlier version"), date and identifier are not restored. The notice says so.
+- After a rename or merge, focus goes to the result notice; after cancelling a dialog, back to the button that opened it; after a delete, to the list heading; while an Undo is pending, to the "Saving…" status. This was checked in jsdom tests (`document.activeElement`), not with a screen reader.
 - The Merchant disclosure is on the payment match card only; other places that show a bank transaction do not have it yet.
 - Merchant assignment to categories and labels (task O5) is a separate task and not part of these screens.
 - Tests are offline: the browser tests stub the API, and nothing here contacts a bank, a model or a logo host.

@@ -20,9 +20,9 @@ export function merchantProblem(e: unknown): string {
       case 'forbidden':
         return 'Not saved: your token or role does not hold merchants:write. Nothing was changed.'
     }
-    return e.message
+    return `${e.message.replace(/[.\s]+$/, '')}. Nothing was changed.`
   }
-  return e instanceof Error ? e.message : 'Something went wrong. Nothing was changed.'
+  return e instanceof Error ? `${e.message.replace(/[.\s]+$/, '')}. Nothing was changed.` : 'Something went wrong. Nothing was changed.'
 }
 
 export const isConflict = (e: unknown) => e instanceof ApiError && e.code === 'version_conflict'
