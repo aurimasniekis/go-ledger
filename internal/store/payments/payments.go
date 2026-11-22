@@ -36,7 +36,11 @@ import (
 // internal/store/occurrences DefaultEvidence; TestEvidenceSourcesMatchDefaultEvidence
 // checks the two agree.
 var EvidenceSources = []string{
-	"SELECT occurrence_id AS occurrence_id, '" + string(payments.EvidenceManual) + "' AS kind, id AS id, amount AS amount, currency AS currency, paid_on AS evidence_date FROM manual_payments WHERE deleted_at IS NULL",
+	// Manual payments that are not deleted (D26-3a) and not replaced by a
+	// confirmed bank match (D45, ADR-0049): a replaced record is kept, but
+	// the match counts instead, so the payment never counts twice.
+	"SELECT occurrence_id AS occurrence_id, '" + string(payments.EvidenceManual) + "' AS kind, id AS id, amount AS amount, currency AS currency, paid_on AS evidence_date FROM manual_payments WHERE deleted_at IS NULL" +
+		" AND NOT EXISTS (SELECT 1 FROM manual_payment_replacements r WHERE r.manual_payment_id = manual_payments.id AND r.restored_at IS NULL)",
 	// Confirmed payment matches (X1, ADR-0035) on a countable transaction:
 	// booked, still reported and not superseded (ADR-0020 point 7).
 	"SELECT m.occurrence_id AS occurrence_id, '" + string(payments.EvidenceBankTransaction) + "' AS kind, m.id AS id, m.amount AS amount, m.currency AS currency," +
@@ -84,7 +88,10 @@ func (s *Store) WithZone(z calendar.Zone) *Store {
 	return &c
 }
 
-const manualColumns = "id, occurrence_id, amount, currency, paid_on, note, version, created_at, updated_at"
+// manualColumns are a manual payment's columns, and the match that replaces it
+// now (D45, ADR-0049), if any; the queries select FROM manual_payments.
+const manualColumns = "id, occurrence_id, amount, currency, paid_on, note, version, created_at, updated_at," +
+	" (SELECT r.match_id FROM manual_payment_replacements r WHERE r.manual_payment_id = manual_payments.id AND r.restored_at IS NULL)"
 
 func scanManual(row interface{ Scan(...any) error }) (payments.ManualPayment, error) {
 	var p payments.ManualPayment
@@ -93,14 +100,15 @@ func scanManual(row interface{ Scan(...any) error }) (payments.ManualPayment, er
 	var paid sqlvalue.Date
 	var note sql.NullString
 	var created, updated store.Timestamp
-	if err := row.Scan(&p.ID, &p.OccurrenceID, &amount, &currency, &paid, &note, &p.Version, &created, &updated); err != nil {
+	var replacedBy sql.Null[string]
+	if err := row.Scan(&p.ID, &p.OccurrenceID, &amount, &currency, &paid, &note, &p.Version, &created, &updated, &replacedBy); err != nil {
 		return payments.ManualPayment{}, err
 	}
 	m, err := sqlvalue.Money(amount, currency)
 	if err != nil {
 		return payments.ManualPayment{}, err
 	}
-	p.Amount, p.PaidOn, p.CreatedAt, p.UpdatedAt = m, paid.Date, created.Time, updated.Time
+	p.Amount, p.PaidOn, p.CreatedAt, p.UpdatedAt, p.ReplacedByMatchID = m, paid.Date, created.Time, updated.Time, replacedBy.V
 	if note.Valid {
 		p.Note = &note.String
 	}

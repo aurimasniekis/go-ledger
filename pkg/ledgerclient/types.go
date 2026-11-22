@@ -210,6 +210,9 @@ type ManualPayment struct {
 	Version      int64   `json:"version"`
 	CreatedAt    string  `json:"created_at"`
 	UpdatedAt    string  `json:"updated_at"`
+	// ReplacedByMatchID is the confirmed payment match that replaces the
+	// record now (it then does not count as payment); nil when none.
+	ReplacedByMatchID *string `json:"replaced_by_match_id"`
 }
 
 // NewManualPayment is the body of RecordManualPayment. PaidOn is YYYY-MM-DD
@@ -268,6 +271,11 @@ type MatchEvent struct {
 	By     MatchActor `json:"by"`
 	Reason *string    `json:"reason"`
 	At     string     `json:"at"`
+	// ReplacedManualPaymentIDs are the manual payments a confirmation
+	// replaced; RestoredManualPaymentIDs those an unconfirm or unmatch made
+	// count again. Empty for other changes.
+	ReplacedManualPaymentIDs []string `json:"replaced_manual_payment_ids,omitempty"`
+	RestoredManualPaymentIDs []string `json:"restored_manual_payment_ids,omitempty"`
 }
 
 // PaymentMatch links a bank transaction to an occurrence with the amount
@@ -328,6 +336,14 @@ type NewPaymentMatch struct {
 type MatchDecision struct {
 	AllowOverpayment bool    `json:"allow_overpayment,omitempty"`
 	Reason           *string `json:"reason,omitempty"`
+}
+
+// MatchReplacement is the body of ConfirmPaymentMatchReplacing: the manual
+// payments of the match's occurrence that the bank payment is (1 to 20).
+type MatchReplacement struct {
+	ManualPaymentIDs []string `json:"manual_payment_ids"`
+	AllowOverpayment bool     `json:"allow_overpayment,omitempty"`
+	Reason           *string  `json:"reason,omitempty"`
 }
 
 // MatchCorrection is the body of CorrectPaymentMatch.

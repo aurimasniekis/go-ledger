@@ -207,8 +207,41 @@ func historyTx(ctx context.Context, tx *sql.Tx, ms []matches.Match) error {
 		if err := rows.Err(); err != nil {
 			return err
 		}
+		if err := replacementsTx(ctx, tx, args, index, ms); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// replacementsTx attaches to each history entry the manual payments it marked
+// replaced or made count again (ADR-0049). args are the match IDs of one chunk.
+func replacementsTx(ctx context.Context, tx *sql.Tx, args []any, index map[string]int, ms []matches.Match) error {
+	rows, err := tx.QueryContext(ctx, "SELECT match_id, manual_payment_id, replaced_event_id, restored_event_id FROM manual_payment_replacements"+
+		" WHERE match_id IN ("+placeholders(len(args))+") ORDER BY rowid", args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var matchID, paymentID, replacedBy string
+		var restoredBy sql.Null[string]
+		if err := rows.Scan(&matchID, &paymentID, &replacedBy, &restoredBy); err != nil {
+			return err
+		}
+		h := ms[index[matchID]].History
+		for i := range h {
+			switch h[i].ID {
+			case replacedBy:
+				h[i].Replaced = append(h[i].Replaced, paymentID)
+			case restoredBy.V:
+				if restoredBy.Valid {
+					h[i].Restored = append(h[i].Restored, paymentID)
+				}
+			}
+		}
+	}
+	return rows.Err()
 }
 
 func getTx(ctx context.Context, tx *sql.Tx, id string) (matches.Match, error) {
@@ -385,14 +418,20 @@ type entry struct {
 	state  matches.State
 	amount money.Money
 	reason *string
+	// id is the entry's identifier when the caller chose it in advance (to
+	// refer to it from manual_payment_replacements); empty for a new one.
+	id string
 }
 
 // event appends a history entry with how its actor came (migration 0023) and
 // the occurrence's version after the change.
 func (s *Store) event(ctx context.Context, tx *sql.Tx, matchID string, e entry, actor audit.Actor, occurrenceVersion int64, at time.Time) error {
+	if e.id == "" {
+		e.id = s.newID()
+	}
 	_, err := tx.ExecContext(ctx, "INSERT INTO payment_match_events (id, match_id, action, state, amount, currency, actor_kind, actor_user, reason, at, actor_via, occurrence_version)"+
 		" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		s.newID(), matchID, string(e.action), string(e.state), sqlvalue.Amount{Decimal: e.amount.Amount()}, sqlvalue.Currency{Currency: e.amount.Currency()},
+		e.id, matchID, string(e.action), string(e.state), sqlvalue.Amount{Decimal: e.amount.Amount()}, sqlvalue.Currency{Currency: e.amount.Currency()},
 		string(storedKind(actor.Kind)), nullable(actor.UserID), e.reason, store.Timestamp{Time: at}, string(storedVia(actor)), occurrenceVersion)
 	if err != nil {
 		return fmt.Errorf("matches: history: %w", err)
@@ -536,7 +575,7 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 			}
 			return fmt.Errorf("matches: create: %w", err)
 		}
-		ch, err = s.finish(ctx, tx, entry{action, n.State, n.Amount, n.Reason}, actor, id, o.ID, "", now)
+		ch, err = s.finish(ctx, tx, entry{action, n.State, n.Amount, n.Reason, ""}, actor, id, o.ID, "", now)
 		return err
 	})
 	return ch, err
@@ -566,8 +605,12 @@ func at(ctx context.Context, tx *sql.Tx, id string, expected int64) (matches.Mat
 }
 
 // decide moves a match from one of the states in from to the state to.
+//
+// check, when set, runs inside the transaction before the change, with the
+// identifier the change's history entry will have and the change's time. An
+// unmatch restores the manual payments the match replaced (ADR-0049).
 func (s *Store) decide(ctx context.Context, actor audit.Actor, id string, expected int64, reason *string, a matches.Action, to matches.State,
-	check func(ctx context.Context, tx *sql.Tx, m matches.Match) error, from ...matches.State) (matches.Change, error) {
+	check func(ctx context.Context, tx *sql.Tx, m matches.Match, eventID string, now time.Time) error, from ...matches.State) (matches.Change, error) {
 	if err := commitments.Validation(matches.ValidateReason(reason)); err != nil {
 		return matches.Change{}, err
 	}
@@ -589,17 +632,23 @@ func (s *Store) decide(ctx context.Context, actor audit.Actor, id string, expect
 				return err
 			}
 		}
+		now := s.now().UTC()
+		eventID := s.newID()
 		if check != nil {
-			if err := check(ctx, tx, m); err != nil {
+			if err := check(ctx, tx, m, eventID, now); err != nil {
 				return err
 			}
 		}
-		now := s.now().UTC()
+		if a == matches.ActionUnmatched {
+			if err := s.restore(ctx, tx, actor, m, eventID, a, now); err != nil {
+				return err
+			}
+		}
 		if _, err := store.UpdateVersioned(ctx, tx, "payment_matches", "state = ?, decided_by_kind = ?, decided_by_user = ?, decided_by_via = ?, decided_at = ?, reason = ?, updated_at = ?",
 			m.ID, expected, string(to), string(storedKind(actor.Kind)), nullable(actor.UserID), string(storedVia(actor)), store.Timestamp{Time: now}, reason, store.Timestamp{Time: now}); err != nil {
 			return err
 		}
-		ch, err = s.finish(ctx, tx, entry{a, to, m.Amount, reason}, actor, m.ID, m.OccurrenceID, m.State, now)
+		ch, err = s.finish(ctx, tx, entry{a, to, m.Amount, reason, eventID}, actor, m.ID, m.OccurrenceID, m.State, now)
 		return err
 	})
 	return ch, err
@@ -727,7 +776,21 @@ func (s *Store) recordTolerance(ctx context.Context, tx *sql.Tx, id string, o oc
 }
 
 func (s *Store) confirm(ctx context.Context, actor audit.Actor, id string, expected int64, allow bool, reason *string) (matches.Change, error) {
-	return s.decide(ctx, actor, id, expected, reason, matches.ActionConfirmed, matches.StateConfirmed, func(ctx context.Context, tx *sql.Tx, m matches.Match) error {
+	return s.confirmWith(ctx, actor, id, expected, allow, reason, nil)
+}
+
+// confirmWith confirms a suggestion. before, when set, runs inside the
+// transaction ahead of the confirmation's checks (ConfirmReplacing marks the
+// manual payments replaced there, so the checks see the evidence that
+// remains).
+func (s *Store) confirmWith(ctx context.Context, actor audit.Actor, id string, expected int64, allow bool, reason *string,
+	before func(ctx context.Context, tx *sql.Tx, m matches.Match, eventID string, now time.Time) error) (matches.Change, error) {
+	return s.decide(ctx, actor, id, expected, reason, matches.ActionConfirmed, matches.StateConfirmed, func(ctx context.Context, tx *sql.Tx, m matches.Match, eventID string, now time.Time) error {
+		if before != nil {
+			if err := before(ctx, tx, m, eventID, now); err != nil {
+				return err
+			}
+		}
 		o, err := occstore.GetTx(ctx, tx, m.OccurrenceID)
 		if err != nil {
 			return err
@@ -885,12 +948,19 @@ func (s *Store) Unconfirm(ctx context.Context, actor audit.Actor, id string, exp
 			return matches.ErrUndoWindow
 		}
 		now := s.now().UTC()
+		// Manual payments the confirmation replaced count again (ADR-0049):
+		// with the match a suggestion again, the occurrence's evidence is
+		// exactly what it was before the confirmation.
+		eventID := s.newID()
+		if err := s.restore(ctx, tx, actor, m, eventID, matches.ActionUnconfirmed, now); err != nil {
+			return err
+		}
 		if _, err := store.UpdateVersioned(ctx, tx, "payment_matches", "state = ?, decided_by_kind = NULL, decided_by_user = NULL, decided_by_via = NULL, decided_at = NULL,"+
 			" reason = ?, tolerance_amount = NULL, tolerance_currency = NULL, updated_at = ?",
 			m.ID, expected, string(matches.StateSuggested), before.reason, store.Timestamp{Time: now}); err != nil {
 			return err
 		}
-		ch, err = s.finish(ctx, tx, entry{matches.ActionUnconfirmed, matches.StateSuggested, m.Amount, reason}, actor, m.ID, o.ID, m.State, now)
+		ch, err = s.finish(ctx, tx, entry{matches.ActionUnconfirmed, matches.StateSuggested, m.Amount, reason, eventID}, actor, m.ID, o.ID, m.State, now)
 		return err
 	})
 	return ch, err
@@ -942,7 +1012,7 @@ func (s *Store) Correct(ctx context.Context, actor audit.Actor, id string, expec
 				return err
 			}
 		}
-		ch, err = s.finish(ctx, tx, entry{matches.ActionCorrected, m.State, amount, reason}, actor, m.ID, o.ID, m.State, now)
+		ch, err = s.finish(ctx, tx, entry{matches.ActionCorrected, m.State, amount, reason, ""}, actor, m.ID, o.ID, m.State, now)
 		return err
 	})
 	return ch, err

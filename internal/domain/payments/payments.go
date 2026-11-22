@@ -321,6 +321,10 @@ type ManualPayment struct {
 	Version      int64
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// ReplacedByMatchID is the confirmed payment match that replaces the
+	// record now (decision D45, ADR-0049), empty when none. A replaced record
+	// is kept and listed but is not payment evidence: the match is.
+	ReplacedByMatchID string
 }
 
 // Evidence returns the payment as evidence for its occurrence.
@@ -409,6 +413,27 @@ func RecordedEvent(actor audit.Actor, p ManualPayment, at time.Time) audit.Event
 func DeletedEvent(actor audit.Actor, p ManualPayment, at time.Time) audit.Event {
 	return audit.Event{Action: audit.ManualPaymentDeleted, Actor: actor, TargetType: TargetType, TargetID: p.OccurrenceID, At: at,
 		Details: map[string]string{"payment_id": p.ID, "amount": p.Amount.Amount().String(), "currency": p.Amount.Currency().Code()}}
+}
+
+// ReplacedEvent is the audit event for marking a manual payment replaced by
+// the confirmed payment match matchID (decision D45, ADR-0049). Like a
+// delete it carries the amount: the record stops counting.
+func ReplacedEvent(actor audit.Actor, p ManualPayment, matchID string, at time.Time) audit.Event {
+	d := map[string]string{"payment_id": p.ID, "match_id": matchID, "amount": p.Amount.Amount().String(), "currency": p.Amount.Currency().Code()}
+	if v := actor.Channel(); v != "" {
+		d["via"] = string(v)
+	}
+	return audit.Event{Action: audit.ManualPaymentReplaced, Actor: actor, TargetType: TargetType, TargetID: p.OccurrenceID, At: at, Details: d}
+}
+
+// RestoredEvent is the audit event for a replaced manual payment that counts
+// again because the replacing confirmation was undone; by is the change that
+// did it ("unconfirmed" or "unmatched").
+func RestoredEvent(actor audit.Actor, p ManualPayment, matchID, by string, at time.Time) audit.Event {
+	e := ReplacedEvent(actor, p, matchID, at)
+	e.Action = audit.ManualPaymentRestored
+	e.Details["by"] = by
+	return e
 }
 
 // OverriddenEvent is the audit event for setting a manual status override:
