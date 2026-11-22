@@ -94,7 +94,7 @@ export function subjectText(s: Subject): string {
 
 /** The last characters of a transaction id: enough to tell apart identical-looking transactions on one screen. */
 export function shortRef(id: string): string {
-  return id.slice(-8)
+  return id.length <= 8 ? id : `…${id.slice(-8)}`
 }
 
 export const OFFLINE_NOTE_ID = 'matches-offline-note'
@@ -307,7 +307,13 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
             <span><DateText value={when} />, <Amount className="font-mono" amount={t.amount.amount} currency={t.amount.currency} /></span>
             {booked ? <span className="text-xs text-muted-foreground">booked</span> : <StatusBadge status="pending" label="Pending at the bank" />}
           </span>
-          <span className="block text-xs text-muted-foreground" data-testid="bank-ref">Transaction ref …{shortRef(t.id)} (Ledger's id for this bank transaction; two transactions with the same text are still two payments)</span>
+          <span className="block text-xs text-muted-foreground">
+            Ledger transaction id{' '}
+            <span className="font-mono" data-testid="bank-ref" title={t.id}>
+              <span aria-hidden>{shortRef(t.id)}</span>
+              <span className="sr-only">{t.id}</span>
+            </span>
+          </span>
           {m.bank_text_redacted ? (
             <span className="block text-xs text-muted-foreground">Bank description hidden: it needs the banking:read grant.</span>
           ) : (
@@ -356,7 +362,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
       )}
       {m.state === 'suggested' && competing > 1 && !alreadyPaid && (
         <p role="note" data-testid="competing" className="text-xs">
-          <StatusBadge status="stale" label="Needs your choice" /> {competing} suggestions compete for this occurrence. Check which transaction is the payment, confirm that one and reject the rest.
+          <StatusBadge status="stale" label="Needs your choice" /> {competing} suggestions compete for this occurrence. The bank reported these as separate transactions, so Ledger cannot tell from them whether they are separate payments, a duplicate or a reversal. Compare the transaction ids, confirm the one that is the payment and reject the rest.
         </p>
       )}
       {m.state === 'suggested' && !canConfirm && (

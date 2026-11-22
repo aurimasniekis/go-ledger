@@ -72,10 +72,19 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
 
 - **No HTTP routes, CLI commands or UI** for suggestions or alerts, and so no OpenAPI change: they belong to L7 (review UI
   and settings) and the MCP and Terraform tasks. Grants for them are decided there.
-- **No runner calls these services yet.** Nothing in `serve` triggers `SuggestCategory`/`SuggestLabels` for new
-  transactions, nothing reads transaction facts and the merchant's transfer classification for them (the caller builds
-  `Facts`), and no detector scans bank connections, commitments or occurrences to feed `alerts.Service.Raise`. Wiring
-  these to a trigger (after import) and to the real data is a follow-up that needs L7's settings and the decision adapters
+- **Triggers (L6d).** `decisiontasks.Trigger` runs after a refresh that stored something, for the transactions that
+  refresh inserted (`bankimport.AccountResult.Inserted`; updates and unchanged rows are never asked about). It builds
+  `Facts` from the stored transaction (description, amount, booking date) and calls `SuggestCategory` and
+  `SuggestLabels` for each enabled task. `serve` runs it in a background goroutine, one pass at a time, so the import
+  never waits for a model and never fails because of one; a failure (an error or a reason such as an outage, no consent
+  or an exhausted budget) is logged and counted in `RefreshStats`. Pending and declined objects are skipped by the
+  tasks themselves, so a repeated refresh asks nothing new. Nothing classifies a merchant as a transfer yet, so `serve`
+  gives no merchant lookup and the merchant name is never sent (fail closed); a lookup can be added where the
+  classification exists. The revert is atomic: `decisions.Store.RevertAutomatic` runs the conditional reset (the
+  organisation store's `ResetAutomaticCategoryWith`) and the reversal record in one transaction. Transactions that
+  arrived while no task was enabled are not asked about later. The trigger status is not on the API or UI yet (L7).
+- **No detector** scans bank connections, commitments or occurrences to feed `alerts.Service.Raise`. Wiring
+  detectors to the real data is a follow-up that needs L7's settings and the decision adapters
   (L2 to L5, none exist in this build, so an enabled decision task still stops startup as ADR-0060 says).
 - **No configuration key selects an alert channel.** The channel list is a constructor argument; the config key and the
   Pulse event for alerts are not defined.

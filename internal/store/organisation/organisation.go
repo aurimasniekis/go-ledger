@@ -932,6 +932,14 @@ func (s *Store) ResetCategory(ctx context.Context, actor audit.Actor, obj organi
 // undone. It returns [organisation.ErrAssignmentChanged] when the category is
 // anything else (or absent or inherited).
 func (s *Store) ResetAutomaticCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, source, categoryID string) error {
+	return s.ResetAutomaticCategoryWith(ctx, actor, obj, source, categoryID, nil)
+}
+
+// ResetAutomaticCategoryWith is [Store.ResetAutomaticCategory] with a step run
+// inside the same transaction, after the reset: when it fails, the reset is
+// rolled back with it (the decisions store records a reversal this way, so
+// the category and the record of taking it back never part).
+func (s *Store) ResetAutomaticCategoryWith(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, source, categoryID string, inTx func(ctx context.Context, tx *sql.Tx) error) error {
 	if err := checkObject(obj); err != nil {
 		return err
 	}
@@ -950,7 +958,13 @@ func (s *Store) ResetAutomaticCategory(ctx context.Context, actor audit.Actor, o
 		if _, err := tx.ExecContext(ctx, "DELETE FROM category_assignments WHERE object_type = ? AND object_id = ?", string(obj.Type), obj.ID); err != nil {
 			return err
 		}
-		return s.assignmentEvent(ctx, tx, actor, obj, organisation.KindCategory, "reset", organisation.OriginUser, originName(prev), now)
+		if err := s.assignmentEvent(ctx, tx, actor, obj, organisation.KindCategory, "reset", organisation.OriginUser, originName(prev), now); err != nil {
+			return err
+		}
+		if inTx == nil {
+			return nil
+		}
+		return inTx(ctx, tx)
 	})
 }
 

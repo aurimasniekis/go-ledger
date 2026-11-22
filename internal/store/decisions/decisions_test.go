@@ -54,9 +54,14 @@ type fixture struct {
 	rec   *recorder
 	facts *bankfacts.Store
 	tx    banking.StoredTransaction
+	hook  func(context.Context, bankimport.Result)
 }
 
-func newFixture(t *testing.T, withBank bool) *fixture {
+func newFixture(t *testing.T, withBank bool) *fixture { return newFixtureHook(t, withBank, nil) }
+
+// newFixtureHook is newFixture with a hook the import engine calls after a
+// refresh that stored something.
+func newFixtureHook(t *testing.T, withBank bool, hook func(context.Context, bankimport.Result)) *fixture {
 	t.Helper()
 	ctx := context.Background()
 	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "ledger.db"), store.Options{})
@@ -67,6 +72,7 @@ func newFixture(t *testing.T, withBank bool) *fixture {
 	f := &fixture{t: t, ctx: ctx, db: db, rec: &recorder{}, facts: bankfacts.New(db, nil)}
 	clock := func() time.Time { return t0 }
 	f.ds = decstore.New(db, f.rec, clock, nil)
+	f.hook = hook
 	if withBank {
 		f.importBank(clock)
 	}
@@ -77,7 +83,7 @@ func (f *fixture) importBank(clock func() time.Time) {
 	t, ctx := f.t, f.ctx
 	p := bankingtest.New(bankingtest.Options{Mode: banking.ModeApp, Now: clock, PageSize: 3}, bankingtest.Standard())
 	engine := bankimport.New(f.facts, bankimport.Options{Now: clock, Sleep: func(context.Context, time.Duration) error { return nil },
-		Jitter: func(d time.Duration) time.Duration { return d }})
+		Jitter: func(d time.Duration) time.Duration { return d }, AfterRefresh: f.hook})
 	inst := bankingtest.Standard().Institutions[0]
 	if _, err := p.StartConsent(ctx, banking.ConsentRequest{Institution: inst, RedirectURL: "https://ledger.example/cb", State: "s", PSUType: banking.PSUPersonal}); err != nil {
 		t.Fatal(err)

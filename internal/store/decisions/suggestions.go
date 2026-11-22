@@ -9,6 +9,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/decisions"
+	"github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 )
@@ -93,8 +94,42 @@ func (s *Store) Decide(ctx context.Context, actor audit.Actor, id string, to dec
 // effect, with its audit event. Only an accepted suggestion that was marked
 // for auto-apply can be reverted, once ([decisions.ErrNotReversible]).
 func (s *Store) RecordReversal(ctx context.Context, actor audit.Actor, id string) error {
+	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error { return s.recordReversalTx(ctx, tx, actor, id) })
+}
+
+// CategoryResetter resets an object's category only while it is still the
+// given model-origin assignment, and runs inTx in the same transaction
+// (internal/store/organisation implements it).
+type CategoryResetter interface {
+	ResetAutomaticCategoryWith(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, source, categoryID string, inTx func(ctx context.Context, tx *sql.Tx) error) error
+}
+
+// UseCategoryResetter sets the organisation store RevertAutomatic resets
+// categories through. Both stores must use the same database.
+func (s *Store) UseCategoryResetter(r CategoryResetter) { s.resetter = r }
+
+// RevertAutomatic takes back an auto-applied category and records the
+// reversal in one transaction: the conditional reset (the object's own
+// category is still the model's) and the reversal row with its audit event
+// commit together or not at all. A category changed since is
+// [decisions.ErrNotReversible], as is a suggestion that cannot be reverted or
+// was reverted already; nothing changes then.
+func (s *Store) RevertAutomatic(ctx context.Context, actor audit.Actor, id string, obj organisation.ObjectRef, source, categoryID string) error {
+	if s.resetter == nil {
+		return errors.New("decisions: no category resetter is set")
+	}
+	err := s.resetter.ResetAutomaticCategoryWith(ctx, actor, obj, source, categoryID, func(ctx context.Context, tx *sql.Tx) error {
+		return s.recordReversalTx(ctx, tx, actor, id)
+	})
+	if errors.Is(err, organisation.ErrAssignmentChanged) {
+		return decisions.ErrNotReversible
+	}
+	return err
+}
+
+func (s *Store) recordReversalTx(ctx context.Context, tx *sql.Tx, actor audit.Actor, id string) error {
 	now := s.now().UTC()
-	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	{
 		sg, err := scanSuggestion(tx.QueryRowContext(ctx, "SELECT "+suggestionColumns+" FROM decision_suggestions WHERE id = ?", id))
 		if errors.Is(err, sql.ErrNoRows) {
 			return resource.ErrNotFound
@@ -118,7 +153,7 @@ func (s *Store) RecordReversal(ctx context.Context, actor audit.Actor, id string
 			return err
 		}
 		return s.audit.WriteAudit(ctx, tx, suggestionEvent(audit.DecisionSuggestionReverted, actor, sg, now))
-	})
+	}
 }
 
 // Reverted reports whether a suggestion's effect was taken back.
