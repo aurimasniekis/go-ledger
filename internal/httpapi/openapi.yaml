@@ -3229,6 +3229,10 @@ paths:
         Ordered by provider, source, base currency and quote currency, then
         date newest first. A rate revised by the provider shows the value
         it replaced in `previous`.
+
+        Administrators only (decision D-FX-R): the read-only role and tokens of
+        a read-only owner get 403. Converted totals in the outlook and month
+        views do not need this endpoint.
       tags: [rates]
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -3293,6 +3297,7 @@ paths:
         optional: this is reported here and in the
         ledger_rates_* metrics, and it never makes /readyz fail. The last run is
         what happened since the process started (null before the first run).
+        Administrators only (decision D-FX-R), like the rates list.
       tags: [rates]
       responses:
         "200":

@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fail, installApi, ok, renderApp, signedIn } from '@/test/fake-api'
+import { fail, installApi, ok, renderApp, signedIn, type Handler, type Reply } from '@/test/fake-api'
 import type { CachedRate, RatesStatus } from './types'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -81,7 +81,6 @@ describe('rates page', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Load more rates' }))
     expect(await screen.findByText('SEK/EUR')).toBeInTheDocument()
     expect(calls.filter((c) => c.path === '/api/v1/rates').at(-1)!.query.get('cursor')).toBe('abc')
-    expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull()
     expect(calls.every((c) => c.method === 'GET')).toBe(true)
   })
 
@@ -89,6 +88,14 @@ describe('rates page', () => {
     installApi({ ...signedIn(), 'GET /api/v1/rates/status': ok(status()), 'GET /api/v1/rates': fail(400, 'validation_failed', 'boom') })
     renderApp('/rates')
     expect(await screen.findByText(/Could not load exchange rates/)).toBeInTheDocument()
+  })
+
+  it('shows the standard not-permitted state, and calls no rates endpoint, without rates:read', async () => {
+    const calls = installApi({ ...signedIn(undefined, ['commitments:read']) })
+    renderApp('/rates')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not permitted/)
+    expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull()
+    expect(calls.some((c) => c.path.startsWith('/api/v1/rates'))).toBe(false)
   })
 
   it('offers the page in the account menu only with rates:read', async () => {
@@ -123,5 +130,57 @@ describe('rates page', () => {
     installApi({ ...signedIn(), 'GET /api/v1/rates/status': () => new Promise(() => {}), 'GET /api/v1/rates': ok({ items: [rate()], next_cursor: null }) })
     renderApp('/rates')
     expect(await screen.findByText(/Loading the rate provider status/)).toBeInTheDocument()
+  })
+
+  describe('Refresh now', () => {
+    const page = (extra: Record<string, Handler> = {}, st: Partial<RatesStatus> = {}) =>
+      installApi({ ...signedIn(), 'GET /api/v1/rates/status': ok(status(st)), 'GET /api/v1/rates': ok({ items: [rate()], next_cursor: null }), ...extra })
+    const run = { trigger: 'manual', started_at: '2026-11-21T10:00:00Z', finished_at: '2026-11-21T10:00:02Z', outcome: 'succeeded', currencies_refreshed: 2, error: null }
+
+    it('is absent for a role without rates:write', async () => {
+      installApi({ ...signedIn(undefined, ['rates:read']), 'GET /api/v1/rates/status': ok(status()), 'GET /api/v1/rates': ok({ items: [], next_cursor: null }) })
+      renderApp('/rates')
+      await screen.findByRole('heading', { name: 'Exchange rates' })
+      expect(screen.queryByRole('button', { name: 'Refresh now' })).toBeNull()
+    })
+
+    it('shows pending, then success with the time and a reversible-feedback note', async () => {
+      let release: (r: Reply) => void = () => {}
+      const calls = page({ 'POST /api/v1/rates/refreshes': () => new Promise<Reply>((r) => (release = r)) })
+      renderApp('/rates')
+      await userEvent.click(await screen.findByRole('button', { name: 'Refresh now' }))
+      const pending = await screen.findByRole('button', { name: 'Refreshing…' })
+      expect(pending).toBeDisabled()
+      expect(screen.getByTestId('rates-refresh-result')).toHaveTextContent('Asking the rate provider')
+      release(ok(run))
+      expect(await screen.findByText(/Refreshed 2 currencies at/)).toHaveTextContent('2026-11-21 10:00:02 UTC'.slice(0, 16))
+      expect(screen.getByText(/nothing is deleted/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Refresh now' })).toBeEnabled()
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+    })
+
+    it('says when a rate-limited refresh can be retried and keeps the button off until then', async () => {
+      page({ 'POST /api/v1/rates/refreshes': { ...fail(429, 'rate_limited', 'slow down'), headers: { 'Retry-After': '45' } } })
+      renderApp('/rates')
+      await userEvent.click(await screen.findByRole('button', { name: 'Refresh now' }))
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent(/Nothing changed/)
+      expect(alert).toHaveTextContent(/try again at \d{4}-\d\d-\d\d \d\d:\d\d UTC/)
+      expect(screen.getByRole('button', { name: 'Refresh now' })).toBeDisabled()
+    })
+
+    it('says when refreshing is unavailable and changes nothing', async () => {
+      page({ 'POST /api/v1/rates/refreshes': fail(409, 'rates_refresh_unavailable', 'off') })
+      renderApp('/rates')
+      await userEvent.click(await screen.findByRole('button', { name: 'Refresh now' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be refreshed right now.*Nothing changed/)
+    })
+
+    it('is disabled with the reason when no refresh can run', async () => {
+      page({}, { enabled: false, refresh_available: false })
+      renderApp('/rates')
+      expect(await screen.findByText(/No refresh can run/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Refresh now' })).toBeDisabled()
+    })
   })
 })

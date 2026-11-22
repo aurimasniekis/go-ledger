@@ -14,10 +14,13 @@ CLI, MCP read tool, UI) without making the optional rate provider a dependency.
 
 ## Decision
 
-1. **Grant.** A new resource `rates` with `rates:read` and `rates:write`. Reading is not administrator-only: the rates
-   are public reference data and the read-only role holds `rates:read` (so the UI's rates page and the MCP read tools
-   work for them). Writing, which asks the provider for fresh rates, is held by administrators only (the read-only role
-   never holds a write; a token holds it only if its owner does). Reusing `commitments:write` was rejected: refreshing
+1. **Grant.** A new resource `rates` with `rates:read` and `rates:write`. **Amended by decision D-FX-R (task FX4):
+   both are administrator-only.** The read-only role no longer holds `rates:read`, so the rates list and status
+   endpoints, the `/rates` page and its navigation entry, the MCP read tools and the CLI read commands are for
+   administrators (a token holds a grant only if its owner's role does). Converted totals in the outlook and month views
+   carry their own rates, dates and ages on the view endpoints and stay visible to roles that can read those views.
+   Originally reading was open to the read-only role; writing, which asks the provider for fresh rates, was always held
+   by administrators only. Reusing `commitments:write` was rejected: refreshing
    rates has nothing to do with editing commitments, and `connections:write` is for bank access.
 2. **Read API.** `GET /api/v1/rates` lists the cache in the Management API's conventions (ADR-0011): `limit`, an
    opaque `cursor`, and equality filters `provider`, `source`, `base`, `quote` plus `date[gte]` and `date[lte]`

@@ -118,8 +118,8 @@ var mgmtVerbs = map[string]map[string]verb{
 		"disconnect":   {"disconnect <id> [--version N]   (ends the provider session; stored data stays as history)", bankDisconnect},
 	},
 	"rates": {
-		"list":    {"list [--provider P] [--source S] [--base CUR] [--quote CUR] [--from YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N] [--cursor C] [--all]   (cached exchange rates with date, retrieval time and staleness; needs rates:read)", ratesList},
-		"status":  {"status   (rate provider, freshness policy and the last refresh; needs rates:read)", ratesStatus},
+		"list":    {"list [--provider P] [--source S] [--base CUR] [--quote CUR] [--from YYYY-MM-DD] [--until YYYY-MM-DD] [--limit N] [--cursor C] [--all]   (cached exchange rates with date, retrieval time and staleness; administrator, needs rates:read)", ratesList},
+		"status":  {"status   (rate provider, freshness policy and the last refresh; administrator, needs rates:read)", ratesStatus},
 		"refresh": {"refresh   (ask the rate provider for fresh rates now; administrator, needs rates:write; at most one a minute)", ratesRefresh},
 	},
 	"tokens": {

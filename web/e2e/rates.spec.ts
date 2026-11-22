@@ -23,7 +23,7 @@ async function stub(page: Page) {
     r.fulfill(body({ user_id: 'u1', csrf_token: 'x', recent_auth_until: now, two_factor: { enabled: false, required: false, enrollment_required: false },
       session: { id: 's1', current: true, created_at: now, last_seen_at: now, authenticated_at: now, idle_expires_at: now, expires_at: now, user_agent: 'e2e', address: '192.0.2.1' } })))
   await page.route('**/api/v1/me', (r) =>
-    r.fulfill(body({ kind: 'user', user_id: 'u1', token_id: null, role: 'read-only', grants: ['commitments:read', 'rates:read'] })))
+    r.fulfill(body({ kind: 'user', user_id: 'u1', token_id: null, role: 'administrator', grants: ['commitments:read', 'rates:read', 'rates:write'] })))
   await page.route('**/api/v1/rates/status', (r) => r.fulfill(body(status)))
   await page.route('**/api/v1/rates', (r) => r.fulfill(body({
     items: [rate('GBP', '1.16210', '2026-11-13', '2026-11-14T09:00:00Z', 'not_retrieved_recently'), rate('USD', '0.90992', '2026-11-20', '2026-11-21T09:00:00Z', null)],
@@ -56,8 +56,27 @@ test('the rates screen shows exact rates, ISO dates, retrieval time, staleness a
   await expect(usd).toContainText('Current')
   await expect(page.getByTestId('rates-last-run')).toContainText('scheduled refresh failed: the rate provider did not answer (timeout)')
   await expect(page.getByTestId('rates-last-run')).toContainText('Last fully successful refresh: 2026-11-20 09:00 UTC')
-  await expect(page.getByRole('button', { name: /refresh/i })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Refresh now' })).toBeEnabled()
   await shot(page, 'rates-desktop')
+})
+
+test('Refresh now shows success, then the retry time when rate limited', async ({ page }) => {
+  await stub(page)
+  let posts = 0
+  await page.route('**/api/v1/rates/refreshes', (r) => {
+    posts++
+    if (posts === 1) {
+      return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ trigger: 'manual', started_at: now, finished_at: now, outcome: 'succeeded', currencies_refreshed: 2, error: null }) })
+    }
+    return r.fulfill({ status: 429, contentType: 'application/json', headers: { 'Retry-After': '60' }, body: JSON.stringify({ code: 'rate_limited', message: 'slow down', request_id: 'r' }) })
+  })
+  await page.goto('/rates')
+  const button = page.getByRole('button', { name: 'Refresh now' })
+  await button.click()
+  await expect(page.getByTestId('rates-refresh-result')).toContainText('Refreshed 2 currencies at')
+  await button.click()
+  await expect(page.getByRole('alert')).toContainText('You can try again at')
+  await expect(button).toBeDisabled()
 })
 
 test('at 390 px nothing scrolls sideways', async ({ page }) => {

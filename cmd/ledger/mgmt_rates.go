@@ -11,7 +11,8 @@ import (
 
 // The rates commands list the exchange rates Ledger has cached, report on the
 // optional rate provider and ask it for fresh rates (task FX2c, ADR-0048).
-// Reading needs rates:read; refresh needs rates:write, an administrator grant.
+// Reading needs rates:read and refresh needs rates:write; both are administrator
+// grants (decision D-FX-R).
 // Rates are shown exactly as published, with their date and when they were
 // retrieved: a stale rate is marked and is never used in a converted total.
 
