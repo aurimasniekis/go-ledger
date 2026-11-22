@@ -32,6 +32,23 @@ export interface OutlookCurrency {
   balance_as_of: string | null
   /** Payments dated strictly after balance_as_of: a caveat, never netted into the balance. Null without a balance. */
   payments_after_balance: { count: number; amount: Money } | null
+  /**
+   * The window with each outstanding amount placed in the month it is planned to be paid (deferral plans): total =
+   * still_due − deferred_beyond + adjustments. A plan never changes still_due, overdue or upcoming. Absent from older servers.
+   */
+  planned_outflows?: {
+    total: Money
+    /** Part of still_due planned into a later month of the window than its own. */
+    deferred_in: Money
+    /** Part of still_due planned after the window. */
+    deferred_beyond: Money
+    /** Fees and charges still planned (not removed, not marked paid); not part of still_due. */
+    adjustments: Money
+    /** Active plans of the window whose date passed while something planned is unpaid. Absent from older servers. */
+    missed_count?: number
+    /** Outstanding principal of the occurrences behind missed_count. */
+    missed_outstanding?: Money
+  }
 }
 
 export type FreshnessState = 'fresh' | 'stale' | 'failed' | 'reconnect_required' | 'disconnected' | 'never_refreshed'
@@ -61,6 +78,8 @@ export interface OutlookConverted {
   complete: boolean
   still_due: Money
   overdue: Money
+  /** The per-currency planned total converted with the same rate as still_due; other planned figures are per currency only. */
+  planned_total?: Money
   balance: Money | null
   balance_less_still_due: Money | null
   balance_account_count: number
@@ -69,9 +88,19 @@ export interface OutlookConverted {
   excluded: { currency: string; status: 'stale' | 'missing'; reason: string; rate: ExchangeRate | null }[]
 }
 
+/** Present when the outlook was restricted to one bucket (D12): a view, never an allocation of money. */
+export interface OutlookSlice {
+  bucket: { id: string; name: string; archived: boolean }
+  commitment_count: number
+  account_count: number
+  note: string
+}
+
 export interface Outlook {
   as_of: string
   notice: string
+  /** Null for the whole outlook. */
+  slice?: OutlookSlice | null
   window: { from: string | null; through: string; truncated: boolean; not_recorded_count: number }
   currencies: OutlookCurrency[]
   balances: { shown: boolean; note: string; stale_after_seconds: number | null }

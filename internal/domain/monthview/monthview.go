@@ -77,8 +77,11 @@ type Row struct {
 //   - CarriedIn is the outstanding amount of occurrences of earlier months
 //     whose active plan falls in this month.
 //   - Adjustments sums the explicit fees and charges of the active plans
-//     planned in this month whose occurrence still owes something; a plan
-//     never adds one by itself (D14).
+//     planned in this month that are still planned: neither removed nor marked
+//     paid (D-DF 2). They count whether or not the occurrence's principal is
+//     paid, even when it was cancelled, and each under its own currency; a
+//     plan never adds one by itself (D14), and a fee is never payment
+//     evidence for the occurrence.
 //   - Planned = Outstanding - DeferredOut + CarriedIn + Adjustments.
 //
 // Two occurrences of 50 EUR still owed, one of them deferred into the month
@@ -151,6 +154,22 @@ func (s Service) Current(ctx context.Context, month calendar.YearMonth) (Summary
 // state as of today and the per-currency totals. A month later than
 // [occurrences.HorizonLimit] allows fails with [occurrences.ErrBeyondHorizon].
 func (s Service) Month(ctx context.Context, month calendar.YearMonth, today calendar.Date) (Summary, error) {
+	return s.MonthScoped(ctx, month, today, nil)
+}
+
+// MonthScoped is [Service.Month] restricted to the occurrences of the
+// commitments in only (nil: every commitment; an empty non-nil set: none). The
+// rows, the carried-in rows and every total cover only those commitments, so a
+// scoped summary is never mistaken for the whole month: callers say so where
+// they present it (task O3).
+func (s Service) MonthScoped(ctx context.Context, month calendar.YearMonth, today calendar.Date, only map[string]struct{}) (Summary, error) {
+	in := func(id string) bool {
+		if only == nil {
+			return true
+		}
+		_, ok := only[id]
+		return ok
+	}
 	if month.Compare(occurrences.HorizonLimit(today)) > 0 {
 		return Summary{}, occurrences.ErrBeyondHorizon
 	}
@@ -196,6 +215,9 @@ func (s Service) Month(ctx context.Context, month calendar.YearMonth, today cale
 				}
 			}
 			for _, o := range items {
+				if !in(o.CommitmentID) {
+					continue
+				}
 				name, err := nameOf(o.CommitmentID)
 				if err != nil {
 					return Summary{}, err
@@ -213,7 +235,7 @@ func (s Service) Month(ctx context.Context, month calendar.YearMonth, today cale
 		}
 	}
 	if s.Deferrals != nil {
-		carried, err := s.carriedIn(ctx, month, today, nameOf)
+		carried, err := s.carriedIn(ctx, month, today, nameOf, in)
 		if err != nil {
 			return Summary{}, err
 		}
@@ -225,7 +247,7 @@ func (s Service) Month(ctx context.Context, month calendar.YearMonth, today cale
 
 // carriedIn reads the occurrences of earlier months whose active plan falls in
 // month, with their payment state as of today.
-func (s Service) carriedIn(ctx context.Context, month calendar.YearMonth, today calendar.Date, nameOf func(string) (string, error)) ([]Row, error) {
+func (s Service) carriedIn(ctx context.Context, month calendar.YearMonth, today calendar.Date, nameOf func(string) (string, error), in func(string) bool) ([]Row, error) {
 	plans, err := s.Deferrals.PlannedIn(ctx, month)
 	if err != nil {
 		return nil, err
@@ -249,8 +271,8 @@ func (s Service) carriedIn(ctx context.Context, month calendar.YearMonth, today 
 		if err != nil {
 			return nil, err
 		}
-		if o.Month.Compare(month) >= 0 {
-			continue // planned within its own month: already a row
+		if o.Month.Compare(month) >= 0 || !in(o.CommitmentID) {
+			continue // planned within its own month: already a row; or outside the scope
 		}
 		name, err := nameOf(o.CommitmentID)
 		if err != nil {
@@ -285,14 +307,15 @@ func owed(st payments.State, zero money.Money) money.Money {
 }
 
 // planAdjustments is what a row's active plan adds to its planned month: its
-// active (not removed) adjustments while the occurrence still owes something.
-func planAdjustments(r Row, owes money.Money) []money.Money {
-	if r.Deferral == nil || !r.Deferral.Active() || owes.Sign() <= 0 {
+// adjustments that are neither removed nor marked paid, whatever the
+// occurrence's principal owes.
+func planAdjustments(r Row) []money.Money {
+	if r.Deferral == nil || !r.Deferral.Active() {
 		return nil
 	}
 	var out []money.Money
 	for _, a := range r.Deferral.Adjustments {
-		if a.RemovedAt == nil {
+		if a.Planned() {
 			out = append(out, a.Amount)
 		}
 	}
@@ -316,8 +339,8 @@ func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, 
 	}
 	// addAdjustments adds a row's plan adjustments under the adjustments' own
 	// currency, never the occurrence's: a fee can then never silently vanish.
-	addAdjustments := func(r Row, owes money.Money) {
-		for _, adj := range planAdjustments(r, owes) {
+	addAdjustments := func(r Row) {
+		for _, adj := range planAdjustments(r) {
 			zero, _ := money.Zero(adj.Currency(), adj.Amount().Scale())
 			a := get(adj.Currency(), zero)
 			_ = a.planned.Add(adj)
@@ -331,7 +354,11 @@ func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, 
 			latest = o.UpdatedAt
 		}
 		if st.Status == payments.StatusCancelled {
-			// A cancelled occurrence is owed nothing: it adds to no total and no count.
+			// A cancelled occurrence is owed nothing: it adds to no total and no
+			// count. A fee recorded on its plan is still owed.
+			if deferrals.PlannedMonth(o, r.Deferral) == month {
+				addAdjustments(r)
+			}
 			continue
 		}
 		cur := o.Amount.Currency()
@@ -347,7 +374,7 @@ func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, 
 			_ = a.deferredOut.Add(outstanding)
 		} else {
 			_ = a.planned.Add(outstanding)
-			addAdjustments(r, outstanding)
+			addAdjustments(r)
 		}
 		// Add only fails for a Money without a currency, which cannot occur
 		// here: every figure derives from the occurrence's amount.
@@ -364,6 +391,7 @@ func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, 
 	for _, r := range carried {
 		o, st := r.Occurrence, r.State
 		if st.Status == payments.StatusCancelled {
+			addAdjustments(r)
 			continue
 		}
 		cur := o.Amount.Currency()
@@ -372,7 +400,7 @@ func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, 
 		outstanding := owed(st, zero)
 		_ = a.carriedIn.Add(outstanding)
 		_ = a.planned.Add(outstanding)
-		addAdjustments(r, outstanding)
+		addAdjustments(r)
 	}
 	currencies := make([]money.Currency, 0, len(by))
 	for cur := range by {

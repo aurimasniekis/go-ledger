@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,9 @@ import { DisconnectedState, EmptyState, FailedState, LoadingState } from '@/comp
 import { Amount, DateText } from '@/components/formatted'
 import { isNetworkError, useOnline } from '@/lib/connection'
 import { holds, useMe } from '@/lib/auth'
+import { Select } from '@/components/ui/input'
+import { Field } from '@/components/field'
+import { useAllDefinitions } from '@/features/organisation/api'
 import { STALE_AFTER_MS } from '@/features/month/month-board'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from '@/features/month/month'
 import type { Money } from '@/features/month/types'
@@ -90,9 +93,11 @@ const EXCLUDED_REASON: Record<string, string> = {
 }
 
 /** The /outlook screen: bank balances compared with recorded commitments still due, per currency first. */
-export function OutlookPage({ through, currency }: { through?: string; currency?: string }) {
+export function OutlookPage({ through, currency, bucket }: { through?: string; currency?: string; bucket?: string }) {
   const navigate = useNavigate()
-  const q = useOutlook(through, currency)
+  const q = useOutlook(through, currency, bucket)
+  const canReadOrganisation = holds(useMe().data?.grants, 'organisation:read')
+  const buckets = useAllDefinitions('bucket', undefined, canReadOrganisation)
   // The rates page is administrator-only (D-FX-R): the totals above carry their own rates, so only the link depends on the grant.
   const canSeeRates = holds(useMe().data?.grants, 'rates:read')
   const online = useOnline()
@@ -102,7 +107,13 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
     return () => clearInterval(t)
   }, [])
   const shownThrough = q.data?.window.through ?? through
-  const go = (m: string) => void navigate({ to: '/outlook', search: { through: m, ...(currency ? { currency } : {}) } })
+  const search = (over: { through?: string; bucket?: string }) => ({
+    ...((over.through ?? through) ? { through: over.through ?? through } : {}),
+    ...(currency ? { currency } : {}),
+    ...(('bucket' in over ? over.bucket : bucket) ? { bucket: 'bucket' in over ? over.bucket : bucket } : {}),
+  })
+  const go = (m: string) => void navigate({ to: '/outlook', search: search({ through: m }) })
+  const slice = q.data?.slice ?? null
 
   return (
     <section className="space-y-4" aria-labelledby="outlook-title">
@@ -122,6 +133,35 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
           <p data-testid="outlook-notice" className="rounded-md border border-border bg-surface p-3 text-sm">
             {q.data.notice}
           </p>
+          {canReadOrganisation && (buckets.items.length > 0 || bucket) && (
+            <Field label="Show only one bucket (a slice of the outlook)" name="outlook-bucket" className="min-w-48 max-w-xs">
+              {(p) => (
+                <Select {...p} value={bucket ?? ''} onChange={(e) => void navigate({ to: '/outlook', search: search({ bucket: e.target.value || undefined }) })}>
+                  <option value="">Everything (no slice)</option>
+                  {buckets.items.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                      {b.archived ? ' (archived)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+          )}
+          {slice && (
+            <section role="note" aria-label="This is a slice of the outlook" data-testid="outlook-slice" className="space-y-1 rounded-md border-2 border-border bg-surface p-3 text-sm">
+              <p>
+                <StatusBadge status="stale" label="Slice" /> <strong>Only the bucket {slice.bucket.name}</strong>
+                {slice.bucket.archived ? ' (archived)' : ''}: {slice.commitment_count} {slice.commitment_count === 1 ? 'commitment' : 'commitments'} and {slice.account_count} {slice.account_count === 1 ? 'account' : 'accounts'}. Not the whole outlook.
+              </p>
+              <p>{slice.note}</p>
+              <p>
+                <Link to="/outlook" search={search({ bucket: undefined })} className="underline">
+                  Show the whole outlook
+                </Link>
+              </p>
+            </section>
+          )}
           {shownThrough && (
             <div role="group" aria-label="Commitments counted through" className="flex items-center gap-2">
               <Button variant="outline" size="sm" disabled={shownThrough <= q.data.as_of.slice(0, 7)} onClick={() => go(shiftMonth(shownThrough, -1))}>
@@ -155,7 +195,7 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
               No commitment is still due in this window{q.data.balances.shown ? ' and no bank balance is counted' : ''}. Add commitments, or <Link to="/connections" className="underline">connect a bank on the Connections page</Link>, to see the outlook.
             </EmptyState>
           ) : (
-            <Currencies lines={q.data.currencies} accounts={q.data.accounts} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} />
+            <Currencies sliceName={slice?.bucket.name} lines={q.data.currencies} accounts={q.data.accounts} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} through={q.data.window.through} />
           )}
           {q.data.converted && (
             <Converted
@@ -175,7 +215,7 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
               and when they were retrieved.
             </p>
           )}
-          <Accounts data={q.data} />
+          <Accounts data={q.data} sliceName={slice?.bucket.name} />
           <p className="text-sm text-muted-foreground">{q.data.planned_outflows.note}</p>
         </>
       )}
@@ -226,11 +266,11 @@ function Freshness(p: {
   )
 }
 
-function Currencies({ lines, accounts, balancesShown, staleAfter }: { lines: OutlookCurrency[]; accounts: OutlookAccount[]; balancesShown: boolean; staleAfter: number | null }) {
+function Currencies({ sliceName, lines, accounts, balancesShown, staleAfter, through }: { sliceName?: string; lines: OutlookCurrency[]; accounts: OutlookAccount[]; balancesShown: boolean; staleAfter: number | null; through: string }) {
   return (
     <section aria-labelledby="outlook-currencies" className="space-y-2">
       <h2 id="outlook-currencies" className="font-semibold">
-        By currency
+        By currency{sliceName ? ', bucket ' + sliceName + ' only' : ''}
       </h2>
       <p className="text-sm text-muted-foreground">
         Each currency is compared on its own; amounts in different currencies are never added together here.
@@ -278,6 +318,7 @@ function Currencies({ lines, accounts, balancesShown, staleAfter }: { lines: Out
                   <dd className={AMOUNT}>{money(l.balance_less_still_due)}</dd>
                 </>
               )}
+              {l.planned_outflows && <PlannedOutflows p={l.planned_outflows} through={through} />}
             </dl>
             {l.overdue_months.length > 0 && (
               <div className="mt-1 text-xs">
@@ -308,6 +349,52 @@ function Currencies({ lines, accounts, balancesShown, staleAfter }: { lines: Out
         ))}
       </ul>
     </section>
+  )
+}
+
+/**
+ * The window with each amount placed in the month it is planned to be paid (deferral plans, D-DF 8). It sits beside the
+ * obligation rows and never replaces them: a plan changes when an amount is planned, not whether it is still owed.
+ * Each row names what it is, so deferred and fee amounts are told apart by their words, not by colour.
+ */
+function PlannedOutflows({ p, through }: { p: NonNullable<OutlookCurrency['planned_outflows']>; through: string }) {
+  const rows: [string, string, Money][] = []
+  if (!isZeroAmount(p.deferred_in.amount)) rows.push(['deferred-in', 'of which deferred in: still due, planned in a later month than its own', p.deferred_in])
+  if (!isZeroAmount(p.adjustments.amount)) rows.push(['fees', 'of which fees and charges still planned (not part of "still due")', p.adjustments])
+  const missed = p.missed_count ?? 0
+  return (
+    <>
+      <dt className="mt-1 border-t border-border pt-1 font-semibold sm:col-span-2" data-testid="outlook-planned-heading">
+        Planned outflows
+      </dt>
+      <dd className="text-xs text-muted-foreground sm:col-span-2">Where each amount still due is planned to be paid. A plan is not a payment: "still due" above is unchanged.</dd>
+      <dt>Planned to be paid through {monthLabel(through)}</dt>
+      <dd data-testid="outlook-planned-total" className={AMOUNT}>
+        {money(p.total)}
+      </dd>
+      {rows.map(([key, label, m]) => (
+        <Fragment key={key}>
+          <dt className="pl-3" data-testid={'outlook-planned-' + key}>
+            {label}
+          </dt>
+          <dd className={AMOUNT}>{money(m)}</dd>
+        </Fragment>
+      ))}
+      {missed > 0 && p.missed_outstanding && (
+        <>
+          <dt data-testid="outlook-planned-missed" className="font-medium">
+            {missed} {missed === 1 ? 'plan' : 'plans'} missed: the planned date has passed and something planned is still unpaid (outstanding amount of {missed === 1 ? 'it' : 'them'})
+          </dt>
+          <dd className={AMOUNT}>{money(p.missed_outstanding)}</dd>
+        </>
+      )}
+      {!isZeroAmount(p.deferred_beyond.amount) && (
+        <>
+          <dt data-testid="outlook-planned-beyond">Still due but planned after {monthLabel(through)} (deferred beyond this view)</dt>
+          <dd className={AMOUNT}>{money(p.deferred_beyond)}</dd>
+        </>
+      )}
+    </>
   )
 }
 
@@ -361,7 +448,7 @@ function Converted({ c, accounts, hasLine, balancesShown, staleAfter }: { c: Out
         Converted to {c.currency} (secondary)
       </h2>
       <p className="text-sm text-muted-foreground">
-        An approximation for orientation: each currency is converted at its latest acceptable exchange rate and rounded to {c.currency}. The figures by currency above are the reference.
+        An approximation for orientation: each currency is converted at its latest acceptable exchange rate and rounded to {c.currency}. The figures by currency above are the reference. Deferred, fee and missed-plan figures are shown per currency only.
       </p>
       {!c.complete && (
         <div role="note" className="flex flex-wrap items-start gap-2 text-sm">
@@ -393,6 +480,12 @@ function Converted({ c, accounts, hasLine, balancesShown, staleAfter }: { c: Out
         <dd className={AMOUNT}>{money(c.still_due)}</dd>
         <dt>of which overdue</dt>
         <dd className={AMOUNT}>{money(c.overdue)}</dd>
+        {c.planned_total && (
+          <>
+            <dt data-testid="outlook-converted-planned">Planned to be paid through the selected month, converted</dt>
+            <dd className={AMOUNT}>{money(c.planned_total)}</dd>
+          </>
+        )}
         {c.balance_less_still_due && (
           <>
             <dt>Balance minus recorded commitments still due</dt>
@@ -416,15 +509,15 @@ function Converted({ c, accounts, hasLine, balancesShown, staleAfter }: { c: Out
   )
 }
 
-function Accounts({ data }: { data: Outlook }) {
+function Accounts({ data, sliceName }: { data: Outlook; sliceName?: string }) {
   if (!data.balances.shown) return null
   return (
     <section aria-labelledby="outlook-accounts" className="space-y-2">
       <h2 id="outlook-accounts" className="font-semibold">
-        Bank accounts
+        {sliceName ? 'Bank accounts in the bucket ' + sliceName : 'Bank accounts'}
       </h2>
       {data.accounts.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No bank account is connected, so no balance is compared.</p>
+        <p className="text-sm text-muted-foreground">{sliceName ? 'No bank account is in this bucket, so no balance is compared in this slice.' : 'No bank account is connected, so no balance is compared.'}</p>
       ) : (
         <ul className="space-y-2">
           {data.accounts.map((a) => {

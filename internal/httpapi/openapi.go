@@ -76,6 +76,8 @@ type Deps struct {
 	Matches matches.Store
 	// Merchants stores merchant enrichments and decisions (ADR-0051).
 	Merchants merchants.Store
+	// MerchantSources describes the merchant-identification sources (ADR-0054).
+	MerchantSources []MerchantSourceInfo
 	// Organisation stores categories, labels, buckets and their assignments
 	// (ADR-0053).
 	Organisation organisation.Store
@@ -149,23 +151,25 @@ func RegisterAPI(s *Server, d Deps) {
 	registerAudit(s, d.Audit)
 	registerTokens(s, d.Tokens)
 	todayFn := newToday(d.Zone, d.Now)
-	registerCommitments(s, d.Commitments, todayFn)
+	registerCommitments(s, d.Commitments, d.Organisation, todayFn)
 	var plans deferrals.Reader
 	if d.Deferrals != nil {
 		plans = d.Deferrals
 	}
-	registerOccurrences(s, d.Occurrences, d.Payments, d.Commitments, plans, todayFn, d.Grace, d.Now, d.Banks, d.BankStaleAfter)
+	registerOccurrences(s, d.Organisation, d.Occurrences, d.Payments, d.Commitments, plans, todayFn, d.Grace, d.Now, d.Banks, d.BankStaleAfter)
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
-	registerMatches(s, d.Matches)
+	registerMatches(s, d.Matches, d.Organisation)
 	registerMerchants(s, d.Merchants)
+	registerMerchantRecords(s, d.Merchants)
+	registerMerchantSources(s, d.MerchantSources)
 	registerOrganisation(s, d.Organisation)
 	registerDeferrals(s, d.Deferrals, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerBankConnections(s, d.Banking)
 	registerMatching(s, d.Matching)
 	registerRates(s, d.RateCache, d.Now)
 	registerOutlook(s, outlook.Service{
-		Months:      monthview.Service{Occurrences: d.Occurrences, Payments: d.Payments, Grace: d.Grace},
-		Commitments: d.Commitments, Banks: d.Banks, Rates: d.Rates, ConvertTimeout: d.ConvertTimeout, Today: todayFn, Now: d.Now, BankStaleAfter: d.BankStaleAfter, Zone: d.Zone,
+		Months:      monthview.Service{Occurrences: d.Occurrences, Payments: d.Payments, Grace: d.Grace, Deferrals: plans},
+		Commitments: d.Commitments, Banks: d.Banks, Buckets: d.Organisation, Rates: d.Rates, ConvertTimeout: d.ConvertTimeout, Today: todayFn, Now: d.Now, BankStaleAfter: d.BankStaleAfter, Zone: d.Zone,
 	}, d.ReportingCurrency, d.Now)
 	registerMCP(s, d.MCP)
 }

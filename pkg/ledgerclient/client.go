@@ -147,6 +147,9 @@ type request struct {
 	query   url.Values
 	body    any
 	version int64 // If-Match when > 0
+	// params fills any other {placeholder} of the path (object_type, object_id,
+	// label_id), each escaped.
+	params map[string]string
 }
 
 // do performs req and decodes a 2xx JSON answer into out (nil: ignore it).
@@ -161,6 +164,9 @@ func (c *Client) do(ctx context.Context, req request, out any) error {
 	if req.pathID2 != "" {
 		path = strings.Replace(path, "{payment_id}", url.PathEscape(req.pathID2), 1)
 		path = strings.Replace(path, "{adjustment_id}", url.PathEscape(req.pathID2), 1)
+	}
+	for k, v := range req.params {
+		path = strings.Replace(path, "{"+k+"}", url.PathEscape(v), 1)
 	}
 	u := c.base + APIPath + path
 	if len(req.query) > 0 {

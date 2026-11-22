@@ -12,7 +12,8 @@
 // overpayment, and automation never undoes a person's decision (decision D33).
 //
 // Candidate generation uses the same currency (amounts are never converted,
-// decision D5), an amount band and a date window around the due date. The
+// decision D5), an amount band and a date window around the due date (and
+// around the planned date of an active deferral plan, decision D-DF 7). The
 // transaction description is only a hint: its similarity score orders and
 // explains suggestions and never confirms anything.
 //
@@ -20,7 +21,9 @@
 // D9): the same currency; the transaction's whole amount equals the
 // occurrence's amount, or falls short of it by no more than the commitment's
 // tolerance; the transaction is booked (pending ones only produce suggestions,
-// decision D8); it is dated within [ConfirmDays] of the due date; the
+// decision D8); it is dated within [ConfirmDays] of the due date, or of the
+// planned date of the occurrence's active deferral plan (decision D-DF 7; an
+// undone plan never counts); the
 // occurrence has exactly one candidate transaction and the transaction exactly
 // one candidate occurrence; and neither is already assigned (the occurrence
 // has no payment evidence or confirmed match, the transaction no confirmed or
@@ -84,6 +87,9 @@ type Occurrence struct {
 	Amount  money.Money
 	// Tolerance is the commitment's match tolerance; nil when none.
 	Tolerance *money.Money
+	// PlannedDate is the planned date of the occurrence's active deferral
+	// plan; nil when there is none. An undone plan is never set here.
+	PlannedDate *calendar.Date
 }
 
 // Existing is a stored payment match, in any state.
@@ -185,6 +191,9 @@ type Checks struct {
 	// Days is how many days the transaction is dated from the due date
 	// (absolute).
 	Days int
+	// PlannedDays is how many days it is dated from the active plan's
+	// planned date (absolute); nil when the occurrence has no active plan.
+	PlannedDays *int
 	// Transactions counts the occurrence's candidate transactions;
 	// Occurrences the transaction's candidate occurrences.
 	Transactions int
@@ -207,7 +216,7 @@ func (c Checks) Failed() []string {
 	if !c.Booked {
 		out = append(out, "pending")
 	}
-	if c.Days > ConfirmDays {
+	if !c.dateOK() {
 		out = append(out, "date_outside_window")
 	}
 	if c.Transactions != 1 {
@@ -220,6 +229,13 @@ func (c Checks) Failed() []string {
 		out = append(out, "transaction_has_open_match")
 	}
 	return out
+}
+
+// dateOK reports whether the date safeguard passes: within [ConfirmDays] of
+// the due date or, with an active deferral plan, of its planned date
+// (decision D-DF 7).
+func (c Checks) dateOK() bool {
+	return c.Days <= ConfirmDays || (c.PlannedDays != nil && *c.PlannedDays <= ConfirmDays)
 }
 
 // Pass reports whether every safeguard passed.
@@ -238,7 +254,11 @@ func (c Checks) reason() string {
 		case "pending":
 			parts = append(parts, code+" (only a booked transaction can be confirmed)")
 		case "date_outside_window":
-			parts = append(parts, code+" ("+strconv.Itoa(c.Days)+" days from the due date; at most "+strconv.Itoa(ConfirmDays)+")")
+			s := code + " (" + strconv.Itoa(c.Days) + " days from the due date"
+			if c.PlannedDays != nil {
+				s += ", " + strconv.Itoa(*c.PlannedDays) + " from the planned date"
+			}
+			parts = append(parts, s+"; at most "+strconv.Itoa(ConfirmDays)+")")
 		case "several_transactions":
 			parts = append(parts, code+" ("+strconv.Itoa(c.Transactions)+" candidate transactions for this occurrence)")
 		case "several_occurrences":
@@ -255,8 +275,11 @@ func (c Checks) reason() string {
 		if c.Amount == AmountTolerance {
 			amount = "within the commitment's tolerance (short by " + c.Difference.String() + ")"
 		}
-		return "automatic match confirmed: " + amount + ", booked, " + strconv.Itoa(c.Days) +
-			" days from the due date, the only candidate on both sides; " + hint
+		when := strconv.Itoa(c.Days) + " days from the due date"
+		if c.Days > ConfirmDays && c.PlannedDays != nil {
+			when = strconv.Itoa(*c.PlannedDays) + " days from the planned date of its deferral plan"
+		}
+		return "automatic match confirmed: " + amount + ", booked, " + when + ", the only candidate on both sides; " + hint
 	}
 	return "automatic match not confirmed: " + strings.Join(parts, "; ") + "; " + hint
 }
@@ -394,7 +417,7 @@ func candidate(t Transaction, o Occurrence) bool {
 	if t.Status != banking.StatusBooked && t.Status != banking.StatusPending {
 		return false
 	}
-	if days(t.Date, o.DueDate) > CandidateDays {
+	if days(t.Date, o.DueDate) > CandidateDays && (o.PlannedDate == nil || days(t.Date, *o.PlannedDate) > CandidateDays) {
 		return false
 	}
 	diff, err := t.Magnitude().Sub(o.Amount)
@@ -416,6 +439,10 @@ func candidate(t Transaction, o Occurrence) bool {
 // evaluate fills in the checks that depend on the pair alone.
 func evaluate(t Transaction, o Occurrence) Checks {
 	ch := Checks{Booked: t.Status == banking.StatusBooked, Days: days(t.Date, o.DueDate), Score: Score(o.Name, t.Text)}
+	if o.PlannedDate != nil {
+		n := days(t.Date, *o.PlannedDate)
+		ch.PlannedDays = &n
+	}
 	mag := t.Magnitude()
 	diff, _ := mag.Sub(o.Amount) // same currency: checked by candidate
 	ch.Difference = diff.Abs()

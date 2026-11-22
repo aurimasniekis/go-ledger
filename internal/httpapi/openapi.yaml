@@ -462,6 +462,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/CategoryFilter"
+        - $ref: "#/components/parameters/LabelFilter"
         - name: kind
           in: query
           description: Only commitments of these kinds (repeat for any of several).
@@ -1557,6 +1559,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/CategoryFilter"
+        - $ref: "#/components/parameters/LabelFilter"
         - name: month
           in: query
           required: true
@@ -1627,6 +1631,8 @@ paths:
         Months more than 60 months after the current month are refused.
       tags: [occurrences]
       parameters:
+        - $ref: "#/components/parameters/CategoryFilter"
+        - $ref: "#/components/parameters/LabelFilter"
         - name: month
           in: query
           required: true
@@ -1718,6 +1724,16 @@ paths:
           description: Reporting currency of the converted aggregate; default reporting.currency.
           schema:
             $ref: "#/components/schemas/Currency"
+        - name: bucket
+          in: query
+          required: false
+          description: |
+            Slice the outlook by a bucket (decision D12): only the commitments and the accounts in the bucket are counted, per currency, and
+            converted only under the same conversion policy. The response then carries slice. It is a view, not an allocation: a bucket
+            holds no money, each balance is the whole balance of an account in the bucket, and the figures are never money that is safe to
+            spend. An archived bucket still slices. Needs the organisation:read grant as well; an unknown bucket is a validation error.
+          schema:
+            $ref: "#/components/schemas/ID"
       responses:
         "200":
           description: The outlook.
@@ -2147,6 +2163,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/CategoryFilter"
+        - $ref: "#/components/parameters/LabelFilter"
         - name: transaction_id
           in: query
           schema:
@@ -3078,7 +3096,8 @@ paths:
         and a date within 7 days of the due date. A pair is confirmed only
         when every safeguard of decision D9 passes: the exact amount (or short
         by at most the commitment's match_tolerance), a booked transaction,
-        dated within 3 days of the due date, the only candidate on both sides,
+        dated within 3 days of the due date (or, for an occurrence with an
+        active deferral plan, of its planned date), the only candidate on both sides,
         and neither already assigned. Every other candidate becomes a
         suggestion (state suggested, origin auto_rule) whose reason lists the
         safeguards that failed; the description similarity is shown as a hint
@@ -3107,6 +3126,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaymentMatchingRun"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants/sources:
+    get:
+      operationId: listMerchantSources
+      x-ledger-access: merchants:read
+      summary: The merchant-identification sources
+      description: |
+        Which sources identify merchants (task E2, ADR-0054; decision D15):
+        the built-in curated mapping and the reuse of the person's confirmed
+        mappings as suggestions, both local and always on, and a remote
+        source that is off unless the operator enabled it. For each: whether
+        it is on, what leaves the machine for a lookup (nothing for a local
+        source), the attribution its licence requires next to identities it
+        provided, whether its logo references are kept and how long its
+        answers are kept. Show the attribution wherever an identity from that
+        source (enrichment.source) is shown. Administrators only.
+      tags: [merchants]
+      responses:
+        "200":
+          description: The sources.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MerchantSource"
         default:
           $ref: "#/components/responses/Error"
   /transactions/{id}/merchant:
@@ -3187,7 +3238,12 @@ paths:
                   type: [string, "null"]
                   minLength: 1
                   maxLength: 200
-                  description: The merchant's name; required for corrected and refused for the others. Runs of white space are collapsed.
+                  description: The merchant's name for corrected (or give merchant_id instead), refused for the others. Runs of white space are collapsed. The name resolves to the merchant record whose alias has its key, and a new record (with the name as its first alias) is made when none has.
+                merchant_id:
+                  oneOf:
+                    - $ref: "#/components/schemas/ID"
+                    - type: "null"
+                  description: Corrects to an existing, active merchant record (409 merchant_archived for an archived one); the decision records its display name. Only for corrected, and not together with name.
       responses:
         "200":
           description: The merchant after the decision.
@@ -3219,6 +3275,428 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Merchant"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants:
+    get:
+      operationId: listMerchants
+      x-ledger-access: merchants:read
+      summary: List merchant records
+      description: |
+        Merchant records (task M1, ADR-0058, decision D-MER 1a): a stable id, the name to show and the
+        alias names a transaction's merchant name is matched by. Decisions about transactions and
+        organisation assignments to a merchant refer to its id, so they survive a rename or a new
+        spelling. Active merchants only unless archived=true (which lists archived and merged ones too).
+        Items come in ID order. Administrators only (names and aliases derive from bank text).
+      tags: [merchants]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: archived
+          in: query
+          description: true includes archived and merged merchants.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: One page of merchants.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MerchantRecord"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createMerchant
+      x-ledger-access: merchants:write
+      summary: Create a merchant record
+      description: |
+        Creates a merchant at version 1. The display name (trimmed, white space collapsed, Unicode
+        NFC) is its first alias, and aliases adds more. An alias is matched by its key: NFC, white
+        space collapsed, lower case; a key names one merchant at most (409 merchant_alias_taken,
+        nothing is created). Identified enrichment answers whose name has one of the keys resolve to
+        the new merchant. Audited (merchant.created with origin user, never a name).
+      tags: [merchants]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [display_name]
+              properties:
+                display_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                aliases:
+                  type: [array, "null"]
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 200
+      responses:
+        "201":
+          description: The created merchant.
+          headers:
+            Location:
+              schema:
+                type: string
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MerchantRecord"
+        "409":
+          description: merchant_alias_taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getMerchant
+      x-ledger-access: merchants:read
+      summary: Get a merchant record
+      description: A merchant with its aliases. A merged merchant is still found, archived, with merged_into naming the merchant it was merged into.
+      tags: [merchants]
+      responses:
+        "200":
+          description: The merchant.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MerchantRecord"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateMerchant
+      x-ledger-access: merchants:write
+      summary: Rename a merchant
+      description: |
+        A JSON Merge Patch (RFC 7396) of display_name. The id never changes, so every decision and
+        assignment follows the rename. The new name also becomes an alias unless the merchant has it
+        already; when another merchant has it the rename is refused (409 merchant_alias_taken: merge
+        the two instead). Requires the version in If-Match or the body; a stale version is a 409
+        version_conflict with reconciliation. A merged merchant cannot change (409
+        merchant_archived). The same name is a no-op. Audited (merchant.updated with fields).
+      tags: [merchants]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                version:
+                  $ref: "#/components/schemas/Version"
+                display_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+      responses:
+        "200":
+          description: The renamed merchant.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MerchantRecord"
+        "409":
+          description: version_conflict, merchant_alias_taken or merchant_archived (merged).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteMerchant
+      x-ledger-access: merchants:write
+      summary: Delete a merchant record
+      description: |
+        Deletes a merchant that no decision, organisation assignment or merged merchant refers to,
+        with its aliases (409 merchant_in_use otherwise: archive or merge it). Enrichment answers that
+        resolved to it lose the reference (they are derived data). Requires If-Match. Audited
+        (merchant.deleted).
+      tags: [merchants]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Deleted.
+        "409":
+          description: version_conflict or merchant_in_use.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants/{id}/archive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: archiveMerchant
+      x-ledger-access: merchants:write
+      summary: Archive a merchant record
+      description: |
+        Keeps the merchant with its aliases, decisions and assignments, and stops anything new from
+        being attached to it by id (a correction naming it, an organisation assignment: 409
+        merchant_archived). Its aliases still resolve names to it. Requires If-Match. Audited
+        (merchant.archived).
+      tags: [merchants]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The archived merchant.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MerchantRecord"
+        "409":
+          description: version_conflict or merchant_archived (merged).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants/{id}/unarchive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: unarchiveMerchant
+      x-ledger-access: merchants:write
+      summary: Unarchive a merchant record
+      description: Makes the merchant usable again; a merged merchant stays archived (409 merchant_archived). Requires If-Match. Audited (merchant.unarchived).
+      tags: [merchants]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The unarchived merchant.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MerchantRecord"
+        "409":
+          description: version_conflict or merchant_archived (merged).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants/{id}/aliases:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: addMerchantAlias
+      x-ledger-access: merchants:write
+      summary: Add a spelling to a merchant
+      description: |
+        Adds an alias: transactions whose merchant name has the same key (NFC, white space collapsed,
+        lower case) resolve to this merchant and keep its decisions and assignments. A key the
+        merchant already has is no change; another merchant's is 409 merchant_alias_taken. Identified
+        enrichment answers with the name and no merchant yet now resolve to it. Raises the version.
+        Audited (merchant.alias_added, never the alias).
+      tags: [merchants]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+      responses:
+        "200":
+          description: The merchant with the alias.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MerchantRecord"
+        "409":
+          description: merchant_alias_taken or merchant_archived (merged).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants/{id}/aliases/{alias_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+      - name: alias_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    delete:
+      operationId: removeMerchantAlias
+      x-ledger-access: merchants:write
+      summary: Remove a spelling from a merchant
+      description: |
+        Removes one alias (404 when the merchant has no such alias). Decisions and assignments stay
+        with the merchant; enrichment answers that resolved to it through that key lose the
+        reference. Raises the version. Audited (merchant.alias_removed).
+      tags: [merchants]
+      responses:
+        "200":
+          description: The merchant without the alias.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MerchantRecord"
+        "409":
+          description: merchant_archived (merged).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants/{id}/merge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: mergeMerchants
+      x-ledger-access: merchants:write
+      summary: Merge another merchant into this one
+      description: |
+        Moves everything of the merchant named by merchant_id into this one in one transaction: its
+        aliases, the decisions and enrichment answers that refer to it, and its organisation
+        assignments. Where both have an assignment for the same slot (the category, or the same
+        label), this merchant's stands unless the other's is the person's own and this one's is a
+        rule's or a model's (counted in kept when not moved). The other merchant stays, archived,
+        with merged_into set to this one; merchants merged into it earlier now point here. This
+        merchant must be active (409 merchant_archived) and at the If-Match version; the other may be
+        archived but not merged (409 merchant_archived). Merging a merchant into itself is a 400.
+        Audited (merchant.merged with merged_from and the counts).
+      tags: [merchants]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [merchant_id]
+              properties:
+                merchant_id:
+                  $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: The remaining merchant and what moved.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [merchant, moved, kept]
+                properties:
+                  merchant:
+                    $ref: "#/components/schemas/MerchantRecord"
+                  moved:
+                    type: object
+                    additionalProperties: false
+                    required: [aliases, decisions, enrichments, categories, labels]
+                    properties:
+                      aliases:
+                        type: integer
+                        minimum: 0
+                      decisions:
+                        type: integer
+                        minimum: 0
+                      enrichments:
+                        type: integer
+                        minimum: 0
+                      categories:
+                        type: integer
+                        minimum: 0
+                      labels:
+                        type: integer
+                        minimum: 0
+                  kept:
+                    type: integer
+                    minimum: 0
+                    description: Assignments of the merged merchant not moved because this one had its own for the slot.
+        "409":
+          description: version_conflict or merchant_archived.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /rates:
@@ -3549,7 +4027,10 @@ paths:
         in its own month again. Nothing about the occurrence or its payments
         changes. The plan and its history are kept (state undone) and never
         change again; the occurrence can be deferred anew. An optional
-        reason is kept in the history. Requires the version in If-Match or
+        reason is kept in the history. Refused with 409
+        deferral_adjustments_unpaid while a fee or interest adjustment is
+        still planned: mark it paid or remove it first, so a recorded fee never
+        drops out of the planned totals. Requires the version in If-Match or
         the body. Audited as deferral_plan.undone.
       tags: [deferral-plans]
       parameters:
@@ -3687,7 +4168,7 @@ paths:
       summary: Remove an adjustment from a deferral plan
       description: |
         Removes an adjustment of an active plan: it is kept as history
-        (removed_at) and no longer counts. Removing it again is a 409
+        (removed_at) and no longer counts, whether or not it was marked paid. Removing it again is a 409
         deferral_adjustment_removed. A malformed adjustment_id is a 400. Requires the plan's version in
         If-Match. Audited as deferral_plan.adjustment_removed.
       tags: [deferral-plans]
@@ -3696,6 +4177,82 @@ paths:
       responses:
         "200":
           description: The plan after the removal.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}/adjustments/{adjustment_id}/paid:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+      - name: adjustment_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: markDeferralAdjustmentPaid
+      x-ledger-access: commitments:write
+      summary: Mark a deferral plan adjustment paid
+      description: |
+        Records that the person paid a fee or interest adjustment of an active
+        plan (paid_at, paid_by). A recorded adjustment stays planned until it is
+        marked paid or removed: paying the occurrence's principal does not
+        settle it, and the marker is not payment evidence for the occurrence.
+        Marking it again is a 409 deferral_adjustment_paid; a removed
+        adjustment is a 409 deferral_adjustment_removed. Requires the plan's
+        version in If-Match. Audited as deferral_plan.adjustment_paid, without
+        amount or note.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The plan after marking the adjustment paid.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}/adjustments/{adjustment_id}/unpaid:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+      - name: adjustment_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: unmarkDeferralAdjustmentPaid
+      x-ledger-access: commitments:write
+      summary: Clear the paid marker of a deferral plan adjustment
+      description: |
+        Reverses marking an adjustment paid: it is planned again. An adjustment
+        that is not marked paid is a 409 deferral_adjustment_not_paid. Requires
+        the plan's version in If-Match. Audited as
+        deferral_plan.adjustment_unpaid.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The plan after clearing the marker.
           headers:
             ETag:
               $ref: "#/components/headers/ETag"
@@ -4572,10 +5129,10 @@ paths:
         in: path
         required: true
         description: |
-          The object's identifier; for a merchant its key: the merchant's name in lower case with
-          white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
-          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
+          The object's identifier; for a merchant its merchant record's id (ADR-0058, decision D-MER 1a;
+          a name is no longer accepted). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise; an
+          archived or merged merchant gets nothing new (409 merchant_archived).
         schema:
           type: string
     put:
@@ -4621,10 +5178,10 @@ paths:
         in: path
         required: true
         description: |
-          The object's identifier; for a merchant its key: the merchant's name in lower case with
-          white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
-          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
+          The object's identifier; for a merchant its merchant record's id (ADR-0058, decision D-MER 1a;
+          a name is no longer accepted). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise; an
+          archived or merged merchant gets nothing new (409 merchant_archived).
         schema:
           type: string
     get:
@@ -4660,10 +5217,10 @@ paths:
         in: path
         required: true
         description: |
-          The object's identifier; for a merchant its key: the merchant's name in lower case with
-          white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
-          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
+          The object's identifier; for a merchant its merchant record's id (ADR-0058, decision D-MER 1a;
+          a name is no longer accepted). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise; an
+          archived or merged merchant gets nothing new (409 merchant_archived).
         schema:
           type: string
     put:
@@ -4743,10 +5300,10 @@ paths:
         in: path
         required: true
         description: |
-          The object's identifier; for a merchant its key: the merchant's name in lower case with
-          white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
-          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
+          The object's identifier; for a merchant its merchant record's id (ADR-0058, decision D-MER 1a;
+          a name is no longer accepted). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise; an
+          archived or merged merchant gets nothing new (409 merchant_archived).
         schema:
           type: string
       - name: label_id
@@ -4841,6 +5398,27 @@ components:
       name: __Host-ledger_session
       description: The browser session cookie set by sign-in. State-changing requests made with it also send X-CSRF-Token.
   parameters:
+    CategoryFilter:
+      name: category_id
+      in: query
+      required: false
+      description: |
+        Only objects whose effective category is this one or one of its children (repeat for any of several). A category groups; it allocates no
+        money. Combined with label_id, an object must satisfy both. Needs the organisation:read grant as well as the endpoint's own. For
+        occurrences, the month view and its totals, the category is the commitment's; for payment matches it is the transaction's, including
+        what it inherits from the pending transaction it replaced. An unknown category is a validation error. A filter that matches more than
+        5000 objects is refused: narrow it.
+      schema:
+        $ref: "#/components/schemas/ID"
+    LabelFilter:
+      name: label_id
+      in: query
+      required: false
+      description: |
+        Only objects carrying this label (repeat for any of several). Labels group; they allocate no money. Combined with category_id, an
+        object must satisfy both. Needs the organisation:read grant as well as the endpoint's own. Same object rules and limits as category_id.
+      schema:
+        $ref: "#/components/schemas/ID"
     Limit:
       name: limit
       in: query
@@ -5245,12 +5823,30 @@ components:
       type: object
       description: The monthly view (ADR-0034).
       additionalProperties: false
-      required: [month, as_of, items, carried_in, totals, freshness]
+      required: [month, as_of, items, carried_in, totals, freshness, filter]
       properties:
         month:
           $ref: "#/components/schemas/YearMonth"
         as_of:
           $ref: "#/components/schemas/Date"
+        filter:
+          description: Null for the whole month. Set when category_id or label_id restricted it; the items and the totals then cover only the matching commitments, never the whole month.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [category_ids, label_ids, note]
+              properties:
+                category_ids:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ID"
+                label_ids:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ID"
+                note:
+                  type: string
+            - type: "null"
         items:
           type: array
           description: Every occurrence of the month, by due date, then ID, each with its commitment's name.
@@ -5338,7 +5934,7 @@ components:
       type: object
       description: An explicit fee, interest or other charge recorded on a plan, in the plan's currency.
       additionalProperties: false
-      required: [id, kind, amount, note, created_at, removed_at]
+      required: [id, kind, amount, note, created_at, removed_at, paid_at, paid_by]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -5355,6 +5951,15 @@ components:
           type: [string, "null"]
           format: date-time
           description: Set once removed; a removed adjustment is history and does not count.
+        paid_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the person marked the adjustment paid; null while it is still planned. Reversible, and never payment evidence for the occurrence.
+        paid_by:
+          description: Who marked it paid and how; null while it is still planned.
+          oneOf:
+            - $ref: "#/components/schemas/MatchActor"
+            - type: "null"
     DeferralPlan:
       type: object
       description: |
@@ -5367,7 +5972,7 @@ components:
         evidence changes.
       additionalProperties: false
       required: [id, occurrence_id, commitment_id, plan_type, state, planned_date, planned_month, reason, original_due_date, original_amount, outstanding_when_planned,
-        occurrence_status, outstanding_amount, overdue_since, grace_until, within_grace, adjustment_total, adjustments, version, created_at, updated_at, undone_at]
+        occurrence_status, outstanding_amount, overdue_since, grace_until, within_grace, missed, missed_reason, adjustment_total, unpaid_adjustment_total, adjustments, version, created_at, updated_at, undone_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -5408,8 +6013,23 @@ components:
         within_grace:
           type: boolean
           description: True while the occurrence is overdue and today is not after grace_until ("overdue, within documented grace until grace_until").
+        missed:
+          type: boolean
+          description: |
+            True while the plan is active, its planned date has passed (today is after it) and either the occurrence is overdue and still owes something ("principal") or a recorded fee is still planned, even when the principal is paid ("fee").
+            Derived on every read and never stored; it is not payment state. It clears when the occurrence is paid and every fee is paid or removed, the plan is revised to a later date or the plan is undone.
+        missed_reason:
+          description: Why the plan is missed; null when it is not. "principal" takes precedence over "fee".
+          oneOf:
+            - type: string
+              enum: [principal, fee]
+            - type: "null"
         adjustment_total:
           $ref: "#/components/schemas/Money"
+          description: The adjustments not removed, paid ones included.
+        unpaid_adjustment_total:
+          $ref: "#/components/schemas/Money"
+          description: The adjustments still planned (neither removed nor marked paid), which the monthly view counts in the planned month.
         adjustments:
           type: array
           description: Every adjustment, oldest first, removed ones included.
@@ -5434,7 +6054,7 @@ components:
       properties:
         action:
           type: string
-          enum: [created, revised, undone, adjustment_added, adjustment_removed]
+          enum: [created, revised, undone, adjustment_added, adjustment_removed, adjustment_paid, adjustment_unpaid]
         plan_version:
           $ref: "#/components/schemas/Version"
         plan_type:
@@ -5444,7 +6064,7 @@ components:
         reason:
           $ref: "#/components/schemas/DeferralReason"
         adjustment_id:
-          description: The adjustment added or removed; null for other changes.
+          description: The adjustment added, removed or marked paid or unpaid; null for other changes.
           oneOf:
             - $ref: "#/components/schemas/ID"
             - type: "null"
@@ -5500,13 +6120,32 @@ components:
       type: object
       description: The outlook against recorded commitments (ADR-0044). Not a forecast and not money that is safe to spend.
       additionalProperties: false
-      required: [as_of, notice, window, currencies, balances, accounts, converted, planned_outflows, freshness]
+      required: [as_of, notice, slice, window, currencies, balances, accounts, converted, planned_outflows, freshness]
       properties:
         as_of:
           $ref: "#/components/schemas/Date"
         notice:
           type: string
           description: The wording to show with the outlook.
+        slice:
+          description: Null for the whole outlook. Set when the outlook was restricted to a bucket (the bucket parameter); every figure then covers only that bucket's commitments and accounts.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [bucket, commitment_count, account_count, note]
+              properties:
+                bucket:
+                  $ref: "#/components/schemas/OrganisationDefinition"
+                commitment_count:
+                  type: integer
+                  description: Commitments in the bucket.
+                account_count:
+                  type: integer
+                  description: Accounts in the bucket.
+                note:
+                  type: string
+                  description: The wording to show with a slice.
+            - type: "null"
         window:
           type: object
           additionalProperties: false
@@ -5573,7 +6212,7 @@ components:
       type: object
       description: The comparison in one currency. Nothing in it is converted.
       additionalProperties: false
-      required: [currency, still_due, overdue, upcoming, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at, overdue_months, balance_as_of, payments_after_balance]
+      required: [currency, still_due, overdue, upcoming, planned_outflows, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at, overdue_months, balance_as_of, payments_after_balance]
       properties:
         currency:
           $ref: "#/components/schemas/Currency"
@@ -5583,6 +6222,34 @@ components:
           $ref: "#/components/schemas/Money"
         upcoming:
           $ref: "#/components/schemas/Money"
+        planned_outflows:
+          type: object
+          description: |
+            The window with each outstanding amount placed in the month it is planned to be paid (deferral plans, ADR-0050, D-DF 8):
+            total = still_due - deferred_beyond + adjustments. A plan is not payment and not forgiveness: still_due, overdue and
+            upcoming are unchanged by plans. Per currency only: the converted aggregate carries only the converted total.
+            Only occurrences of the window's own months count: an amount deferred into a truncated window from before it is
+            not in still_due and so is in none of total, deferred_in and deferred_beyond.
+          additionalProperties: false
+          required: [total, deferred_in, deferred_beyond, adjustments, missed_count, missed_outstanding]
+          properties:
+            total:
+              $ref: "#/components/schemas/Money"
+            deferred_in:
+              description: The outstanding amount of occurrences planned into a later month of the window than their own, shown apart; part of still_due (and overdue past the due date) as before, and of total.
+              $ref: "#/components/schemas/Money"
+            deferred_beyond:
+              description: The part of still_due whose active plan falls in a month after the window; owed, not planned inside it. Counts only occurrences of the window.
+              $ref: "#/components/schemas/Money"
+            adjustments:
+              description: Recorded fees, interest and other charges of active plans still planned (neither removed nor marked paid); not part of still_due.
+              $ref: "#/components/schemas/Money"
+            missed_count:
+              type: integer
+              description: Active plans of occurrences in the window whose planned date has passed while something planned (principal or a fee) is still unpaid. Derived when read; not payment state.
+            missed_outstanding:
+              description: The outstanding principal of the occurrences behind missed_count (zero when only fees are unpaid).
+              $ref: "#/components/schemas/Money"
         overdue_count:
           type: integer
         unconverted_evidence_count:
@@ -5703,7 +6370,7 @@ components:
       type: object
       description: The secondary aggregate in one reporting currency (decision D5). Only currencies with an acceptable rate are included.
       additionalProperties: false
-      required: [currency, complete, still_due, overdue, balance, balance_less_still_due, balance_account_count, stale_balance_account_count, included, excluded]
+      required: [currency, complete, still_due, overdue, planned_total, balance, balance_less_still_due, balance_account_count, stale_balance_account_count, included, excluded]
       properties:
         currency:
           $ref: "#/components/schemas/Currency"
@@ -5713,6 +6380,9 @@ components:
         still_due:
           $ref: "#/components/schemas/Money"
         overdue:
+          $ref: "#/components/schemas/Money"
+        planned_total:
+          description: The per-currency planned_outflows.total converted with the same rate and rounding as still_due. The other planned figures (deferred in, beyond, fees, missed) are per currency only.
           $ref: "#/components/schemas/Money"
         balance:
           oneOf:
@@ -5998,6 +6668,90 @@ components:
             is still that person's.
           type: [string, "null"]
           enum: [session, token, mcp, system, null]
+    MerchantSource:
+      type: object
+      additionalProperties: false
+      required: [name, kind, enabled, description, sends_off_machine, attribution, stores_logo_ref, retention_hours]
+      description: One merchant-identification source (task E2, ADR-0054).
+      properties:
+        name:
+          type: string
+          description: The token stored as enrichment.source for this source's answers (curated, local_mapping, remote).
+        kind:
+          type: string
+          enum: [local, remote]
+        enabled:
+          type: boolean
+        description:
+          type: string
+        sends_off_machine:
+          type: array
+          description: What leaves the machine for one lookup; empty for a local source.
+          items:
+            type: string
+        attribution:
+          type: [string, "null"]
+          description: Text the source's licence requires next to identities it provided, or null.
+        stores_logo_ref:
+          type: boolean
+          description: Whether the logo references the source returns are kept. Ledger never downloads or copies a logo.
+        retention_hours:
+          type: [integer, "null"]
+          description: How long the source's answers are kept; null means until replaced. A person's decisions are never deleted.
+    MerchantRecord:
+      type: object
+      description: |
+        A merchant record (task M1, ADR-0058): a stable id, the name to show and the alias names a
+        transaction's merchant name resolves to it by. Decisions and organisation assignments refer to
+        the id.
+      required: [id, display_name, aliases, archived, archived_at, merged_into, version, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        display_name:
+          type: string
+        aliases:
+          type: array
+          description: Sorted by key.
+          items:
+            $ref: "#/components/schemas/MerchantAlias"
+        archived:
+          type: boolean
+        archived_at:
+          type: [string, "null"]
+          format: date-time
+        merged_into:
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+          description: The merchant this one was merged into; null unless merged.
+        version:
+          $ref: "#/components/schemas/Version"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MerchantAlias:
+      type: object
+      required: [id, name, key, origin, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          description: The spelling as given.
+        key:
+          type: string
+          description: The name as matched (Unicode NFC, white space collapsed, lower case); unique across merchants.
+        origin:
+          type: string
+          enum: [user, decision, upgrade]
+          description: user (added through this API), decision (a confirmation or correction named it) or upgrade (made from earlier data by migration 0030).
+        created_at:
+          type: string
+          format: date-time
     Merchant:
       type: object
       description: |
@@ -6006,10 +6760,17 @@ components:
         then true). enrichment (the source's answer) and review (the person's
         decision) are the two records it is resolved from; neither contains an
         amount or a payment status.
-      required: [transaction_id, state, name, logo_ref, identity_source, fallback, needs_review, confirmation_outdated, review_inherited, enrichment, review]
+      required: [transaction_id, state, merchant_id, name, logo_ref, identity_source, fallback, needs_review, confirmation_outdated, review_inherited, enrichment, review]
       properties:
         transaction_id:
           $ref: "#/components/schemas/ID"
+        merchant_id:
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+          description: |
+            The merchant record of the identity shown (ADR-0058); name is then its display name. Null when
+            nothing is shown, or the shown name is a source's name no alias knows.
         state:
           type: string
           enum: [confirmed, corrected, rejected, reliable, uncertain, ambiguous, none, unavailable, not_looked_up]
@@ -6056,8 +6817,13 @@ components:
     MerchantEnrichment:
       type: object
       description: What a lookup source said, as stored. A decision never edits it; a failed lookup never replaces an earlier answer (last_failed_at records it).
-      required: [status, name, logo_ref, source, confidence_permille, candidates, retrieved_at, last_failed_at]
+      required: [status, name, logo_ref, source, confidence_permille, candidates, retrieved_at, last_failed_at, merchant_id]
       properties:
+        merchant_id:
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+          description: The merchant record the identified name resolves to through an alias (ADR-0058); source and confidence_permille stay the answer's provenance.
         status:
           type: string
           enum: [identified, ambiguous, none, unavailable]
@@ -6087,8 +6853,13 @@ components:
     MerchantReview:
       type: object
       description: The person's decision about the merchant. For confirmed, name is the enrichment name that was confirmed.
-      required: [transaction_id, decision, name, by, decided_at, version]
+      required: [transaction_id, decision, name, merchant_id, by, decided_at, version]
       properties:
+        merchant_id:
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+          description: The merchant record the decision attaches to (ADR-0058); null for a rejection.
         transaction_id:
           $ref: "#/components/schemas/ID"
           description: The transaction the decision was made about; the superseded pending transaction when the merchant's review_inherited is true.
@@ -7222,10 +7993,16 @@ components:
             - deferral_plan_exists
             - deferral_plan_undone
             - deferral_adjustment_removed
+            - deferral_adjustment_paid
+            - deferral_adjustment_not_paid
+            - deferral_adjustments_unpaid
             - deferral_plan_currency
             - definition_archived
             - definition_in_use
             - duplicate_name
+            - merchant_alias_taken
+            - merchant_archived
+            - merchant_in_use
         message:
           type: string
         field:

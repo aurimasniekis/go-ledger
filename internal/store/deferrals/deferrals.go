@@ -144,7 +144,7 @@ func attachAdjustments(ctx context.Context, tx *sql.Tx, ps []deferrals.Plan) err
 	}
 	for start := 0; start < len(ids); start += maxIn {
 		chunk := ids[start:min(start+maxIn, len(ids))]
-		rows, err := tx.QueryContext(ctx, "SELECT id, plan_id, kind, amount, currency, note, created_at, removed_at FROM deferral_plan_adjustments"+
+		rows, err := tx.QueryContext(ctx, "SELECT id, plan_id, kind, amount, currency, note, created_at, removed_at, paid_at, paid_actor_kind, paid_actor_user, paid_via FROM deferral_plan_adjustments"+
 			" WHERE plan_id IN ("+placeholders(len(chunk))+") ORDER BY created_at, id", chunk...)
 		if err != nil {
 			return err
@@ -175,8 +175,9 @@ func scanAdjustment(row interface{ Scan(...any) error }) (deferrals.Adjustment, 
 	var cur sqlvalue.Currency
 	var note sql.Null[string]
 	var created store.Timestamp
-	var removed sql.Null[store.Timestamp]
-	if err := row.Scan(&a.ID, &a.PlanID, &kind, &amt, &cur, &note, &created, &removed); err != nil {
+	var removed, paid sql.Null[store.Timestamp]
+	var paidKind, paidUser, paidVia sql.Null[string]
+	if err := row.Scan(&a.ID, &a.PlanID, &kind, &amt, &cur, &note, &created, &removed, &paid, &paidKind, &paidUser, &paidVia); err != nil {
 		return deferrals.Adjustment{}, err
 	}
 	m, err := sqlvalue.Money(amt, cur)
@@ -191,6 +192,11 @@ func scanAdjustment(row interface{ Scan(...any) error }) (deferrals.Adjustment, 
 	if removed.Valid {
 		t := removed.V.Time
 		a.RemovedAt = &t
+	}
+	if paid.Valid {
+		t := paid.V.Time
+		a.PaidAt = &t
+		a.PaidBy = &deferrals.By{Kind: audit.ActorKind(paidKind.V), UserID: paidUser.V, Via: audit.Via(paidVia.V)}
 	}
 	return a, nil
 }
@@ -526,6 +532,9 @@ func (s *Store) Undo(ctx context.Context, actor audit.Actor, id string, expected
 		if err != nil {
 			return err
 		}
+		if p.HasUnpaidAdjustments() {
+			return deferrals.ErrUnpaidAdjustments
+		}
 		ts := store.Timestamp{Time: now}
 		v, err := store.UpdateVersioned(ctx, tx, "deferral_plans", "undone_at = ?, updated_at = ?", p.ID, expected, ts, ts)
 		if err != nil {
@@ -617,4 +626,81 @@ func (s *Store) RemoveAdjustment(ctx context.Context, actor audit.Actor, id, adj
 		return err
 	})
 	return out, err
+}
+
+// adjustmentTx runs one change of an adjustment of an active plan: it checks
+// the version, finds the adjustment, lets check refuse it, applies it (set is
+// the SQL assignment, args its values), bumps the plan's version and appends
+// the history and audit entries.
+func (s *Store) adjustmentTx(ctx context.Context, id, adjustmentID string, expected int64, action deferrals.Action,
+	check func(deferrals.Adjustment) error, set string, args func(by deferrals.By, ts store.Timestamp) []any,
+	event func(audit.Actor, deferrals.Plan, deferrals.Adjustment, time.Time) audit.Event, actor audit.Actor) (deferrals.Plan, error) {
+	var out deferrals.Plan
+	now := s.now()
+	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		p, err := activeAt(ctx, tx, id, expected)
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(p.Adjustments, func(a deferrals.Adjustment) bool { return a.ID == adjustmentID })
+		if i < 0 {
+			return resource.ErrNotFound
+		}
+		adj := p.Adjustments[i]
+		if adj.RemovedAt != nil {
+			return deferrals.ErrAdjustmentRemoved
+		}
+		if err := check(adj); err != nil {
+			return err
+		}
+		ts := store.Timestamp{Time: now}
+		if _, err := tx.ExecContext(ctx, "UPDATE deferral_plan_adjustments SET "+set+" WHERE id = ?", append(args(deferrals.ByOf(actor), ts), adj.ID)...); err != nil {
+			return err
+		}
+		v, err := store.UpdateVersioned(ctx, tx, "deferral_plans", "updated_at = ?", p.ID, expected, ts)
+		if err != nil {
+			return err
+		}
+		p.Version = v
+		if err := s.event(ctx, tx, actor, p, action, nil, adj.ID, now); err != nil {
+			return err
+		}
+		if err := s.audit.WriteAudit(ctx, tx, event(actor, p, adj, now)); err != nil {
+			return err
+		}
+		out, err = getTx(ctx, tx, p.ID)
+		return err
+	})
+	return out, err
+}
+
+// MarkAdjustmentPaid records that the person paid an adjustment: it is no
+// longer planned, whatever the occurrence's principal owes. The marker is not
+// payment evidence for the occurrence and is reversible.
+func (s *Store) MarkAdjustmentPaid(ctx context.Context, actor audit.Actor, id, adjustmentID string, expected int64) (deferrals.Plan, error) {
+	return s.adjustmentTx(ctx, id, adjustmentID, expected, deferrals.ActionAdjustmentPaid,
+		func(a deferrals.Adjustment) error {
+			if a.Paid() {
+				return deferrals.ErrAdjustmentPaid
+			}
+			return nil
+		},
+		"paid_at = ?, paid_actor_kind = ?, paid_actor_user = ?, paid_via = ?",
+		func(by deferrals.By, ts store.Timestamp) []any {
+			return []any{ts, string(by.Kind), nullable(by.UserID), nullable(string(by.Via))}
+		}, deferrals.AdjustmentPaidEvent, actor)
+}
+
+// UnmarkAdjustmentPaid clears the paid marker: the adjustment is planned
+// again.
+func (s *Store) UnmarkAdjustmentPaid(ctx context.Context, actor audit.Actor, id, adjustmentID string, expected int64) (deferrals.Plan, error) {
+	return s.adjustmentTx(ctx, id, adjustmentID, expected, deferrals.ActionAdjustmentUnpaid,
+		func(a deferrals.Adjustment) error {
+			if !a.Paid() {
+				return deferrals.ErrAdjustmentNotPaid
+			}
+			return nil
+		},
+		"paid_at = NULL, paid_actor_kind = NULL, paid_actor_user = NULL, paid_via = NULL",
+		func(deferrals.By, store.Timestamp) []any { return nil }, deferrals.AdjustmentUnpaidEvent, actor)
 }

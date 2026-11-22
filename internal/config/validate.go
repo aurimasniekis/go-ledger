@@ -19,6 +19,7 @@ import (
 func resolveSecretFiles(c *Config, sources map[string]string, readFile func(string) ([]byte, error)) []Problem {
 	ps := resolveKEKFile(c, sources, readFile)
 	ps = append(ps, resolveOIDCSecretFile(c, sources, readFile)...)
+	ps = append(ps, resolveDecisionKeyFiles(c, sources, readFile)...)
 	for _, slot := range []struct {
 		mode string
 		app  *EnableBankingApp
@@ -182,6 +183,8 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	// Sources are cached apart, so one source has one spelling: ECB, not ecb.
 	c.Rates.Source = frankfurter.NormalizeSource(c.Rates.Source)
 	c.Rates.validate(bad)
+	c.Decisions.validate(bad)
+	c.Merchants.Enrichment.Remote.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {
 		ps = append(ps, Problem{Key: "kek", Msg: "required: set " + EnvName("kek.value") + " or " + EnvName("kek.file")})
 	}

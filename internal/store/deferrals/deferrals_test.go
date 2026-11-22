@@ -476,7 +476,8 @@ func TestCurrencyChangeWithActivePlanIsRefused(t *testing.T) {
 	c := f.commitment("50.00", 15)
 	dec := f.occurrence(c.ID, "2026-12")
 	p := f.plan(dec, "2027-01-15", deferrals.TypePersonal)
-	if _, _, err := f.ds.AddAdjustment(f.ctx, alice, p.ID, p.Version, deferrals.NewAdjustment{Kind: deferrals.AdjustmentFee, Amount: money.MustParse("5.00", "EUR")}); err != nil {
+	withFee, fee, err := f.ds.AddAdjustment(f.ctx, alice, p.ID, p.Version, deferrals.NewAdjustment{Kind: deferrals.AdjustmentFee, Amount: money.MustParse("5.00", "EUR")})
+	if err != nil {
 		t.Fatal(err)
 	}
 	sig := func(m string) string {
@@ -486,7 +487,7 @@ func TestCurrencyChangeWithActivePlanIsRefused(t *testing.T) {
 	beforeDec, beforeJan := sig("2026-12"), sig("2027-01")
 	fields := c.Fields
 	fields.Amount = money.MustParse("60.00", "USD")
-	_, err := f.cs.Update(f.ctx, alice, c.ID, c.Version, fields, d("2026-12-01"), today)
+	_, err = f.cs.Update(f.ctx, alice, c.ID, c.Version, fields, d("2026-12-01"), today)
 	var cc *occurrences.CurrencyChangePlanError
 	if !errors.As(err, &cc) || cc.PlanID != p.ID || cc.OccurrenceID != dec.ID {
 		t.Fatalf("currency change with an active plan: %v, want a CurrencyChangePlanError naming the plan", err)
@@ -503,8 +504,16 @@ func TestCurrencyChangeWithActivePlanIsRefused(t *testing.T) {
 	if got := sig("2027-01"); got != beforeJan || !strings.Contains(got, "|105.00 EUR|") || !strings.HasSuffix(got, "|5.00 EUR") {
 		t.Errorf("January totals %s, want planned 105.00 EUR with the 5.00 fee", got)
 	}
-	// Undoing the plan lets the currency change.
-	if _, err := f.ds.Undo(f.ctx, alice, p.ID, p.Version+1, nil); err != nil {
+	// Undoing the plan lets the currency change, once its fee is settled
+	// (D-DF 2: a planned fee never silently drops out of the totals).
+	if _, err := f.ds.Undo(f.ctx, alice, p.ID, withFee.Version, nil); !errors.Is(err, deferrals.ErrUnpaidAdjustments) {
+		t.Fatalf("undo with a planned fee: %v, want ErrUnpaidAdjustments", err)
+	}
+	removed, err := f.ds.RemoveAdjustment(f.ctx, alice, p.ID, fee.ID, withFee.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ds.Undo(f.ctx, alice, p.ID, removed.Version, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.cs.Update(f.ctx, alice, c.ID, c.Version, fields, d("2026-12-01"), today); err != nil {

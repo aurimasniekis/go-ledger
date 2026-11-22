@@ -155,6 +155,8 @@ func organisationError(err error) error {
 		return NotFound(err.Error())
 	case errors.Is(err, organisation.ErrNotApplicable):
 		return Validation("object_type", err.Error())
+	case errors.Is(err, organisation.ErrObjectArchived):
+		return orgConflict(CodeMerchantArchived, err)
 	}
 	return err
 }
@@ -432,9 +434,10 @@ func registerDefinitions(s *Server, st organisation.Store, k organisation.Kind, 
 
 // objectOf reads the object a route names. Only its form is checked here; the
 // store checks that it exists.
-// merchantGate refuses a merchant-keyed route to a principal without the
-// merchants grant: the key is bank-derived text, so what is filed under it is
-// as sensitive as the merchant enrichment itself (admin-only, ADR-0051).
+// merchantGate refuses a merchant route to a principal without the merchants
+// grant: a merchant's names and aliases are bank-derived text, so what is
+// filed under it is as sensitive as the merchant enrichment itself
+// (admin-only, ADR-0051; merchants are named by record id since ADR-0058).
 func merchantGate(r *http.Request, g authz.Grant) error {
 	if objectOf(r).Type != organisation.ObjectMerchant {
 		return nil

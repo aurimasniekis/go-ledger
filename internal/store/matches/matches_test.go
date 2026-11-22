@@ -115,8 +115,20 @@ func open(t *testing.T, path string, c *clock) *fixture {
 // (October 2026) through the real import engine.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureWith(t, nil)
+}
+
+// newFixtureWith is [newFixture] with extra changes to the fake bank's data,
+// applied before the first import (later refreshes only see a window of
+// recent days).
+func newFixtureWith(t *testing.T, extra func(*bankingtest.Dataset)) *fixture {
+	t.Helper()
 	f := open(t, filepath.Join(t.TempDir(), "ledger.db"), &clock{now: t0})
-	f.p = bankingtest.New(bankingtest.Options{Mode: banking.ModeApp, Now: f.clock.Now, PageSize: 3}, bankingtest.Standard())
+	data := bankingtest.Standard()
+	if extra != nil {
+		extra(&data)
+	}
+	f.p = bankingtest.New(bankingtest.Options{Mode: banking.ModeApp, Now: f.clock.Now, PageSize: 3}, data)
 	inst := bankingtest.Standard().Institutions[0]
 	if _, err := f.p.StartConsent(f.ctx, banking.ConsentRequest{Institution: inst, RedirectURL: "https://ledger.example/cb", State: "s", PSUType: banking.PSUPersonal}); err != nil {
 		t.Fatal(err)

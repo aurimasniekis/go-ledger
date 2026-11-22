@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 	"io"
 	"maps"
 	"net/http"
@@ -220,7 +221,7 @@ func matchError(err error) error {
 	return err
 }
 
-var matchesListSpec = ListSpec{Filters: map[string]FilterSpec{
+var matchesListSpec = withOrgFilters(ListSpec{Filters: map[string]FilterSpec{
 	"transaction_id": {Ops: []FilterOp{OpEq}, Check: checkID("transaction_id must be a transaction identifier")},
 	"occurrence_id":  {Ops: []FilterOp{OpEq}, Check: checkID("occurrence_id must be an occurrence identifier")},
 	"state": {Ops: []FilterOp{OpEq}, Check: func(v string) error {
@@ -235,7 +236,7 @@ var matchesListSpec = ListSpec{Filters: map[string]FilterSpec{
 		}
 		return nil
 	}},
-}}
+}})
 
 func checkID(msg string) func(string) error {
 	return func(v string) error {
@@ -350,7 +351,7 @@ func decodeMatchBody(doc map[string]json.RawMessage, allowed, required []string)
 // registerMatches registers the payment match routes (task X1, ADR-0035).
 // Matches are decisions about commitment occurrences, like manual payments
 // (ADR-0031 point 9), so they need the commitments grants.
-func registerMatches(s *Server, st matches.Store) {
+func registerMatches(s *Server, st matches.Store, org organisation.Store) {
 	item := PaymentMatchesPath + "/{id}"
 	// Bank text (descriptions, counterparty names) needs banking:read.
 	bankText := func(r *http.Request) bool {
@@ -381,6 +382,20 @@ func registerMatches(s *Server, st matches.Store) {
 		}
 		for _, v := range q.Filter("origin", OpEq) {
 			f.Origins = append(f.Origins, matches.Origin(v))
+		}
+		// The category and label filters are those of the transaction.
+		if ids, active, err := selectOrganised(r, org, organisation.ObjectTransaction, q.Filter("category_id", OpEq), q.Filter("label_id", OpEq)); err != nil {
+			WriteError(w, r, err)
+			return
+		} else if active {
+			if len(f.TransactionIDs) > 0 {
+				ids = intersectIDs(f.TransactionIDs, ids)
+			}
+			if len(ids) == 0 {
+				WriteJSON(w, http.StatusOK, NewPage([]paymentMatchJSON{}, q, func(m paymentMatchJSON) string { return m.ID }))
+				return
+			}
+			f.TransactionIDs = ids
 		}
 		items, err := st.List(r.Context(), f)
 		if err != nil {

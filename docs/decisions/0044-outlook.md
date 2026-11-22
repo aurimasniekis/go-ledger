@@ -78,7 +78,7 @@ and payment derivation is changing in parallel (PR #79).
 - No migration. New: `internal/domain/outlook`, `internal/httpapi/outlook.go`, the OpenAPI path and schemas
   (`Outlook`, `OutlookCurrency`, `OutlookAccount`, `OutlookConverted`, `ExchangeRate`, `SignedMoney`, since balances
   and differences may be negative), `reporting.currency`, the `connections` grant resource, the `/outlook` page and nav
-  entry. The Go client lists `getOutlook` as not implemented until a CLI or MCP view needs it.
+  entry. The Go client has `GetOutlook` since O3 (ADR-0059).
 - No audit entries: the outlook only reads.
 - Open for the operator: the 240-month bound (3); the balance-type preference and counting stale balances (4); whether the
   converted aggregate should also exist without balances (6); the wording and layout (8, product-designer review

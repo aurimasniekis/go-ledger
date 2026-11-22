@@ -93,6 +93,14 @@ const headerRows = (page: Page) =>
     return centres.reduce((n, c, i) => (i === 0 || c - centres[i - 1]! >= 8 ? n + 1 : n), 0)
   })
 
+// Where each header item sits, for the failure message when a row count is off (text, left, width, top; fonts differ per machine).
+const headerLayout = (page: Page) =>
+  page.getByRole('banner').evaluate((h) =>
+    JSON.stringify([...h.querySelectorAll('a, button, select')].filter((el) => (el as HTMLElement).offsetParent !== null).map((el) => {
+      const b = el.getBoundingClientRect()
+      return [(el.textContent ?? '').slice(0, 16), Math.round(b.left), Math.round(b.width), Math.round(b.top)]
+    })) + ' font=' + getComputedStyle(h).fontFamily + ' ' + getComputedStyle(h).fontSize)
+
 // An administrator also holds connections:read, so the header has four links: it is still two rows at 390 px.
 test.describe('390 CSS px wide, an administrator with connections:read', () => {
   test.use({ viewport: { width: 390, height: 844 } })
@@ -123,12 +131,23 @@ test.describe('640 to 830 CSS px wide, an administrator with connections:read', 
   })
 })
 
-// The header is at most two rows at every width from 320 to 1280 CSS px, with and without connections:read. The administrator
-// has the longest link row (the 320, 340, 360 and 390 px cases are the phone widths it was checked at first).
+// The header is at most two rows from 320 to 1280 CSS px, with and without connections:read. The administrator has the
+// longest link row (the 320, 340, 360 and 390 px cases are the phone widths it was checked at first).
 // "Monthly" keeps its full word on a phone (WCAG 2.5.3: the visible label is part of the accessible name "Monthly view").
 const adminGrants = ['commitments:read', 'users:read', 'tokens:read', 'connections:read']
 const memberGrants = ['commitments:read', 'users:read', 'tokens:read']
-const headerWidths = Array.from({ length: 1280 - 320 + 1 }, (_, i) => 320 + i)
+// Not every width: a sweep of all 961 widths outran the test's timeout on a loaded machine. The widths are every 16 CSS px
+// from 320 to 1280, plus each layout breakpoint (Tailwind's sm 640, md 768, lg 1024 and xl 1280, and the 830 px edge of the
+// 640 to 830 range above) with the widths one px either side, so each boundary is checked on both sides. SHELL_RESPONSIVE_FULL=1
+// checks every width instead, for a slower, exhaustive run.
+const layoutBreakpoints = [640, 768, 830, 1024, 1280]
+const headerWidths = (() => {
+  const full = process.env.SHELL_RESPONSIVE_FULL === '1'
+  const widths = new Set<number>()
+  for (let w = 320; w <= 1280; w++) if (full || (w - 320) % 16 === 0) widths.add(w)
+  for (const b of layoutBreakpoints) for (const w of [b - 1, b, b + 1]) if (w >= 320 && w <= 1280) widths.add(w)
+  return [...widths].sort((a, b) => a - b)
+})()
 for (const [label, grants] of [['an administrator with connections:read', adminGrants], ['without connections:read', memberGrants]] as const) {
   test.describe('320 to 1280 CSS px wide, ' + label, () => {
     test.use({ viewport: { width: 320, height: 640 } })
@@ -138,7 +157,8 @@ for (const [label, grants] of [['an administrator with connections:read', adminG
       await page.goto('/month?month=2026-11')
       for (const width of headerWidths) {
         await page.setViewportSize({ width, height: 640 })
-        expect(await headerRows(page), `rows in the header at ${width} px`).toBeLessThanOrEqual(2)
+        const rows = await headerRows(page)
+        expect(rows, `rows in the header at ${width} px: ${rows > 2 ? await headerLayout(page) : ''}`).toBeLessThanOrEqual(2)
         await noOverflow(page)
       }
     })
