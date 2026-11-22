@@ -1,4 +1,4 @@
-// Package alerts persists in-app alerts (task L6, ADR-0063) in the alerts
+// Package alerts persists in-app alerts (task L6, ADR-0065) in the alerts
 // table of migration 0032_decision_tasks. An alert is raised idempotently by
 // its key, only ever closed afterwards, and audited.
 package alerts

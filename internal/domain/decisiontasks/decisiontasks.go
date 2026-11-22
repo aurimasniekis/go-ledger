@@ -1,5 +1,5 @@
 // Package decisiontasks runs the model-assisted organisation tasks (task L6,
-// ADR-0063, decision D13): categorisation and label suggestions, and the
+// ADR-0065, decision D13): categorisation and label suggestions, and the
 // wording of in-app alerts.
 //
 // It sits between the decision layer (internal/domain/decisions: consent,

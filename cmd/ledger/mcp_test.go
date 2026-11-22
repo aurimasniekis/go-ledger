@@ -542,6 +542,22 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		}
 	}
 
+	// A tool that takes an object_type declares the merchants grant the route's merchantGate
+	// asks for: read for a read, write for a change. The route is the authority; its answer to a
+	// merchant object is checked below with and without that grant.
+	for _, tl := range mcpserver.Tools() {
+		if !strings.HasPrefix(tl.Path, "/organisation/{object_type}/") {
+			continue
+		}
+		want := authz.G(authz.ResourceMerchants, authz.ActionWrite)
+		if tl.Kind == mcpserver.KindRead {
+			want = authz.G(authz.ResourceMerchants, authz.ActionRead)
+		}
+		if g, ok := tl.ObjectGrants["merchant"]; !ok || g != want {
+			t.Errorf("tool %s declares object grants %v for merchant, the route's merchantGate needs %s", tl.Name, tl.ObjectGrants, want)
+		}
+	}
+
 	// Real objects for the argument samples.
 	adminSecret, _ := f.token(t, f.admin, "commitments:write")
 	ac := f.connect(t, adminSecret)
@@ -678,6 +694,37 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"remove_object_label": func() (string, string, string) {
 			return "DELETE", "/organisation/transaction/" + fakeID + "/labels/" + fakeID, ""
 		},
+	}
+	// The same tools against a merchant object: the route refuses without the declared merchants
+	// grant (403) and lets it through with it (the sample merchant simply does not exist).
+	for _, tl := range mcpserver.Tools() {
+		mg, ok := tl.ObjectGrants["merchant"]
+		if !ok {
+			continue
+		}
+		method, path, body := httpReq[tl.Name]()
+		path = strings.Replace(path, "/organisation/transaction/", "/organisation/merchant/", 1)
+		for _, withGrant := range []bool{false, true} {
+			grants := []string{tl.Grant.String()}
+			if withGrant {
+				grants = append(grants, mg.String())
+			}
+			secret, _ := f.token(t, f.admin, grants...)
+			req, _ := http.NewRequest(method, f.ts.URL+"/api/v1"+path, strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+secret)
+			if body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if denied := resp.StatusCode == 403; denied == withGrant {
+				t.Errorf("%s on a merchant with grants %v: HTTP status %d", tl.Name, grants, resp.StatusCode)
+			}
+		}
 	}
 	mcpArgs := map[string]map[string]any{
 		"list_commitments":  nil,

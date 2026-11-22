@@ -1,4 +1,4 @@
--- Decision tasks (task L6, ADR-0063, decision D13): the reversal record of an
+-- Decision tasks (task L6, ADR-0065, decision D13): the reversal record of an
 -- automatically applied suggestion, and in-app alerts.
 --
 -- decision_suggestion_reversals: a person took back a suggestion's effect (the

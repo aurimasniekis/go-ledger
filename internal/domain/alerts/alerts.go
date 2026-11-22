@@ -1,4 +1,4 @@
-// Package alerts holds Ledger's in-app alerts (task L6, ADR-0063, decision
+// Package alerts holds Ledger's in-app alerts (task L6, ADR-0065, decision
 // D13): a bank consent about to expire, a commitment whose amount changed, and
 // an overdue commitment with no matching payment.
 //

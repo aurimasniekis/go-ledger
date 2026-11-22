@@ -63,6 +63,7 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0059: Outlook slice by bucket and category/label list filters](0059-outlook-bucket-slice-and-organisation-filters.md)
 - [ADR-0060: Decision-provider layer and policy enforcement](0060-decision-provider-layer.md)
 - [ADR-0061: Merchant screens and the merchant client](0061-merchant-ui.md)
-- [ADR-0063: Decision tasks: categorisation, label suggestions and alerts](0063-decision-tasks.md)
+- [ADR-0062: Organising merchants: UI and MCP](0062-merchant-organisation-ui-and-mcp.md)
+- [ADR-0065: Decision tasks: categorisation, label suggestions and alerts](0065-decision-tasks.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

@@ -1,4 +1,4 @@
-# ADR-0063: Decision tasks: categorisation, label suggestions and alerts
+# ADR-0065: Decision tasks: categorisation, label suggestions and alerts
 
 Status: Accepted (task L6, 2026-11-22). Decisions D12 (category, label and bucket semantics) and D13 (LLM policy) were
 taken on 2026-11-20. This increment is the domain, store and audit; HTTP routes, the review UI and the settings screens

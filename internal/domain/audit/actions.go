@@ -68,8 +68,9 @@ const (
 	// merchant (target type "merchant", its id: an identifier, never a name).
 	// Details: via; origin (user or decision) when created; fields when
 	// updated; for a merge, merged_from (the merchant merged away) and the
-	// counts of aliases, decisions, categories and labels moved and of
-	// assignments kept. Never a name or an alias: they derive from bank text.
+	// counts of aliases, decisions, enrichments, categories and labels moved,
+	// of assignments kept and of automatic assignments replaced. Never a name
+	// or an alias: they derive from bank text.
 	MerchantCreated      Action = "merchant.created"
 	MerchantUpdated      Action = "merchant.updated"
 	MerchantArchived     Action = "merchant.archived"
@@ -132,7 +133,7 @@ const (
 	DecisionConsentGranted Action = "decision_consent.granted"
 	DecisionConsentRevoked Action = "decision_consent.revoked"
 
-	// What became of a model's suggestion (L6, ADR-0063). The target is the
+	// What became of a model's suggestion (L6, ADR-0065). The target is the
 	// suggestion (target type "decision_suggestion"). Details: task, provider
 	// and via; never the model, the answer or any object text.
 	// auto_applied is the system applying a categorisation the operator opted
@@ -144,7 +145,7 @@ const (
 	DecisionSuggestionReverted    Action = "decision_suggestion.reverted"
 	DecisionSuggestionDismissed   Action = "decision_suggestion.dismissed"
 
-	// In-app alerts (L6, ADR-0063). The target is the alert (target type
+	// In-app alerts (L6, ADR-0065). The target is the alert (target type
 	// "alert"). Details: kind (and for a close, how) and via; never facts.
 	AlertRaised Action = "alert.raised"
 	AlertClosed Action = "alert.closed"
