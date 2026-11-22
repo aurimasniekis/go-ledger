@@ -53,10 +53,14 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
       void qc.invalidateQueries({ queryKey: ['occurrences'] })
     },
   })
-  useEffect(() => box.current?.focus(), [undo.isSuccess])
   // After these refusals the undo can never work on this match: the button goes, so it is not offered again.
   // A version conflict is one of them: the notice holds the version it saved, which is stale now, and resending it cannot work.
   const undoGone = undo.isError && (isVersionConflict(undo.error) || UNDO_FINAL.includes(undo.error instanceof ApiError ? undo.error.code : ''))
+  useEffect(() => box.current?.focus(), [undo.isSuccess])
+  // When the refusal takes the Undo button away, focus moves to the notice: a removed button would leave focus on <body>.
+  useEffect(() => {
+    if (undoGone) box.current?.focus()
+  }, [undoGone])
   return (
     <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3 text-sm">
       {undo.isSuccess ? (
@@ -178,9 +182,9 @@ export function MatchesPage() {
         <Link to="/month" className="underline">record a payment manually from the monthly view</Link>.
       </p>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div role="group" aria-label="Show" className="grid min-w-0 grid-cols-3 gap-2">
+        <div role="group" aria-label="Show" className="flex min-w-0 flex-wrap gap-2">
           {VIEWS.map((v) => (
-            <Button key={v.state} variant={v.state === state ? 'default' : 'outline'} size="sm" className="h-auto min-h-8 min-w-0 whitespace-normal px-2 py-1" aria-pressed={v.state === state} onClick={() => setState(v.state)}>
+            <Button key={v.state} variant={v.state === state ? 'default' : 'outline'} size="sm" className="h-auto min-h-8 whitespace-normal px-2 py-1" aria-pressed={v.state === state} onClick={() => setState(v.state)}>
               {v.label}
             </Button>
           ))}

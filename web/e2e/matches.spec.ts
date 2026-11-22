@@ -118,6 +118,20 @@ test('review queue by keyboard: ambiguity is explained, confirm names what chang
   await expect(mine).not.toContainText('Decided by the engine')
 })
 
+test('a refused undo that takes its Undo button away moves focus to the notice, not to the page (focus)', async ({ page }) => {
+  await stub(page)
+  await page.route(/\/api\/v1\/payment-matches\/a\/unconfirm$/, (r) =>
+    r.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ code: 'match_undo_window_closed', message: 'closed', request_id: 'r1' }) }))
+  await page.goto('/matches')
+  await page.getByRole('article').first().getByRole('button', { name: 'Confirm match' }).click()
+  const notice = page.getByRole('status').filter({ hasText: 'Match confirmed' })
+  await expect(notice).toBeFocused()
+  await notice.getByRole('button', { name: 'Undo confirmation' }).click()
+  await expect(notice.getByRole('alert')).toContainText('Undo is no longer possible')
+  await expect(notice.getByRole('button', { name: 'Undo confirmation' })).toHaveCount(0)
+  await expect(notice).toBeFocused()
+})
+
 test('a conflict while the Reject form is open leaves no enabled submit and puts focus on the explanation (R1)', async ({ page }) => {
   const posts = await stub(page)
   await page.route(/\/api\/v1\/payment-matches\/a\/reject$/, (r) => {
@@ -184,9 +198,24 @@ for (const s of sizes) {
       if (s.textScale) await page.addStyleTag({ content: 'html { font-size: 200% }' })
       await expect(page.getByRole('article')).toHaveCount(2)
       await noOverflow(page)
-      // The view switch stays on one row; at 200% text its labels wrap inside the buttons instead.
-      const tops = await Promise.all(['Needs review', 'Confirmed', 'Closed'].map(async (n) => (await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: n, exact: true }).boundingBox())!.y))
-      expect(new Set(tops).size, 'view switch on one row').toBe(1)
+      // The view switch: each button holds its own label (no clipping), no two buttons overlap, and it stays on one row
+      // only when the three labels fit (at 200% text they wrap onto more rows instead of running into each other).
+      const switchButtons = page.getByRole('group', { name: 'Show' }).getByRole('button')
+      await expect(switchButtons).toHaveCount(3)
+      const switchBoxes = []
+      for (const b of await switchButtons.all()) {
+        const { scroll, client } = await b.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }))
+        expect(scroll, 'label fits its button').toBeLessThanOrEqual(client)
+        switchBoxes.push((await b.boundingBox())!)
+      }
+      for (let i = 0; i < switchBoxes.length; i++) {
+        for (let j = i + 1; j < switchBoxes.length; j++) {
+          const [a, c] = [switchBoxes[i]!, switchBoxes[j]!]
+          const overlap = a.x < c.x + c.width && c.x < a.x + a.width && a.y < c.y + c.height && c.y < a.y + a.height
+          expect(overlap, 'view switch buttons do not overlap').toBe(false)
+        }
+      }
+      if (!s.textScale) expect(new Set(switchBoxes.map((b) => b.y)).size, 'view switch on one row when it fits').toBe(1)
       await page.getByRole('button', { name: 'Reject suggestion' }).first().click()
       await expect(page.getByLabel('Reason (optional)')).toBeVisible()
       await noOverflow(page)

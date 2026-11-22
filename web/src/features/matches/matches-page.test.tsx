@@ -134,6 +134,9 @@ describe('confirming: nothing is shown as saved before the server confirms it', 
     expect(alert).toHaveTextContent('Undo is no longer possible')
     expect(alert).toHaveTextContent('Unmatch in the Confirmed list (final)')
     expect(screen.queryByText('Undone')).not.toBeInTheDocument()
+    // The Undo button is gone, so focus goes to the notice that explains why, not to <body>.
+    expect(screen.queryByRole('button', { name: 'Undo confirmation' })).not.toBeInTheDocument()
+    expect(alert.closest('[role="status"]')).toHaveFocus()
   })
 
   it('a failed save says it was not saved, keeps the suggestion as it was, and can be tried again', async () => {
