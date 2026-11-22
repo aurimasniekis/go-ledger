@@ -202,12 +202,15 @@ type fakeStore struct {
 	recorded  map[banking.TransactionID]merchants.Answer
 	recordErr error
 	deleted   string
-	// recheckNone records the flag of each Pending call.
+	// recheckNone records the flag of each Pending call, changed the
+	// watermark (confirmations changed since; zero for none).
 	recheckNone []bool
+	changed     []time.Time
 }
 
-func (f *fakeStore) Pending(_ context.Context, _ int, _ time.Time, recheckNone bool) ([]enrichment.Candidate, error) {
+func (f *fakeStore) Pending(_ context.Context, _ int, _ time.Time, recheckNone bool, changedBefore time.Time) ([]enrichment.Candidate, error) {
 	f.recheckNone = append(f.recheckNone, recheckNone)
+	f.changed = append(f.changed, changedBefore)
 	return f.pending, nil
 }
 func (f *fakeStore) RecordAnswer(_ context.Context, id banking.TransactionID, a merchants.Answer) (merchants.Merchant, error) {
@@ -372,17 +375,31 @@ func TestNoneRechecksNeedARemoteSourceOrChangedConfirmations(t *testing.T) {
 	ctx := context.Background()
 	st := &fakeStore{}
 	svc := newService(st, nil)
+	clock := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	svc.Now = func() time.Time { return clock }
+	start := clock
 	for i := 0; i < 3; i++ {
 		if _, err := svc.Run(ctx); err != nil {
 			t.Fatal(err)
 		}
+		clock = clock.Add(time.Hour)
 	}
-	if got := st.recheckNone; len(got) != 3 || !got[0] || got[1] || got[2] {
-		t.Fatalf("recheck flags without a remote source: %v (first pass true, then false)", got)
+	// Without a remote source the 24-hour recheck is off; the first pass after
+	// a start sets the watermark (older none and ambiguous answers are looked
+	// up again), and it stays where it is while nothing changes, so later
+	// passes keep working through the older rows without re-asking about rows
+	// already rechecked.
+	if got := st.recheckNone; len(got) != 3 || got[0] || got[1] || got[2] {
+		t.Fatalf("recheck flags without a remote source: %v (all false)", got)
+	}
+	for i, w := range st.changed {
+		if !w.Equal(start) {
+			t.Fatalf("watermark of pass %d = %v, want the first pass %v", i, w, start)
+		}
 	}
 	st.confirmed = []enrichment.Confirmation{{Subject: enrichment.Subject{Description: "CORNER KIOSK 8"}, Name: "Corner Kiosk"}}
-	if _, err := svc.Run(ctx); err != nil || !st.recheckNone[3] {
-		t.Fatalf("a changed confirmation must recheck: %v %v", st.recheckNone, err)
+	if _, err := svc.Run(ctx); err != nil || !st.changed[3].Equal(clock) {
+		t.Fatalf("a changed confirmation must move the watermark: %v %v", st.changed, err)
 	}
 	rs := newRemoteServer(t, reply(`{"status":"none"}`))
 	r, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: rs.URL})

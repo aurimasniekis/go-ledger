@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
@@ -21,9 +22,12 @@ type Candidate struct {
 // Store is what the service needs from persistence (internal/store/merchants).
 type Store interface {
 	// Pending lists up to limit transactions that have no answer yet (newest
-	// first), then those whose answer is unavailable, or none when recheckNone
-	// is set, and last tried before recheckBefore (oldest attempt first).
-	Pending(ctx context.Context, limit int, recheckBefore time.Time, recheckNone bool) ([]Candidate, error)
+	// first), then those flagged for a recheck (a decision about another
+	// transaction of the same merchant changed), then those whose answer is
+	// unavailable, or none when recheckNone is set, and last tried before
+	// recheckBefore, and those whose none or ambiguous answer is older than
+	// changedBefore (zero: none), oldest attempt first.
+	Pending(ctx context.Context, limit int, recheckBefore time.Time, recheckNone bool, changedBefore time.Time) ([]Candidate, error)
 	RecordAnswer(ctx context.Context, id banking.TransactionID, a merchants.Answer) (merchants.Merchant, error)
 	// Confirmations lists the person's confirmed and corrected mappings.
 	Confirmations(ctx context.Context) ([]Confirmation, error)
@@ -56,6 +60,14 @@ type Service struct {
 	// switched off, so what it cached is still purged. When zero, an enabled
 	// Remote's licence retention is used.
 	RemoteRetention time.Duration
+
+	mu sync.Mutex
+	// changedAt is when the person's confirmations last changed (or the first
+	// pass after a start). Answers of none or ambiguous older than it are
+	// looked up again, batch after batch over as many passes as it takes, so
+	// a change reaches every older row and not only the first batch (from the
+	// PR #124 review).
+	changedAt time.Time
 }
 
 // Report counts what a pass did. It carries no names or bank text.
@@ -163,20 +175,22 @@ func (s *Service) Run(ctx context.Context) (Report, error) {
 	// transaction: a remote source, or a changed confirmation. The curated list
 	// changes with the code, so a first pass after a start always rechecks.
 	recheckNone := s.Remote != nil || s.Learned == nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Learned != nil {
 		cs, err := s.Store.Confirmations(ctx)
 		if err != nil {
 			return rep, errors.New("enrichment: reading confirmations failed")
 		}
 		if s.Learned.Load(cs) {
-			recheckNone = true
+			s.changedAt = s.now()
 		}
 	}
 	batch := s.Batch
 	if batch <= 0 {
 		batch = DefaultBatch
 	}
-	pending, err := s.Store.Pending(ctx, batch, s.now().Add(-RecheckAfter), recheckNone)
+	pending, err := s.Store.Pending(ctx, batch, s.now().Add(-RecheckAfter), recheckNone, s.changedAt)
 	if err != nil {
 		return rep, errors.New("enrichment: listing pending transactions failed")
 	}

@@ -18,7 +18,7 @@ var decisionAdapters = func(config.Decisions) []decisions.Provider { return nil 
 // decisionProviderNames lists the providers whose key may be configured.
 var decisionProviderNames = []string{"openrouter", "openai", "anthropic", "typesafe"}
 
-// buildDecisions returns the decision service (ADR-0058), or nil when no task
+// buildDecisions returns the decision service (ADR-0059), or nil when no task
 // is enabled. An enabled task whose provider has no adapter in this build is
 // a startup error, never a silent no-op: the operator asked for something
 // Ledger cannot do.

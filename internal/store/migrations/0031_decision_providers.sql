@@ -1,4 +1,4 @@
--- Decision providers (task L1, ADR-0058, decision D13): consent per provider
+-- Decision providers (task L1, ADR-0059, decision D13): consent per provider
 -- and purpose, the per-task monthly request count, and model suggestions.
 --
 -- None of these tables refers to or changes a bank fact, a payment, a match,

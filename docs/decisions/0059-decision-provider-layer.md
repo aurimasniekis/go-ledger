@@ -1,4 +1,4 @@
-# ADR-0058: Decision-provider layer and policy enforcement
+# ADR-0059: Decision-provider layer and policy enforcement
 
 Status: Accepted (2026-11-22)
 
@@ -115,5 +115,5 @@ that run it are L6, the review UI and settings L7, the TypeSafe matcher X3.
   and whether free-text fields such as the description should be scrubbed of
   account numbers before sending (today the description is sent as the bank
   wrote it when the allowlist permits it).
-- New migration `0030_decision_providers`; `decision_usage` is exempt from
+- New migration `0031_decision_providers`; `decision_usage` is exempt from
   the version column (server bookkeeping).

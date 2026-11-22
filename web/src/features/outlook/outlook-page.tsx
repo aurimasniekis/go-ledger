@@ -321,11 +321,13 @@ function PlannedOutflows({ p, through }: { p: NonNullable<OutlookCurrency['plann
   const rows: [string, string, Money][] = []
   if (!isZeroAmount(p.deferred_in.amount)) rows.push(['deferred-in', 'of which deferred in: still due, planned in a later month than its own', p.deferred_in])
   if (!isZeroAmount(p.adjustments.amount)) rows.push(['fees', 'of which fees and charges still planned (not part of "still due")', p.adjustments])
+  const missed = p.missed_count ?? 0
   return (
     <>
       <dt className="mt-1 border-t border-border pt-1 font-semibold sm:col-span-2" data-testid="outlook-planned-heading">
         Planned outflows
       </dt>
+      <dd className="text-xs text-muted-foreground sm:col-span-2">Where each amount still due is planned to be paid. A plan is not a payment: "still due" above is unchanged.</dd>
       <dt>Planned to be paid through {monthLabel(through)}</dt>
       <dd data-testid="outlook-planned-total" className={AMOUNT}>
         {money(p.total)}
@@ -338,6 +340,14 @@ function PlannedOutflows({ p, through }: { p: NonNullable<OutlookCurrency['plann
           <dd className={AMOUNT}>{money(m)}</dd>
         </Fragment>
       ))}
+      {missed > 0 && p.missed_outstanding && (
+        <>
+          <dt data-testid="outlook-planned-missed" className="font-medium">
+            {missed} {missed === 1 ? 'plan' : 'plans'} missed: the planned date has passed and something planned is still unpaid (outstanding amount of {missed === 1 ? 'it' : 'them'})
+          </dt>
+          <dd className={AMOUNT}>{money(p.missed_outstanding)}</dd>
+        </>
+      )}
       {!isZeroAmount(p.deferred_beyond.amount) && (
         <>
           <dt data-testid="outlook-planned-beyond">Still due but planned after {monthLabel(through)} (deferred beyond this view)</dt>
@@ -398,7 +408,7 @@ function Converted({ c, accounts, hasLine, balancesShown, staleAfter }: { c: Out
         Converted to {c.currency} (secondary)
       </h2>
       <p className="text-sm text-muted-foreground">
-        An approximation for orientation: each currency is converted at its latest acceptable exchange rate and rounded to {c.currency}. The figures by currency above are the reference.
+        An approximation for orientation: each currency is converted at its latest acceptable exchange rate and rounded to {c.currency}. The figures by currency above are the reference. Deferred, fee and missed-plan figures are shown per currency only.
       </p>
       {!c.complete && (
         <div role="note" className="flex flex-wrap items-start gap-2 text-sm">
@@ -430,6 +440,12 @@ function Converted({ c, accounts, hasLine, balancesShown, staleAfter }: { c: Out
         <dd className={AMOUNT}>{money(c.still_due)}</dd>
         <dt>of which overdue</dt>
         <dd className={AMOUNT}>{money(c.overdue)}</dd>
+        {c.planned_total && (
+          <>
+            <dt data-testid="outlook-converted-planned">Planned to be paid through the selected month, converted</dt>
+            <dd className={AMOUNT}>{money(c.planned_total)}</dd>
+          </>
+        )}
         {c.balance_less_still_due && (
           <>
             <dt>Balance minus recorded commitments still due</dt>

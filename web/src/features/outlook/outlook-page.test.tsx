@@ -82,7 +82,7 @@ describe('Outlook page', () => {
     const base = outlook()
     const withPlans = outlook({
       currencies: [
-        { ...base.currencies[0]!, planned_outflows: { total: eur('205.00'), deferred_in: eur('100.00'), deferred_beyond: eur('60.00'), adjustments: eur('5.00') } },
+        { ...base.currencies[0]!, planned_outflows: { total: eur('205.00'), deferred_in: eur('100.00'), deferred_beyond: eur('60.00'), adjustments: eur('5.00'), missed_count: 2, missed_outstanding: eur('30.00') } },
         { ...base.currencies[1]!, planned_outflows: { total: gbp('7.50'), deferred_in: gbp('0.00'), deferred_beyond: gbp('0.00'), adjustments: gbp('0.00') } },
       ],
     })
@@ -93,6 +93,9 @@ describe('Outlook page', () => {
     expect(e.getByText('Recorded commitments still due').nextElementSibling).toHaveTextContent('260.00 EUR')
     expect(e.getByText('of which overdue (past original due date)').nextElementSibling).toHaveTextContent('160.00 EUR')
     expect(e.getByTestId('outlook-planned-heading')).toHaveTextContent('Planned outflows')
+    expect(e.getByTestId('outlook-planned-heading').nextElementSibling?.tagName).toBe('DD')
+    expect(e.getByTestId('outlook-planned-missed')).toHaveTextContent('2 plans missed')
+    expect(e.getByTestId('outlook-planned-missed').nextElementSibling).toHaveTextContent('30.00 EUR')
     expect(e.getByText('Planned to be paid through November 2026').nextElementSibling).toHaveTextContent('205.00 EUR')
     expect(e.getByTestId('outlook-planned-deferred-in')).toHaveTextContent('of which deferred in: still due, planned in a later month than its own')
     expect(e.getByTestId('outlook-planned-deferred-in').nextElementSibling).toHaveTextContent('100.00 EUR')
@@ -103,6 +106,7 @@ describe('Outlook page', () => {
     expect(g.getByText('Planned to be paid through November 2026').nextElementSibling).toHaveTextContent('7.50 GBP')
     expect(g.queryByTestId('outlook-planned-deferred-in')).toBeNull()
     expect(g.queryByTestId('outlook-planned-beyond')).toBeNull()
+    expect(g.queryByTestId('outlook-planned-missed')).toBeNull()
   })
 
   it('shows the converted totals without calling a rates endpoint, and links to the rates page only with rates:read', async () => {

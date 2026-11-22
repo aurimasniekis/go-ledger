@@ -163,9 +163,15 @@ func TestOrganisationAPI(t *testing.T) {
 	if code, m, _ := admin.do("GET", obj("transaction", txID), ""); code != 200 || m["category"] != nil || len(asList(t, m["labels"])) != 0 || len(asList(t, m["buckets"])) != 0 {
 		t.Fatalf("empty assignments: %d %v", code, m)
 	}
-	// Merchant keys are bank-derived text: merchant-keyed routes need the
-	// admin-only merchants grant, whatever the organisation grants say.
-	merchantObj := obj("merchant", "acme%20shop")
+	// A merchant is named by its record's id (ADR-0058); its names derive
+	// from bank text, so merchant routes need the admin-only merchants grant,
+	// whatever the organisation grants say.
+	code, mr, _ := admin.do("POST", "/api/v1/merchants", `{"display_name":"Acme Shop"}`)
+	if code != 201 {
+		t.Fatalf("merchant: %d %v", code, mr)
+	}
+	mid := mr["id"].(string)
+	merchantObj := obj("merchant", mid)
 	orgReadTok := bankCall{t: t, f: f, hdr: map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "organisation:read"}}
 	bothTok := bankCall{t: t, f: f, hdr: map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "organisation:read,merchants:read"}}
 	for _, who := range []struct {
@@ -182,7 +188,7 @@ func TestOrganisationAPI(t *testing.T) {
 	if code, _, _ := orgReadTok.do("GET", obj("transaction", txID), ""); code != 200 {
 		t.Errorf("organisation:read token on a transaction: %d, want 200", code)
 	}
-	for p, want := range map[string]int{obj("transaction", "01JZ0000000000000000009999"): 404, obj("widget", txID): 400, obj("transaction", "nope"): 400, obj("merchant", "Not%20A%20Key"): 400} {
+	for p, want := range map[string]int{obj("transaction", "01JZ0000000000000000009999"): 404, obj("widget", txID): 400, obj("transaction", "nope"): 400, obj("merchant", "acme%20shop"): 400, obj("merchant", "01JZ0000000000000000009999"): 404} {
 		if code, _, _ := admin.do("GET", p, ""); code != want {
 			t.Errorf("GET %s: %d, want %d", p, code, want)
 		}
@@ -228,8 +234,8 @@ func TestOrganisationAPI(t *testing.T) {
 			t.Fatalf("add label: %d", code)
 		}
 	}
-	code, m, _ = admin.do("PUT", obj("merchant", "acme%20shop")+"/labels/"+l1["id"].(string), "")
-	if code != 200 || m["object_id"] != "acme shop" || len(asList(t, m["labels"])) != 1 {
+	code, m, _ = admin.do("PUT", merchantObj+"/labels/"+l1["id"].(string), "")
+	if code != 200 || m["object_id"] != mid || len(asList(t, m["labels"])) != 1 {
 		t.Fatalf("merchant label: %d %v", code, m)
 	}
 	_, m, _ = admin.do("GET", obj("transaction", txID), "")

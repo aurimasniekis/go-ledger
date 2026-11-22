@@ -534,7 +534,7 @@ func objectExists(ctx context.Context, tx *sql.Tx, obj organisation.ObjectRef) e
 	case organisation.ObjectAccount:
 		q = "SELECT 1 FROM bank_accounts WHERE id = ?"
 	case organisation.ObjectMerchant:
-		return nil // a merchant is its key: there is no record to find
+		q = "SELECT 1 FROM merchants WHERE id = ?"
 	default:
 		return fieldErr("object_type", "unknown object type")
 	}
@@ -546,6 +546,26 @@ func objectExists(ctx context.Context, tx *sql.Tx, obj organisation.ObjectRef) e
 	return err
 }
 
+// objectWritable is objectExists for a change: an archived or merged merchant
+// gets nothing new (organisation.ErrObjectArchived); what it has is kept and
+// readable.
+func objectWritable(ctx context.Context, tx *sql.Tx, obj organisation.ObjectRef) error {
+	if err := objectExists(ctx, tx, obj); err != nil {
+		return err
+	}
+	if obj.Type != organisation.ObjectMerchant {
+		return nil
+	}
+	n, err := count(ctx, tx, "SELECT count(*) FROM merchants WHERE id = ? AND archived_at IS NULL AND merged_into_id IS NULL", obj.ID)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return organisation.ErrObjectArchived
+	}
+	return nil
+}
+
 func checkObject(obj organisation.ObjectRef) error {
 	return commitments.Validation(obj.Validate())
 }
@@ -553,7 +573,7 @@ func checkObject(obj organisation.ObjectRef) error {
 // objectColumns returns the object columns of an assignment row and their
 // values: the typed column that carries the foreign key holds the ID.
 func objectColumns(obj organisation.ObjectRef) (cols string, vals []any) {
-	var tx, cm, ac any
+	var tx, cm, ac, mc any
 	switch obj.Type {
 	case organisation.ObjectTransaction:
 		tx = obj.ID
@@ -561,8 +581,10 @@ func objectColumns(obj organisation.ObjectRef) (cols string, vals []any) {
 		cm = obj.ID
 	case organisation.ObjectAccount:
 		ac = obj.ID
+	case organisation.ObjectMerchant:
+		mc = obj.ID
 	}
-	return "object_type, object_id, transaction_id, commitment_id, account_id", []any{string(obj.Type), obj.ID, tx, cm, ac}
+	return "object_type, object_id, transaction_id, commitment_id, account_id, merchant_id", []any{string(obj.Type), obj.ID, tx, cm, ac, mc}
 }
 
 // lineage returns the object and, for a transaction, the pending transactions
@@ -786,13 +808,9 @@ func (s *Store) Get(ctx context.Context, obj organisation.ObjectRef) (organisati
 	return out, err
 }
 
-// auditTarget names an object in the audit log. A merchant is not identified
-// at all: its key is derived from bank text, and a digest of a guessable name
-// can be reversed with a dictionary.
+// auditTarget names an object in the audit log by its id. A merchant is
+// named by its record's id (ADR-0058), which is not derived from its name.
 func auditTarget(obj organisation.ObjectRef) (typ, id string) {
-	if obj.Type == organisation.ObjectMerchant {
-		return string(obj.Type), ""
-	}
 	return string(obj.Type), obj.ID
 }
 
@@ -822,7 +840,7 @@ func (s *Store) SetCategory(ctx context.Context, actor audit.Actor, obj organisa
 	now := s.now().UTC()
 	var out organisation.Assignments
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if err := objectExists(ctx, tx, obj); err != nil {
+		if err := objectWritable(ctx, tx, obj); err != nil {
 			return err
 		}
 		if categoryID != nil {
@@ -861,7 +879,7 @@ func upsertCategory(ctx context.Context, tx *sql.Tx, obj organisation.ObjectRef,
 	cols, vals := objectColumns(obj)
 	kind, user, via := whoOf(actor)
 	vals = append(vals, categoryID, string(origin), source, kind, user, via, store.Timestamp{Time: at})
-	_, err := tx.ExecContext(ctx, "INSERT INTO category_assignments ("+cols+", category_id, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"+
+	_, err := tx.ExecContext(ctx, "INSERT INTO category_assignments ("+cols+", category_id, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"+
 		" ON CONFLICT (object_type, object_id) DO UPDATE SET category_id = excluded.category_id, origin = excluded.origin, source = excluded.source,"+
 		" set_by_kind = excluded.set_by_kind, set_by_user = excluded.set_by_user, set_by_via = excluded.set_by_via, set_at = excluded.set_at", vals...)
 	return err
@@ -912,7 +930,7 @@ func upsertLabel(ctx context.Context, tx *sql.Tx, obj organisation.ObjectRef, la
 	cols, vals := objectColumns(obj)
 	kind, user, via := whoOf(actor)
 	vals = append(vals, labelID, removed, string(origin), source, kind, user, via, store.Timestamp{Time: at})
-	_, err := tx.ExecContext(ctx, "INSERT INTO label_assignments ("+cols+", label_id, removed, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"+
+	_, err := tx.ExecContext(ctx, "INSERT INTO label_assignments ("+cols+", label_id, removed, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"+
 		" ON CONFLICT (object_type, object_id, label_id) DO UPDATE SET removed = excluded.removed, origin = excluded.origin, source = excluded.source,"+
 		" set_by_kind = excluded.set_by_kind, set_by_user = excluded.set_by_user, set_by_via = excluded.set_by_via, set_at = excluded.set_at", vals...)
 	return err
@@ -938,7 +956,7 @@ func (s *Store) AddLabel(ctx context.Context, actor audit.Actor, obj organisatio
 	now := s.now().UTC()
 	var out organisation.Assignments
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if err := objectExists(ctx, tx, obj); err != nil {
+		if err := objectWritable(ctx, tx, obj); err != nil {
 			return err
 		}
 		d, err := getDef(ctx, tx, organisation.KindLabel, labelID)
@@ -1132,7 +1150,7 @@ func (s *Store) ApplyAutomatic(ctx context.Context, actor audit.Actor, obj organ
 	var res organisation.AutomaticResult
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		res = organisation.AutomaticResult{}
-		if err := objectExists(ctx, tx, obj); err != nil {
+		if err := objectWritable(ctx, tx, obj); err != nil {
 			return err
 		}
 		e, err := loadEffective(ctx, tx, obj)

@@ -1,6 +1,6 @@
 // Package decisions persists the decision layer's consent records, request
-// counts and suggestions (task L1, ADR-0058) in the tables of migration
-// 0030_decision_providers.
+// counts and suggestions (task L1, ADR-0059) in the tables of migration
+// 0031_decision_providers.
 //
 // It implements [decisions.Consents], [decisions.Usage] and
 // [decisions.Suggestions]. Nothing here reads or writes a bank fact, a

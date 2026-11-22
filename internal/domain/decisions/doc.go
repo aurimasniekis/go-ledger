@@ -1,5 +1,5 @@
 // Package decisions is the shared decision-provider layer for model-assisted
-// suggestions (task L1, ADR-0058, decision D13 and the control defaults that
+// suggestions (task L1, ADR-0059, decision D13 and the control defaults that
 // extend it).
 //
 // It owns everything that must hold whichever provider answers:

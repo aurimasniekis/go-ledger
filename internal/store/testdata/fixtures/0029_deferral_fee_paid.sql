@@ -1,7 +1,7 @@
--- Fixture: a database at schema version 29 (the version 28 contents plus the
--- paid marker on deferral plan fees of migration 0029), holding every row of
--- the version 28 fixture. Upgrading it must apply migration 0030 (decision
--- consents, usage and suggestions) and leave every existing row as it is. All
+-- Fixture: a database at schema version 28 (the version 27 contents plus the
+-- categories, labels, buckets and their assignments of migration 0028), holding
+-- every row of the version 27 fixture. Upgrading it must apply migration 0029
+-- (the paid marker on deferral plan fees) and leave every adjustment unpaid. All
 -- identifiers and hashes are synthetic.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
@@ -1605,6 +1605,7 @@ INSERT INTO deferral_plan_events (id, plan_id, plan_version, action, plan_type, 
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (28, 'organisation', 'acf155fdb1388015e9b23242e631c32819b9ed073e8be7bb84c582428481eb18', '2026-01-31T03:04:05.000000000Z');
 
+-- Migration 0029 applied to the version 28 contents above.
 -- Deferral plan fees with their own paid marker; a plan the person did not keep
 -- is visible (DF1c, ADR-0050, operator decision D-DF 1 and 2).
 --
@@ -1690,3 +1691,32 @@ BEGIN
 END;
 
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (29, 'deferral_fee_paid', 'e7f77758369835051625761e928004b340bbf1f80893ff36ee690e3cde9d9e9e', '2026-02-01T03:04:05.000000000Z');
+
+-- Representative merchant data of version 29 for the merchant-record upgrade
+-- (migration 0030, ADR-0058): decisions with names that share a key in
+-- different case or Unicode composition, an enrichment answer per status, a
+-- rejection, and organisation assignments keyed by merchant name keys (one
+-- matching a decision only after NFC, one with no decision at all).
+INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, booking_status, provider_status, source_amount, source_currency, transaction_date, raw_description, counterparty_name, imported_at, last_seen_at) VALUES ('01JZ0000000000000000000015', '01JZ0000000000000000000011', 'fake', 'fb:00000000000000000000000000000015#1', 'fallback', 'booked', 'BOOK', '-12.30', 'EUR', '2026-01-20', 'CARD PURCHASE LIDL 1523 VILNIUS', 'LIDL 1523', '2026-02-01T05:00:00.000000000Z', '2026-02-01T05:00:00.000000000Z');
+INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, booking_status, provider_status, source_amount, source_currency, transaction_date, raw_description, counterparty_name, imported_at, last_seen_at) VALUES ('01JZ0000000000000000000016', '01JZ0000000000000000000011', 'fake', 'fb:00000000000000000000000000000016#1', 'fallback', 'booked', 'BOOK', '-12.30', 'EUR', '2026-01-20', 'CARD PURCHASE LIDL 0042 KAUNAS', 'Lidl 0042', '2026-02-01T05:00:00.000000000Z', '2026-02-01T05:00:00.000000000Z');
+INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, booking_status, provider_status, source_amount, source_currency, transaction_date, raw_description, counterparty_name, imported_at, last_seen_at) VALUES ('01JZ0000000000000000000017', '01JZ0000000000000000000011', 'fake', 'fb:00000000000000000000000000000017#1', 'fallback', 'booked', 'BOOK', '-12.30', 'EUR', '2026-01-20', 'CAFE EXAMPLE 77', '', '2026-02-01T05:00:00.000000000Z', '2026-02-01T05:00:00.000000000Z');
+INSERT INTO bank_transactions (id, account_id, provider, dedupe_key, key_kind, booking_status, provider_status, source_amount, source_currency, transaction_date, raw_description, counterparty_name, imported_at, last_seen_at) VALUES ('01JZ0000000000000000000018', '01JZ0000000000000000000011', 'fake', 'fb:00000000000000000000000000000018#1', 'fallback', 'booked', 'BOOK', '-12.30', 'EUR', '2026-01-20', 'UNKNOWN 1234', '', '2026-02-01T05:00:00.000000000Z', '2026-02-01T05:00:00.000000000Z');
+INSERT INTO merchant_enrichments (transaction_id, status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at) VALUES ('01JZ0000000000000000000015', 'identified', 'Lidl', '', 'curated', 950, '[]', '2026-02-01T06:00:00.000000000Z', NULL);
+INSERT INTO merchant_enrichments (transaction_id, status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at) VALUES ('01JZ0000000000000000000016', 'identified', 'Lidl', '', 'local_mapping', 700, '[]', '2026-02-01T06:00:00.000000000Z', NULL);
+INSERT INTO merchant_enrichments (transaction_id, status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at) VALUES ('01JZ0000000000000000000014', 'identified', 'Hotel Example', '', 'curated', 850, '[]', '2026-02-01T06:00:00.000000000Z', NULL);
+INSERT INTO merchant_enrichments (transaction_id, status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at) VALUES ('01JZ0000000000000000000017', 'ambiguous', '', '', 'curated', NULL, '["Cafe A","Cafe B"]', '2026-02-01T06:00:00.000000000Z', NULL);
+INSERT INTO merchant_enrichments (transaction_id, status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at) VALUES ('01JZ0000000000000000000018', 'none', '', '', 'local', NULL, '[]', '2026-02-01T06:00:00.000000000Z', NULL);
+INSERT INTO merchant_enrichments (transaction_id, status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at) VALUES ('01JZ0000000000000000000013', 'unavailable', '', '', 'remote', NULL, '[]', NULL, '2026-02-01T06:00:00.000000000Z');
+INSERT INTO merchant_reviews (transaction_id, decision, name, decided_kind, decided_user, decided_via, decided_at, version) VALUES ('01JZ0000000000000000000015', 'confirmed', 'Lidl', 'user', '01JZ0000000000000000000030', 'session', '2026-02-02T10:00:00.000000000Z', 1);
+INSERT INTO merchant_reviews (transaction_id, decision, name, decided_kind, decided_user, decided_via, decided_at, version) VALUES ('01JZ0000000000000000000016', 'corrected', 'LIDL', 'token', '01JZ0000000000000000000030', 'mcp', '2026-02-03T10:00:00.000000000Z', 2);
+INSERT INTO merchant_reviews (transaction_id, decision, name, decided_kind, decided_user, decided_via, decided_at, version) VALUES ('01JZ0000000000000000000017', 'corrected', 'Café Example', 'user', '01JZ0000000000000000000030', 'session', '2026-02-04T10:00:00.000000000Z', 1);
+INSERT INTO merchant_reviews (transaction_id, decision, name, decided_kind, decided_user, decided_via, decided_at, version) VALUES ('01JZ0000000000000000000013', 'rejected', '', 'user', '01JZ0000000000000000000030', 'session', '2026-02-04T11:00:00.000000000Z', 1);
+INSERT INTO categories (id, name, name_key, parent_id, archived_at, created_at, updated_at, version) VALUES ('01JZ0000000000000000000300', 'Groceries', 'groceries', NULL, NULL, '2026-02-01T07:00:00.000000000Z', '2026-02-01T07:00:00.000000000Z', 1);
+INSERT INTO categories (id, name, name_key, parent_id, archived_at, created_at, updated_at, version) VALUES ('01JZ0000000000000000000301', 'Eating out', 'eating out', NULL, NULL, '2026-02-01T07:00:00.000000000Z', '2026-02-01T07:00:00.000000000Z', 1);
+INSERT INTO labels (id, name, name_key, archived_at, created_at, updated_at, version) VALUES ('01JZ0000000000000000000310', 'Weekly', 'weekly', NULL, '2026-02-01T07:00:00.000000000Z', '2026-02-01T07:00:00.000000000Z', 1);
+INSERT INTO category_assignments (object_type, object_id, transaction_id, commitment_id, account_id, category_id, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES ('merchant', 'lidl', NULL, NULL, NULL, '01JZ0000000000000000000300', 'user', '', 'user', '01JZ0000000000000000000030', 'session', '2026-02-05T09:00:00.000000000Z');
+INSERT INTO category_assignments (object_type, object_id, transaction_id, commitment_id, account_id, category_id, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES ('merchant', 'café example', NULL, NULL, NULL, '01JZ0000000000000000000301', 'rule', 'rule-cafes', 'system', NULL, 'system', '2026-02-05T10:00:00.000000000Z');
+INSERT INTO category_assignments (object_type, object_id, transaction_id, commitment_id, account_id, category_id, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES ('merchant', 'acme shop', NULL, NULL, NULL, NULL, 'user', '', 'user', '01JZ0000000000000000000030', 'session', '2026-02-05T11:00:00.000000000Z');
+INSERT INTO category_assignments (object_type, object_id, transaction_id, commitment_id, account_id, category_id, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES ('transaction', '01JZ0000000000000000000018', '01JZ0000000000000000000018', NULL, NULL, '01JZ0000000000000000000300', 'user', '', 'user', '01JZ0000000000000000000030', 'session', '2026-02-05T12:00:00.000000000Z');
+INSERT INTO label_assignments (object_type, object_id, transaction_id, commitment_id, account_id, label_id, removed, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES ('merchant', 'lidl', NULL, NULL, NULL, '01JZ0000000000000000000310', 0, 'rule', 'rule-weekly', 'system', NULL, 'system', '2026-02-05T13:00:00.000000000Z');
+INSERT INTO label_assignments (object_type, object_id, transaction_id, commitment_id, account_id, label_id, removed, origin, source, set_by_kind, set_by_user, set_by_via, set_at) VALUES ('merchant', 'acme shop', NULL, NULL, NULL, '01JZ0000000000000000000310', 1, 'user', '', 'user', '01JZ0000000000000000000030', 'session', '2026-02-05T14:00:00.000000000Z');
