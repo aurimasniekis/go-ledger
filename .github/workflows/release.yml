@@ -121,9 +121,11 @@ jobs:
           GOBIN="$RUNNER_TEMP/tools" go install "github.com/anchore/syft/cmd/syft@${SYFT_VERSION}"
           echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
       - name: Log in to Docker Hub
-        env:
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: printf '%s' "$DOCKERHUB_TOKEN" | docker login --username aurimasniekis --password-stdin docker.io
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: docker.io
+          username: aurimasniekis
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       # The same tag builds the same binaries again. The env turns off the GitHub Release (.goreleaser.yaml, release.disable).
       - name: Build and push the images
         env:
