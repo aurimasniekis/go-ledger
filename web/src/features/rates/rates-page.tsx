@@ -4,7 +4,12 @@ import { EmptyState } from '@/components/state-panels'
 import { QueryState } from '@/components/query-state'
 import { DateText } from '@/components/formatted'
 import { utcStamp } from '@/features/month/month'
-import { useRates, useRatesStatus } from './api'
+import { useEffect, useRef, useState } from 'react'
+import { ApiError } from '@/lib/api'
+import { holds, useMe } from '@/lib/auth'
+import { LoadingState } from '@/components/state-panels'
+import { Notice } from '@/components/notice'
+import { useRates, useRatesStatus, useRefreshRates } from './api'
 import type { CachedRate, RatesRun, RatesStatus } from './types'
 
 const STALE_REASON: Record<NonNullable<CachedRate['stale_reason']>, string> = {
@@ -70,8 +75,121 @@ function StatusPanel({ s }: { s: RatesStatus }) {
   )
 }
 
-/** The read-only /rates screen: the cached exchange rates with provenance, rate date, retrieval time and freshness (ADR-0048). */
+/** The Refresh now control (administrators): one request at a time, at most one a minute, and every outcome is said in words. */
+function RefreshControl({ status }: { status?: RatesStatus }) {
+  const refresh = useRefreshRates()
+  // The wall-clock time a refused refresh may be retried: kept so the button stays off until then.
+  const [retryAt, setRetryAt] = useState<number | null>(null)
+  const [waiting, setWaiting] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // Do not set state on an unmounted page when the wait ends.
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const err = refresh.error instanceof ApiError ? refresh.error : undefined
+  const notRunnable = status !== undefined && !status.refresh_available
+  // The button stays focusable while it cannot act (aria-disabled, as the matches UI does), so keyboard focus is not lost.
+  const blocked = refresh.isPending || waiting || notRunnable
+  const run = () => {
+    if (blocked) return
+    refresh.mutate(undefined, {
+      onSuccess: () => {
+        setRetryAt(null)
+        setWaiting(false)
+      },
+      onError: (e) => {
+        if (e instanceof ApiError && e.status === 429) {
+          const at = Date.now() + (e.retryAfter ?? 60) * 1000
+          setRetryAt(at)
+          setWaiting(true)
+          clearTimeout(timer.current)
+          timer.current = setTimeout(() => setWaiting(false), at - Date.now() + 50)
+        }
+      },
+    })
+  }
+  return (
+    <section aria-label="Refresh exchange rates" className="space-y-2 rounded-md border border-border bg-surface p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          variant="outline"
+          size="sm"
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          aria-disabled={blocked || undefined}
+          aria-describedby="rates-refresh-help"
+          onClick={run}
+        >
+          {refresh.isPending ? 'Refreshing…' : 'Refresh now'}
+        </Button>
+        <span id="rates-refresh-help" className="text-muted-foreground">
+          {notRunnable
+            ? 'No refresh can run: the rate provider is off or no reporting currency is set.'
+            : 'Asks the provider for fresh rates. Allowed once a minute. It only adds or revises cached rates; nothing is deleted, and a rate it revises keeps the value it replaced.'}
+        </span>
+      </div>
+      <div role="status" aria-live="polite" data-testid="rates-refresh-result" className="empty:hidden">
+        {refresh.isPending && <p>Asking the rate provider for fresh rates…</p>}
+        {refresh.isSuccess && refresh.data.outcome === 'succeeded' && (
+          <p>
+            Refreshed {refresh.data.currencies_refreshed} {refresh.data.currencies_refreshed === 1 ? 'currency' : 'currencies'} at{' '}
+            <time dateTime={refresh.data.finished_at}>{utcStamp(refresh.data.finished_at)}</time>. The list below is up to date; earlier values of revised rates are kept.
+          </p>
+        )}
+        {refresh.isSuccess && refresh.data.outcome !== 'succeeded' && (
+          <p>
+            The refresh {RUN_OUTCOME[refresh.data.outcome]}
+            {refresh.data.error ? ': ' + (ERROR_KIND[refresh.data.error.kind] ?? refresh.data.error.kind) : ''}; {refresh.data.currencies_refreshed}{' '}
+            {refresh.data.currencies_refreshed === 1 ? 'currency was' : 'currencies were'} refreshed. Rates it could not fetch keep their cached values and age, and may be stale. You can try again in a minute.
+          </p>
+        )}
+      </div>
+      {err && !refresh.isPending && (
+        <Notice role="alert">
+          {err.status === 429 ? (
+            <>
+              Refreshed a moment ago, so this one was not run. Nothing changed.
+              {retryAt !== null && (
+                <>
+                  {' '}
+                  You can try again at <time dateTime={new Date(retryAt).toISOString()}>{utcStamp(new Date(retryAt).toISOString())}</time>
+                  .
+                </>
+              )}
+            </>
+          ) : err.code === 'refresh_in_progress' ? (
+            'A refresh is already running. Nothing changed; wait a moment and check the list.'
+          ) : err.code === 'rates_refresh_unavailable' || err.status === 503 ? (
+            'Exchange rates cannot be refreshed right now: the provider is off, not set up or unavailable. Nothing changed and the cached rates are still shown. You can try again later.'
+          ) : (
+            'The refresh could not be started: ' + err.message + '. Nothing changed.'
+          )}
+        </Notice>
+      )}
+      {refresh.isError && !err && (
+        <Notice role="alert">The refresh could not reach Ledger: {refresh.error.message}. Nothing changed; try again.</Notice>
+      )}
+    </section>
+  )
+}
+
+/** The /rates screen, for administrators: the cached exchange rates with provenance, rate date, retrieval time and freshness (ADR-0048, D-FX-R). */
 export function RatesPage() {
+  const me = useMe()
+  if (me.isPending) return <LoadingState label="your permissions" />
+  if (!holds(me.data?.grants, 'rates:read')) {
+    return (
+      <section className="space-y-3" aria-labelledby="rates-title">
+        <h1 id="rates-title" className="text-xl font-semibold">
+          Exchange rates
+        </h1>
+        <Notice role="alert">
+          You are not permitted to see this page: the cached exchange rates are for administrators. Converted totals in the outlook and month views are not affected and still show the rate each one used.
+        </Notice>
+      </section>
+    )
+  }
+  return <RatesContent canRefresh={holds(me.data?.grants, 'rates:write')} />
+}
+
+function RatesContent({ canRefresh }: { canRefresh: boolean }) {
   const status = useRatesStatus()
   const list = useRates()
   return (
@@ -82,6 +200,7 @@ export function RatesPage() {
       <p className="rounded-md border border-border bg-surface p-3 text-sm">
         These are the published reference rates Ledger converts with in the outlook's secondary totals. They are not what a bank or card would charge, and each shows the day it is for and when Ledger last retrieved it.
       </p>
+      {canRefresh && <RefreshControl status={status.data} />}
       <QueryState query={status} label="the rate provider status">
         {(s) => <StatusPanel s={s} />}
       </QueryState>

@@ -555,11 +555,14 @@ type BankConnection struct {
 	Accounts           []BankAccount             `json:"accounts"`
 	LastRefreshRun     *BankRefreshRun           `json:"last_refresh_run"`
 	RefreshRunning     bool                      `json:"refresh_running"`
-	Schedule           *BankSchedule             `json:"schedule"`
-	AsOf               string                    `json:"as_of"`
-	Version            int64                     `json:"version"`
-	CreatedAt          string                    `json:"created_at"`
-	UpdatedAt          string                    `json:"updated_at"`
+	// RefreshAvailableAt is set while a refresh on request is refused (429
+	// refresh_cooldown) until that time; nil when allowed now.
+	RefreshAvailableAt *string       `json:"refresh_available_at"`
+	Schedule           *BankSchedule `json:"schedule"`
+	AsOf               string        `json:"as_of"`
+	Version            int64         `json:"version"`
+	CreatedAt          string        `json:"created_at"`
+	UpdatedAt          string        `json:"updated_at"`
 	// PreviousSessionEndFailed is only set by the completion of a reconnect.
 	PreviousSessionEndFailed bool `json:"previous_session_end_failed,omitempty"`
 }

@@ -171,6 +171,9 @@ func (c *Config) validate(sources map[string]string) []Problem {
 			bad(d.key, "must be at least 1m")
 		}
 	}
+	if d := c.Banking.Refresh.RequestCooldown; d < 0 || d > 24*time.Hour {
+		bad("banking.refresh.request_cooldown", "must be between 0s (off) and 24h")
+	}
 	c.Auth.validateOIDC(bad)
 	c.MCP.validate(bad)
 	c.Events.Pulse.validate(bad)

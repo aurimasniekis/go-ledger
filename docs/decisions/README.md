@@ -56,5 +56,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0052: Commitment leeway and priority](0052-commitment-leeway.md)
 - [ADR-0053: Organisation model: categories, labels, buckets and their assignments](0053-organisation-model.md)
 - [ADR-0054: Merchant enrichment sources](0054-merchant-enrichment-sources.md)
+- [ADR-0055: Cooldown for bank refresh on request](0055-bank-refresh-request-cooldown.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

@@ -133,6 +133,9 @@ const env = {
   LEDGER_DATABASE_PATH: join(dir, 'ledger.db'),
   LEDGER_BANKING_REDIRECT_URL: 'http://127.0.0.1:' + LEDGER_PORT + '/connections/callback',
   LEDGER_BANKING_REFRESH_ENABLED: 'false',
+  // The journey refreshes the same connection again within seconds (failure, revoked consent, reconnect): the 5 minute
+  // cooldown on requests (D-B6c) would refuse that. The cooldown is covered by Go and UI tests.
+  LEDGER_BANKING_REFRESH_REQUEST_COOLDOWN: '0s',
   LEDGER_BANKING_ENABLE_BANKING_BASE_URL: 'http://127.0.0.1:' + BANK_PORT,
   LEDGER_BANKING_ENABLE_BANKING_APP_ENABLED: 'true',
   LEDGER_BANKING_ENABLE_BANKING_APP_APP_ID: APP_ID,

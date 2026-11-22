@@ -68,6 +68,8 @@ export interface BankConnection {
   last_refresh_run: BankRefreshRun | null
   /** A refresh is still going on in the background: poll until false. */
   refresh_running: boolean
+  /** While in the future, a refresh on request is refused (429 refresh_cooldown) until then; null when allowed now. */
+  refresh_available_at: string | null
   schedule: BankSchedule | null
   as_of: string
   version: number

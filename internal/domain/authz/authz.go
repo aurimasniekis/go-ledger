@@ -62,9 +62,10 @@ const (
 	// read-only role may read it.
 	ResourceOrganisation Resource = "organisation"
 	// ResourceRates is the cached exchange rates and their refresh (task FX2c,
-	// ADR-0048): reading lists the rates, their provenance and freshness (public
-	// reference data, so the read-only role holds it); writing asks the provider
-	// for fresh rates, which only an administrator may do.
+	// ADR-0048): reading lists the rates, their provenance and freshness, and
+	// writing asks the provider for fresh rates. Both are administrator only
+	// (decision D-FX-R, task FX4); converted totals in the outlook and month
+	// views do not need this grant.
 	ResourceRates Resource = "rates"
 	// ResourceTokens is every user's API tokens: listing and revoking them
 	// (task A4). A user manages their own tokens with a session, whatever
@@ -92,7 +93,7 @@ var vocabulary = []ResourceInfo{
 	{Name: ResourceConnections, Description: "Bank connections: connect, reconnect, refresh, disconnect, and read accounts, balances and freshness.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceMerchants, Description: "Merchant identity of bank transactions: the enrichment, and confirming, correcting or rejecting it.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceOrganisation, Description: "Categories, labels and buckets, and assigning them to transactions, commitments, accounts and merchants.", Actions: []Action{ActionRead, ActionWrite}},
-	{Name: ResourceRates, Description: "Cached exchange rates with provider, source, rate date and freshness; write asks the rate provider for fresh rates.", Actions: []Action{ActionRead, ActionWrite}},
+	{Name: ResourceRates, Description: "Cached exchange rates with provider, source, rate date and freshness; write asks the rate provider for fresh rates.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceTokens, Description: "Every user's API tokens: list them and revoke them. Never the tokens themselves.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceUsers, Description: "User accounts, their roles and whether they are disabled.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 }

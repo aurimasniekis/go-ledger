@@ -2924,7 +2924,12 @@ paths:
         server shuts down, a run still going after the shutdown bound is cancelled
         and recorded as interrupted (outcome interrupted); the committed windows
         stay and a later refresh resumes them. A failed refresh never changes
-        stored balances or transactions. 409 connection_not_active for a connection that is pending,
+        stored balances or transactions. After a refresh of the connection
+        finished (any trigger, any outcome) another one on request is refused for
+        banking.refresh.request_cooldown (default 5 minutes): 429 refresh_cooldown
+        with Retry-After in seconds; the connection's refresh_available_at says
+        when it is allowed again. The background scheduler is never held back.
+        409 connection_not_active for a connection that is pending,
         disconnected, failed or needs a new consent. Audited as
         bank_connection.refresh_requested.
       tags: [bank-connections]
@@ -2938,6 +2943,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BankConnection"
+        "429":
+          description: |
+            refresh_cooldown: this connection was refreshed a moment ago. Retry-After
+            says in seconds when a refresh on request is allowed again. Nothing was
+            started or recorded. (bank_rate_limited is the bank asking for a pause.)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
           description: |
             dependency_unavailable: the server is shutting down and starts no new
@@ -3261,6 +3279,10 @@ paths:
         Ordered by provider, source, base currency and quote currency, then
         date newest first. A rate revised by the provider shows the value
         it replaced in `previous`.
+
+        Administrators only (decision D-FX-R): the read-only role and tokens of
+        a read-only owner get 403. Converted totals in the outlook and month
+        views do not need this endpoint.
       tags: [rates]
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -3325,6 +3347,7 @@ paths:
         optional: this is reported here and in the
         ledger_rates_* metrics, and it never makes /readyz fail. The last run is
         what happened since the process started (null before the first run).
+        Administrators only (decision D-FX-R), like the rates list.
       tags: [rates]
       responses:
         "200":
@@ -7116,7 +7139,7 @@ components:
               obtained_at: {type: string, format: date-time}
     BankConnection:
       type: object
-      required: [id, provider, application, mode, environment, account_access, institution, status, needs_reconnect, freshness, consent_granted_at, consent_valid_until, consent_expires_soon, last_error, accounts, last_refresh_run, refresh_running, schedule, as_of, version, created_at, updated_at]
+      required: [id, provider, application, mode, environment, account_access, institution, status, needs_reconnect, freshness, consent_granted_at, consent_valid_until, consent_expires_soon, last_error, accounts, last_refresh_run, refresh_running, refresh_available_at, schedule, as_of, version, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/ID"}
         provider: {type: string}
@@ -7159,6 +7182,12 @@ components:
         refresh_running:
           type: boolean
           description: True while a refresh is still going on in the background (the last run is running, or a refresh just requested outlived the wait). Poll the connection until it is false.
+        refresh_available_at:
+          description: While in the future, a refresh on request is refused (429 refresh_cooldown) until this time, counted from when the last refresh finished. Null when a refresh on request is allowed now.
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
         schedule:
           description: The background scheduler's view; null when background refresh is off or has not seen the connection yet.
           oneOf:
@@ -7237,6 +7266,7 @@ components:
             - bank_request_rejected
             - connection_not_active
             - refresh_in_progress
+            - refresh_cooldown
             - consent_not_found
             - bank_connect_unavailable
             - occurrence_overpaid
