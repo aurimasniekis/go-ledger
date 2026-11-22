@@ -84,7 +84,10 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
      past, non-cancelled occurrence differs from that occurrence's expected amount (for example a subscription price
      rise). An occurrence is never the baseline when it is cancelled, partly paid, has any **manual** payment among its
      evidence (even one settled together with a bank payment), or its bank match was confirmed **short within the
-     commitment's tolerance** (`State.Shortfall > 0`, decision C-L6e-amount-change addendum: the gap was accepted). In
+     commitment's tolerance** (`State.Shortfall > 0`, decision C-L6e-amount-change addendum: the gap was accepted), or its status comes
+     from an **applied override** (`State.OverrideApplied`, decision C-L6e-amount-override). So a lower bank payment surfaces as
+     partly paid or short in the monthly view, not as an amount-change alert; overrides and tolerance shortfalls are not
+     baselines, and in practice the alert reports price increases and overpayments. In
      the same currency any non-zero difference counts, compared numerically (`"15"` equals `"15.00"`): the alert
      shows the expected and the paid amount exactly (decimal strings with currency, no float), and its key uses the
      normalised amounts, so a change of scale alone neither re-raises nor resolves it. In another currency it is reported

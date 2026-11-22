@@ -253,7 +253,7 @@ func TestDetectorAmountChangeComparesNumericallyAcrossScales(t *testing.T) {
 		t.Fatalf("a scale change alone re-raised or resolved the alert: %+v sent %d", rep, len(e.sent))
 	}
 	// The commitment is updated to "12.5", which equals the paid 12.50 numerically: resolved.
-	e.cmts.list[0].Amount = eur("12.5")
+	e.cmts.list[0].Amount = eur("12.500") // another scale than the paid 12.5
 	if rep := e.run(t); rep.Resolved != 1 || e.state(t, alerts.KindAmountChanged)[alerts.StateOpen] != 0 {
 		t.Fatalf("an update at another scale did not resolve: %+v", rep)
 	}
@@ -287,6 +287,25 @@ func TestDetectorAmountChangeIgnoresMixedManualAndShortfallBaselines(t *testing.
 	e.mon.rows[nov.YearMonth()] = []monthview.Row{short}
 	if rep := e.run(t); rep.Raised != 1 {
 		t.Fatalf("a payment short without a tolerance confirmation was not a change: %+v", rep)
+	}
+}
+
+func TestDetectorAmountChangeIgnoresAppliedOverrideBaselines(t *testing.T) {
+	e := newDetectEnv(t)
+	e.cmts.list = []commitments.Commitment{{ID: "k-ovr", Fields: commitments.Fields{Amount: eur("10.00")}}}
+	nov := calendar.MustDate(2026, 11, 1)
+	// A bank payment of 4.00 for 10.00 whose status is "paid" only because of an applied override.
+	r := bankPaid(row("o1", "k-ovr", nov, "10.00", payments.StatusPaid), "b1", nov, eur("4.00"))
+	r.State.OverrideApplied = true
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{r}
+	if rep := e.run(t); rep.Raised != 0 {
+		t.Fatalf("an occurrence whose status comes from an override was a baseline: %+v", rep)
+	}
+	// Without the override the same payment is a baseline (control).
+	r.State.OverrideApplied = false
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{r}
+	if rep := e.run(t); rep.Raised != 1 {
+		t.Fatalf("control: %+v", rep)
 	}
 }
 
