@@ -830,6 +830,25 @@ describe('the Closed list: rejected and reversed matches, read only', () => {
   })
 })
 
+describe('what an allocation line says before and after it counts', () => {
+  it('a suggestion would pay only if confirmed; a confirmed match that does not count says so', async () => {
+    store = [match('a', { state: 'suggested' })]
+    start()
+    const s = await screen.findByRole('article', { name: 'Rent' })
+    expect(s).toHaveTextContent('would pay this occurrence if you confirm it; it does not count yet')
+    expect(s).not.toHaveTextContent(/of this transaction pays this occurrence/)
+  })
+
+  it('a confirmed match the bank no longer reports does not count right now', async () => {
+    store = [match('a', { state: 'confirmed', needs_review: true, counts_as_evidence: false })]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const c = await screen.findByRole('article', { name: 'Rent' })
+    expect(c).toHaveTextContent('does not count as payment right now')
+    expect(c).not.toHaveTextContent(/of this transaction pays this occurrence/)
+  })
+})
+
 describe('Undo after a refusal, and the Closed card wording', () => {
   const confirmThenUndo = async (code: string, status = 409) => {
     extra['POST /api/v1/payment-matches/a/confirm'] = () => {
@@ -854,11 +873,35 @@ describe('Undo after a refusal, and the Closed card wording', () => {
     expect(screen.queryByRole('button', { name: 'Undo confirmation' })).not.toBeInTheDocument()
   })
 
-  it('a version conflict shows our own message, not the server text, and keeps Undo offered', async () => {
+  it('a version conflict shows our own message, not the server text, and stops offering the stale Undo', async () => {
     const alert = await confirmThenUndo('version_conflict')
     expect(alert).toHaveTextContent('Something else changed this match since you saved it')
+    expect(alert).toHaveTextContent('no longer offered here')
     expect(alert).not.toHaveTextContent('raw server text')
-    expect(screen.getByRole('button', { name: 'Undo confirmation' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Undo confirmation' })).not.toBeInTheDocument()
+  })
+
+  it('a correction undo refused with invalid_match_state shows our own sentence', async () => {
+    store = [match('a', { state: 'confirmed', version: 2, counts_as_evidence: true, amount: { amount: '10.00', currency: 'EUR' } })]
+    extra['POST /api/v1/payment-matches/a/correct'] = (r) => {
+      const amount = (r.body as { amount: { amount: string } }).amount.amount
+      if (amount === '10.00') return fail(409, 'invalid_match_state', 'raw server text')
+      store = [match('a', { state: 'confirmed', version: 3, counts_as_evidence: true, amount: { amount, currency: 'EUR' } })]
+      return ok(store[0])
+    }
+    start()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await user.click(within(card).getByRole('button', { name: 'Correct amount' }))
+    await user.clear(within(card).getByLabelText(/Allocated amount/))
+    await user.type(within(card).getByLabelText(/Allocated amount/), '7.50')
+    await user.click(within(card).getByRole('button', { name: 'Save correction' }))
+    await user.click(await screen.findByRole('button', { name: 'Undo this correction' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('This match is no longer confirmed, so its amount cannot be put back.')
+    expect(alert).not.toHaveTextContent('raw server text')
+    expect(screen.queryByRole('button', { name: 'Undo this correction' })).not.toBeInTheDocument()
   })
 
   it('words the undo hint as working only while nothing else changed the match or occurrence', async () => {

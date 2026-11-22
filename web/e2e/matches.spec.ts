@@ -184,6 +184,9 @@ for (const s of sizes) {
       if (s.textScale) await page.addStyleTag({ content: 'html { font-size: 200% }' })
       await expect(page.getByRole('article')).toHaveCount(2)
       await noOverflow(page)
+      // The view switch stays on one row; at 200% text its labels wrap inside the buttons instead.
+      const tops = await Promise.all(['Needs review', 'Confirmed', 'Closed'].map(async (n) => (await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: n, exact: true }).boundingBox())!.y))
+      expect(new Set(tops).size, 'view switch on one row').toBe(1)
       await page.getByRole('button', { name: 'Reject suggestion' }).first().click()
       await expect(page.getByLabel('Reason (optional)')).toBeVisible()
       await noOverflow(page)
