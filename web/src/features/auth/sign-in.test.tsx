@@ -8,6 +8,7 @@ import { safeRedirect } from '@/features/auth/sign-in'
 afterEach(() => {
   vi.unstubAllGlobals()
   setCsrfToken(null)
+  window.history.replaceState(null, '', '/')
 })
 
 const signedOut = { 'GET /api/v1/auth/session': fail(401, 'unauthenticated', 'sign in required') }
@@ -18,6 +19,65 @@ describe('safeRedirect', () => {
     for (const bad of ['//evil.example', '/\\evil.example', '/a\\b', '/a\tb', '/a\nb', '/a\x00b', '/a\x7fb', 'https://evil.example', '/sign-in', undefined, '']) {
       expect(safeRedirect(bad)).toBe('/')
     }
+  })
+})
+
+describe('the redirect through the second factor', () => {
+  const challenge = () => ok({ second_factor_required: true, challenge: 'chal', expires_at: '2026-11-21T10:05:00Z', methods: ['totp'] }, 202)
+  const methods = ok({ password: { enabled: true }, oidc: { enabled: false, name: null, authorize_url: null } })
+
+  function mount(path: string) {
+    let signed = false
+    const calls = installApi({
+      'GET /api/v1/auth/session': () => (signed ? ok(session()) : fail(401, 'unauthenticated', 'sign in required')),
+      'GET /api/v1/auth/methods': methods,
+      'POST /api/v1/auth/sign-in': challenge(),
+      'POST /api/v1/auth/sign-in/second-factor': () => {
+        signed = true
+        return ok(session())
+      },
+    })
+    renderApp(path)
+    return calls
+  }
+
+  it('returns to the kept address after the password and the second step', async () => {
+    const user = userEvent.setup()
+    const calls = mount(`/sign-in?redirect=${encodeURIComponent('/account/tokens')}`)
+    await user.type(await screen.findByLabelText('Username'), 'alice')
+    await user.type(screen.getByLabelText('Password'), 'pw{Enter}')
+    await user.type(await screen.findByLabelText('Authenticator code'), '123456{Enter}')
+    expect(await screen.findByRole('heading', { name: 'API tokens' })).toBeInTheDocument()
+    expect(calls.filter((c) => c.method === 'POST').at(-1)!.body).toEqual({ challenge: 'chal', code: '123456' })
+  })
+
+  it('ignores a //evil target after the second step and opens the monthly view', async () => {
+    const user = userEvent.setup()
+    mount(`/sign-in?redirect=${encodeURIComponent('//evil.example/steal')}`)
+    await user.type(await screen.findByLabelText('Username'), 'alice')
+    await user.type(screen.getByLabelText('Password'), 'pw{Enter}')
+    await user.type(await screen.findByLabelText('Authenticator code'), '123456{Enter}')
+    expect(await screen.findByRole('heading', { level: 1, name: /^\w+ \d{4}$/ })).toBeInTheDocument()
+    expect(screen.queryByText('Page not found')).not.toBeInTheDocument()
+  })
+
+  it('keeps the redirect through the provider challenge in the fragment (good path)', async () => {
+    const user = userEvent.setup()
+    const path = `/sign-in?step=second_factor&redirect=${encodeURIComponent('/account/tokens')}#second_factor=chal`
+    window.history.replaceState(null, '', path)
+    mount(path)
+    await user.type(await screen.findByLabelText('Authenticator code'), '123456{Enter}')
+    expect(await screen.findByRole('heading', { name: 'API tokens' })).toBeInTheDocument()
+  })
+
+  it('ignores a //evil target carried through the provider challenge', async () => {
+    const user = userEvent.setup()
+    const path = `/sign-in?step=second_factor&redirect=${encodeURIComponent('//evil.example/steal')}#second_factor=chal`
+    window.history.replaceState(null, '', path)
+    mount(path)
+    await user.type(await screen.findByLabelText('Authenticator code'), '123456{Enter}')
+    expect(await screen.findByRole('heading', { level: 1, name: /^\w+ \d{4}$/ })).toBeInTheDocument()
+    expect(screen.queryByText('Page not found')).not.toBeInTheDocument()
   })
 })
 
