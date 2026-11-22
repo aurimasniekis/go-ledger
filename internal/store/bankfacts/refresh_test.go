@@ -74,6 +74,38 @@ func newEngineEnv(t *testing.T, mode banking.Mode, opts ...func(*bankingtest.Opt
 	return e
 }
 
+// A refresh that started with the old session and fails with
+// reconnect-required after the user has reconnected must not undo the
+// reconnect: the failure stays on the run, the new consent stays active.
+func TestStaleRunFailureDoesNotUndoReconnect(t *testing.T) {
+	e := newEngineEnv(t, banking.ModeApp)
+	e.mustRefresh()
+	oldSession := e.conn.Session
+	e.h.onAccounts = func() {
+		e.h.onAccounts = nil
+		if _, err := e.p.StartConsent(e.ctx, banking.ConsentRequest{Institution: bankingtest.Standard().Institutions[0], RedirectURL: "https://ledger.example/cb", State: "s2"}); err != nil {
+			t.Error(err)
+		}
+		if _, err := e.facts.BeginReconnectBy(e.ctx, e.conn.ID, "s2", "user", e.clock.now, nil); err != nil {
+			t.Error(err)
+		}
+		e.clock.now = e.clock.now.Add(time.Minute)
+		e.complete(e.conn, "s2")
+		e.p.FailNext(bankingtest.OpAccounts, bankingtest.Failure(bankingtest.OpAccounts, banking.KindReconnectRequired, banking.ReasonNone, "session_expired", 0))
+	}
+	res, err := e.refresh()
+	if !errors.Is(err, banking.ErrReconnectRequired) || res.Run.Outcome != banking.RefreshFailed || res.Run.ErrorKind != banking.KindReconnectRequired {
+		t.Fatalf("stale run: %v, %s, %s; want a recorded reconnect-required failure", err, res.Run.Outcome, res.Run.ErrorKind)
+	}
+	c, err := e.facts.Connection(e.ctx, e.conn.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Status != banking.ConnectionActive || c.Session.Equal(oldSession) || c.LastErrorKind != "" {
+		t.Errorf("reconnect undone by a stale run: status %s, error kind %q", c.Status, c.LastErrorKind)
+	}
+}
+
 func (e *engineEnv) refresh() (bankimport.Result, error) {
 	e.t.Helper()
 	return e.engine.Refresh(e.ctx, e.conn.ID, e.h)

@@ -433,8 +433,14 @@ func (r *refresh) connectionFailed(book context.Context, cause error, at time.Ti
 
 func (r *refresh) updateStatus(book context.Context, cause error) {
 	if status, ok := banking.StatusAfter(cause); ok {
-		if _, err := r.e.facts.SetConnectionStatus(book, r.conn.ID, status, cause, r.e.now()); err != nil {
+		// Conditional on the session the run started with: the user may have
+		// reconnected meanwhile, and that consent must stand. The failure is
+		// still on the run and the accounts.
+		_, applied, err := r.e.facts.SetConnectionStatusForSession(book, r.conn.ID, r.conn.Session, status, cause, r.e.now())
+		if err != nil {
 			r.log.Error("recording the connection status failed", "error", err)
+		} else if !applied {
+			r.log.Warn("connection status left as is: the connection was re-authorised during the refresh", "status", string(status))
 		}
 	}
 }

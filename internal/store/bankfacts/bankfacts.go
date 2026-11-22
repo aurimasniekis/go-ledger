@@ -355,6 +355,40 @@ func (s *Store) SetConnectionStatus(ctx context.Context, id banking.ConnectionID
 		status, kind, code, ts(at))
 }
 
+// SetConnectionStatusForSession implements [banking.FactStore]. The session
+// comparison and the update share one transaction, so a reconnect that
+// commits first is never overwritten by a run that started before it.
+func (s *Store) SetConnectionStatusForSession(ctx context.Context, id banking.ConnectionID, session banking.Sensitive, status banking.ConnectionStatus, cause error, at time.Time) (banking.Connection, bool, error) {
+	if !status.Valid() || status == banking.ConnectionActive || status == banking.ConnectionPending {
+		return banking.Connection{}, false, fmt.Errorf("bankfacts: SetConnectionStatusForSession cannot set %q", status)
+	}
+	if err := requireTime("status change", at); err != nil {
+		return banking.Connection{}, false, err
+	}
+	kind, code := banking.Classify(cause), ""
+	if e, ok := errors.AsType[*banking.Error](cause); ok {
+		code = e.Code
+	}
+	var out banking.Connection
+	applied := false
+	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			"UPDATE bank_connections SET status = ?, consent_state = NULL, last_error_kind = ?, last_error_code = ?, updated_at = ?, version = version + 1 WHERE id = ? AND COALESCE(session_reference, '') = ?",
+			status, kind, code, ts(at), id, session.Reveal())
+		if err != nil {
+			return fmt.Errorf("bankfacts: update connection %s: %w", id, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		applied = n > 0
+		out, err = connectionTx(ctx, tx, "id = ?", id)
+		return err
+	})
+	return out, applied, err
+}
+
 // ---- accounts ----
 
 const accountColumns = "id, connection_id, provider, external_id, provider_handle, iban, bban, masked_pan, other_identifier, name, product, currency, first_seen_at, last_seen_at, no_longer_reported_at"

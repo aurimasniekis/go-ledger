@@ -168,6 +168,12 @@ type FactStore interface {
 	// SetConnectionStatus records a status change and, for a failure, the
 	// error kind and provider code of cause (nil clears them).
 	SetConnectionStatus(ctx context.Context, id ConnectionID, status ConnectionStatus, cause error, at time.Time) (Connection, error)
+	// SetConnectionStatusForSession is SetConnectionStatus for a run that
+	// started with session: inside the same transaction it changes nothing
+	// when the connection has since been re-authorised (its session differs),
+	// so a stale failure cannot undo a reconnect. It returns the stored
+	// connection and whether the change was applied.
+	SetConnectionStatusForSession(ctx context.Context, id ConnectionID, session Sensitive, status ConnectionStatus, cause error, at time.Time) (Connection, bool, error)
 
 	UpsertAccounts(ctx context.Context, id ConnectionID, accounts []Account, seenAt time.Time) ([]AccountUpsert, error)
 	Accounts(ctx context.Context, id ConnectionID) ([]StoredAccount, error)
