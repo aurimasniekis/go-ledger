@@ -84,7 +84,10 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
      past, non-cancelled occurrence differs from that occurrence's expected amount (for example a subscription price
      rise). An occurrence is never the baseline when it is cancelled, partly paid, has any **manual** payment among its
      evidence (even one settled together with a bank payment), or its bank match was confirmed **short within the
-     commitment's tolerance** (`State.Shortfall > 0`, decision C-L6e-amount-change addendum: the gap was accepted). In
+     commitment's tolerance** (`State.Shortfall > 0`, decision C-L6e-amount-change addendum: the gap was accepted), or its status comes
+     from an **applied override** (`State.OverrideApplied`, decision C-L6e-amount-override). So a lower bank payment surfaces as
+     partly paid or short in the monthly view, not as an amount-change alert; overrides and tolerance shortfalls are not
+     baselines, and in practice the alert reports price increases and overpayments. In
      the same currency any non-zero difference counts, compared numerically (`"15"` equals `"15.00"`): the alert
      shows the expected and the paid amount exactly (decimal strings with currency, no float), and its key uses the
      normalised amounts, so a change of scale alone neither re-raises nor resolves it. In another currency it is reported
@@ -113,7 +116,8 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
   `SuggestLabels` for each enabled task. `serve` runs it in a background goroutine, one pass at a time, so the import
   never waits for a model and never fails because of one; a failure (an error or a reason such as an outage, no consent
   or an exhausted budget) is logged, counted in `RefreshStats` and on the `ledger_decision_questions_total` metric (by task
-  and outcome, no transaction data). **A failed question is not retried:** the transaction is not in a later refresh's
+  and outcome, no transaction data); a question cut short by shutdown is counted in `RefreshStats` only (no metric, no
+  `OnError`). **A failed question is not retried:** the transaction is not in a later refresh's
   inserted set, so it gets no suggestion and is not asked about again. A re-ask or backfill action for such transactions is
   planned with L7. Pending and declined objects are skipped by the
   tasks themselves, so a repeated refresh asks nothing new. Nothing classifies a merchant as a transfer yet, so `serve`
