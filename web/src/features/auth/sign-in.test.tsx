@@ -1,4 +1,6 @@
-import { screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import { createMemoryHistory } from '@tanstack/react-router'
+import { App } from '@/App'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fail, installApi, ok, renderApp, session, signedIn } from '@/test/fake-api'
@@ -19,6 +21,27 @@ describe('safeRedirect', () => {
     for (const bad of ['//evil.example', '/\\evil.example', '/a\\b', '/a\tb', '/a\nb', '/a\x00b', '/a\x7fb', 'https://evil.example', '/sign-in', undefined, '']) {
       expect(safeRedirect(bad)).toBe('/')
     }
+  })
+})
+
+describe('sign-in redirect', () => {
+  it('never keeps a bank consent code in the sign-in address or the single-sign-on return_to', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/connections/callback?state=S3CRET&code=C0DE&error=x#frag'] })
+    installApi({ ...signedOut, 'GET /api/v1/auth/methods': ok({ password: { enabled: true }, oidc: { enabled: true, name: 'SSO', authorize_url: '/api/v1/auth/oidc/authorize' } }) })
+    render(<App history={history} />)
+    expect(await screen.findByTestId('bank-incomplete')).toHaveTextContent(/not completed/i)
+    const url = history.location.href
+    expect(url).toContain('/sign-in')
+    for (const secret of ['S3CRET', 'C0DE', 'callback', 'frag']) expect(decodeURIComponent(url)).not.toContain(secret)
+    expect(new URL(url, 'http://x').searchParams.get('redirect')).toBe('/connections')
+  })
+
+  it('drops the fragment from the remembered place', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/month?month=2026-11#top'] })
+    installApi(signedOut)
+    render(<App history={history} />)
+    await screen.findByRole('heading', { name: 'Sign in' })
+    expect(new URL(history.location.href, 'http://x').searchParams.get('redirect')).toBe('/month?month=2026-11')
   })
 })
 

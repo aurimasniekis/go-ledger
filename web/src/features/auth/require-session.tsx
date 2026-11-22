@@ -9,6 +9,9 @@ import { ReauthProvider } from '@/features/auth/reauth'
 /** Where a session confined to two-factor enrolment may go (ADR-0030 §8). */
 export const ENROLMENT_PATH = '/account/security'
 
+/** Where a bank sends the user back after consent; its address carries a single-use code. */
+export const BANK_CALLBACK_PATH = '/connections/callback'
+
 /**
  * Splits the address a signed-out visitor was heading for into the path to return to and the provider
  * outcome (oidc_error) riding on it. The outcome describes the attempt that just ended, so it belongs on
@@ -35,14 +38,22 @@ export function RequireSession() {
   const loc = useLocation()
   const navigate = useNavigate()
   const signedOut = !s.data && s.error instanceof ApiError && s.error.status === 401
-  const href = loc.href
+  // The sign-in redirect keeps the place the user was going, without a fragment (the server's return_to refuses one).
+  // A bank's return carries a single-use consent code: it is never kept anywhere, so the user is sent to Connections
+  // with a notice that the connection was not completed.
+  const bankReturn = loc.pathname === BANK_CALLBACK_PATH
+  const href = bankReturn ? '/connections' : loc.pathname + loc.searchStr
   useEffect(() => {
     // Once per place the user was going, not on every render.
     // The layout stays mounted for a moment after navigating away: never redirect from the sign-in page itself.
     if (!signedOut || href.startsWith('/sign-in')) return
     const { redirect, oidcError } = splitOutcome(href)
-    void navigate({ to: '/sign-in', search: { redirect, ...(oidcError ? { oidc_error: oidcError } : {}) }, replace: true })
-  }, [signedOut, href, navigate])
+    void navigate({
+      to: '/sign-in',
+      search: { redirect, ...(oidcError ? { oidc_error: oidcError } : {}), ...(bankReturn ? { notice: 'bank_incomplete' } : {}) },
+      replace: true,
+    })
+  }, [signedOut, href, bankReturn, navigate])
   if (s.data) {
     if (s.data.two_factor.enrollment_required && loc.pathname !== ENROLMENT_PATH) {
       return <Navigate to={ENROLMENT_PATH} replace />

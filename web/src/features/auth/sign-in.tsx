@@ -27,7 +27,7 @@ function takeFragmentChallenge(): SecondFactorChallenge | null {
   const params = new URLSearchParams(window.location.search)
   params.delete('step')
   const rest = params.toString()
-  window.history.replaceState(window.history.state, '', window.location.pathname + (rest ? `?${rest}` : ''))
+  window.history.replaceState(window.history.state, '', window.location.origin + window.location.pathname + (rest ? `?${rest}` : ''))
   return { second_factor_required: true, challenge: token, methods: ['totp', 'recovery_code'] }
 }
 
@@ -48,7 +48,7 @@ function formMessage(err: unknown, form: string | undefined): string | undefined
   return form
 }
 
-export function SignInPage({ redirect, oidcError, recoveryError }: { redirect?: string; oidcError?: string; recoveryError?: string }) {
+export function SignInPage({ redirect, oidcError, recoveryError, notice }: { redirect?: string; oidcError?: string; recoveryError?: string; notice?: string }) {
   const session = useSession()
   const start = useStartSession()
   const methods = useQuery(methodsQuery)
@@ -62,6 +62,11 @@ export function SignInPage({ redirect, oidcError, recoveryError }: { redirect?: 
   return (
     <section className="mx-auto max-w-sm space-y-4">
       <h1 className="text-2xl font-semibold">Sign in</h1>
+      {!challenge && notice === 'bank_incomplete' && (
+        <p role="status" data-testid="bank-incomplete" className="text-sm">
+          The bank connection was not completed because your session had ended. Sign in, then start connecting the bank again from Connections.
+        </p>
+      )}
       {!challenge && oidcError && <FormError message={oidcErrorMessage(oidcError)} />}
       {!challenge && recoveryError && <FormError message={recoveryErrorMessage(recoveryError)} />}
       {challenge ? (
