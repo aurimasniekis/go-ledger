@@ -748,3 +748,99 @@ describe('the page says offline once', () => {
     expect(screen.getByRole('button', { name: 'Run matching now' })).toBeDisabled()
   })
 })
+
+describe('"This is the payment I recorded" (D45)', () => {
+  const rec = (id: string, over: Record<string, unknown> = {}) => ({
+    id, occurrence_id: 'occ-a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, created_at: '2026-11-20T08:00:00Z', updated_at: '2026-11-20T08:00:00Z', replaced_by_match_id: null, ...over,
+  })
+  let records: ReturnType<typeof rec>[]
+  beforeEach(() => {
+    vi.restoreAllMocks() // the offline test above spies on navigator.onLine without restoring it
+    records = [rec('mp1')]
+    extra['GET /api/v1/occurrences/occ-a'] = () => ok({ ...occurrence('a'), payment: { status: 'paid', bank_evidence_count: 0, manual_evidence_count: 1, override: null } })
+    extra['GET /api/v1/occurrences/occ-a/manual-payments'] = () => ok({ items: records, next_cursor: null })
+  })
+  const confirmedRepl = () => match('a', { state: 'confirmed', version: 2, counts_as_evidence: true, history: [{ action: 'confirmed', state: 'confirmed', amount: { amount: '10.00', currency: 'EUR' }, by: { kind: 'user', user_id: 'u1' }, reason: null, at: '2026-11-24T09:00:00Z', replaced_manual_payment_ids: ['mp1'] }] })
+
+  it('offers it on a card whose occurrence is paid by a manual record, explains what happens, and sends confirm-replacing with the record', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => {
+      store = [confirmedRepl()]
+      records = [rec('mp1', { replaced_by_match_id: 'a' })]
+      return ok(store[0])
+    }
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    expect(await within(card).findByTestId('already-paid')).toHaveTextContent('choose "This is the payment I recorded"')
+    expect(card).not.toHaveTextContent('Ledger cannot link')
+    await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
+    const form = within(card).getByRole('form', { name: 'This is the payment I recorded' })
+    expect(form).toHaveTextContent('kept in history and no longer counted')
+    expect(within(form).getByRole('checkbox')).toBeChecked()
+    expect(form).toHaveTextContent('10.00')
+    expect(form).toHaveTextContent('2026-11-20')
+    expect(posts()).toHaveLength(0)
+    await userEvent.click(within(form).getByRole('button', { name: 'Confirm and replace my record' }))
+    const notice = await screen.findByTestId('replaced-notice')
+    expect(posts()[0]!.body).toEqual({ version: 1, manual_payment_ids: ['mp1'] })
+    expect(posts()[0]!.headers['If-Match']).toBe('"1"')
+    expect(notice).toHaveTextContent('Match confirmed for Rent, November 2026')
+    expect(notice).toHaveTextContent('Bank match')
+    expect(notice).toHaveTextContent('Manual record replaced')
+    expect(notice).toHaveTextContent('kept in history and no longer counted')
+  })
+
+  it('Undo uses unconfirm on the saved version and says the record counts again; a refusal leaves it replaced and says so', async () => {
+    let refuse = true
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => { store = [confirmedRepl()]; return ok(store[0]) }
+    extra['POST /api/v1/payment-matches/a/unconfirm'] = () => {
+      if (refuse) return fail(409, 'undo_window_closed', 'The undo window has passed.')
+      store = [match('a', { version: 3 })]
+      return ok(store[0])
+    }
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Confirm and replace my record' }))
+    const undo = await screen.findByRole('button', { name: 'Undo: bring my record back' })
+    await userEvent.click(undo)
+    expect(await screen.findByText(/Undo not saved/)).toBeInTheDocument()
+    expect(screen.getByTestId('replaced-notice')).toHaveTextContent('stays replaced')
+    refuse = false
+    await userEvent.click(screen.getByRole('button', { name: 'Undo: bring my record back' }))
+    expect(await screen.findByText('Undone')).toBeInTheDocument()
+    expect(screen.getByTestId('replaced-notice')).toHaveTextContent('count as payment again'.replace('count', 'counts'))
+    const unconfirms = posts().filter((p) => p.path.endsWith('/unconfirm'))
+    expect(unconfirms).toHaveLength(2)
+    expect(unconfirms[0]!.headers['If-Match']).toBe('"2"')
+  })
+
+  it('is not offered when the manual records are already replaced, and a failed save says nothing was saved', async () => {
+    records = [rec('mp1', { replaced_by_match_id: 'zz' })]
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await within(card).findByTestId('already-paid')
+    expect(within(card).queryByRole('button', { name: 'This is the payment I recorded' })).not.toBeInTheDocument()
+  })
+
+  it('a refusal says nothing was saved and keeps the suggestion', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => fail(409, 'manual_payment_not_replaceable', 'A listed payment cannot be replaced.')
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Confirm and replace my record' }))
+    const alert = await within(card).findByRole('alert')
+    expect(alert).toHaveTextContent('Nothing was saved')
+    expect(card).toHaveAttribute('data-state', 'suggested')
+    expect(screen.queryByTestId('replaced-notice')).not.toBeInTheDocument()
+  })
+
+  it('a confirmed card names the replaced records in its history, and Unmatch says the record comes back', async () => {
+    store = [confirmedRepl()]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    expect(card).toHaveTextContent('Replaced 1 manual record(s), kept in history.')
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    expect(within(card).getByRole('form')).toHaveTextContent('Your manual record of this payment comes back')
+  })
+})

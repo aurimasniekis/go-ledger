@@ -73,5 +73,8 @@ export interface ManualPayment {
   occurrence_id: string
   amount: Money
   paid_on: string
+  note?: string | null
   version: number
+  /** The confirmed bank match that replaced this record (D45, ADR-0049): kept and listed, but it no longer counts. Null when none. */
+  replaced_by_match_id?: string | null
 }

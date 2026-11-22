@@ -4,7 +4,7 @@ import type { Money } from '@/features/month/types'
 
 export type MatchState = 'suggested' | 'confirmed' | 'rejected' | 'reversed'
 export type MatchOrigin = 'auto_rule' | 'model_suggestion' | 'user'
-export type MatchAction = 'confirm' | 'reject' | 'unmatch' | 'correct' | 'reverse'
+export type MatchAction = 'confirm' | 'reject' | 'unmatch' | 'correct' | 'reverse' | 'unconfirm'
 
 export interface Decider {
   kind: string
@@ -36,6 +36,10 @@ export interface MatchEvent {
   by: Decider
   reason: string | null
   at: string
+  /** On a confirmation made with "This is the payment I recorded" (ADR-0049): the manual records it replaced. */
+  replaced_manual_payment_ids?: string[]
+  /** On an unconfirm or unmatch: the records that count again. */
+  restored_manual_payment_ids?: string[]
 }
 
 export interface PaymentMatch {

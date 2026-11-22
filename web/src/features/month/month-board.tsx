@@ -7,6 +7,7 @@ import { Amount, DateText } from '@/components/formatted'
 import { isNetworkError } from '@/lib/connection'
 import type { ReactNode, Ref } from 'react'
 import { ProvenanceMarker, provenanceOf } from './provenance'
+import { ReplacedRecords } from './replaced-records'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from './month'
 import type { MonthItem, MonthSummary, MonthTotals, PaymentStatus } from './types'
 
@@ -327,6 +328,7 @@ function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting }: 
           </Button>
         )}
       </div>
+      {p.bank_evidence_count > 0 && <ReplacedRecords occurrenceId={i.id} />}
       {p.timing === 'overdue' && p.grace_until && (
         <p className="text-sm">
           {p.within_grace ? (

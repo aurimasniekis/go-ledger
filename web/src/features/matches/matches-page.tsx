@@ -10,6 +10,7 @@ import { useOnline } from '@/lib/connection'
 import { useOptimisticSave } from '@/lib/optimistic-save'
 import { usePagedList } from '@/lib/paged'
 import { matchAction, matchesKey, runMatching } from './api'
+import { ReplacedNotice } from './replace-manual'
 import { describeAction, MatchCard, OFFLINE_NOTE_ID, subjectText, type Subject } from './match-card'
 import type { MatchAction, MatchState, MatchingRunResult, PaymentMatch } from './types'
 
@@ -169,7 +170,7 @@ export function MatchesPage() {
           You are offline. The matches below are the last ones that loaded; every action is off until the connection is back.
         </p>
       )}
-      {done && <DoneNotice key={done.saved.id + done.saved.version} done={done} onDone={() => setDone(null)} />}
+      {done && done.subject.replaced?.length ? <ReplacedNotice key={done.saved.id + done.saved.version} saved={done.saved} replaced={done.subject.replaced} where={subjectText(done.subject)} onDone={() => setDone(null)} /> : done && <DoneNotice key={done.saved.id + done.saved.version} done={done} onDone={() => setDone(null)} />}
       <QueryState query={q} label="payment matches">
         {(items) => {
           const ids = new Set(items.map((m) => m.id))

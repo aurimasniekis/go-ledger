@@ -8,6 +8,7 @@ import { ApiError } from '@/lib/api'
 import { Amount, DateText } from '@/components/formatted'
 import { formatAmount, isIsoDate } from '@/lib/format'
 import { money } from './month-board'
+import { ReplacedRecords } from './replaced-records'
 import { isZeroAmount, monthLabel } from './month'
 import { deletePayment, monthKey, recordPayment } from './api'
 import type { ManualPayment, MonthItem } from './types'
@@ -168,6 +169,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
           </label>
         </div>
       </div>
+      <ReplacedRecords occurrenceId={item.id} />
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={pending || gone}>
           {pending ? 'Saving…' : 'Save payment'}

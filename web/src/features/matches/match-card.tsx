@@ -12,6 +12,8 @@ import { useSession } from '@/lib/auth'
 import { Bot, KeyRound } from 'lucide-react'
 import { AMBIGUITY_CODES, actorPhrase, decisionLine, deciderMarker, historyVerb, originLine, plainReason } from './explain'
 import { matchAction, matchesKey, useCommitmentName, useOccurrence, type ActionInput } from './api'
+import type { ManualPayment } from '@/features/month/types'
+import { ReplaceManual, replacedIds, useReplaceableRecords } from './replace-manual'
 import type { MatchAction, MatchState, PaymentMatch } from './types'
 
 /** What a person may do with a match in each state (ADR-0035 point 5). rejected and reversed are final. */
@@ -27,6 +29,7 @@ const VERB: Record<MatchAction, { button: string; submit: string; busy: string; 
   unmatch: { button: 'Unmatch (final)', submit: 'Unmatch now', busy: 'Unmatching…', done: 'Match removed' },
   correct: { button: 'Correct amount', submit: 'Save correction', busy: 'Saving…', done: 'Amount corrected' },
   reverse: { button: 'Reverse (payment bounced)', submit: 'Reverse now', busy: 'Reversing…', done: 'Match reversed' },
+  unconfirm: { button: 'Undo confirmation', submit: 'Undo confirmation', busy: 'Undoing…', done: 'Confirmation undone' },
 }
 
 const EXPLAIN: Partial<Record<MatchAction, string>> = {
@@ -53,6 +56,8 @@ export function rebaseInput(v: ActionInput, conflict: ApiError): ActionInput | u
 export interface Subject {
   name?: string
   month?: string
+  /** Set when the save was "This is the payment I recorded": the manual records it replaced. */
+  replaced?: ManualPayment[]
 }
 
 /** "Rent, November 2026": the commitment and the month, with whatever is known. */
@@ -78,6 +83,8 @@ const PAID_NOTE: Record<PaidBy, string> = {
   override: 'This occurrence was marked paid by hand, with a reason, over what the payments show. Confirming this bank transaction would add a payment on top of that, and the server refuses it unless you allow an overpayment. If the transaction is that payment, reject this suggestion; confirm it only if you really paid twice.',
   unknown: 'This occurrence is already paid in full. Confirming this transaction would pay more than the amount due, so the server refuses it unless you allow an overpayment. Reject it unless you mean to pay twice.',
 }
+/** What the already-paid note says when the manual records can be named and replaced (D45): the bank payment can be linked to them. */
+const PAID_NOTE_LINKABLE = 'You recorded this occurrence as paid by hand. If this bank transaction is that payment, choose "This is the payment I recorded": your record is kept in history and replaced by the bank match, so the payment counts once. Confirming it as a separate payment would count it twice (the server refuses that unless you allow an overpayment); do that only if you really paid twice.'
 const CTRL = 'h-auto min-h-8 whitespace-normal py-1 text-left aria-disabled:cursor-not-allowed aria-disabled:opacity-50'
 
 export interface MatchCardProps {
@@ -160,6 +167,9 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
   const alreadyPaid = m.state === 'suggested' && pay?.status === 'paid'
   // Where the existing payment comes from decides what is honest to say: a bank match, a manual record or a status set by hand.
   const paidBy: PaidBy = !pay?.override?.applied ? ((pay?.bank_evidence_count ?? 0) > 0 ? 'bank' : (pay?.manual_evidence_count ?? 0) > 0 ? 'manual' : 'unknown') : ((pay.bank_evidence_count ?? 0) > 0 ? 'bank' : 'override')
+  const replaceable = useReplaceableRecords(m, m.state === 'suggested' && (pay?.manual_evidence_count ?? 0) > 0)
+  const canReplace = m.state === 'suggested' && replaceable.length > 0 && m.transaction.booking_status === 'booked' && m.transaction.countable
+  const replacedNow = m.state === 'confirmed' ? replacedIds(m).length : 0
   const alertBox = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (conflict) alertBox.current?.focus()
@@ -279,7 +289,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
       </dl>
       {alreadyPaid && (
         <p role="note" data-testid="already-paid" className="text-xs">
-          <StatusBadge status="stale" label="Already paid" /> {PAID_NOTE[paidBy]}
+          <StatusBadge status="stale" label="Already paid" /> {canReplace && paidBy === 'manual' ? PAID_NOTE_LINKABLE : PAID_NOTE[paidBy]}
         </p>
       )}
       {m.state === 'suggested' && competing > 1 && !alreadyPaid && (
@@ -306,6 +316,8 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
                 {utcStamp(e.at)}: {historyVerb(e)}{' '}
                 {(e.action === 'corrected' || e.action === 'confirmed' || e.action === 'suggested') && <><Amount className="font-mono" amount={e.amount.amount} currency={e.amount.currency} />{' '}</>}
                 by {actorPhrase(e.by, me)}{plainReason(e.reason).verbatim ? `: ${e.reason}` : ''}
+                {(e.replaced_manual_payment_ids?.length ?? 0) > 0 && ` Replaced ${e.replaced_manual_payment_ids!.length} manual record(s), kept in history.`}
+                {(e.restored_manual_payment_ids?.length ?? 0) > 0 && ` ${e.restored_manual_payment_ids!.length} manual record(s) count again.`}
               </li>
             ))}
           </ul>
@@ -315,6 +327,10 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
       {actions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {(alreadyPaid ? [...actions].sort((a, b) => Number(b === 'reject') - Number(a === 'reject')) : actions).map((a) => btn(a, a === (alreadyPaid ? (paidBy === 'bank' || paidBy === 'unknown' ? 'reject' : '') : 'confirm') ? 'default' : 'outline'))}
+          {canReplace && (
+            <ReplaceManual match={m} records={replaceable} offline={offline} offlineNoteId={OFFLINE_NOTE_ID} primary={paidBy === 'manual'}
+              onSaved={(saved, replaced) => onSaved(saved, 'confirm', m, { name: name.data, month: occ.data?.month, replaced })} />
+          )}
           {pending && form === null && <span role="status"><StatusBadge status="pending" label="Not saved yet" /></span>}
         </div>
       )}
@@ -347,7 +363,11 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
             run(form, extra)
           }}
         >
-          <p className="text-muted-foreground">{EXPLAIN[form]}</p>
+          <p className="text-muted-foreground">
+            {EXPLAIN[form]}
+            {form === 'unmatch' && replacedNow > 0 && ' Your manual record of this payment comes back and counts again.'}
+            {form === 'reverse' && replacedNow > 0 && ' Your manual record of this payment stays replaced (it was that payment); you can record a new payment in the monthly view.'}
+          </p>
           {form === 'correct' && (
             <label className="grid min-w-0 gap-1">
               Allocated amount ({m.amount.currency})
