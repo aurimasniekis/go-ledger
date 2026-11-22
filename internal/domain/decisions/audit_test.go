@@ -19,14 +19,16 @@ func TestAuditListsMatchTheRegistry(t *testing.T) {
 	for _, n := range decisions.TaskNames() {
 		purposes = append(purposes, string(n))
 	}
-	for _, a := range []audit.Action{audit.DecisionConsentGranted, audit.DecisionConsentRevoked} {
+	for _, a := range []audit.Action{audit.DecisionConsentGranted, audit.DecisionConsentRevoked,
+		audit.DecisionSuggestionAccepted, audit.DecisionSuggestionRejected, audit.DecisionSuggestionCorrected, audit.DecisionSuggestionAutoApplied,
+		audit.DecisionSuggestionReverted, audit.DecisionSuggestionDismissed} {
 		for _, f := range audit.Definitions[a] {
 			switch f.Name {
 			case "provider":
 				if !slices.Equal(f.Enum, providers) {
 					t.Errorf("%s provider %v, want %v", a, f.Enum, providers)
 				}
-			case "purpose":
+			case "task", "purpose":
 				if !slices.Equal(f.Enum, purposes) {
 					t.Errorf("%s purpose %v, want %v", a, f.Enum, purposes)
 				}
