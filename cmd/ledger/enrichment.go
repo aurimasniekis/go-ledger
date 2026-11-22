@@ -52,7 +52,7 @@ func buildEnrichment(cfg config.MerchantRemote, st *merchantstore.Store, log *sl
 		return nil, nil, "", err
 	}
 	svc.Remote = r
-	remote.SendsOffMachine = []string{"merchant string (the counterparty name, else the description, without digits, IBAN or account-like tokens, amounts and dates; sent only when it starts or ends with a company form such as UAB or Ltd (short forms like AS only in capitals) next to another word, or a multi-word curated pattern; nothing for transfers, people or anything without that marker)"}
+	remote.SendsOffMachine = []string{"merchant string (the counterparty name only, never the description, without digits, IBAN or account-like tokens; sent only when it starts or ends with an unambiguous company form such as UAB, MB, SIA, Ltd, LLC, GmbH, Inc or plc next to another word; the short forms as, co, sa, ab, ag, sp, oy, nv and bv never count; nothing for transfers, people or anything without that marker)"}
 	if cfg.Country != "" {
 		remote.SendsOffMachine = append(remote.SendsOffMachine, "country code")
 	}

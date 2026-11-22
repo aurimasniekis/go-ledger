@@ -50,30 +50,23 @@ func (s Subject) Key() string {
 }
 
 // MerchantString is the only bank text a remote source may be asked about
-// (decision C-E2-remote, ADR-0054). Nothing is sent unless the text carries a
-// positive merchant marker. The text is the counterparty name, else the
-// description. It is cleaned first: control characters removed, split at white
-// space and at the punctuation , / . and ;, every token that holds a digit
-// removed (IBANs and account numbers, amounts, dates, references, store
-// numbers) and the words iban, bic, swift, account and acct removed. The result
-// is sent only when it starts or ends with a company form (UAB, Ltd, GmbH, AB,
-// AS, SIA, Inc and the like) as a whole token, with at least one other word;
-// a form inside the text does not count, and the ambiguous short forms (as, co,
-// sa, ab, ag, sp, oy, nv, bv) count only in capitals, or a multi-word curated
-// pattern ("apple com bill"). Business words and single curated words are not
-// markers: they also sit in personal names. It is empty, and nothing is sent,
-// for transfers, for names of people and for everything else without a marker.
-// At most 100 characters are kept.
+// (decisions C-E2-remote and C-E2-forms-2, ADR-0054). It is built from the
+// counterparty name alone: description text is never sent and never a
+// fallback. The name is cleaned first: control characters removed, split at
+// white space and at the punctuation , / . and ;, every token that holds a
+// digit removed (IBANs, account numbers, store numbers) and the words iban,
+// bic, swift, account and acct removed. The result is sent only when it starts
+// or ends, as a whole token in any case, with one of the unambiguous company
+// forms in [CompanyForms] and holds at least one other word with a letter in
+// it. A bare form, a form plus punctuation ("UAB &"), the short ambiguous forms
+// (as, co, sa, ab, ag, sp, oy, nv, bv), names of people and transfers send
+// nothing. At most 100 characters are kept.
 func (s Subject) MerchantString() string {
-	used := s.Counterparty
-	if strings.TrimSpace(used) == "" {
-		used = s.Description
-	}
 	if looksLikeTransfer(s.Counterparty) || looksLikeTransfer(s.Description) {
 		return ""
 	}
 	var out []string
-	for _, t := range tokens(used) {
+	for _, t := range tokens(s.Counterparty) {
 		if strings.IndexFunc(t, unicode.IsDigit) >= 0 || accountWords[strings.ToLower(t)] {
 			continue
 		}
@@ -89,45 +82,21 @@ func (s Subject) MerchantString() string {
 	return t
 }
 
-// hasMerchantMarker: a company form beside another word, or a multi-word
-// curated pattern.
+// hasMerchantMarker: an unambiguous company form as the first or last token,
+// beside at least one other word that holds a letter.
 func hasMerchantMarker(toks []string) bool {
-	if len(toks) >= 2 && (isCompanyForm(toks[0]) || isCompanyForm(toks[len(toks)-1])) {
-		hasWord := false
-		for _, t := range toks[1 : len(toks)-1] {
-			hasWord = hasWord || strings.IndexFunc(t, unicode.IsLetter) >= 0
-		}
-		if isCompanyForm(toks[0]) && isCompanyForm(toks[len(toks)-1]) && !hasWord {
-			// only forms: no name
-		} else {
-			return true
-		}
+	if len(toks) < 2 || (!isCompanyForm(toks[0]) && !isCompanyForm(toks[len(toks)-1])) {
+		return false
 	}
-	key := Key(strings.Join(toks, " "))
-	for _, e := range DefaultCurated() {
-		for _, p := range e.Patterns {
-			if p = Key(p); strings.Contains(p, " ") && contains(key, p) {
-				return true
-			}
+	for _, t := range toks {
+		if !isCompanyForm(t) && strings.IndexFunc(t, unicode.IsLetter) >= 0 {
+			return true
 		}
 	}
 	return false
 }
 
-// isCompanyForm: the token is a company form. The ambiguous short forms (they
-// are also ordinary words or initials) count only in capitals.
-func isCompanyForm(t string) bool {
-	l := strings.ToLower(t)
-	if !companyForms[l] {
-		return false
-	}
-	if ambiguousForms[l] {
-		return t == strings.ToUpper(t)
-	}
-	return true
-}
-
-var ambiguousForms = map[string]bool{"as": true, "co": true, "sa": true, "ab": true, "ag": true, "sp": true, "oy": true, "nv": true, "bv": true}
+func isCompanyForm(t string) bool { return companyForms[strings.ToLower(t)] }
 
 var accountWords = map[string]bool{"iban": true, "bic": true, "swift": true, "account": true, "acct": true}
 
@@ -137,12 +106,19 @@ var transferWords = map[string]bool{
 	"overforing": true, "ueberweisung": true, "überweisung": true, "virement": true,
 }
 
-// companyForms are the positive merchant marker.
-var companyForms = map[string]bool{
-	"uab": true, "ltd": true, "limited": true, "gmbh": true, "inc": true, "llc": true, "as": true, "sia": true, "oy": true,
-	"ab": true, "bv": true, "sa": true, "srl": true, "plc": true, "corp": true, "co": true, "ag": true, "oü": true,
-	"mb": true, "sp": true, "zoo": true, "kft": true, "sarl": true, "nv": true,
-}
+// CompanyForms is the fixed list of unambiguous company forms that mark a
+// counterparty as a business (decision C-E2-forms-2). Short forms that are
+// also ordinary words or initials (as, co, sa, ab, ag, sp, oy, nv, bv) are not
+// on it and never count.
+var CompanyForms = []string{"uab", "mb", "sia", "ltd", "limited", "llc", "gmbh", "inc", "plc", "corp", "srl", "sarl", "kft", "oü"}
+
+var companyForms = func() map[string]bool {
+	m := map[string]bool{}
+	for _, f := range CompanyForms {
+		m[f] = true
+	}
+	return m
+}()
 
 func tokens(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool {

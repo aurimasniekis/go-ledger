@@ -133,10 +133,10 @@ func TestRemoteSendsOnlyTheAllowlistedFields(t *testing.T) {
 	if strings.Contains(rs.body.Load().(string), "LT1210") || rs.auth.Load() != "Bearer k-secret" {
 		t.Fatalf("leak or auth: %v %v", rs.body.Load(), rs.auth.Load())
 	}
-	// No country configured: none is sent. With no counterparty the
-	// description is the merchant string.
+	// No country configured: none is sent. The description is never the
+	// merchant string.
 	r2, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: rs.URL})
-	if q := r2.Query(enrichment.Subject{Description: "Only a description UAB"}); q.Merchant != "Only a description UAB" || q.Country != "" {
+	if q := r2.Query(enrichment.Subject{Counterparty: "Example Shop UAB", Description: "Only a description UAB"}); q.Merchant != "Example Shop UAB" || q.Country != "" {
 		t.Fatalf("query %+v", q)
 	}
 }
@@ -404,22 +404,26 @@ func TestMerchantStringSendsNoIdentifiersAmountsDatesOrTransfers(t *testing.T) {
 	}{
 		{"merchant counterparty", enrichment.Subject{Counterparty: "Example Shop UAB"}, "Example Shop UAB"},
 		{"company form with digits dropped", enrichment.Subject{Counterparty: "Example Shop 1523 UAB"}, "Example Shop UAB"},
-		{"description with form", enrichment.Subject{Description: "CARD PURCHASE Corner Kiosk Ltd LT121000011101001000 12.50 EUR 2026-10-01 ref 99A"}, ""},
-		{"form inside a description", enrichment.Subject{Description: "Payment to Jonas Jonaitis as agreed"}, ""},
-		{"form inside a longer description", enrichment.Subject{Description: "Invoice paid to Corner Kiosk Ltd for lunch"}, ""},
-		{"lowercase ambiguous form", enrichment.Subject{Counterparty: "Jonas Jonaitis as"}, ""},
-		{"lowercase co", enrichment.Subject{Counterparty: "Jonas Jonaitis co"}, ""},
 		{"form first", enrichment.Subject{Counterparty: "UAB Example Shop"}, "UAB Example Shop"},
-		{"capital AS last", enrichment.Subject{Counterparty: "Example AS"}, "Example AS"},
+		{"uppercase LTD", enrichment.Subject{Counterparty: "EXAMPLE SHOP LTD"}, "EXAMPLE SHOP LTD"},
 		{"lowercase unambiguous form", enrichment.Subject{Counterparty: "Example Shop uab"}, "Example Shop uab"},
-		{"split iban", enrichment.Subject{Description: "Kiosk GmbH IBAN LT12 1000 0111 0100 1000 account 4730"}, "Kiosk GmbH"},
-		{"multi-word curated pattern", enrichment.Subject{Description: "APPLE.COM/BILL 12345"}, "APPLE COM BILL"},
+		{"description never sent", enrichment.Subject{Description: "CARD PURCHASE Corner Kiosk Ltd 12.50 EUR"}, ""},
+		{"description with form at end", enrichment.Subject{Description: "Payment from Jonas Jonaitis to Example UAB"}, ""},
+		{"description with form at start", enrichment.Subject{Description: "UAB invoice for Jonas Jonaitis"}, ""},
+		{"description is no fallback", enrichment.Subject{Counterparty: "  ", Description: "Kiosk GmbH"}, ""},
+		{"uppercase ambiguous AS", enrichment.Subject{Counterparty: "JONAS JONAITIS AS"}, ""},
+		{"uppercase ambiguous SA", enrichment.Subject{Counterparty: "NGUYEN VAN SA"}, ""},
+		{"uppercase ambiguous CO", enrichment.Subject{Counterparty: "JONAS CO"}, ""},
+		{"ambiguous AS first", enrichment.Subject{Counterparty: "AS JONAITIS"}, ""},
+		{"ambiguous AB first", enrichment.Subject{Counterparty: "AB Jonaitis"}, ""},
+		{"capital AS last", enrichment.Subject{Counterparty: "Example AS"}, ""},
+		{"form and punctuation", enrichment.Subject{Counterparty: "UAB &"}, ""},
+		{"split iban", enrichment.Subject{Counterparty: "Kiosk GmbH IBAN LT12 1000 0111 0100 1000 account 4730"}, "Kiosk GmbH"},
+		{"curated pattern in description", enrichment.Subject{Description: "APPLE.COM/BILL 12345"}, ""},
 		{"single curated word", enrichment.Subject{Counterparty: "LIDL 1523 VILNIUS"}, ""},
-		{"business word only", enrichment.Subject{Description: "Corner Kiosk Bakery"}, ""},
 		{"form alone", enrichment.Subject{Counterparty: "UAB"}, ""},
 		{"only numbers", enrichment.Subject{Description: "12345678 2026-10-01"}, ""},
 		{"sepa transfer", enrichment.Subject{Counterparty: "Example Shop UAB", Description: "SEPA credit transfer"}, ""},
-		{"transfer word", enrichment.Subject{Description: "Transfer to savings UAB"}, ""},
 		{"person counterparty", enrichment.Subject{Counterparty: "Jonas Jonaitis", Description: "rent"}, ""},
 		{"person with initial", enrichment.Subject{Counterparty: "Anna K. Smith"}, ""},
 		{"surname first", enrichment.Subject{Counterparty: "SMITH, JOHN"}, ""},
