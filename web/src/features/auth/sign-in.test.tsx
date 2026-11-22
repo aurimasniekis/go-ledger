@@ -36,6 +36,36 @@ describe('sign-in redirect', () => {
     expect(new URL(url, 'http://x').searchParams.get('redirect')).toBe('/connections')
   })
 
+  it('detects the bank return whatever the letter case of the address', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/Connections/Callback/?state=S3CRET&code=C0DE'] })
+    installApi(signedOut)
+    render(<App history={history} />)
+    expect(await screen.findByTestId('bank-incomplete')).toBeInTheDocument()
+    expect(decodeURIComponent(history.location.href)).not.toMatch(/S3CRET|C0DE/)
+  })
+
+  it('removes the code from the address when the session check fails otherwise, and still completes after Try again', async () => {
+    const user = userEvent.setup()
+    let up = false
+    const done = { id: 'c1', institution: { id: 'B', name: 'Fake Bank', country: 'FI' } }
+    const calls = installApi({
+      ...signedIn(),
+      'GET /api/v1/auth/session': () => (up ? ok(session()) : fail(429, 'rate_limited', 'try later')),
+      'POST /api/v1/bank-connections/complete': ok(done),
+      'GET /api/v1/bank-connections': ok({ items: [], next_cursor: null }),
+    })
+    const history = createMemoryHistory({ initialEntries: ['/connections/callback?state=S3CRET&code=C0DE'] })
+    render(<App history={history} />)
+    await screen.findByRole('button', { name: 'Try again' })
+    await waitFor(() => expect(history.location.href).toBe('/connections/callback'))
+    expect(calls.filter((c) => c.path.endsWith('/complete'))).toHaveLength(0)
+    up = true
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText(/Fake Bank is connected/)).toBeInTheDocument()
+    expect(calls.find((c) => c.path.endsWith('/complete'))!.body).toEqual({ state: 'S3CRET', code: 'C0DE' })
+    expect(history.location.href).not.toMatch(/S3CRET|C0DE/)
+  })
+
   it('drops the fragment from the remembered place', async () => {
     const history = createMemoryHistory({ initialEntries: ['/month?month=2026-11#top'] })
     installApi(signedOut)

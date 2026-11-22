@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { Navigate, Outlet, useLocation, useNavigate } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
+import { Outlet, useLocation, useRouter, useSearch } from '@tanstack/react-router'
 import { ApiError } from '@/lib/api'
 import { useSession } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
@@ -35,13 +35,19 @@ export function splitOutcome(href: string): { redirect: string; oidcError: strin
  */
 export function RequireSession() {
   const s = useSession()
+  // A bank's return held in memory while the session check is failing for a reason other than being signed out (the
+  // address is cleaned meanwhile), so "Try again" can still complete the connection.
+  const [held, setHeld] = useState<{ search: string; stripped: boolean } | null>(null)
   const loc = useLocation()
-  const navigate = useNavigate()
+  // The router's own navigate is stable; the hook's changes with every location, which would restart a pending navigation.
+  const { navigate } = useRouter()
   const signedOut = !s.data && s.error instanceof ApiError && s.error.status === 401
   // The sign-in redirect keeps the place the user was going, without a fragment (the server's return_to refuses one).
   // A bank's return carries a single-use consent code: it is never kept anywhere, so the user is sent to Connections
   // with a notice that the connection was not completed.
-  const bankReturn = loc.pathname === BANK_CALLBACK_PATH
+  // Routes match case-insensitively and ignore a trailing slash, so the check does too.
+  const bankReturn = loc.pathname.replace(/\/+$/, '').toLowerCase() === BANK_CALLBACK_PATH
+  const failed = !s.data && !s.isPending && !signedOut
   const href = bankReturn ? '/connections' : loc.pathname + loc.searchStr
   useEffect(() => {
     // Once per place the user was going, not on every render.
@@ -54,10 +60,36 @@ export function RequireSession() {
       replace: true,
     })
   }, [signedOut, href, bankReturn, navigate])
+  // What the matched route sees: the restored address counts only once the route itself has it.
+  const matched = useSearch({ strict: false }) as { state?: unknown; code?: unknown; error?: unknown }
+  const hasReturn = !!(matched.state || matched.code || matched.error)
+  // State kept from render to render (set while rendering, never inside an effect).
+  if (failed && bankReturn && held === null && loc.searchStr) setHeld({ search: loc.searchStr, stripped: false })
+  if (held && !held.stripped && !loc.searchStr && !hasReturn) setHeld({ ...held, stripped: true })
+  if (held?.stripped && hasReturn) setHeld(null)
+  const heldSearch = held?.search
+  const needsStrip = !!held && !held.stripped && !!loc.searchStr
+  const needsRestore = !!held?.stripped && !!s.data && !s.data.two_factor.enrollment_required && !hasReturn
+  useEffect(() => {
+    if (needsStrip) void navigate({ to: BANK_CALLBACK_PATH, search: {}, replace: true })
+    else if (needsRestore && heldSearch) void navigate({ to: BANK_CALLBACK_PATH, search: Object.fromEntries(new URLSearchParams(heldSearch)), replace: true })
+  }, [needsStrip, needsRestore, heldSearch, navigate])
+  // Nothing is rendered until the page's route has the restored address: the page reads its code on first render.
+  const confinedAway = !!s.data?.two_factor.enrollment_required && loc.pathname !== ENROLMENT_PATH
+  const bankNotice = bankReturn || held !== null
+  // The code leaves the address first, on its own step, and only then does the session move on.
+  const stripFirst = confinedAway && bankReturn && !!loc.searchStr
+  useEffect(() => {
+    if (stripFirst) void navigate({ to: BANK_CALLBACK_PATH, search: {}, replace: true })
+    else if (confinedAway) void navigate({ to: ENROLMENT_PATH, search: {}, replace: true, state: (bankNotice ? { bankIncomplete: true } : {}) as never })
+  }, [stripFirst, confinedAway, bankNotice, navigate])
+  const restoring = !!s.data && held !== null && bankReturn
   if (s.data) {
     if (s.data.two_factor.enrollment_required && loc.pathname !== ENROLMENT_PATH) {
-      return <Navigate to={ENROLMENT_PATH} replace />
+      // The bank's code is not kept; the user is told the connection was not completed.
+      return null
     }
+    if (restoring) return null
     return (
       <ReauthProvider>
         <Outlet />
