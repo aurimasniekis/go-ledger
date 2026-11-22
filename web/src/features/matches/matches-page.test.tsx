@@ -1053,6 +1053,24 @@ describe('"This is the payment I recorded" (D45)', () => {
     await userEvent.click(within(card).getByRole('button', { name: 'Reverse (payment bounced)' }))
     expect(within(card).getByRole('form')).toHaveTextContent('stays replaced')
   })
+
+  it('held (confirmed, not counting): Unmatch says the record already counts again, and Reverse says it stops counting', async () => {
+    const h = confirmedRepl()
+    h.counts_as_evidence = false
+    store = [h]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    const unmatchForm = within(card).getByRole('form')
+    expect(unmatchForm).toHaveTextContent('Your manual record of this payment already counts again, because the bank no longer reports the payment. Unmatching keeps it counting.')
+    expect(unmatchForm).not.toHaveTextContent('comes back')
+    await userEvent.click(within(card).getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Reverse (payment bounced)' }))
+    const reverseForm = within(card).getByRole('form')
+    expect(reverseForm).toHaveTextContent('Your manual record of this payment counts again right now. Reversing keeps it replaced: it stops counting and nothing stands in for the payment.')
+    expect(reverseForm).not.toHaveTextContent('stays replaced')
+  })
 })
 
 describe('replacedIds', () => {

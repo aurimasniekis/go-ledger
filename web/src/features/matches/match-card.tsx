@@ -170,6 +170,8 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
   const replaceable = useReplaceableRecords(m, m.state === 'suggested' && (pay?.manual_evidence_count ?? 0) > 0)
   const canReplace = m.state === 'suggested' && replaceable.length > 0 && m.transaction.booking_status === 'booked' && m.transaction.countable
   const replacedNow = m.state === 'confirmed' ? replacedIds(m).length : 0
+  // A held match (ADR-0049 amendment A): its replaced records already count again, because the bank no longer reports the payment.
+  const heldNow = replacedNow > 0 && !m.counts_as_evidence
   // A final refusal of "This is the payment I recorded" lives here, not in ReplaceManual: the refetch it triggers can unmount that form.
   const [refusal, setRefusal] = useState<string | null>(null)
   const refusalBox = useRef<HTMLDivElement>(null)
@@ -390,8 +392,12 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
         >
           <p className="text-muted-foreground">
             {EXPLAIN[form]}
-            {form === 'unmatch' && replacedNow > 0 && ` Your manual ${replacedNow === 1 ? 'record' : 'records'} of this payment ${replacedNow === 1 ? 'comes' : 'come'} back and ${replacedNow === 1 ? 'counts' : 'count'} again.`}
-            {form === 'reverse' && replacedNow > 0 && ' Your manual record of this payment stays replaced (it was that payment); you can record a new payment in the monthly view.'}
+            {form === 'unmatch' && replacedNow > 0 && (heldNow
+              ? ` Your manual ${replacedNow === 1 ? 'record of this payment already counts' : 'records of this payment already count'} again, because the bank no longer reports the payment. Unmatching keeps ${replacedNow === 1 ? 'it' : 'them'} counting.`
+              : ` Your manual ${replacedNow === 1 ? 'record' : 'records'} of this payment ${replacedNow === 1 ? 'comes' : 'come'} back and ${replacedNow === 1 ? 'counts' : 'count'} again.`)}
+            {form === 'reverse' && replacedNow > 0 && (heldNow
+              ? ` Your manual ${replacedNow === 1 ? 'record of this payment counts' : 'records of this payment count'} again right now. Reversing keeps ${replacedNow === 1 ? 'it' : 'them'} replaced: ${replacedNow === 1 ? 'it stops' : 'they stop'} counting and nothing stands in for the payment.`
+              : ' Your manual record of this payment stays replaced (it was that payment); you can record a new payment in the monthly view.')}
           </p>
           {form === 'correct' && (
             <label className="grid min-w-0 gap-1">
