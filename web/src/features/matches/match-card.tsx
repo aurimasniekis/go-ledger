@@ -7,6 +7,7 @@ import { ApiError } from '@/lib/api'
 import { isVersionConflict, useOptimisticSave } from '@/lib/optimistic-save'
 import { useFocusRestore } from '@/lib/focus'
 import { ProvenanceMarker } from '@/features/month/provenance'
+import { useManualPayments } from '@/features/month/api'
 import { isZeroAmount, monthLabel, utcStamp } from '@/features/month/month'
 import { useSession } from '@/lib/auth'
 import { Bot, KeyRound } from 'lucide-react'
@@ -17,6 +18,20 @@ import { ReplaceManual, replacedIds, useReplaceableRecords } from './replace-man
 import type { MatchAction, MatchState, PaymentMatch } from './types'
 
 /** What a person may do with a match in each state (ADR-0035 point 5). rejected and reversed are final. */
+/** What Unmatch says about the manual records a match replaced (ADR-0049). A record deleted while replaced stays deleted, so it does not come back (X5j). */
+function unmatchRecordsCopy(live: number, deleted: number, held: boolean, check: 'checking' | 'failed' | null): string {
+  if (check === 'checking') return ' Whether your manual records of this payment still exist is being checked.'
+  if (check === 'failed') return ' Your manual records of this payment could not be checked, so this does not say whether they come back.'
+  const parts: string[] = []
+  if (live > 0) parts.push(held
+    ? `Your manual ${live === 1 ? 'record of this payment already counts' : 'records of this payment already count'} again, because the bank no longer reports the payment. Unmatching keeps ${live === 1 ? 'it' : 'them'} counting.`
+    : `Your manual ${live === 1 ? 'record' : 'records'} of this payment ${live === 1 ? 'comes' : 'come'} back and ${live === 1 ? 'counts' : 'count'} again.`)
+  if (deleted > 0) parts.push(deleted === 1
+    ? 'A manual record of this payment was deleted while it was replaced, so it does not come back.'
+    : `${deleted} manual records of this payment were deleted while they were replaced, so they do not come back.`)
+  return parts.map((p) => ` ${p}`).join('')
+}
+
 export function actionsFor(state: MatchState): MatchAction[] {
   if (state === 'suggested') return ['confirm', 'reject', 'correct']
   if (state === 'confirmed') return ['correct', 'unmatch', 'reverse']
@@ -169,7 +184,14 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
   const paidBy: PaidBy = !pay?.override?.applied ? ((pay?.bank_evidence_count ?? 0) > 0 ? 'bank' : (pay?.manual_evidence_count ?? 0) > 0 ? 'manual' : 'unknown') : ((pay.bank_evidence_count ?? 0) > 0 ? 'bank' : 'override')
   const replaceable = useReplaceableRecords(m, m.state === 'suggested' && (pay?.manual_evidence_count ?? 0) > 0)
   const canReplace = m.state === 'suggested' && replaceable.length > 0 && m.transaction.booking_status === 'booked' && m.transaction.countable
-  const replacedNow = m.state === 'confirmed' ? replacedIds(m).length : 0
+  const replacedAll = m.state === 'confirmed' ? replacedIds(m) : []
+  // A replaced record deleted since is not listed among the occurrence's manual records, and it stays deleted when the match is unmatched or reversed (X5j).
+  const manualList = useManualPayments(m.occurrence_id, replacedAll.length > 0)
+  const listedIds = new Set((manualList.data ?? []).map((p) => p.id))
+  const listKnown = manualList.isSuccess
+  const deletedNow = listKnown ? replacedAll.filter((id) => !listedIds.has(id)).length : 0
+  const replacedNow = replacedAll.length - deletedNow
+  const listCheck = replacedAll.length > 0 && !listKnown ? (manualList.isError ? 'failed' : 'checking') : null
   // A held match (ADR-0049 amendment A): its replaced records already count again, because the bank no longer reports the payment.
   const heldNow = replacedNow > 0 && !m.counts_as_evidence
   // A final refusal of "This is the payment I recorded" lives here, not in ReplaceManual: the refetch it triggers can unmount that form.
@@ -392,9 +414,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
         >
           <p className="text-muted-foreground">
             {EXPLAIN[form]}
-            {form === 'unmatch' && replacedNow > 0 && (heldNow
-              ? ` Your manual ${replacedNow === 1 ? 'record of this payment already counts' : 'records of this payment already count'} again, because the bank no longer reports the payment. Unmatching keeps ${replacedNow === 1 ? 'it' : 'them'} counting.`
-              : ` Your manual ${replacedNow === 1 ? 'record' : 'records'} of this payment ${replacedNow === 1 ? 'comes' : 'come'} back and ${replacedNow === 1 ? 'counts' : 'count'} again.`)}
+            {form === 'unmatch' && replacedAll.length > 0 && unmatchRecordsCopy(replacedNow, deletedNow, heldNow, listCheck)}
             {form === 'reverse' && replacedNow > 0 && (heldNow
               ? ` Your manual ${replacedNow === 1 ? 'record of this payment counts' : 'records of this payment count'} again right now. Reversing keeps ${replacedNow === 1 ? 'it' : 'them'} replaced: ${replacedNow === 1 ? 'it stops' : 'they stop'} counting and nothing stands in for the payment.`
               : ' Your manual record of this payment stays replaced (it was that payment); you can record a new payment in the monthly view.')}
