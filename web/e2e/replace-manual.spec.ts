@@ -35,6 +35,7 @@ async function stub(page: Page) {
     const state = new URL(r.request().url()).searchParams.get('state')
     return json(r, { items: match.state === state ? [match] : [], next_cursor: null })
   })
+  await page.route(/\/api\/v1\/payment-matches\/m1$/, (r) => json(r, match))
   await page.route(/\/api\/v1\/payment-matches\/m1\/(confirm-replacing|unconfirm)$/, (r) => {
     const action = r.request().url().split('/').pop()!
     calls.push(action + ' ' + r.request().postData())
