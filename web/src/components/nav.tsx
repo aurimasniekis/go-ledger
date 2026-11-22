@@ -157,7 +157,7 @@ export function AccountMenu() {
             {holds(grants, 'organisation:read') && (
               <Group label="Organise">
                 <li><Link to="/organisation" className={link}>Categories, labels, buckets</Link></li>
-                <li><Link to="/commitments" className={link}>Organise commitments</Link></li>
+                {holds(grants, 'commitments:read') && <li><Link to="/commitments" className={link}>Organise commitments</Link></li>}
               </Group>
             )}
             {holds(grants, 'merchants:read') && (

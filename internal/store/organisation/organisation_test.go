@@ -1188,6 +1188,34 @@ func TestSchemaEnforcesTheRules(t *testing.T) {
 	}
 }
 
+func TestSelectRefusesMoreThanTheCap(t *testing.T) {
+	f := newFixture(t)
+	a, b := f.tx("CARD PURCHASE BOOKSHOP"), f.tx("COFFEE KIOSK")
+	keep := f.def(org.KindLabel, "Keep", nil)
+	food := f.def(org.KindCategory, "Food", nil)
+	for _, tx := range []banking.StoredTransaction{a, b} {
+		if _, err := f.os.AddLabel(f.ctx, alice, txRef(tx), keep.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.os.SetCategory(f.ctx, alice, txRef(tx), &food.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer orgstore.SetMaxSelected(2)()
+	for name, fl := range map[string]org.Filter{"label": {LabelIDs: []string{keep.ID}}, "category": {CategoryIDs: []string{food.ID}}} {
+		if ids, err := f.os.Select(f.ctx, org.ObjectTransaction, fl); err != nil || len(ids) != 2 {
+			t.Fatalf("%s at the cap: %v %v", name, ids, err)
+		}
+	}
+	restore := orgstore.SetMaxSelected(1)
+	defer restore()
+	for name, fl := range map[string]org.Filter{"label": {LabelIDs: []string{keep.ID}}, "category": {CategoryIDs: []string{food.ID}}} {
+		if ids, err := f.os.Select(f.ctx, org.ObjectTransaction, fl); !errors.Is(err, org.ErrTooManyObjects) || ids != nil {
+			t.Fatalf("%s over the cap: %v %v", name, ids, err)
+		}
+	}
+}
+
 func TestSelectAndMemberIDs(t *testing.T) {
 	f := newFixture(t)
 	pending := f.tx("CARD PURCHASE BOOKSHOP")
