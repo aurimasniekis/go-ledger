@@ -24,6 +24,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
@@ -77,6 +78,9 @@ type Deps struct {
 	Merchants merchants.Store
 	// MerchantSources describes the merchant-identification sources (ADR-0054).
 	MerchantSources []MerchantSourceInfo
+	// Organisation stores categories, labels, buckets and their assignments
+	// (ADR-0053).
+	Organisation organisation.Store
 	// Deferrals stores deferral plans (DF1, ADR-0050); nil leaves the
 	// monthly view without plans (the plan routes are registered regardless,
 	// like the other stores').
@@ -157,6 +161,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerMatches(s, d.Matches)
 	registerMerchants(s, d.Merchants)
 	registerMerchantSources(s, d.MerchantSources)
+	registerOrganisation(s, d.Organisation)
 	registerDeferrals(s, d.Deferrals, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerBankConnections(s, d.Banking)
 	registerMatching(s, d.Matching)

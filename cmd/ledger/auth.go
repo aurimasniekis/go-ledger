@@ -33,6 +33,7 @@ import (
 	deferralstore "github.com/aurimasniekis/go-ledger/internal/store/deferrals"
 	matchstore "github.com/aurimasniekis/go-ledger/internal/store/matches"
 	merchantstore "github.com/aurimasniekis/go-ledger/internal/store/merchants"
+	organisationstore "github.com/aurimasniekis/go-ledger/internal/store/organisation"
 	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
 	tokenstore "github.com/aurimasniekis/go-ledger/internal/store/tokens"
 	userstore "github.com/aurimasniekis/go-ledger/internal/store/users"
@@ -62,11 +63,12 @@ func authConfig(c config.Auth) auth.Config {
 
 // apiParts are the stores and services behind the Management API.
 type apiParts struct {
-	users       *userstore.Store
-	commitments *commitmentstore.Store
-	payments    *paymentstore.Store
-	matches     *matchstore.Store
-	merchants   *merchantstore.Store
+	users        *userstore.Store
+	commitments  *commitmentstore.Store
+	payments     *paymentstore.Store
+	matches      *matchstore.Store
+	merchants    *merchantstore.Store
+	organisation *organisationstore.Store
 	// enricher and merchantSources are the merchant enrichment service and its
 	// description (E2, ADR-0054); nil/empty in tests that do not build them.
 	enricher        *enrichment.Service
@@ -118,7 +120,7 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.
 		return apiParts{}, err
 	}
 	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil),
-		matches: matchstore.New(db, al, now, nil), merchants: merchantstore.New(db, al, now), deferrals: deferralstore.New(db, al, now, nil), auth: svc, db: db,
+		matches: matchstore.New(db, al, now, nil), merchants: merchantstore.New(db, al, now), organisation: organisationstore.New(db, al, now, nil), deferrals: deferralstore.New(db, al, now, nil), auth: svc, db: db,
 		tokens: tokens.NewService(tokenstore.New(db, al), us, tokens.Options{Now: now})}, nil
 }
 

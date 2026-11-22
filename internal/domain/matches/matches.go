@@ -459,7 +459,8 @@ func CheckConfirm(t Transaction, otherAllocated []money.Money, amount money.Mone
 		return nil
 	}
 	// Evidence in the occurrence's currency only; the amount is in it too.
-	paid := payments.Derive(o, facts, o.DueDate, nil).Paid
+	// No grace hook is given, so nothing reads the context.
+	paid := payments.Derive(context.Background(), o, facts, o.DueDate, nil).Paid
 	after, err := paid.Add(amount)
 	if err != nil {
 		return ErrCurrency

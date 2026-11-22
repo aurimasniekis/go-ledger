@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/logging"
@@ -84,6 +85,23 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// loggedPath is the path the access log records. A merchant is named in the
+// path by a key derived from its name, which derives from bank text (decision
+// D13 treats counterparty names as sensitive), so that segment is replaced
+// (ADR-0053); every other path is logged as it is.
+func loggedPath(r *http.Request) string {
+	const merchant = OrganisationPath + "/merchant/"
+	escaped := r.URL.EscapedPath()
+	if !strings.HasPrefix(escaped, merchant) {
+		return r.URL.Path
+	}
+	rest := escaped[len(merchant):]
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return merchant + "{object_id}" + rest[i:]
+	}
+	return merchant + "{object_id}"
+}
+
 // accessLogMiddleware logs one line per request, after it completes. It logs
 // the method, path (never the query string), status, size and duration; never
 // headers or bodies. The request-scoped logger is put in the context.
@@ -114,7 +132,7 @@ func accessLogMiddleware(log *slog.Logger) func(http.Handler) http.Handler {
 				}
 				reqLog.Log(ctx, level, "request",
 					"method", r.Method,
-					"path", r.URL.Path,
+					"path", loggedPath(r),
 					"status", sw.status,
 					"bytes", sw.bytes,
 					"duration_ms", float64(time.Since(start).Microseconds())/1000,

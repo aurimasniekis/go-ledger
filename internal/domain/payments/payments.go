@@ -167,8 +167,11 @@ type Grace struct {
 // GraceFunc returns the leeway recorded for an occurrence's commitment. It is
 // the hook of task DF2; nil means no grace information is available at all.
 // There is deliberately no default length, and nothing is inferred from
-// history or model output: only the user's own entry yields a date.
-type GraceFunc func(o occurrences.Occurrence) Grace
+// history or model output: only the user's own entry yields a date. ctx is the
+// caller's context (the request, for a page), so a read stops with it. A hook
+// that cannot read the recorded leeway logs the error and returns the zero
+// Grace, which reports nothing recorded.
+type GraceFunc func(ctx context.Context, o occurrences.Occurrence) Grace
 
 // Leeway states of a [State] besides the user-entered kinds.
 const LeewayNotRecorded = "not_recorded"
@@ -220,8 +223,8 @@ type State struct {
 }
 
 // Derive computes the payment state of o from its facts, today's date in the
-// reporting zone and an optional grace hook.
-func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceFunc) State {
+// reporting zone and an optional grace hook; ctx is passed to the hook.
+func Derive(ctx context.Context, o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceFunc) State {
 	cur := o.Amount.Currency()
 	paid, _ := money.Zero(cur, o.Amount.Amount().Scale())
 	var other []money.Currency
@@ -321,7 +324,7 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 		}
 	}
 	if timing == StatusOverdue && grace != nil { // not for not_recorded
-		g := grace(o)
+		g := grace(ctx, o)
 		st.Leeway = LeewayNotRecorded
 		if g.Recorded {
 			st.Leeway = string(g.Kind)
