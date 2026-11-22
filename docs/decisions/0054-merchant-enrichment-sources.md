@@ -1,4 +1,4 @@
-# ADR-0053: Merchant enrichment sources
+# ADR-0054: Merchant enrichment sources
 
 Status: accepted. Builds on [ADR-0051](0051-merchant-model-and-corrections.md) (task E2). Decision D15, taken by the
 operator on 2026-11-20, fixes the policy; research is in the knowledge base (merchant/logo enrichment, R8).

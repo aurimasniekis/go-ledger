@@ -340,7 +340,7 @@ merchants:
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_ENABLED  Flag: --merchants.enrichment.remote.enabled
       enabled: false
 
-      # Lookup endpoint of the remote service (POST, JSON; see ADR-0053 for
+      # Lookup endpoint of the remote service (POST, JSON; see ADR-0054 for
       # the contract). https only (plain http only for a loopback test
       # server), no credentials or query. Required when enabled.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_URL  Flag: --merchants.enrichment.remote.url

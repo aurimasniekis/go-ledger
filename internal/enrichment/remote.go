@@ -21,7 +21,7 @@ const SourceRemote = "remote"
 // Licence is what the remote service's licence lets Ledger do with its answers.
 // The zero value is the most restrictive: no logo reference kept, no attribution
 // to show, answers kept until replaced. The operator states it in configuration
-// (ADR-0053); Ledger cannot verify it.
+// (ADR-0054); Ledger cannot verify it.
 type Licence struct {
 	// Attribution is shown with identities that came from the service.
 	Attribution string

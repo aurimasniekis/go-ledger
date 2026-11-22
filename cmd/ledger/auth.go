@@ -68,7 +68,7 @@ type apiParts struct {
 	matches     *matchstore.Store
 	merchants   *merchantstore.Store
 	// enricher and merchantSources are the merchant enrichment service and its
-	// description (E2, ADR-0053); nil/empty in tests that do not build them.
+	// description (E2, ADR-0054); nil/empty in tests that do not build them.
 	enricher        *enrichment.Service
 	merchantSources []httpapi.MerchantSourceInfo
 	deferrals       *deferralstore.Store

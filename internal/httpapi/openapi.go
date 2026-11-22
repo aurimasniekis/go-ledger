@@ -75,7 +75,7 @@ type Deps struct {
 	Matches matches.Store
 	// Merchants stores merchant enrichments and decisions (ADR-0051).
 	Merchants merchants.Store
-	// MerchantSources describes the merchant-identification sources (ADR-0053).
+	// MerchantSources describes the merchant-identification sources (ADR-0054).
 	MerchantSources []MerchantSourceInfo
 	// Deferrals stores deferral plans (DF1, ADR-0050); nil leaves the
 	// monthly view without plans (the plan routes are registered regardless,

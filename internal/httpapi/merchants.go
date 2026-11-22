@@ -135,7 +135,7 @@ func merchantError(err error) error {
 }
 
 // MerchantSourceInfo describes one merchant-identification source for the
-// client (task E2, ADR-0053): what it is, whether it is on, and what the
+// client (task E2, ADR-0054): what it is, whether it is on, and what the
 // licence requires to be shown with its answers.
 type MerchantSourceInfo struct {
 	// Name is the source token stored with an answer (the enrichment's source).

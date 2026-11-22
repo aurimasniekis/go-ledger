@@ -166,7 +166,7 @@ type Rates struct {
 	Timeout         time.Duration `cfg:"timeout" default:"15s" desc:"Time limit for one request to Frankfurter (1s to 2m). A request that exceeds it counts as an outage: cached rates stay in use."`
 }
 
-// Merchants configures merchant identification (E2, ADR-0053). Decision D15:
+// Merchants configures merchant identification (E2, ADR-0054). Decision D15:
 // the baseline is a local curated mapping plus the person's confirmations, fully
 // offline; the remote source is off and none is approved.
 type Merchants struct {
@@ -179,10 +179,10 @@ type MerchantEnrichment struct {
 }
 
 // MerchantRemote configures the optional remote merchant source. The adapter is
-// provider-neutral; it speaks the small JSON contract in ADR-0053.
+// provider-neutral; it speaks the small JSON contract in ADR-0054.
 type MerchantRemote struct {
 	Enabled      bool          `cfg:"enabled" default:"false" desc:"Ask a remote merchant-identification service about transactions the local curated mapping and your confirmations cannot identify. Off by default and no service is approved (decision D15). Turning it on sends one cleaned merchant string per transaction (the counterparty name, else the start of the description) and, if merchants.enrichment.remote.country is set, that country code. Never amounts, dates, IBANs, account holders or balances. Needs url, and you are responsible for the service's terms: see attribution, store_logo_ref and retention."`
-	URL          string        `cfg:"url" desc:"Lookup endpoint of the remote service (POST, JSON; see ADR-0053 for the contract). https only (plain http only for a loopback test server), no credentials or query. Required when enabled."`
+	URL          string        `cfg:"url" desc:"Lookup endpoint of the remote service (POST, JSON; see ADR-0054 for the contract). https only (plain http only for a loopback test server), no credentials or query. Required when enabled."`
 	APIKeyFile   string        `cfg:"api_key_file" desc:"Path of a file with the bearer key for the remote service (trailing newlines ignored). The key is read at startup, sent only to the configured URL and never logged. Optional."`
 	Country      string        `cfg:"country" desc:"Optional ISO 3166-1 alpha-2 country code sent with each lookup as a hint, for example LT. Empty means no country is sent."`
 	Timeout      time.Duration `cfg:"timeout" default:"10s" desc:"Time limit for one lookup (1s to 1m). A failure or timeout leaves the transaction without a remote answer and never delays or fails an import."`

@@ -18,7 +18,7 @@ import (
 // remote source can never hold up the refresh that triggered it (task E2).
 const enrichmentBudget = time.Minute
 
-// buildEnrichment builds the merchant enrichment service (ADR-0053) and the
+// buildEnrichment builds the merchant enrichment service (ADR-0054) and the
 // description of its sources for the API. The local sources are always on; the
 // remote source only when the operator enabled it (decision D15: off by default,
 // none approved). It returns the API key it read so the caller can register it

@@ -10,7 +10,7 @@ import (
 // Entry is one curated merchant: the display name and the patterns (as [Key]
 // words) that identify it. Domain documents where a logo would come from; no
 // logo file ships, so the interface uses its neutral icon (a logo needs a
-// licence, see ADR-0053).
+// licence, see ADR-0054).
 type Entry struct {
 	Name     string
 	Domain   string

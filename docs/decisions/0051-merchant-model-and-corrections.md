@@ -69,7 +69,7 @@ This task builds the model and the person's corrections so that any source, or n
 - **Reliability threshold.** 800 permille (`merchants.DefaultThreshold`) is a documented named default, not a decision
   of D15. The store takes it as an option (`WithThreshold`); there is no configuration key until one is needed.
 - **Reuse of confirmed mappings** (D15: confirmed mappings are reused as suggestions). Built in task E2, see
-  [ADR-0053](0053-merchant-enrichment-sources.md). Originally not built here: what counts as
+  [ADR-0054](0054-merchant-enrichment-sources.md). Originally not built here: what counts as
   similar is task E2's design. The model does not presuppose it: a reused mapping is written as an enrichment answer
   with its own source (for instance `local_mapping`) and a confidence, so it is shown or held back by the same
   threshold and never outranks a person's decision on that transaction.

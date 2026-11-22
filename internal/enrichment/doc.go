@@ -1,5 +1,5 @@
 // Package enrichment identifies the merchant behind a bank transaction (task
-// E2, ADR-0053) and hands the answer to the merchant store (E1, ADR-0051).
+// E2, ADR-0054) and hands the answer to the merchant store (E1, ADR-0051).
 //
 // Decision D15 fixes the policy. The baseline is a local curated mapping plus
 // the person's confirmations, fully offline. A confirmed mapping is reused only
