@@ -5,11 +5,12 @@ import { StatusBadge, type Status } from '@/components/status-badge'
 import { DisconnectedState, EmptyState, FailedState, LoadingState } from '@/components/state-panels'
 import { Amount, DateText } from '@/components/formatted'
 import { isNetworkError } from '@/lib/connection'
-import type { ReactNode, Ref } from 'react'
+import { Fragment, type ReactNode, type Ref } from 'react'
 import { ProvenanceMarker, provenanceOf } from './provenance'
 import { ReplacedRecords } from './replaced-records'
+import { PlanSummary } from '@/features/deferrals/plan-summary'
 import { ageLabel, isZeroAmount, monthLabel, shiftMonth, utcStamp } from './month'
-import type { MonthItem, MonthSummary, MonthTotals, PaymentStatus } from './types'
+import type { Money, MonthItem, MonthSummary, MonthTotals, PaymentStatus } from './types'
 
 export const OFFLINE_NOTE_ID = 'record-offline-note'
 export const REFRESH_OFFLINE_ID = 'refresh-offline-note'
@@ -52,6 +53,11 @@ export interface MonthBoardProps {
   filterNote?: (shown: number, total: number) => ReactNode
   /** Receives the page title (h1) so focus can fall back to it. */
   titleRef?: Ref<HTMLHeadingElement>
+  /** Opens the plan form (no plan yet) or the plan's details (an active plan) in place under the row (task DF3). */
+  onPlan?: (item: MonthItem) => void
+  /** The plan panel, shown in place under the row with this id (own or carried-in), like the payment form. */
+  planFor?: string | null
+  planPanel?: ReactNode
 }
 
 /** A money amount: the amount with its currency, one line, never broken (the shared formatter for the month views). */
@@ -59,6 +65,7 @@ export const money = (m: { amount: string; currency: string }) => <Amount amount
 
 export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
   const label = monthLabel(p.month)
+  const carried = p.data?.carried_in ?? []
   return (
     <div className="space-y-4">
       <div role="group" aria-label="Month" className="flex flex-wrap items-center gap-2">
@@ -94,7 +101,7 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           <Freshness {...p} data={p.data} />
           {/* The form opened from the header sits above the list; one opened from a row sits under that row. */}
           {!p.formFor && p.form}
-          {p.data.items.length === 0 && !(p.form && p.formFor) ? (
+          {p.data.items.length === 0 && carried.length === 0 && !(p.form && p.formFor) ? (
             <EmptyState id="month-empty" level={2} title={`No commitments fall due in ${label}`}>
               Nothing is scheduled for this month. A commitment shows here once its schedule has a due date in it; use the month buttons to look at another month.
             </EmptyState>
@@ -102,7 +109,8 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
             <>
               {p.data.items.length > 0 && <Totals totals={p.data.totals} />}
               {p.filterNote?.(p.visible ? p.data.items.filter(p.visible).length : p.data.items.length, p.data.items.length)}
-              <Occurrences items={p.visible ? p.data.items.filter(p.visible) : p.data.items} renderOrganise={p.renderOrganise} onRecord={p.onRecord} offline={p.offline} formFor={p.formFor} form={p.form} waiting={p.waiting} />
+              <Occurrences items={p.visible ? p.data.items.filter(p.visible) : p.data.items} renderOrganise={p.renderOrganise} onRecord={p.onRecord} offline={p.offline} formFor={p.formFor} form={p.form} waiting={p.waiting} onPlan={p.onPlan} planFor={p.planFor} planPanel={p.planPanel} />
+              {carried.length > 0 && <CarriedIn items={carried} month={p.month} onPlan={p.onPlan} planFor={p.planFor} planPanel={p.planPanel} offline={p.offline} />}
             </>
           )}
         </>
@@ -234,6 +242,12 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
               <dd data-total-amount className={AMOUNT}>{money(t.paid)}</dd>
               <dt>Outstanding</dt>
               <dd data-total-amount className={AMOUNT}>{money(t.outstanding)}</dd>
+              {t.planned && (
+                <>
+                  <dt>Planned this month</dt>
+                  <dd data-total-amount data-testid={'planned-' + t.currency} className={AMOUNT}>{money(t.planned)}</dd>
+                </>
+              )}
               <dt className={hasOverdue(t) ? 'font-semibold' : undefined}>Overdue (past original due date)</dt>
               <dd data-total-amount className={hasOverdue(t) ? AMOUNT + ' font-semibold text-status-overdue' : AMOUNT}>
                 {money(t.overdue)}
@@ -244,6 +258,7 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
                 </dd>
               )}
             </dl>
+            <PlanFigures t={t} />
             {!isZeroAmount(t.overpaid.amount) && (
               <p className="mt-1 text-xs text-muted-foreground">Includes {money(t.overpaid)} paid above the amounts due.</p>
             )}
@@ -259,6 +274,34 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
   )
 }
 
+/** The parts of "Planned this month" that differ from "Outstanding": shown only when a deferral plan or a planned fee is involved. */
+function PlanFigures({ t }: { t: MonthTotals }) {
+  const parts: [string, Money | undefined, string][] = [
+    ['Deferred to a later month', t.deferred_out, 'still owed here, planned in the later month'],
+    ['Carried in from earlier months', t.carried_in, 'owed since an earlier month, planned this month'],
+    ['Fees and charges still planned', t.adjustments, 'recorded on a plan, not yet marked paid'],
+  ]
+  const shown = parts.filter(([, m]) => m && !isZeroAmount(m.amount))
+  if (shown.length === 0) return null
+  return (
+    <div data-testid={'plan-figures-' + t.currency} className="mt-1 space-y-1 text-xs">
+      <dl className="grid grid-cols-1 gap-x-4 sm:grid-cols-[minmax(0,1fr)_auto]">
+        {shown.map(([label, m, note]) => (
+          <Fragment key={label}>
+            <dt>
+              {label} <span className="text-muted-foreground">({note})</span>
+            </dt>
+            <dd className={AMOUNT}>{money(m!)}</dd>
+          </Fragment>
+        ))}
+      </dl>
+      <p className="text-muted-foreground">
+        Planned this month = outstanding − deferred to a later month + carried in + fees still planned. A plan changes when an amount is planned, not whether it is owed.
+      </p>
+    </div>
+  )
+}
+
 function Occurrences({
   renderOrganise,
   items,
@@ -267,8 +310,14 @@ function Occurrences({
   formFor,
   form,
   waiting,
+  onPlan,
+  planFor,
+  planPanel,
 }: {
   renderOrganise?: (commitmentId: string, name: string) => ReactNode
+  onPlan?: (i: MonthItem) => void
+  planFor?: string | null
+  planPanel?: ReactNode
   waiting?: ReadonlySet<string>
   items: MonthItem[]
   onRecord: (i: MonthItem) => void
@@ -277,7 +326,7 @@ function Occurrences({
   form?: ReactNode
 }) {
   const rows = items.map((i) => (
-    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} offline={offline} form={i.id === formFor ? form : null} suggestionWaiting={waiting?.has(i.id)} organise={renderOrganise?.(i.commitment_id, i.commitment_name || i.commitment_id)} />
+    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} offline={offline} form={i.id === formFor ? form : null} suggestionWaiting={waiting?.has(i.id)} onPlan={onPlan} planPanel={i.id === planFor ? planPanel : null} organise={renderOrganise?.(i.commitment_id, i.commitment_name || i.commitment_id)} />
   ))
   // The row that opened the form left the list (paid elsewhere): its place stays, in the same list under the
   // same key, so the open form keeps what was typed and can say so.
@@ -294,7 +343,28 @@ function Occurrences({
           {statusSummary(items)}
         </p>
       )}
+      {items.length === 0 && <p className="text-sm text-muted-foreground">No commitments fall due this month; only occurrences carried in from earlier months are listed below.</p>}
       <ul className="space-y-2">{rows}</ul>
+    </section>
+  )
+}
+
+/** Occurrences of earlier months planned into this month: kept apart from the month's own, with their own month and due date. */
+function CarriedIn({ items, month, onPlan, planFor, planPanel, offline }: { items: MonthItem[]; month: string; onPlan?: (i: MonthItem) => void; planFor?: string | null; planPanel?: ReactNode; offline?: boolean }) {
+  return (
+    <section aria-labelledby="month-carried-in" className="space-y-2" data-testid="carried-in">
+      <h2 id="month-carried-in" className="font-semibold">
+        Carried in from earlier months
+      </h2>
+      <p className="text-sm text-muted-foreground">
+        These fell due in an earlier month and are planned to be paid in {monthLabel(month)}. They are still owed from their original due date; they are not
+        this month's own occurrences and are not counted in its scheduled or outstanding totals.
+      </p>
+      <ul className="space-y-2">
+        {items.map((i) => (
+          <OccurrenceRow key={i.id} item={i} carriedInto={month} onRecord={() => undefined} offline={offline} onPlan={onPlan} planPanel={i.id === planFor ? planPanel : null} />
+        ))}
+      </ul>
     </section>
   )
 }
@@ -326,7 +396,28 @@ function statusOf(i: MonthItem): Status {
   return i.payment.status
 }
 
-function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting, organise }: { organise?: ReactNode; item: MonthItem | null; onRecord: (i: MonthItem) => void; offline?: boolean; form?: ReactNode; suggestionWaiting?: boolean }) {
+function OccurrenceRow({
+  item: i,
+  onRecord,
+  offline,
+  form,
+  suggestionWaiting,
+  onPlan,
+  planPanel,
+  carriedInto,
+  organise,
+}: {
+  organise?: ReactNode
+  item: MonthItem | null
+  onRecord: (i: MonthItem) => void
+  offline?: boolean
+  form?: ReactNode
+  suggestionWaiting?: boolean
+  onPlan?: (i: MonthItem) => void
+  planPanel?: ReactNode
+  /** Set for a row of the "carried in" list: the month it is planned in. Its payment is recorded from its own month. */
+  carriedInto?: string
+}) {
   // No item: the occurrence the open form came from has left the list. Same component, same key, so the form stays mounted.
   if (!i) {
     return (
@@ -349,6 +440,7 @@ function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting, or
           <p className="font-medium break-words">{i.commitment_name || i.commitment_id}</p>
           <p className="text-sm text-muted-foreground">
             Original due date <DateText value={i.due_date} />
+            {carriedInto ? <>, in {monthLabel(i.month)}</> : null}
           </p>
         </div>
         <p className="shrink-0 whitespace-nowrap font-mono">{money(i.amount)}</p>
@@ -358,13 +450,25 @@ function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting, or
         {p.status === 'partially_paid' && (p.timing === 'overdue' || p.timing === 'due') && (
           <StatusBadge status={p.timing} label={p.timing === 'overdue' ? 'Remainder overdue' : 'Remainder due today'} />
         )}
+        {i.deferral && <StatusBadge status="deferred" label={'Planned for ' + i.deferral.planned_date} />}
         {provenance && <ProvenanceMarker kind={provenance} />}
         {p.override?.applied && <span className="text-sm">Marked {p.override.status}: {p.override.reason}</span>}
-        {!settled && (
+        {onPlan && (i.deferral || (!settled && !isZeroAmount(p.outstanding_amount.amount))) && (
           <Button
             variant="ghost"
             size="sm"
             className="ml-auto h-auto min-h-8 whitespace-normal py-1 text-foreground underline underline-offset-4"
+            onClick={() => onPlan(i)}
+            aria-label={`${i.deferral ? 'Manage the plan for' : 'Plan a later date for'} ${i.commitment_name || i.commitment_id}, due ${i.due_date}`}
+          >
+            {i.deferral ? 'Manage plan' : 'Plan a later date'}
+          </Button>
+        )}
+        {!settled && !carriedInto && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`${onPlan && (i.deferral || !isZeroAmount(p.outstanding_amount.amount)) ? '' : 'ml-auto '}h-auto min-h-8 whitespace-normal py-1 text-foreground underline underline-offset-4`}
             onClick={() => onRecord(i)}
             disabled={offline}
             aria-describedby={offline ? OFFLINE_NOTE_ID : undefined}
@@ -375,6 +479,16 @@ function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting, or
         )}
       </div>
       <ReplacedRecords occurrenceId={i.id} unmatchLink />
+      {i.deferral && <PlanSummary plan={i.deferral} ownMonth={i.month} />}
+      {carriedInto && (
+        <p className="text-sm">
+          Planned for <DateText value={i.deferral?.planned_date ?? ''} /> in {monthLabel(carriedInto)}. To record a payment, open{' '}
+          <Link to="/month" search={{ month: i.month }} className="underline underline-offset-4">
+            {monthLabel(i.month)}
+          </Link>
+          .
+        </p>
+      )}
       {p.timing === 'overdue' && p.grace_until && (
         <p className="text-sm">
           {p.within_grace ? (
@@ -421,6 +535,7 @@ function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting, or
       {organise}
       </div>
       {form}
+      {planPanel}
     </li>
   )
 }

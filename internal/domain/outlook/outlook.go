@@ -172,10 +172,14 @@ type Outlook struct {
 //     currency; nil when no account has one (or balances are not shown).
 //   - BalanceLessStillDue is Balance less StillDue; nil when Balance is.
 type CurrencyLine struct {
-	Currency            money.Currency
-	StillDue            money.Money
-	Overdue             money.Money
-	Upcoming            money.Money
+	Currency money.Currency
+	StillDue money.Money
+	Overdue  money.Money
+	Upcoming money.Money
+	// Planned is how the same window looks when each outstanding amount is
+	// placed in the month it is planned to be paid (deferral plans, DF1/DF3,
+	// D-DF 8). It never changes StillDue, Overdue or Upcoming.
+	Planned             PlannedFigures
 	OverdueCount        int
 	Balance             *money.Money
 	BalanceLessStillDue *money.Money
@@ -201,6 +205,32 @@ type CurrencyLine struct {
 	// reflect. It is a caveat only and is never netted into Balance. Nil when
 	// no balance is counted.
 	PaymentsAfterBalance *PaymentsAfter
+}
+
+// PlannedFigures are the planned outflows of one currency over the window,
+// summed from the monthly view's planned figures (ADR-0050):
+//
+//		Total = StillDue - DeferredBeyond + Adjustments
+//
+//	  - DeferredIn is the outstanding amount of occurrences planned into a later
+//	    month of the window than their own: still due and, past the due date,
+//	    overdue, but planned later. It is part of StillDue and of Total, shown
+//	    apart so a deferral never reads as money that stopped being owed.
+//	  - DeferredBeyond is the part of StillDue whose active plan puts it in a
+//	    month after the window: still owed, not planned inside the window.
+//	  - Adjustments sums the recorded fees and charges of the plans that are
+//	    still planned in the window (neither removed nor marked paid), whether
+//	    or not the principal is paid. They are not part of StillDue.
+//
+// A plan is not payment and not forgiveness: StillDue keeps counting every
+// deferred amount. When the window is truncated (see [Outlook.Truncated]) an
+// amount deferred from before it into it is counted in DeferredIn only, so
+// DeferredBeyond can then be understated.
+type PlannedFigures struct {
+	Total          money.Money
+	DeferredIn     money.Money
+	DeferredBeyond money.Money
+	Adjustments    money.Money
 }
 
 // OverdueMonth is the overdue part of one currency that falls in one month.
@@ -349,7 +379,7 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 		l := lines[cur]
 		if l == nil {
 			z, _ := money.Zero(cur, scale)
-			l = &CurrencyLine{Currency: cur, StillDue: z, Overdue: z, Upcoming: z}
+			l = &CurrencyLine{Currency: cur, StillDue: z, Overdue: z, Upcoming: z, Planned: PlannedFigures{Total: z, DeferredIn: z, DeferredBeyond: z, Adjustments: z}}
 			lines[cur] = l
 		}
 		return l
@@ -395,7 +425,8 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 				}
 			}
 			for _, t := range sum.Totals {
-				if t.Outstanding.Sign() == 0 && t.Unconverted == 0 {
+				// A fee still planned on a paid occurrence has no outstanding amount but is a planned outflow.
+				if t.Outstanding.Sign() == 0 && t.Unconverted == 0 && t.Planned.Sign() == 0 && t.DeferredOut.Sign() == 0 && t.CarriedIn.Sign() == 0 && t.Adjustments.Sign() == 0 {
 					continue
 				}
 				l := line(t.Currency, t.Outstanding.Amount().Scale())
@@ -407,6 +438,13 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 					l.OverdueMonths = append(l.OverdueMonths, OverdueMonth{Month: m, Count: t.OverdueCount, Amount: t.Overdue})
 				}
 				l.UnconvertedEvidence += t.Unconverted
+				l.Planned.Total, _ = l.Planned.Total.Add(t.Planned)
+				// Each month's deferred_out and carried_in cancel inside the window; what is left of
+				// deferred_out is planned after it.
+				l.Planned.DeferredBeyond, _ = l.Planned.DeferredBeyond.Add(t.DeferredOut)
+				l.Planned.DeferredBeyond, _ = l.Planned.DeferredBeyond.Sub(t.CarriedIn)
+				l.Planned.DeferredIn, _ = l.Planned.DeferredIn.Add(t.CarriedIn)
+				l.Planned.Adjustments, _ = l.Planned.Adjustments.Add(t.Adjustments)
 			}
 			if m, err = m.AddMonths(1); err != nil {
 				return Outlook{}, fmt.Errorf("outlook: window: %w", err)

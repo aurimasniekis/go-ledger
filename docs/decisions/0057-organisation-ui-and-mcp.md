@@ -1,4 +1,4 @@
-# ADR-0056: Organisation UI and MCP tools
+# ADR-0057: Organisation UI and MCP tools
 
 Status: Accepted (task O2, 2026-11-22). Builds on ADR-0053 (the model and the Management API).
 

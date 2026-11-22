@@ -48,6 +48,7 @@ type outlookLineJSON struct {
 	StillDue                money.Money               `json:"still_due"`
 	Overdue                 money.Money               `json:"overdue"`
 	Upcoming                money.Money               `json:"upcoming"`
+	PlannedOutflows         outlookPlannedJSON        `json:"planned_outflows"`
 	OverdueCount            int                       `json:"overdue_count"`
 	UnconvertedEvidence     int                       `json:"unconverted_evidence_count"`
 	Balance                 *money.Money              `json:"balance"`
@@ -58,6 +59,16 @@ type outlookLineJSON struct {
 	OverdueMonths           []outlookOverdueMonthJSON `json:"overdue_months"`
 	BalanceAsOf             *calendar.Date            `json:"balance_as_of"`
 	PaymentsAfterBalance    *outlookPaymentsAfterJSON `json:"payments_after_balance"`
+}
+
+// outlookPlannedJSON is the window with every outstanding amount placed in the
+// month it is planned to be paid (ADR-0050): total = still_due -
+// deferred_beyond + adjustments. A plan is not payment: still_due is unchanged.
+type outlookPlannedJSON struct {
+	Total          money.Money `json:"total"`
+	DeferredIn     money.Money `json:"deferred_in"`
+	DeferredBeyond money.Money `json:"deferred_beyond"`
+	Adjustments    money.Money `json:"adjustments"`
 }
 
 type outlookOverdueMonthJSON struct {
@@ -165,7 +176,7 @@ const (
 	outlookBalancesShownNote  = "Balances are the latest each bank reported; check each account's freshness before relying on them."
 	outlookBalancesGrantNote  = "Bank balances are not shown: they need the connections:read grant."
 	outlookBalancesSourceNote = "Bank balances are not available on this server."
-	outlookPlannedNote        = "Planned outflows (deferral plans) are not part of Ledger yet; only recorded commitments are compared."
+	outlookPlannedNote        = "Planned outflows follow deferral plans: each outstanding amount is planned in the month of its plan's date, deferred amounts are shown apart as deferred in, and recorded fees still planned are added. A plan is not payment: what is still due is unchanged."
 )
 
 func optTime(t time.Time) *time.Time {
@@ -191,7 +202,8 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 	}
 	out.Window.Through, out.Window.Truncated, out.Window.NotRecordedCount = o.Through, o.Truncated, o.NotRecordedCount
 	for i, l := range o.Currencies {
-		out.Currencies[i] = outlookLineJSON{Currency: l.Currency, StillDue: l.StillDue, Overdue: l.Overdue, Upcoming: l.Upcoming, OverdueCount: l.OverdueCount,
+		out.Currencies[i] = outlookLineJSON{Currency: l.Currency, StillDue: l.StillDue, Overdue: l.Overdue, Upcoming: l.Upcoming,
+			PlannedOutflows: outlookPlannedJSON{Total: l.Planned.Total, DeferredIn: l.Planned.DeferredIn, DeferredBeyond: l.Planned.DeferredBeyond, Adjustments: l.Planned.Adjustments}, OverdueCount: l.OverdueCount,
 			UnconvertedEvidence: l.UnconvertedEvidence, Balance: l.Balance, BalanceLessStillDue: l.BalanceLessStillDue,
 			AccountCount: l.Accounts, StaleAccountCount: l.StaleAccounts, OldestBalanceObtainedAt: l.OldestBalanceAt,
 			OverdueMonths: make([]outlookOverdueMonthJSON, len(l.OverdueMonths))}
@@ -255,7 +267,7 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 		}
 		out.Converted = cj
 	}
-	out.PlannedOutflow.Note = outlookPlannedNote
+	out.PlannedOutflow.Included, out.PlannedOutflow.Note = true, outlookPlannedNote
 	out.Freshness.ComputedAt = now.UTC()
 	out.Freshness.OccurrencesChangedAt = o.OccurrencesChangedAt
 	return out

@@ -3,9 +3,8 @@
 Status: Accepted and decided (task DF1, extended by DF1c, 2026-11-22). D7 (a)/(a), D14 (a),(a),(a) and D-DF (all nine
 recommendations, operator, 2026-11-22) are the operator's decisions; nothing in this ADR is provisional any more. The
 missed-plan state (D-DF 1) and the fee paid marker (D-DF 2) were added by task DF1c (migration 0029). D-DF 7 (automatic
-matching also accepts the planned date, plus or minus 3 days) and D-DF 8 (the outlook follows plans, showing deferred
-amounts separately as "deferred in") are decided but are separate tasks: they are not built here, and the Consequences
-below still describe the current behaviour of both.
+matching also accepts the planned date, plus or minus 3 days) was built by task X6, and D-DF 8 (the outlook follows plans,
+showing deferred amounts separately as "deferred in") by task DF3 (see "Outlook" below).
 
 ## Context
 
@@ -125,18 +124,22 @@ when the plan was made.
 - The obligation views (status, outstanding, overdue, outlook "still due") are unchanged by plans; only the new planned
   figures move. Re-imports never touch plans (they do not read or write bank facts), and later matching pays the
   occurrence through the usual evidence while the plan stays as history (tests in `internal/store/deferrals`).
-- The outlook (ADR-0044) does not use plans yet: placing planned outflows by month there is task DF3.
+- The outlook (ADR-0044) keeps its obligation figures (still due, overdue, upcoming, balance less still due) and, since task DF3,
+  adds per currency `planned_outflows`: `total` = still due − `deferred_beyond` (planned after the window) + `adjustments` (fees still
+  planned); `deferred_in` is the part of still due planned into a later month of the window than its own, shown apart (it stays in
+  still due and in total). Nothing is converted: the converted aggregate stays an obligation figure.
 - Automatic matching still uses the due date for its date window (D9): a payment made on a planned date far from the due
   date becomes a suggestion for a person, never an automatic confirmation, until D-DF 7 is built.
 - A fee marked paid is the person's statement, not bank evidence: this feature matches no bank transaction to it.
 
-## What the UI needs (task DF3)
+## What the UI needs (task DF3, built: see [ADR-0056](0056-deferral-planning-ui.md))
 
 Defer, revise and undo flows on a month row (plan type with neutral wording, planned date, optional reason; If-Match
 from the row's `deferral.version`); show the original due date, overdue status, planned date and "within documented grace
-until X" distinctly without relying on colour; render `carried_in` apart from the month's own occurrences; show
+until X" distinctly without relying on colour (shape, text and an icon, never hue alone); render `carried_in` apart from the month's own occurrences; show
 `planned`, `deferred_out`, `carried_in` and `adjustments` beside the obligation totals; add and remove fees; show a
-plan's history, the missed flag ("plan date passed, still owed", not by colour alone) and each fee's paid marker with
+plan's history, the missed flag and its `missed_reason` (`principal` or `fee`: "plan date passed, still owed" for the
+amount or for a fee; not by colour alone) and each fee's paid marker with
 mark-paid and undo-paid actions; the e2e journey: defer within a month, carry to the next month, undo, re-import, match.
 
 ## Open questions
