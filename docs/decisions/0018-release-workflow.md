@@ -6,11 +6,12 @@ release workflow.
 ## Context
 
 F10 delivers a tag-triggered release that produces the binaries (linux amd64 and arm64, darwin arm64) with the web UI
-embedded, checksums, SBOMs and the container image (D19). The operator chose Docker Hub for the image, `docker.io/aurimasniekis/ledger`,
-with a repository secret holding a push token (the login username is fixed in the workflow; the login uses the pinned `docker/login-action`). A GitHub Release needs
-`contents: write`. ADR-0007 keeps every write scope out of `ci.yml`, and `scripts/check-workflow-permissions.sh` rejects a
-write scope in every workflow file. The release therefore needs an explicit, narrow exception. The Terraform provider's
-GPG signing belongs to `terraform-provider-ledger`, not to this repository.
+embedded, checksums, SBOMs and the container image (D19). The operator chose Docker Hub for the image,
+`docker.io/aurimasniekis/ledger`, with a repository secret holding a push token (the login username is fixed in the
+workflow; the login uses the pinned `docker/login-action`). A GitHub Release needs `contents: write`. ADR-0007 keeps
+every write scope out of `ci.yml`, and `scripts/check-workflow-permissions.sh` rejects a write scope in every workflow
+file. The release therefore needs an explicit, narrow exception. The Terraform provider's GPG signing belongs to
+`terraform-provider-ledger`, not to this repository.
 
 ## Decision
 
@@ -30,9 +31,10 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
    Tags: `<version>`, and `latest` for stable releases only.
 5. **Workflow `.github/workflows/release.yml`.** Triggers: a tag push `v*` and `workflow_dispatch`. Top-level permissions
    are `contents: read`.
-   - `build` (no secrets, no write scope): on a tag, a tagged build; on a dispatch, a snapshot. Both use
-     `--skip=publish`, so nothing is pushed or released. It uploads `dist/` as a workflow artefact.
-   - `publish-images` (tag pushes): checks that `DOCKERHUB_TOKEN` is set (the value is never printed; a missing token fails the job with `::error::`), logs in to Docker Hub with the token on stdin and runs
+   - `build` (no secrets, no write scope): sets up a docker-container Buildx builder (multi-platform images); on a tag, a
+     tagged build; on a dispatch, a snapshot. Both use `--skip=publish`, so nothing is pushed or released. It uploads
+     `dist/` as a workflow artefact.
+   - `publish-images` (tag pushes): checks that `DOCKERHUB_TOKEN` is set (the value is never printed; a missing token fails the job with `::error::`), sets up the same Buildx builder, logs in to Docker Hub with the token and runs
      `goreleaser release --skip=announce` with `LEDGER_DISABLE_GITHUB_RELEASE=true`, which turns off the GitHub Release
      (`release.disable` in `.goreleaser.yaml`). `--skip=publish` cannot be used here: it also skips the image push, and
      `--skip=release` is not a valid option.
@@ -47,7 +49,12 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
    (`release.draft: true`), which a person reviews and publishes, but the images are pushed before that review. The
    operator accepted this residual risk on 2026-11-21: anyone who can push a `v*` tag can publish images to Docker Hub.
 8. **Actions.** `actions/upload-artifact` (an official GitHub action, pinned to v7.0.2) is added to the official set that
-   ADR-0007 lists. Caches are off in the release jobs (`setup-go cache: false`, `package-manager-cache: false`), so a cache
+   ADR-0007 lists. Two third-party Docker actions are added, each pinned to a commit SHA: `docker/setup-buildx-action`
+   (v4.4.1), which creates the docker-container Buildx builder that GoReleaser's multi-platform (amd64 and arm64) image
+   build needs, and `docker/login-action` (v4.8.0), which logs in to Docker Hub. The Buildx builder's BuildKit image is
+   pinned by digest through `driver-opts` (`moby/buildkit:v0.35.1@sha256:baf6138e…`, the index digest resolved from the
+   registry on 2026-11-22), so no floating tag reaches the builder that produces the published images. Bumping it is a
+   manual, reviewed change. Caches are off in the release jobs (`setup-go cache: false`, `package-manager-cache: false`), so a cache
    written by one run cannot reach a published artefact.
 
 ## Why
@@ -55,8 +62,11 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
 - **GoReleaser** produces the archives, checksums, SBOMs, images and the release from one configuration, and its image
   builder can build arm64 from an amd64 runner with a COPY-only Dockerfile (verified). Hand-written `go build` and
   `docker` steps would duplicate that logic.
-- **Docker Hub with the `docker` CLI** follows D19. A `docker/*` action would add third-party actions that ADR-0007
-  keeps out.
+- **Docker Hub, with two pinned `docker/*` actions.** D19 chose the registry. ADR-0007 keeps third-party actions out of
+  the validation workflow, but the release needs a multi-platform builder (the default Docker driver cannot build both
+  platforms) and a login that does not put the token on a command line. Both actions are small, SHA-pinned, take no
+  secret other than the Docker Hub token (login only), and run only in the release workflow. This follows the precedent
+  of `pnpm/action-setup` in ADR-0008.
 - **A narrow policy exception**, not a relaxed policy. The alternatives were a write scope at top level (rejected), a
   release job outside `.github/workflows` (it would bypass the check), and no GitHub Release (the binaries would exist
   only as run artefacts).
@@ -70,7 +80,7 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
 
 ## Consequences
 
-- Verified locally: `goreleaser check`; a snapshot release (three binaries, three archives, checksums, six SBOMs, two
+- Verified locally (without `setup-buildx-action` and `docker/login-action`, which only run on a GitHub runner): `goreleaser check`; a snapshot release (three binaries, three archives, checksums, six SBOMs, two
   platform images); the amd64 image starts as non-root, serves the UI (`/`, a deep link) and returns the JSON 404 for
   `/api/...`; a tag run with the release disabled pushed the images to a throwaway local registry (an rc tag gets no
   `latest`, a stable tag gets `latest`, and both platforms are in the manifest); the permission policy self-test and the
@@ -78,6 +88,9 @@ GPG signing belongs to `terraform-provider-ledger`, not to this repository.
 - **Not verified:** a GitHub Actions run of this workflow, the Docker Hub push, the GitHub Release creation (it needs a
   token and a tag, and no tag is pushed to the upstream repository, because a tag there would publish with the real
   secret), and the arm64 image at run time (no emulator on the build host).
+- **Not verified:** that the pinned BuildKit image works with `setup-buildx-action` v4.4.1 on a hosted runner. It is the
+  same image as the action's default `buildx-stable-1` tag at the time of pinning, so no behaviour change is expected.
+  The pin does not update itself.
 - A tag build with `--skip=publish` builds no images (GoReleaser builds and pushes them in one step). A tag dry run
   therefore produces the binaries, archives, checksums and SBOMs; the images are built by the dispatch snapshot and pushed
   only by `publish-images`.
