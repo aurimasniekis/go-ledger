@@ -542,8 +542,15 @@ func TestRefreshPastTheDeadlineIsNotCancelledOrFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.RefreshRunning || v.LastRun == nil || v.LastRun.Outcome != banking.RefreshRunning {
-		t.Fatalf("answer at the deadline: running=%v last run=%+v, want a running run", v.RefreshRunning, v.LastRun)
+	if !v.RefreshRunning {
+		t.Fatalf("answer at the deadline: running=%v, want running", v.RefreshRunning)
+	}
+	// The deadline can fire before the detached run has been recorded (a
+	// loaded machine), so the stored run is checked once the provider call,
+	// which follows the recording, has been entered.
+	<-slow.entered
+	if v, err := e.svc.View(e.ctx, c.ID); err != nil || v.LastRun == nil || v.LastRun.Outcome != banking.RefreshRunning {
+		t.Fatalf("stored state while the run is held: err=%v view=%+v, want a running run", err, v)
 	}
 	if n := len(e.actions(audit.BankRefreshRequested)); n != 0 {
 		t.Errorf("%d refresh entries while the run is still going", n)
