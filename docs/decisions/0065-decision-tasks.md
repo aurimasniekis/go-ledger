@@ -84,16 +84,16 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
      past, non-cancelled occurrence differs from that occurrence's expected amount (for example a subscription price
      rise). An occurrence is never the baseline when it is cancelled, partly paid, has any **manual** payment among its
      evidence (even one settled together with a bank payment), or its bank match was confirmed **short within the
-     commitment's tolerance** (`State.Shortfall > 0`, decision C-L6e-amount-change addendum: the gap was accepted), or its status comes
-     from an **applied override** (`State.OverrideApplied`, decision C-L6e-amount-override). So a lower bank payment surfaces as
-     partly paid or short in the monthly view, not as an amount-change alert; overrides and tolerance shortfalls are not
-     baselines, and in practice the alert reports price increases and overpayments. In
-     the same currency any non-zero difference counts, compared numerically (`"15"` equals `"15.00"`): the alert
-     shows the expected and the paid amount exactly (decimal strings with currency, no float), and its key uses the
-     normalised amounts, so a change of scale alone neither re-raises nor resolves it. In another currency it is reported
-     as a currency difference (`currency_differs`) and nothing is converted. It resolves once the commitment's amount
-     numerically equals what was paid, or a later matched payment equals the expected amount. The person's own edit of the commitment is not an alert. A split bank payment is summed per
-     occurrence in the currency of its newest piece.
+     commitment's tolerance** (`State.Shortfall > 0`, decision C-L6e-amount-change addendum: the gap was accepted), or
+     its status comes from an **applied override** (`State.OverrideApplied`, decision C-L6e-amount-override). So a lower
+     bank payment surfaces as partly paid or short in the monthly view, not as an amount-change alert; overrides and
+     tolerance shortfalls are not baselines, and in practice the alert reports price increases and overpayments. In the
+     same currency any non-zero difference counts, compared numerically (`"15"` equals `"15.00"`): the alert shows the
+     expected and the paid amount exactly (decimal strings with currency, no float), and its key uses the normalised
+     amounts, so a change of scale alone neither re-raises nor resolves it. In another currency it is reported as a
+     currency difference (`currency_differs`) and nothing is converted. It resolves once the commitment's amount
+     numerically equals what was paid, or a later matched payment equals the expected amount. The person's own edit of
+     the commitment is not an alert. A split bank payment is summed per occurrence in the currency of its newest piece.
    - **Overdue unmatched:** occurrences whose derived status is overdue with an outstanding amount, as the monthly view
      derives it (a partially paid or deferred-but-paid one is not). Resolves when paid, matched, cancelled or removed.
    The occurrence detectors read the current month and the 13 before it. An alert about an older occurrence is neither

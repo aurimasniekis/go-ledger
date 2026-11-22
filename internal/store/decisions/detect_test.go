@@ -252,7 +252,7 @@ func TestDetectorAmountChangeComparesNumericallyAcrossScales(t *testing.T) {
 	if rep := e.run(t); rep.Raised != 0 || rep.Resolved != 0 || len(e.sent) != 1 {
 		t.Fatalf("a scale change alone re-raised or resolved the alert: %+v sent %d", rep, len(e.sent))
 	}
-	// The commitment is updated to "12.5", which equals the paid 12.50 numerically: resolved.
+	// The commitment is updated to "12.500", which equals the paid 12.5 numerically: resolved.
 	e.cmts.list[0].Amount = eur("12.500") // another scale than the paid 12.5
 	if rep := e.run(t); rep.Resolved != 1 || e.state(t, alerts.KindAmountChanged)[alerts.StateOpen] != 0 {
 		t.Fatalf("an update at another scale did not resolve: %+v", rep)
