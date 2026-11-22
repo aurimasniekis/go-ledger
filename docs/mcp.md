@@ -305,7 +305,7 @@ Get one occurrence with its derived payment state.
 
 ### `create_commitment`
 
-Create a recurring commitment. Its occurrences are generated from the schedule. The same validation as the HTTP API applies; field errors name the member that is wrong. Optionally sets match_tolerance for automatic payment matching. Not idempotent: calling it twice creates two commitments. If the answer is reported as too large to return, the commitment WAS created: find it with list_commitments instead of calling this again.
+Create a recurring commitment. Its occurrences are generated from the schedule. The same validation as the HTTP API applies; field errors name the member that is wrong. Optionally sets match_tolerance for automatic payment matching and leeway (the grace the creditor allows, only as the person states it: never guess it, and use kind 'unknown' when they say they do not know; omit it when they said nothing). Not idempotent: calling it twice creates two commitments. If the answer is reported as too large to return, the commitment WAS created: find it with list_commitments instead of calling this again.
 
 - Kind: write
 - Operation: `POST /api/v1/commitments`
@@ -356,6 +356,69 @@ Create a recurring commitment. Its occurrences are generated from the schedule. 
         "debt_repayment"
       ],
       "type": "string"
+    },
+    "leeway": {
+      "additionalProperties": false,
+      "description": "Optional; omit when the person said nothing. What the person knows about the grace after a due date. kind unknown: they do not know. none: no grace. period: days (1 to 365) after each due date. deadline: until a fixed date. Never infer it from payment history or from the commitment's name.",
+      "properties": {
+        "conditions": {
+          "description": "What the grace depends on.",
+          "maxLength": 500,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "consequences": {
+          "description": "Known fees or other consequences of paying late.",
+          "maxLength": 500,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "days": {
+          "description": "Only for kind period.",
+          "maximum": 365,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "unknown",
+            "none",
+            "period",
+            "deadline"
+          ],
+          "type": "string"
+        },
+        "source": {
+          "description": "Where the information comes from.",
+          "maxLength": 200,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "until": {
+          "description": "Only for kind deadline, YYYY-MM-DD.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "match_tolerance": {
       "description": "Optional, in the commitment's currency; omit or null for none. How far a booked bank payment may fall short of amount and still be confirmed automatically. A payment above amount is never confirmed automatically.",

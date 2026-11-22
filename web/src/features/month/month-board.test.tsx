@@ -320,6 +320,23 @@ describe('MonthBoard content', () => {
     expect(screen.getByText(/within documented grace until/)).toHaveTextContent('2026-11-30')
   })
 
+  it('says an unknown grace period is unknown, not none, and shows nothing when not recorded', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'overdue', timing: 'overdue', leeway: 'unknown' }) })]) })
+    expect(screen.getByTestId('leeway-unknown')).toHaveTextContent('do not know whether any grace period applies')
+    expect(screen.queryByTestId('leeway-none')).toBeNull()
+  })
+
+  it('says when no grace period was recorded as applying', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'overdue', timing: 'overdue', leeway: 'none' }) })]) })
+    expect(screen.getByTestId('leeway-none')).toHaveTextContent('no grace period applies')
+  })
+
+  it('adds no grace text when nothing was recorded', () => {
+    board({ data: summary([item('a', { payment: payment({ status: 'overdue', timing: 'overdue', leeway: 'not_recorded' }) })]) })
+    expect(screen.queryByTestId('leeway-unknown')).toBeNull()
+    expect(screen.queryByTestId('leeway-none')).toBeNull()
+  })
+
   it('shows per-currency totals as received, with the not-a-forecast wording', () => {
     const s = summary([item('a'), item('b')])
     s.totals.push({ ...s.totals[0]!, currency: 'USD', due: { amount: '5.00', currency: 'USD' } })

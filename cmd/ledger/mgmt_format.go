@@ -101,7 +101,7 @@ func userText(w io.Writer, u *ledgerclient.User) {
 func commitmentText(w io.Writer, c *ledgerclient.Commitment) {
 	kv(w, "id", c.ID, "name", c.Name, "kind", c.Kind, "amount", money(c.Amount), "schedule", scheduleText(c.Schedule),
 		"start date", c.StartDate, "end date", deref(c.EndDate), "priority", deref(c.Priority), "notes", deref(c.Notes),
-		"match tolerance", tolText(c.MatchTolerance), "version", fmt.Sprint(c.Version), "updated", c.UpdatedAt)
+		"match tolerance", tolText(c.MatchTolerance), "leeway", leewayText(c.Leeway), "version", fmt.Sprint(c.Version), "updated", c.UpdatedAt)
 }
 
 // tolText shows a commitment's match tolerance; empty when none is set.

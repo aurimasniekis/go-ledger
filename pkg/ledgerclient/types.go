@@ -129,9 +129,31 @@ type Commitment struct {
 	// still be confirmed automatically; nil when none is set (only the exact
 	// amount confirms automatically).
 	MatchTolerance *Money `json:"match_tolerance"`
-	Version        int64  `json:"version"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	// Leeway is what the user recorded about the grace the creditor allows;
+	// nil when nothing was recorded, which is not the same as kind "unknown".
+	Leeway    *Leeway `json:"leeway"`
+	Version   int64   `json:"version"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
+}
+
+// Leeway kinds.
+const (
+	LeewayUnknown  = "unknown"  // the user does not know whether any grace exists
+	LeewayNone     = "none"     // the user states there is no grace
+	LeewayPeriod   = "period"   // Days after each due date
+	LeewayDeadline = "deadline" // until a fixed date
+)
+
+// Leeway is what the user recorded about a commitment's grace period.
+// Unknown and none carry neither Days nor Until and are never zero days.
+type Leeway struct {
+	Kind         string  `json:"kind"`
+	Days         *int    `json:"days"`
+	Until        *string `json:"until"`
+	Conditions   *string `json:"conditions"`
+	Consequences *string `json:"consequences"`
+	Source       *string `json:"source"`
 }
 
 // NewCommitment is the body of CreateCommitment.
@@ -146,6 +168,8 @@ type NewCommitment struct {
 	Notes     *string  `json:"notes,omitempty"`
 	// MatchTolerance is optional; see Commitment.MatchTolerance.
 	MatchTolerance *Money `json:"match_tolerance,omitempty"`
+	// Leeway is optional; see Commitment.Leeway.
+	Leeway *Leeway `json:"leeway,omitempty"`
 }
 
 // Occurrence is one due date of a commitment.
@@ -173,20 +197,23 @@ type Occurrence struct {
 // are in the occurrence's currency; other currencies are only listed in
 // UnconvertedCurrencies and are never converted or summed.
 type PaymentState struct {
-	Status                string           `json:"status"`
-	DerivedStatus         string           `json:"derived_status"`
-	Timing                *string          `json:"timing"`
-	PaidAmount            Money            `json:"paid_amount"`
-	OutstandingAmount     Money            `json:"outstanding_amount"`
-	OverpaidAmount        Money            `json:"overpaid_amount"`
-	ShortfallAmount       Money            `json:"shortfall_amount"`
-	UnconvertedCurrencies []string         `json:"unconverted_currencies"`
-	EvidenceCount         int              `json:"evidence_count"`
-	ManualEvidenceCount   int              `json:"manual_evidence_count"`
-	BankEvidenceCount     int              `json:"bank_evidence_count"`
-	GraceUntil            *string          `json:"grace_until"`
-	WithinGrace           bool             `json:"within_grace"`
-	Override              *PaymentOverride `json:"override"`
+	Status                string   `json:"status"`
+	DerivedStatus         string   `json:"derived_status"`
+	Timing                *string  `json:"timing"`
+	PaidAmount            Money    `json:"paid_amount"`
+	OutstandingAmount     Money    `json:"outstanding_amount"`
+	OverpaidAmount        Money    `json:"overpaid_amount"`
+	ShortfallAmount       Money    `json:"shortfall_amount"`
+	UnconvertedCurrencies []string `json:"unconverted_currencies"`
+	EvidenceCount         int      `json:"evidence_count"`
+	ManualEvidenceCount   int      `json:"manual_evidence_count"`
+	BankEvidenceCount     int      `json:"bank_evidence_count"`
+	GraceUntil            *string  `json:"grace_until"`
+	WithinGrace           bool     `json:"within_grace"`
+	// Leeway is not_recorded, unknown, none, period or deadline for an
+	// overdue occurrence; nil otherwise.
+	Leeway   *string          `json:"leeway"`
+	Override *PaymentOverride `json:"override"`
 }
 
 // PaymentOverride is the active manual status override of an occurrence.

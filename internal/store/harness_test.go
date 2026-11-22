@@ -131,6 +131,22 @@ func upgradeFixture(t *testing.T, fx fixture, known []Migration) *DB {
 // fixtureChecks holds data assertions for fixtures of the real schema, by
 // fixture file name. Add one whenever a migration moves or reshapes data.
 var fixtureChecks = map[string]func(t *testing.T, db *DB){
+	// Migration 0027 adds commitment leeway: existing commitments have
+	// recorded none, which is not the same as "unknown" or "none".
+	"0026_merchants.sql": func(t *testing.T, db *DB) {
+		err := db.ReadTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+			if n := queryInt(t, tx, "SELECT count(*) FROM commitments"); n == 0 {
+				t.Error("the fixture has no commitments to check")
+			}
+			if n := queryInt(t, tx, "SELECT count(*) FROM commitments WHERE leeway_kind IS NOT NULL OR leeway_days IS NOT NULL OR leeway_until IS NOT NULL"); n != 0 {
+				t.Errorf("%d commitments have leeway after the migration, want none", n)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	},
 	// Migration 0021 adds the tolerance a match was confirmed within:
 	// existing matches were confirmed within none.
 	"0020_commitment_match_tolerance.sql": func(t *testing.T, db *DB) {

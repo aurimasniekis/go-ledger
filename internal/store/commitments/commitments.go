@@ -63,7 +63,7 @@ func (s *Store) Occurrences() *occstore.Store { return s.occ }
 
 const table = "commitments"
 
-const columns = "id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, match_tolerance_amount, match_tolerance_currency, version, created_at, updated_at"
+const columns = "id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes, match_tolerance_amount, match_tolerance_currency, leeway_kind, leeway_days, leeway_until, leeway_conditions, leeway_consequences, leeway_source, version, created_at, updated_at"
 
 type querier interface {
 	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
@@ -78,8 +78,10 @@ func scan(row interface{ Scan(...any) error }) (commitments.Commitment, error) {
 	var end, priority, notes sql.NullString
 	var tolAmount sql.Null[sqlvalue.Amount]
 	var tolCurrency sql.Null[sqlvalue.Currency]
+	var lwKind, lwUntil, lwConditions, lwConsequences, lwSource sql.NullString
+	var lwDays sql.NullInt64
 	var created, updated store.Timestamp
-	if err := row.Scan(&c.ID, &c.Name, &kind, &amount, &currency, &schedule, &start, &end, &priority, &notes, &tolAmount, &tolCurrency, &c.Version, &created, &updated); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &kind, &amount, &currency, &schedule, &start, &end, &priority, &notes, &tolAmount, &tolCurrency, &lwKind, &lwDays, &lwUntil, &lwConditions, &lwConsequences, &lwSource, &c.Version, &created, &updated); err != nil {
 		return commitments.Commitment{}, err
 	}
 	m, err := sqlvalue.Money(amount, currency)
@@ -105,6 +107,30 @@ func scan(row interface{ Scan(...any) error }) (commitments.Commitment, error) {
 	if notes.Valid {
 		c.Notes = &notes.String
 	}
+	if lwKind.Valid {
+		l := commitments.Leeway{Kind: commitments.LeewayKind(lwKind.String)}
+		if lwDays.Valid {
+			n := int(lwDays.Int64)
+			l.Days = &n
+		}
+		if lwUntil.Valid {
+			var d sqlvalue.Date
+			if err := d.Scan(lwUntil.String); err != nil {
+				return commitments.Commitment{}, err
+			}
+			l.Until = &d.Date
+		}
+		for _, m := range []struct {
+			from sql.NullString
+			to   **string
+		}{{lwConditions, &l.Conditions}, {lwConsequences, &l.Consequences}, {lwSource, &l.Source}} {
+			if m.from.Valid {
+				s := m.from.String
+				*m.to = &s
+			}
+		}
+		c.Leeway = &l
+	}
 	if tolAmount.Valid {
 		t, err := sqlvalue.Money(tolAmount.V, tolCurrency.V)
 		if err != nil {
@@ -126,13 +152,23 @@ func get(ctx context.Context, q querier, id string) (commitments.Commitment, err
 
 // args returns the column values of f in the order name, kind, amount,
 // currency, schedule, start_date, end_date, priority, notes,
-// match_tolerance_amount, match_tolerance_currency.
+// match_tolerance_amount, match_tolerance_currency, leeway_kind, leeway_days,
+// leeway_until, leeway_conditions, leeway_consequences, leeway_source.
 func args(f commitments.Fields) ([]any, error) {
 	schedule, err := json.Marshal(f.Schedule)
 	if err != nil {
 		return nil, err
 	}
-	var end, priority, tolAmount, tolCurrency any
+	var end, priority, tolAmount, tolCurrency, lwKind, lwDays, lwUntil, lwConditions, lwConsequences, lwSource any
+	if l := f.Leeway; l != nil {
+		lwKind, lwConditions, lwConsequences, lwSource = string(l.Kind), l.Conditions, l.Consequences, l.Source
+		if l.Days != nil {
+			lwDays = int64(*l.Days)
+		}
+		if l.Until != nil {
+			lwUntil = sqlvalue.Date{Date: *l.Until}
+		}
+	}
 	if t := f.MatchTolerance; t != nil {
 		tolAmount, tolCurrency = sqlvalue.Amount{Decimal: t.Amount()}, sqlvalue.Currency{Currency: t.Currency()}
 	}
@@ -143,7 +179,8 @@ func args(f commitments.Fields) ([]any, error) {
 		priority = string(*f.Priority)
 	}
 	return []any{f.Name, string(f.Kind), sqlvalue.Amount{Decimal: f.Amount.Amount()}, sqlvalue.Currency{Currency: f.Amount.Currency()},
-		string(schedule), sqlvalue.Date{Date: f.StartDate}, end, priority, f.Notes, tolAmount, tolCurrency}, nil
+		string(schedule), sqlvalue.Date{Date: f.StartDate}, end, priority, f.Notes, tolAmount, tolCurrency,
+		lwKind, lwDays, lwUntil, lwConditions, lwConsequences, lwSource}, nil
 }
 
 // Create validates f, inserts it at version 1 and records commitment.created.
@@ -161,7 +198,8 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, f commitments.Fie
 		all := append([]any{c.ID}, vals...)
 		all = append(all, store.Timestamp{Time: now}, store.Timestamp{Time: now})
 		if _, err := tx.ExecContext(ctx, "INSERT INTO "+table+" (id, name, kind, amount, currency, schedule, start_date, end_date, priority, notes,"+
-			" match_tolerance_amount, match_tolerance_currency, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", all...); err != nil {
+			" match_tolerance_amount, match_tolerance_currency, leeway_kind, leeway_days, leeway_until, leeway_conditions, leeway_consequences, leeway_source,"+
+			" created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", all...); err != nil {
 			return err
 		}
 		return s.audit.WriteAudit(ctx, tx, commitments.CreatedEvent(actor, c, now))
@@ -260,7 +298,7 @@ func (s *Store) Update(ctx context.Context, actor audit.Actor, id string, expect
 			return nil
 		}
 		now := s.now().UTC()
-		set := "name = ?, kind = ?, amount = ?, currency = ?, schedule = ?, start_date = ?, end_date = ?, priority = ?, notes = ?, match_tolerance_amount = ?, match_tolerance_currency = ?, updated_at = ?"
+		set := "name = ?, kind = ?, amount = ?, currency = ?, schedule = ?, start_date = ?, end_date = ?, priority = ?, notes = ?, match_tolerance_amount = ?, match_tolerance_currency = ?, leeway_kind = ?, leeway_days = ?, leeway_until = ?, leeway_conditions = ?, leeway_consequences = ?, leeway_source = ?, updated_at = ?"
 		if _, err := store.UpdateVersioned(ctx, tx, table, set, id, expected, append(vals, store.Timestamp{Time: now})...); err != nil {
 			return err
 		}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
+	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
@@ -185,7 +186,10 @@ func TestDeriveNeverPaysWithoutEvidence(t *testing.T) {
 }
 
 func TestGraceAnnotatesButNeverHidesOverdue(t *testing.T) {
-	grace := func(o occurrences.Occurrence) (calendar.Date, bool) { return d("2026-03-25"), o.ID == occ.ID }
+	until25 := d("2026-03-25")
+	grace := func(o occurrences.Occurrence) payments.Grace {
+		return payments.Grace{Recorded: o.ID == occ.ID, Kind: commitments.LeewayDeadline, Until: &until25}
+	}
 	for _, c := range []struct {
 		today  string
 		status payments.Status

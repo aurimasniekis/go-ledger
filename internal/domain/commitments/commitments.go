@@ -100,6 +100,10 @@ type Fields struct {
 	// (decision D9, task X2, ADR-0039). nil means none: only the exact amount
 	// confirms automatically. It is in Amount's currency and never negative.
 	MatchTolerance *money.Money
+	// Leeway is what the user recorded about the grace the creditor allows
+	// (task DF2, ADR-0052). nil means nothing was recorded, which is not the
+	// same as the explicit kinds "unknown" and "none".
+	Leeway *Leeway
 }
 
 // FieldError is a validation error about one field. Message is safe to show.
@@ -168,6 +172,9 @@ func (f Fields) Validate() []FieldError {
 			errs = append(errs, FieldError{"match_tolerance.amount", "match_tolerance must not be negative"})
 		}
 	}
+	if f.Leeway != nil {
+		errs = append(errs, f.Leeway.Validate()...)
+	}
 	if f.Notes != nil && (!utf8.ValidString(*f.Notes) || strings.TrimSpace(*f.Notes) == "" || utf8.RuneCountInString(*f.Notes) > MaxNotes) {
 		errs = append(errs, FieldError{"notes", fmt.Sprintf("notes must be 1 to %d characters and not blank; use null for none", MaxNotes)})
 	}
@@ -203,6 +210,9 @@ func ChangedFields(a, b Fields) []string {
 	}
 	if !sameTolerance(a.MatchTolerance, b.MatchTolerance) {
 		out = append(out, "match_tolerance")
+	}
+	if !SameLeeway(a.Leeway, b.Leeway) {
+		out = append(out, "leeway")
 	}
 	slices.Sort(out)
 	return out

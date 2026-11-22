@@ -213,6 +213,27 @@ func TestCLIManagementJourney(t *testing.T) {
 		t.Fatalf("clear tolerance: %d %s %s", rc, out, errb)
 	}
 
+	// Leeway is only what is typed: unknown is its own value, not none and not
+	// zero days; a kind switch drops the other kind's member; it can be cleared.
+	if rc, out, errb = c.run(adminToken, "commitments", "get", cm1.ID); rc != 0 || !strings.Contains(out, "not recorded") {
+		t.Fatalf("default leeway: %d %s %s", rc, out, errb)
+	}
+	if rc, out, errb = c.run(adminToken, "commitments", "update", cm1.ID, "--leeway", "unknown", "--leeway-source", "ask the landlord"); rc != 0 ||
+		!strings.Contains(out, "unknown (stated by the user)") || !strings.Contains(out, "source: ask the landlord") {
+		t.Fatalf("set unknown: %d %s %s", rc, out, errb)
+	}
+	if rc, out, errb = c.run(adminToken, "commitments", "update", cm1.ID, "--leeway", "period", "--leeway-days", "5"); rc != 0 || !strings.Contains(out, "5 days after the due date") {
+		t.Fatalf("set period: %d %s %s", rc, out, errb)
+	}
+	if rc, out, errb = c.run(adminToken, "commitments", "update", cm1.ID, "--leeway", "none"); rc != 0 || !strings.Contains(out, "none (stated by the user)") || strings.Contains(out, "5 days") {
+		t.Fatalf("period to none: %d %s %s", rc, out, errb)
+	}
+	c.fail(adminToken, 2, "cannot be combined", "commitments", "update", cm1.ID, "--leeway", "none", "--clear-leeway")
+	c.fail(adminToken, 1, "leeway.days", "commitments", "update", cm1.ID, "--leeway", "period")
+	if rc, out, errb = c.run(adminToken, "commitments", "update", cm1.ID, "--clear-leeway"); rc != 0 || !strings.Contains(out, "not recorded") {
+		t.Fatalf("clear leeway: %d %s %s", rc, out, errb)
+	}
+
 	// Paging: a page of one carries a cursor, --all follows it, filters stay fixed.
 	var page struct {
 		Items      []idVersion `json:"items"`
@@ -289,7 +310,7 @@ func TestCLIManagementJourney(t *testing.T) {
 	for _, e := range aud.Items {
 		actions = append(actions, e.Action)
 	}
-	if strings.Join(actions, ",") != "commitment.created,commitment.created,commitment.updated,commitment.updated,commitment.updated,commitment.created,commitment.deleted" {
+	if strings.Join(actions, ",") != "commitment.created,commitment.created,"+strings.Repeat("commitment.updated,", 7)+"commitment.created,commitment.deleted" {
 		t.Fatalf("audit actions: %v", actions)
 	}
 	if rc, out, _ = c.run(adminToken, "audit", "list", "--target-type", "commitment", "--actor-kind", "user"); rc != 0 || !strings.Contains(out, "commitment.created") {

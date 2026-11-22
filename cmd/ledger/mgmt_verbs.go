@@ -257,6 +257,8 @@ func commitmentsCreate(m *mgmt, _ context.Context, args []string) int {
 	var in ledgerclient.NewCommitment
 	var endDate, prio, notes, tolerance string
 	var interval, month int
+	var lw leewayFlags
+	lw.register(fs)
 	fs.StringVar(&in.Name, "name", "", "")
 	fs.StringVar(&in.Kind, "kind", "", "")
 	fs.StringVar(&in.Amount.Amount, "amount", "", "")
@@ -274,6 +276,9 @@ func commitmentsCreate(m *mgmt, _ context.Context, args []string) int {
 		return max(rc, 0)
 	}
 	in.Schedule.Version = 1
+	if lw.any(visited(fs)) {
+		in.Leeway = lw.create()
+	}
 	if tolerance != "" {
 		// In the commitment's currency: amounts are never converted.
 		in.MatchTolerance = &ledgerclient.Money{Amount: tolerance, Currency: in.Amount.Currency}
@@ -311,7 +316,10 @@ func commitmentsUpdate(m *mgmt, _ context.Context, args []string) int {
 	var version int64
 	var name, kind, amount, currency, frequency, startDate, endDate, prio, notes, effective, tolerance string
 	var interval, month, day int
-	var clrEnd, clrPrio, clrNotes, clrTolerance bool
+	var clrEnd, clrPrio, clrNotes, clrTolerance, clrLeeway bool
+	var lw leewayFlags
+	lw.register(fs)
+	fs.BoolVar(&clrLeeway, "clear-leeway", false, "")
 	fs.Int64Var(&version, "version", 0, "")
 	fs.StringVar(&effective, "effective-from", "", "")
 	fs.StringVar(&name, "name", "", "")
@@ -397,6 +405,15 @@ func commitmentsUpdate(m *mgmt, _ context.Context, args []string) int {
 	}
 	if clrTolerance {
 		patch["match_tolerance"] = nil
+	}
+	if clrLeeway && lw.any(seen) {
+		say(m.stderr, "commitments update: --clear-leeway cannot be combined with the other --leeway flags")
+		return 2
+	}
+	if clrLeeway {
+		patch["leeway"] = nil
+	} else if lw.any(seen) {
+		patch["leeway"] = lw.patch(seen)
 	}
 	if len(patch) == 0 && !seen["match-tolerance"] {
 		say(m.stderr, "commitments update: nothing to change")

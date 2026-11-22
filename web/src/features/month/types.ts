@@ -25,6 +25,8 @@ export interface PaymentState {
   bank_evidence_count: number
   grace_until: string | null
   within_grace: boolean
+  /** What the user recorded about grace for an overdue occurrence; null when not overdue. */
+  leeway: 'not_recorded' | 'unknown' | 'none' | 'period' | 'deadline' | null
   override: {
     status: 'paid' | 'unpaid'
     reason: string
