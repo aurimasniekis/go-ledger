@@ -1,13 +1,17 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
+import { makeQueryClient } from '@/lib/query'
+import { installApi, ok } from '@/test/fake-api'
 import { ApiError } from '@/lib/api'
 import { MonthBoard, OFFLINE_NOTE_ID, STALE_AFTER_MS, statusSummary, type MonthBoardProps } from './month-board'
 import { item, payment, summary } from './fixtures'
 import type { MonthSummary } from './types'
 
 // The board links to other pages; these tests have no router, so a link renders as a plain anchor.
-vi.mock('@tanstack/react-router', () => ({
+vi.mock('@tanstack/react-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-router')>()),
   Link: ({ to, children, ...rest }: { to: string; children?: React.ReactNode }) => <a href={to} {...rest}>{children}</a>,
 }))
 
@@ -18,7 +22,7 @@ function board(over: Partial<MonthBoardProps> = {}) {
     month: '2026-11', status: 'success', data: summary([]), error: null, isFetching: false, dataUpdatedAt: T0, now: T0,
     onMonthChange: vi.fn(), onRetry: vi.fn(), onRecord: vi.fn(), ...over,
   }
-  render(<MonthBoard {...props} />)
+  render(<QueryClientProvider client={makeQueryClient()}><MonthBoard {...props} /></QueryClientProvider>)
   return props
 }
 
@@ -354,5 +358,62 @@ describe('MonthBoard content', () => {
     expect(props.onMonthChange).toHaveBeenLastCalledWith('2026-10')
     await userEvent.click(screen.getByRole('button', { name: 'Next month, December 2026' }))
     expect(props.onMonthChange).toHaveBeenLastCalledWith('2026-12')
+  })
+})
+
+describe('a manual record replaced by a bank match (D45)', () => {
+  it('shows it apart from the payments that count, with ISO date, a narrow no-break space in the amount and the reason it is not counted', async () => {
+    installApi({
+      'GET /api/v1/occurrences/a/manual-payments': ok({
+        items: [
+          { id: 'mp1', occurrence_id: 'a', amount: { amount: '1234.50', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' },
+          { id: 'mp2', occurrence_id: 'a', amount: { amount: '5.00', currency: 'EUR' }, paid_on: '2026-11-19', note: null, version: 1, replaced_by_match_id: null },
+        ],
+        next_cursor: null,
+      }),
+    })
+    board({ data: summary([item('a', { payment: payment({ status: 'paid', bank_evidence_count: 1, evidence_count: 1 }) })]) })
+    const box = await screen.findByTestId('replaced-records')
+    expect(within(box).getAllByRole('listitem')).toHaveLength(1)
+    expect(box).toHaveTextContent('Manual record replaced')
+    expect(box).toHaveTextContent('2026-11-20')
+    expect(box.textContent).toContain('1' + String.fromCharCode(0x202f) + '234.50')
+    expect(box).toHaveTextContent('kept in history and not counted')
+    expect(box).not.toHaveTextContent('2026-11-19')
+  })
+
+  it('still lists a replaced record when no bank payment counts any more (after a Reverse)', async () => {
+    installApi({
+      'GET /api/v1/occurrences/a/manual-payments': ok({
+        items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
+        next_cursor: null,
+      }),
+    })
+    board({ data: summary([item('a', { payment: payment({ status: 'due' }) })]) })
+    const box = await screen.findByTestId('replaced-records')
+    expect(box).toHaveTextContent('Manual record replaced')
+    expect(box).toHaveTextContent('The bank payment that replaced it was reversed; this record stays in history and does not count. Record a new payment if you paid again.')
+    expect(box).not.toHaveTextContent('replaced by a matched bank payment')
+    expect(within(box).queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('names the way back (Unmatch on Payment matches) while a bank payment stands in for the record', async () => {
+    installApi({
+      'GET /api/v1/occurrences/a/manual-payments': ok({
+        items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
+        next_cursor: null,
+      }),
+    })
+    board({ data: summary([item('a', { payment: payment({ status: 'paid', bank_evidence_count: 1, evidence_count: 1 }) })]) })
+    const box = await screen.findByTestId('replaced-records')
+    expect(box).toHaveTextContent('Unmatch it on Payment matches to bring it back')
+    expect(within(box).getByRole('link', { name: 'Unmatch it on Payment matches' })).toHaveAttribute('href', '/matches')
+  })
+
+  it('shows nothing when the records cannot be read', async () => {
+    installApi({})
+    board({ data: summary([item('a', { payment: payment({ status: 'paid', bank_evidence_count: 1, evidence_count: 1 }) })]) })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByTestId('replaced-records')).not.toBeInTheDocument()
   })
 })
