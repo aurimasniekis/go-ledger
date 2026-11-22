@@ -3142,4 +3142,365 @@ Take a label off an object as the person's choice; rules and models do not add i
 
 </details>
 
+### `list_suggestions`
+
+List the suggestions a model made for categorising an object or labelling it, oldest first, one page at a time. A suggestion is model output, never an assignment: it assigns nothing until a person accepts or corrects it (or, for categorisation with auto-apply on, until it was applied automatically as a model-origin assignment). Every suggestion names the provider and model that said it (suggested_by, provenance). State is pending, accepted, rejected (a correction is a rejection with the person's own answer), superseded or reverted (an auto-applied suggestion that was taken back). Filters combine; a repeated filter accepts any of its values.
+
+- Kind: read
+- Operation: `GET /api/v1/suggestions`
+- Grant: `decisions:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "object_id": {
+      "description": "The object identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "Only suggestions about this kind of object.",
+      "enum": [
+        "transaction",
+        "commitment",
+        "account",
+        "merchant"
+      ],
+      "type": "string"
+    },
+    "state": {
+      "description": "Only these states. accepted excludes reverted ones.",
+      "items": {
+        "enum": [
+          "pending",
+          "accepted",
+          "rejected",
+          "superseded",
+          "reverted"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "task": {
+      "description": "Only these tasks.",
+      "items": {
+        "enum": [
+          "categorisation",
+          "label_suggestion"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_suggestion`
+
+Get one suggestion with what the model chose (category or label identifiers and its own confidence, which proves nothing), who said it, its state and any reversal. A suggestion is model output, never an assignment: it assigns nothing until a person accepts or corrects it (or, for categorisation with auto-apply on, until it was applied automatically as a model-origin assignment). Every suggestion names the provider and model that said it (suggested_by, provenance).
+
+- Kind: read
+- Operation: `GET /api/v1/suggestions/{id}`
+- Grant: `decisions:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The suggestion identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `accept_suggestion`
+
+Apply a pending suggestion as the person's own decision (a user-origin assignment, which no rule, model or refresh replaces) and mark it accepted; it keeps the provider and model that said it. An archived category or label is refused (definition_archived) and the suggestion stays pending; a state moves once (suggestion_not_pending); a suggestion with no choice is refused (nothing_to_apply). Also needs organisation:write (and merchants:write for a merchant object): the server refuses without it.
+
+- Kind: write
+- Operation: `POST /api/v1/suggestions/{id}/accept`
+- Grant: `decisions:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The suggestion identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `correct_suggestion`
+
+Apply the person's own answer instead of the model's and mark the suggestion rejected; the model is not asked about the object again. For a categorisation give category_id (an active category, or null for no category); for a label suggestion give label_ids (all are added or none). Also needs organisation:write (and merchants:write for a merchant object): the server refuses without it.
+
+- Kind: write
+- Operation: `POST /api/v1/suggestions/{id}/correct`
+- Grant: `decisions:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "category_id": {
+      "description": "Categorisation only: the category the person chooses, or null for no category. Send null explicitly.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "description": "The suggestion identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "label_ids": {
+      "description": "Label suggestions only: the labels the person adds.",
+      "items": {
+        "description": "The label identifier (26 upper-case characters).",
+        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+        "type": "string"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `reject_suggestion`
+
+Turn a pending suggestion down. Nothing is assigned and the model is not asked about the object again. A state moves once (suggestion_not_pending).
+
+- Kind: write
+- Operation: `POST /api/v1/suggestions/{id}/reject`
+- Grant: `decisions:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The suggestion identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `revert_suggestion`
+
+Take back a categorisation that was applied automatically: the model-origin category is removed and the reversal recorded, so the suggestion reads reverted and the model is not asked again. Allowed only while the object's category is still exactly the one this suggestion wrote: a later decision by a person or a rule is never undone (not_reversible). A suggestion that was not auto-applied, or was already reverted, is also not_reversible. Also needs organisation:write (and merchants:write for a merchant object): the server refuses without it.
+
+- Kind: destructive
+- Operation: `POST /api/v1/suggestions/{id}/revert`
+- Grant: `decisions:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The suggestion identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_alerts`
+
+List the alerts Ledger raised itself (a bank consent about to expire, a commitment whose amount changed, an overdue occurrence with no matching payment), oldest first, one page at a time. state says whether an alert is open, dismissed (a person closed it) or resolved (the condition stopped holding). message is Ledger's own text; model_text is optional extra wording from a model, labelled with its provider and model, never a replacement.
+
+- Kind: read
+- Operation: `GET /api/v1/alerts`
+- Grant: `decisions:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Only these kinds.",
+      "items": {
+        "enum": [
+          "consent_expiring",
+          "commitment_amount_changed",
+          "unmatched_overdue"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "object_id": {
+      "description": "Only alerts about this object (its identifier).",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "Only alerts about this kind of object.",
+      "enum": [
+        "bank_connection",
+        "commitment",
+        "occurrence"
+      ],
+      "type": "string"
+    },
+    "state": {
+      "description": "Only these states.",
+      "items": {
+        "enum": [
+          "open",
+          "dismissed",
+          "resolved"
+        ],
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_alert`
+
+Get one alert with its exact facts (amounts as decimal text with their currency), message, optional model_text and state.
+
+- Kind: read
+- Operation: `GET /api/v1/alerts/{id}`
+- Grant: `decisions:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The alert identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `dismiss_alert`
+
+Close an open alert as dismissed. A dismissal sticks: the same situation is not raised again. An alert that is already closed is refused (alert_not_open).
+
+- Kind: write
+- Operation: `POST /api/v1/alerts/{id}/dismiss`
+- Grant: `decisions:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The alert identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
 <!-- tools:end -->

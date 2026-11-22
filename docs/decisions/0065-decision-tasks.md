@@ -70,8 +70,8 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
 
 ## Limitations and what is not built (kept visible)
 
-- **No HTTP routes, CLI commands or UI** for suggestions or alerts, and so no OpenAPI change: they belong to L7 (review UI
-  and settings) and the MCP and Terraform tasks. Grants for them are decided there.
+- **No UI** for suggestions or alerts (task L7). The routes, OpenAPI, client, CLI and MCP tools are
+  [ADR-0066](0066-decision-tasks-api.md).
 - **No runner calls these services yet.** Nothing in `serve` triggers `SuggestCategory`/`SuggestLabels` for new
   transactions, nothing reads transaction facts and the merchant's transfer classification for them (the caller builds
   `Facts`), and no detector scans bank connections, commitments or occurrences to feed `alerts.Service.Raise`. Wiring

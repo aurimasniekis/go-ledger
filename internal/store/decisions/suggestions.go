@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
@@ -53,6 +54,122 @@ func (s *Store) Suggestion(ctx context.Context, id string) (decisions.Suggestion
 	})
 	return sg, err
 }
+
+// reversalOf reads the reversal columns selected after the suggestion's own.
+func reversalOf(kind sql.Null[string], user sql.Null[string], at sql.Null[store.Timestamp]) *decisions.Reversal {
+	if !at.Valid {
+		return nil
+	}
+	return &decisions.Reversal{ByKind: kind.V, ByUserID: user.V, At: at.V.Time}
+}
+
+const viewColumns = "d.id, d.task, d.provider, d.model, d.response_id, d.object_type, d.object_id, d.decision, d.auto_apply, d.state, d.created_at, d.decided_at, d.version, r.reverted_by_kind, r.reverted_by_user, r.reverted_at"
+
+const viewFrom = " FROM decision_suggestions d LEFT JOIN decision_suggestion_reversals r ON r.suggestion_id = d.id"
+
+func scanView(row interface{ Scan(...any) error }) (decisions.SuggestionView, error) {
+	var sg decisions.Suggestion
+	var task, state, doc string
+	var response sql.Null[string]
+	var created store.Timestamp
+	var decided, revertedAt sql.Null[store.Timestamp]
+	var kind, user sql.Null[string]
+	if err := row.Scan(&sg.ID, &task, &sg.Provider, &sg.Model, &response, &sg.Object.Type, &sg.Object.ID, &doc, &sg.AutoApply, &state, &created, &decided, &sg.Version, &kind, &user, &revertedAt); err != nil {
+		return decisions.SuggestionView{}, err
+	}
+	if err := json.Unmarshal([]byte(doc), &sg.Decision); err != nil {
+		return decisions.SuggestionView{}, err
+	}
+	sg.Task, sg.State, sg.ResponseID, sg.CreatedAt = decisions.TaskName(task), decisions.SuggestionState(state), response.V, created.Time
+	if decided.Valid {
+		t := decided.V.Time
+		sg.DecidedAt = &t
+	}
+	return decisions.SuggestionView{Suggestion: sg, Reversal: reversalOf(kind, user, revertedAt)}, nil
+}
+
+// SuggestionView returns one suggestion with its reversal
+// (resource.ErrNotFound when there is none).
+func (s *Store) SuggestionView(ctx context.Context, id string) (decisions.SuggestionView, error) {
+	var v decisions.SuggestionView
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		v, err = scanView(tx.QueryRowContext(ctx, "SELECT "+viewColumns+viewFrom+" WHERE d.id = ?", id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return resource.ErrNotFound
+		}
+		return err
+	})
+	return v, err
+}
+
+// ListSuggestions returns suggestions matching f, oldest first.
+func (s *Store) ListSuggestions(ctx context.Context, f decisions.SuggestionFilter) ([]decisions.SuggestionView, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var where []string
+	var args []any
+	if len(f.Tasks) > 0 {
+		where = append(where, "d.task IN ("+placeholders(len(f.Tasks))+")")
+		for _, t := range f.Tasks {
+			args = append(args, string(t))
+		}
+	}
+	if len(f.States) > 0 {
+		var ors []string
+		for _, st := range f.States {
+			switch st {
+			case decisions.StateReverted:
+				ors = append(ors, "r.suggestion_id IS NOT NULL")
+			case decisions.StateAccepted:
+				ors = append(ors, "(d.state = 'accepted' AND r.suggestion_id IS NULL)")
+			default:
+				ors = append(ors, "d.state = ?")
+				args = append(args, string(st))
+			}
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if f.ObjectType != "" {
+		where = append(where, "d.object_type = ?")
+		args = append(args, f.ObjectType)
+	}
+	if f.ObjectID != "" {
+		where = append(where, "d.object_id = ?")
+		args = append(args, f.ObjectID)
+	}
+	if f.After != "" {
+		where = append(where, "d.id > ?")
+		args = append(args, f.After)
+	}
+	q := "SELECT " + viewColumns + viewFrom
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY d.id LIMIT ?"
+	args = append(args, limit)
+	var out []decisions.SuggestionView
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			v, err := scanView(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
 
 // Decide moves a pending suggestion to a final state once, and records the
 // audit event named by action, in one transaction. A suggestion that is no

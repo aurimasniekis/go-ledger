@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/alerts"
@@ -163,6 +164,70 @@ func (s *Store) Get(ctx context.Context, id string) (alerts.Alert, error) {
 		return err
 	})
 	return a, err
+}
+
+// Find returns the alerts matching f, oldest first (by identifier).
+func (s *Store) Find(ctx context.Context, f alerts.Filter) ([]alerts.Alert, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var where []string
+	var args []any
+	in := func(col string, vals []string) {
+		if len(vals) == 0 {
+			return
+		}
+		where = append(where, col+" IN ("+strings.TrimSuffix(strings.Repeat("?,", len(vals)), ",")+")")
+		for _, v := range vals {
+			args = append(args, v)
+		}
+	}
+	kinds := make([]string, len(f.Kinds))
+	for i, k := range f.Kinds {
+		kinds[i] = string(k)
+	}
+	states := make([]string, len(f.States))
+	for i, st := range f.States {
+		states[i] = string(st)
+	}
+	in("kind", kinds)
+	in("state", states)
+	if f.ObjectType != "" {
+		where = append(where, "object_type = ?")
+		args = append(args, string(f.ObjectType))
+	}
+	if f.ObjectID != "" {
+		where = append(where, "object_id = ?")
+		args = append(args, f.ObjectID)
+	}
+	if f.After != "" {
+		where = append(where, "id > ?")
+		args = append(args, f.After)
+	}
+	q := "SELECT " + columns + " FROM alerts"
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY id LIMIT ?"
+	args = append(args, limit)
+	var out []alerts.Alert
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			a, err := scan(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, a)
+		}
+		return rows.Err()
+	})
+	return out, err
 }
 
 // List implements [alerts.Store].

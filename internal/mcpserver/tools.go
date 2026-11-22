@@ -139,7 +139,7 @@ var grantCommitmentsRead = authz.G(authz.ResourceCommitments, authz.ActionRead)
 var grantCommitmentsWrite = authz.G(authz.ResourceCommitments, authz.ActionWrite)
 
 func registry() []Tool {
-	return slices.Concat(coreTools(), matchTools(), deferralTools(), bankTools(), rateTools(), organisationTools())
+	return slices.Concat(coreTools(), matchTools(), deferralTools(), bankTools(), rateTools(), organisationTools(), decisionTools())
 }
 
 func coreTools() []Tool {
@@ -504,6 +504,63 @@ func rateTools() []Tool {
 			Description: "Report whether an exchange-rate provider is configured (it is optional), which source it serves, the reporting currency rates are fetched to, the freshness policy (stale after 5 days by default) and how the last refresh went since Ledger started (outcome and the provider's error kind and code, never a URL). When the provider is off, cached rates stay listed but nothing refreshes them.",
 			Schema:      object(map[string]any{}),
 		},
+	}
+}
+
+var (
+	grantDecisionsRead  = authz.G(authz.ResourceDecisions, authz.ActionRead)
+	grantDecisionsWrite = authz.G(authz.ResourceDecisions, authz.ActionWrite)
+)
+
+// decisionTools are the model suggestions and in-app alerts (task L6c,
+// ADR-0065): each is a typed call of the Management API route, so the HTTP
+// grants (accepting, correcting and reverting also need organisation:write, and
+// merchants:write for a merchant: the server enforces it), error codes and audit
+// apply unchanged.
+func decisionTools() []Tool {
+	const suggestionNote = " A suggestion is model output, never an assignment: it assigns nothing until a person accepts or corrects it (or, for categorisation with auto-apply on, until it was applied automatically as a model-origin assignment). Every suggestion names the provider and model that said it (suggested_by, provenance)."
+	const gateNote = " Also needs organisation:write (and merchants:write for a merchant object): the server refuses without it."
+	return []Tool{
+		{Name: "list_suggestions", Title: "List model suggestions", Method: "GET", Path: "/suggestions", Grant: grantDecisionsRead, Kind: KindRead,
+			Description: "List the suggestions a model made for categorising an object or labelling it, oldest first, one page at a time." + suggestionNote + " State is pending, accepted, rejected (a correction is a rejection with the person's own answer), superseded or reverted (an auto-applied suggestion that was taken back). Filters combine; a repeated filter accepts any of its values.",
+			Schema: object(pagingArgs(map[string]any{
+				"state":       map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"pending", "accepted", "rejected", "superseded", "reverted"}}, "description": "Only these states. accepted excludes reverted ones."},
+				"task":        map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"categorisation", "label_suggestion"}}, "description": "Only these tasks."},
+				"object_type": map[string]any{"type": "string", "enum": orgObjectTypes(), "description": "Only suggestions about this kind of object."},
+				"object_id":   idArg("object"),
+			}))},
+		{Name: "get_suggestion", Title: "Get a model suggestion", Method: "GET", Path: "/suggestions/{id}", Grant: grantDecisionsRead, Kind: KindRead,
+			Description: "Get one suggestion with what the model chose (category or label identifiers and its own confidence, which proves nothing), who said it, its state and any reversal." + suggestionNote,
+			Schema:      object(map[string]any{"id": idArg("suggestion")}, "id")},
+		{Name: "accept_suggestion", Title: "Accept a model suggestion", Method: "POST", Path: "/suggestions/{id}/accept", Grant: grantDecisionsWrite, Kind: KindWrite,
+			Description: "Apply a pending suggestion as the person's own decision (a user-origin assignment, which no rule, model or refresh replaces) and mark it accepted; it keeps the provider and model that said it. An archived category or label is refused (definition_archived) and the suggestion stays pending; a state moves once (suggestion_not_pending); a suggestion with no choice is refused (nothing_to_apply)." + gateNote,
+			Schema:      object(map[string]any{"id": idArg("suggestion")}, "id")},
+		{Name: "correct_suggestion", Title: "Correct a model suggestion", Method: "POST", Path: "/suggestions/{id}/correct", Grant: grantDecisionsWrite, Kind: KindWrite,
+			Description: "Apply the person's own answer instead of the model's and mark the suggestion rejected; the model is not asked about the object again. For a categorisation give category_id (an active category, or null for no category); for a label suggestion give label_ids (all are added or none)." + gateNote,
+			Schema: object(map[string]any{"id": idArg("suggestion"),
+				"category_id": map[string]any{"type": []string{"string", "null"}, "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$", "description": "Categorisation only: the category the person chooses, or null for no category. Send null explicitly."},
+				"label_ids":   map[string]any{"type": "array", "minItems": 1, "maxItems": 50, "items": idArg("label"), "description": "Label suggestions only: the labels the person adds."},
+			}, "id")},
+		{Name: "reject_suggestion", Title: "Reject a model suggestion", Method: "POST", Path: "/suggestions/{id}/reject", Grant: grantDecisionsWrite, Kind: KindWrite,
+			Description: "Turn a pending suggestion down. Nothing is assigned and the model is not asked about the object again. A state moves once (suggestion_not_pending).",
+			Schema:      object(map[string]any{"id": idArg("suggestion")}, "id")},
+		{Name: "revert_suggestion", Title: "Revert an auto-applied suggestion", Method: "POST", Path: "/suggestions/{id}/revert", Grant: grantDecisionsWrite, Kind: KindDestructive,
+			Description: "Take back a categorisation that was applied automatically: the model-origin category is removed and the reversal recorded, so the suggestion reads reverted and the model is not asked again. Allowed only while the object's category is still exactly the one this suggestion wrote: a later decision by a person or a rule is never undone (not_reversible). A suggestion that was not auto-applied, or was already reverted, is also not_reversible." + gateNote,
+			Schema:      object(map[string]any{"id": idArg("suggestion")}, "id")},
+		{Name: "list_alerts", Title: "List in-app alerts", Method: "GET", Path: "/alerts", Grant: grantDecisionsRead, Kind: KindRead,
+			Description: "List the alerts Ledger raised itself (a bank consent about to expire, a commitment whose amount changed, an overdue occurrence with no matching payment), oldest first, one page at a time. state says whether an alert is open, dismissed (a person closed it) or resolved (the condition stopped holding). message is Ledger's own text; model_text is optional extra wording from a model, labelled with its provider and model, never a replacement.",
+			Schema: object(pagingArgs(map[string]any{
+				"state":       map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"open", "dismissed", "resolved"}}, "description": "Only these states."},
+				"kind":        map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"consent_expiring", "commitment_amount_changed", "unmatched_overdue"}}, "description": "Only these kinds."},
+				"object_type": map[string]any{"type": "string", "enum": []string{"bank_connection", "commitment", "occurrence"}, "description": "Only alerts about this kind of object."},
+				"object_id":   str("Only alerts about this object (its identifier)."),
+			}))},
+		{Name: "get_alert", Title: "Get an alert", Method: "GET", Path: "/alerts/{id}", Grant: grantDecisionsRead, Kind: KindRead,
+			Description: "Get one alert with its exact facts (amounts as decimal text with their currency), message, optional model_text and state.",
+			Schema:      object(map[string]any{"id": idArg("alert")}, "id")},
+		{Name: "dismiss_alert", Title: "Dismiss an alert", Method: "POST", Path: "/alerts/{id}/dismiss", Grant: grantDecisionsWrite, Kind: KindWrite,
+			Description: "Close an open alert as dismissed. A dismissal sticks: the same situation is not raised again. An alert that is already closed is refused (alert_not_open).",
+			Schema:      object(map[string]any{"id": idArg("alert")}, "id")},
 	}
 }
 

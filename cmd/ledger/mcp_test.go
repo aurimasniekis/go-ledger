@@ -687,6 +687,17 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"remove_bucket_member": func() (string, string, string) {
 			return "DELETE", "/buckets/" + fakeID + "/members/commitment/" + fakeID, ""
 		},
+		"list_suggestions":  func() (string, string, string) { return "GET", "/suggestions", "" },
+		"get_suggestion":    func() (string, string, string) { return "GET", "/suggestions/" + fakeID, "" },
+		"accept_suggestion": func() (string, string, string) { return "POST", "/suggestions/" + fakeID + "/accept", "{}" },
+		"correct_suggestion": func() (string, string, string) {
+			return "POST", "/suggestions/" + fakeID + "/correct", `{"category_id":null}`
+		},
+		"reject_suggestion":       func() (string, string, string) { return "POST", "/suggestions/" + fakeID + "/reject", "{}" },
+		"revert_suggestion":       func() (string, string, string) { return "POST", "/suggestions/" + fakeID + "/revert", "{}" },
+		"list_alerts":             func() (string, string, string) { return "GET", "/alerts", "" },
+		"get_alert":               func() (string, string, string) { return "GET", "/alerts/" + fakeID, "" },
+		"dismiss_alert":           func() (string, string, string) { return "POST", "/alerts/" + fakeID + "/dismiss", "{}" },
 		"get_object_organisation": func() (string, string, string) { return "GET", "/organisation/transaction/" + fakeID, "" },
 		"set_object_category": func() (string, string, string) {
 			return "PUT", "/organisation/transaction/" + fakeID + "/category", `{"category_id":null}`
@@ -801,6 +812,15 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"list_bucket_members":     {"id": fakeID},
 		"add_bucket_member":       {"id": fakeID, "object_type": "commitment", "object_id": fakeID},
 		"remove_bucket_member":    {"id": fakeID, "object_type": "commitment", "object_id": fakeID},
+		"list_suggestions":        nil,
+		"get_suggestion":          {"id": fakeID},
+		"accept_suggestion":       {"id": fakeID},
+		"correct_suggestion":      {"id": fakeID, "category_id": nil},
+		"reject_suggestion":       {"id": fakeID},
+		"revert_suggestion":       {"id": fakeID},
+		"list_alerts":             nil,
+		"get_alert":               {"id": fakeID},
+		"dismiss_alert":           {"id": fakeID},
 		"get_object_organisation": {"object_type": "transaction", "object_id": fakeID},
 		"set_object_category":     {"object_type": "transaction", "object_id": fakeID, "category_id": nil},
 		"reset_object_category":   {"object_type": "transaction", "object_id": fakeID},

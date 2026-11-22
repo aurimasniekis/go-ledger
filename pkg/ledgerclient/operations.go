@@ -125,6 +125,17 @@ var (
 	opReviewTransactionMerchant      = operation{ID: "reviewTransactionMerchant", Method: http.MethodPut, Path: "/transactions/{id}/merchant/review"}
 	opClearTransactionMerchantReview = operation{ID: "clearTransactionMerchantReview", Method: http.MethodDelete, Path: "/transactions/{id}/merchant/review"}
 
+	// Decision tasks (task L6c, ADR-0065).
+	opListSuggestions   = operation{ID: "listSuggestions", Method: http.MethodGet, Path: "/suggestions", Query: []string{"limit", "cursor", "state", "task", "object_type", "object_id"}}
+	opGetSuggestion     = operation{ID: "getSuggestion", Method: http.MethodGet, Path: "/suggestions/{id}"}
+	opAcceptSuggestion  = operation{ID: "acceptSuggestion", Method: http.MethodPost, Path: "/suggestions/{id}/accept"}
+	opCorrectSuggestion = operation{ID: "correctSuggestion", Method: http.MethodPost, Path: "/suggestions/{id}/correct"}
+	opRejectSuggestion  = operation{ID: "rejectSuggestion", Method: http.MethodPost, Path: "/suggestions/{id}/reject"}
+	opRevertSuggestion  = operation{ID: "revertSuggestion", Method: http.MethodPost, Path: "/suggestions/{id}/revert"}
+	opListAlerts        = operation{ID: "listAlerts", Method: http.MethodGet, Path: "/alerts", Query: []string{"limit", "cursor", "state", "kind", "object_type", "object_id"}}
+	opGetAlert          = operation{ID: "getAlert", Method: http.MethodGet, Path: "/alerts/{id}"}
+	opDismissAlert      = operation{ID: "dismissAlert", Method: http.MethodPost, Path: "/alerts/{id}/dismiss"}
+
 	// opCreateMyToken needs a root token of the root account (decision D25).
 	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
@@ -148,4 +159,5 @@ var operations = []operation{
 	opListCategories, opCreateCategory, opGetCategory, opUpdateCategory, opArchiveCategory, opUnarchiveCategory, opDeleteCategory, opListLabels, opCreateLabel, opGetLabel, opUpdateLabel, opArchiveLabel, opUnarchiveLabel, opDeleteLabel, opListBuckets, opCreateBucket, opGetBucket, opUpdateBucket, opArchiveBucket, opUnarchiveBucket, opDeleteBucket, opListBucketMembers, opAddBucketMember, opRemoveBucketMember, opGetObjectOrg, opSetObjectCategory, opResetObjectCategory, opAddObjectLabel, opRemoveObjectLabel,
 	opListMerchants, opCreateMerchant, opGetMerchant, opUpdateMerchant, opDeleteMerchant, opArchiveMerchant, opUnarchiveMerchant, opAddMerchantAlias, opRemoveMerchantAlias, opMergeMerchants, opListMerchantSources,
 	opGetTransactionMerchant, opReviewTransactionMerchant, opClearTransactionMerchantReview,
+	opListSuggestions, opGetSuggestion, opAcceptSuggestion, opCorrectSuggestion, opRejectSuggestion, opRevertSuggestion, opListAlerts, opGetAlert, opDismissAlert,
 }

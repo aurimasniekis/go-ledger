@@ -142,6 +142,19 @@ type Store interface {
 	List(ctx context.Context, state State, limit int) ([]Alert, error)
 }
 
+// Filter selects alerts for listing, oldest first (by identifier). Empty fields
+// match everything.
+type Filter struct {
+	Kinds      []Kind
+	States     []State
+	ObjectType ObjectType
+	ObjectID   string
+	// After is the identifier of the last alert of the previous page.
+	After string
+	// Limit is the number of alerts to return; zero means 100.
+	Limit int
+}
+
 // Wordsmith writes optional wording for an alert (the alerts decision task).
 // ok is false when none was written: disabled, no consent, an outage, invalid
 // output. The alert is raised either way.
