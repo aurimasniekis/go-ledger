@@ -43,11 +43,17 @@ See [ADR-0016](decisions/0016-pulse-publisher.md).
 
 ## Events
 
-No product event is emitted yet: the outbox ships ahead of the features that raise events (PU1). Each feature adds its entry to `outbox.Registry` and a row to the table below in the same change.
+Each feature adds its entry to `outbox.Registry` and a row to the table below in the same change.
 
 | Subject | Type | Trigger | Payload (field: kind, * required) |
 | --- | --- | --- | --- |
-| _none yet_ | | | |
+| `evt.ledger.alert.raised.<alert id>` | `ledger.alert.raised.v1` | An alert is newly raised and `alerts.channels` lists `pulse` (ADR-0065). Raising an open or a dismissed alert again sends nothing. Written in its own transaction after the alert is stored; a failure is logged and never loses the alert. | `kind`: string*, `object_type`: string*, `object_id`: string* |
+
+The alert event carries the kind (`consent_expiring`, `commitment_amount_changed`, `unmatched_overdue`) and the object it is about, never the alert's message, an amount or any bank text. The subject key is the lowercase alert id.
+
+### Alert channels
+
+Alerts are in-app only unless the operator selects a channel. `alerts.channels` (YAML list, or comma separated `LEDGER_ALERTS_CHANNELS`, also from `.env`) is empty by default; the only channel is `pulse`, which requires `events.pulse.enabled: true` (startup is refused otherwise, so a channel never silently does nothing). `alerts.consent_horizon_days` (default 14) and `alerts.interval` (default 1h) tune the detectors. They run after every bank refresh that stored something and on that interval; see [ADR-0065](decisions/0065-decision-tasks.md).
 
 ### Adding an event
 

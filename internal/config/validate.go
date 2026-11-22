@@ -184,6 +184,7 @@ func (c *Config) validate(sources map[string]string) []Problem {
 	c.Rates.Source = frankfurter.NormalizeSource(c.Rates.Source)
 	c.Rates.validate(bad)
 	c.Decisions.validate(bad)
+	c.Alerts.validate(c.Events.Pulse.Enabled, bad)
 	c.Merchants.Enrichment.Remote.validate(bad)
 	if c.KEK.Value == "" && c.KEK.File == "" {
 		ps = append(ps, Problem{Key: "kek", Msg: "required: set " + EnvName("kek.value") + " or " + EnvName("kek.file")})

@@ -185,3 +185,20 @@ func TestValidNamesAccepted(t *testing.T) {
 	r.NewCounter("counter_le_ok", "h", "le") // le is only reserved on histograms
 	r.NewHistogram("h_seconds", "h", nil, "route")
 }
+
+func TestDecisionQuestionsCounter(t *testing.T) {
+	a := NewApp("v1")
+	a.DecisionQuestion("categorisation", "asked")
+	a.DecisionQuestion("categorisation", "asked")
+	a.DecisionQuestion("label_suggestion", "failed")
+	out := render(t, a.Registry)
+	for _, want := range []string{
+		"# TYPE ledger_decision_questions_total counter\n",
+		"ledger_decision_questions_total{task=\"categorisation\",outcome=\"asked\"} 2\n",
+		"ledger_decision_questions_total{task=\"label_suggestion\",outcome=\"failed\"} 1\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}

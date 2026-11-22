@@ -188,15 +188,14 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		log.Error("cannot determine the reporting time zone", "error", err.Error())
 		return 1
 	}
-	// The outbox writer takes the events.pulse switch and source (N3). No feature
-	// registers events yet, so nothing calls it; features add definitions to the
-	// registry in their own change (docs/events.md).
-	ob, err := outbox.New(outbox.Config{Registry: outbox.NewRegistry(), Enabled: cfg.Events.Pulse.Enabled, Source: cfg.Events.Pulse.Source})
+	// The outbox writer takes the events.pulse switch and source (N3). Features
+	// add their definitions to the registry (docs/events.md); today the alert
+	// channel (L6) is the only one that enqueues.
+	ob, err := outbox.New(outbox.Config{Registry: outbox.NewRegistry(alertRaisedEvent), Enabled: cfg.Events.Pulse.Enabled, Source: cfg.Events.Pulse.Source})
 	if err != nil {
 		log.Error("invalid event settings", "error", err.Error())
 		return 1
 	}
-	_ = ob
 
 	ln, err := net.Listen("tcp", cfg.HTTP.Listen)
 	if err != nil {
@@ -270,6 +269,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// and none starts afterwards; the shutdown waits for it after the refreshes.
 	enrichCtx, enrichStop := context.WithCancel(ctx)
 	defer enrichStop()
+	// Alert detectors (L6, ADR-0065): after a refresh and on a schedule.
+	alertRun := newAlertRunner(cfg.Alerts, db, auditLog, ob, parts, facts, zone.Zone(), nil, log)
+	alertRun.done = app.JobDoneFor(alertJobName)
 	// The decision triggers (L6d) are set once the decision service exists,
 	// below; a refresh before that, or with no task enabled, asks nothing.
 	var decisionTrigger atomic.Pointer[decisiontasks.Trigger]
@@ -277,8 +279,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	var decisionWG sync.WaitGroup
 	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(refreshCtx context.Context, res bankimport.Result) {
 		// Questions to a model take seconds each and are never part of the
-		// import: they run in the background, one pass at a time and in
-		// refresh order, and a failure only reaches the log.
+		// import: they run in the background, one pass at a time. The passes
+		// are not run in refresh order (a mutex does not queue FIFO); each pass
+		// is independent and idempotent, so the order does not matter. A
+		// failure is counted and logged, never returned to the import.
 		if tr := decisionTrigger.Load(); tr != nil {
 			inserted := map[banking.AccountID][]banking.TransactionID{}
 			for _, a := range res.Accounts {
@@ -300,6 +304,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		if _, err := parts.matching.Run(refreshCtx); err != nil && refreshCtx.Err() == nil {
 			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
 		}
+		// Alert detectors judge the data after matching, so a payment the
+		// refresh just brought in is not reported as unmatched (ADR-0065).
+		alertRun.Run(refreshCtx)
 		// Merchant identification is presentation only and runs after the
 		// import is stored; its failure never affects the import (E2).
 		// It runs in the background under the application's context, bounded
@@ -345,7 +352,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		_ = ln.Close()
 		return 1
 	}
-	decisionTrigger.Store(buildDecisionTrigger(decisionSvc, cfg.Decisions, db, auditLog, time.Now, facts, parts.organisation, log))
+	decisionTrigger.Store(buildDecisionTrigger(decisionSvc, cfg.Decisions, db, auditLog, time.Now, facts, parts.organisation, log, app))
 	// The rates routes (FX2c, ADR-0048) list the cache and trigger a refresh. The
 	// provider is optional, so its state is reported (status route, metrics)
 	// and never gates readiness.
@@ -405,6 +412,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		defer close(retentionDone)
 		outbox.NewRetention(outbox.RetentionConfig{DB: db, Log: log, Meter: app, Publishing: cfg.Events.Pulse.Enabled}).Run(rctx)
 	}()
+	// Alert detectors on a schedule: consent expiry and overdue dates change with
+	// time, not only after a refresh. In-app only unless alerts.channels says
+	// otherwise; stops with rctx and is waited for before the database closes.
+	alertsDone := make(chan struct{})
+	go func() { defer close(alertsDone); alertRun.Loop(rctx, cfg.Alerts.Interval) }()
 	// Background refresh of bank connections (B6, ADR-0028). One engine is shared
 	// with every other trigger of a refresh (the connection API, B4), so one
 	// connection is never refreshed twice at once. It stops with rctx and is
@@ -458,6 +470,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		enrichStop()
 	}
 	<-retentionDone // before the database closes
+	<-alertsDone
 	// A refresh on request that outlived its request is waited for too (bounded,
 	// so a stuck provider cannot hold the shutdown): its audit entry needs the
 	// database.

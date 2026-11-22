@@ -455,7 +455,7 @@ func TestAlertWordingIsLabelledAndOptional(t *testing.T) {
 	st := alertstore.New(f.db, f.rec, func() time.Time { return t0 }, nil)
 	svc := alerts.New(st, decisiontasks.NewAlertWording(runner, f.ds))
 	today := calendar.MustDate(2026, 11, 1)
-	c1, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNC", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
+	c1, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNC", "o1", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
 	r, err := svc.Raise(f.ctx, decisiontasks.SystemActor, c1)
 	if err != nil || r.Alert.Wording == nil || r.Alert.Wording.Provider != "openai" || r.Alert.Wording.Model != "m1-2026" {
 		t.Fatalf("%+v %v", r, err)
@@ -521,7 +521,7 @@ func TestWordingFailureDoesNotSkipChannelsAndModelTextIsFrozen(t *testing.T) {
 	st := alertstore.New(f.db, f.rec, func() time.Time { return t0 }, nil)
 	var sent int
 	svc := alerts.New(st, failingWords{}, alerts.Channel{Name: "pulse", Notify: func(context.Context, alerts.Alert) error { sent++; return nil }})
-	c, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNG", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
+	c, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNG", "o1", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
 	r, err := svc.Raise(f.ctx, decisiontasks.SystemActor, c)
 	if err != nil || !r.Created || r.WordingErr == nil || sent != 1 {
 		t.Fatalf("%+v sent=%d %v", r, sent, err)
