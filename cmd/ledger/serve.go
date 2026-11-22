@@ -33,10 +33,12 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/pulsebus"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
 	"github.com/aurimasniekis/go-ledger/internal/reporting"
+	"github.com/aurimasniekis/go-ledger/internal/settings"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	deferralstore "github.com/aurimasniekis/go-ledger/internal/store/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/store/fxrates"
+	settingsstore "github.com/aurimasniekis/go-ledger/internal/store/settings"
 	"github.com/aurimasniekis/go-ledger/internal/web"
 )
 
@@ -96,7 +98,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	for _, p := range decisionProviderNames {
 		redact.Default().Add(cfg.Decisions.APIKey(p))
 	}
-	log, err := logging.New(stderr, cfg.Log.Level, cfg.Log.Format, redact.Default())
+	log, logLevel, err := logging.NewLeveled(stderr, cfg.Log.Level, cfg.Log.Format, redact.Default())
 	if err != nil {
 		say(stderr, "ledger: "+err.Error())
 		return 1
@@ -112,20 +114,6 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	}
 	for _, n := range res.UnknownEnv {
 		log.Warn("unknown LEDGER_ variable is ignored; check the spelling", "variable", n)
-	}
-
-	// Banking-data providers (ADR-0023). The keys are parsed now so a bad key
-	// stops startup; nothing connects to Enable Banking until a connection is
-	// made or refreshed. The connection API (B4) and the scheduler (B6) use
-	// these providers.
-	bankProviders, err := bankingProviders(cfg.Banking.EnableBanking)
-	if err != nil {
-		log.Error("invalid Enable Banking configuration", "error", err.Error())
-		return 1
-	}
-	for _, p := range bankProviders {
-		c := p.Capabilities()
-		log.Info("Enable Banking application configured", "application", c.Application, "mode", string(c.Mode), "environment", string(c.Environment), "account_access", string(c.AccountAccess()))
 	}
 
 	// Open the database first: a store or zone problem must stop startup
@@ -162,9 +150,45 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	}
 
 	auditLog := store.NewAuditLog(db)
+	// Runtime settings (ADR-0066): the stored layer joins the configuration
+	// between the defaults and the YAML file, and the whole is validated again.
+	// The service keeps every key's source, so the API can report pins. From
+	// here on cfg is the effective configuration.
+	settingsSvc, err := settings.Open(ctx, res, settingsstore.New(db, auditLog, nil, nil), settings.Options{})
+	if err != nil {
+		log.Error("invalid stored settings", "error", err.Error())
+		return 1
+	}
+	cfg = settingsSvc.Snapshot().Config()
+	// log.level is the one runtime member read before the stored layer is
+	// known: apply the effective value now (the handler reads the variable).
+	if lv, err := logging.ParseLevel(cfg.Log.Level); err == nil {
+		logLevel.Set(lv)
+	}
+
+	// Banking-data providers (ADR-0023). The keys are parsed now so a bad key
+	// stops startup; nothing connects to Enable Banking until a connection is
+	// made or refreshed. The connection API (B4) and the scheduler (B6) use
+	// these providers.
+	bankProviders, err := bankingProviders(cfg.Banking.EnableBanking)
+	if err != nil {
+		log.Error("invalid Enable Banking configuration", "error", err.Error())
+		return 1
+	}
+	for _, p := range bankProviders {
+		c := p.Capabilities()
+		log.Info("Enable Banking application configured", "application", c.Application, "mode", string(c.Mode), "environment", string(c.Environment), "account_access", string(c.AccountAccess()))
+	}
+
 	zoneOpts := env.Reporting
 	zoneOpts.Audit = auditLog
-	zone, err := reporting.Resolve(ctx, db, cfg.Reporting.Timezone, log, zoneOpts)
+	// Only a configured zone is passed on: an API zone and its reclassification
+	// rule belong to the reporting group (ADR-0066 point 6a, task S3).
+	explicitZone := ""
+	if config.Pinned(settingsSvc.Snapshot().Source("reporting.timezone")) {
+		explicitZone = cfg.Reporting.Timezone
+	}
+	zone, err := reporting.Resolve(ctx, db, explicitZone, log, zoneOpts)
 	if err != nil {
 		log.Error("cannot determine the reporting time zone", "error", err.Error())
 		return 1

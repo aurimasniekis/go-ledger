@@ -21,6 +21,38 @@ import (
 // r (nil means redact.Default()), and lines logged with a context that carries
 // a request ID get a request_id attribute.
 func New(w io.Writer, level, format string, r *redact.Redactor) (*slog.Logger, error) {
+	l, _, err := NewLeveled(w, level, format, r)
+	return l, err
+}
+
+// NewLeveled is New, and also returns the level variable the logger reads, so a
+// caller can change the level after startup (for example once the stored
+// settings are known).
+func NewLeveled(w io.Writer, level, format string, r *redact.Redactor) (*slog.Logger, *slog.LevelVar, error) {
+	lv, err := ParseLevel(level)
+	if err != nil {
+		return nil, nil, err
+	}
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(lv)
+	if r == nil {
+		r = redact.Default()
+	}
+	opts := &slog.HandlerOptions{Level: levelVar, ReplaceAttr: r.ReplaceAttr}
+	var h slog.Handler
+	switch strings.ToLower(format) {
+	case "json", "":
+		h = slog.NewJSONHandler(w, opts)
+	case "text":
+		h = slog.NewTextHandler(w, opts)
+	default:
+		return nil, nil, fmt.Errorf("unknown log format %q", format)
+	}
+	return slog.New(contextHandler{Handler: h}), levelVar, nil
+}
+
+// ParseLevel maps a configured level name to its slog level.
+func ParseLevel(level string) (slog.Level, error) {
 	var lv slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
@@ -32,22 +64,9 @@ func New(w io.Writer, level, format string, r *redact.Redactor) (*slog.Logger, e
 	case "error":
 		lv = slog.LevelError
 	default:
-		return nil, fmt.Errorf("unknown log level %q", level)
+		return 0, fmt.Errorf("unknown log level %q", level)
 	}
-	if r == nil {
-		r = redact.Default()
-	}
-	opts := &slog.HandlerOptions{Level: lv, ReplaceAttr: r.ReplaceAttr}
-	var h slog.Handler
-	switch strings.ToLower(format) {
-	case "json", "":
-		h = slog.NewJSONHandler(w, opts)
-	case "text":
-		h = slog.NewTextHandler(w, opts)
-	default:
-		return nil, fmt.Errorf("unknown log format %q", format)
-	}
-	return slog.New(contextHandler{Handler: h}), nil
+	return lv, nil
 }
 
 // contextHandler adds the request ID found in the log call's context.

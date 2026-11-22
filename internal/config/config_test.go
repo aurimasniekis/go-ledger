@@ -97,7 +97,7 @@ func TestPrecedence(t *testing.T) {
 		{"yaml over default", nil, files{"c.yaml": yamlText}, nil, ":1111", 11 * time.Second, time.Minute, "yaml"},
 		{"env over yaml", env{"LEDGER_HTTP_LISTEN": ":2222"}, files{"c.yaml": yamlText}, nil, ":2222", 11 * time.Second, time.Minute, "env LEDGER_HTTP_LISTEN"},
 		{"flag over env", env{"LEDGER_HTTP_LISTEN": ":2222"}, files{"c.yaml": yamlText}, map[string]string{"http.listen": ":3333"}, ":3333", 11 * time.Second, time.Minute, "flag --http.listen"},
-		{"env file over yaml", env{}, files{"c.yaml": yamlText, ".env": "LEDGER_HTTP_LISTEN=:4444\n"}, nil, ":4444", 11 * time.Second, time.Minute, "env LEDGER_HTTP_LISTEN"},
+		{"env file over yaml", env{}, files{"c.yaml": yamlText, ".env": "LEDGER_HTTP_LISTEN=:4444\n"}, nil, ":4444", 11 * time.Second, time.Minute, "dotenv LEDGER_HTTP_LISTEN"},
 		{"real env over env file", env{"LEDGER_HTTP_LISTEN": ":5555"}, files{".env": "LEDGER_HTTP_LISTEN=:4444\n"}, nil, ":5555", 30 * time.Second, 120 * time.Second, "env LEDGER_HTTP_LISTEN"},
 		{"empty env is unset", env{"LEDGER_HTTP_LISTEN": ""}, files{"c.yaml": yamlText}, nil, ":1111", 11 * time.Second, time.Minute, "yaml"},
 	}
