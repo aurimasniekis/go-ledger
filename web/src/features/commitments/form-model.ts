@@ -167,3 +167,24 @@ export function describeSchedule(s: Commitment['schedule']): string {
   const name = new Intl.DateTimeFormat('en', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2001, s.month - 1, 1)))
   return `Yearly on ${name} ${s.day}`
 }
+
+/** Today as YYYY-MM-DD in UTC (the browser's clock; the server decides by the reporting zone). */
+export const todayIso = (now: Date = new Date()) => now.toISOString().slice(0, 10)
+
+/**
+ * Whether this edit makes the server remove unpaid occurrences that are already overdue (removeOutOfRange in the occurrence store):
+ * a new end date before today, or a new start date later than the current one. Null when it does not.
+ * Occurrences with payment evidence or a status override stay; ones only deleted payments refer to are cancelled, not deleted.
+ */
+export function overdueRemovalWarning(c: Commitment, v: FormValues, today: string = todayIso()): string | null {
+  const p = patchBody(c, v)
+  const parts: string[] = []
+  if (typeof p.end_date === 'string' && p.end_date < today) {
+    parts.push(`The end date ${p.end_date} is before today. Unpaid occurrences due after it will be removed, including overdue ones, so they disappear from the monthly view and the outlook.`)
+  }
+  if (typeof p.start_date === 'string' && p.start_date > c.start_date) {
+    parts.push(`The start date moves later, to ${p.start_date}. Unpaid occurrences due before it will be removed, including overdue ones, so they disappear from the monthly view and the outlook.`)
+  }
+  if (parts.length === 0) return null
+  return parts.join(' ') + ' Occurrences with a payment or a status override you set stay. Undo does not bring back occurrences before today.'
+}

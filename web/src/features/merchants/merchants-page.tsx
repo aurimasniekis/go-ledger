@@ -1,5 +1,5 @@
-import { useDeferredValue, useState } from 'react'
-import { Link } from '@tanstack/react-router'
+import { useDeferredValue, useEffect, useRef, useState } from 'react'
+import { Link, useLocation } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { splitErrors } from '@/lib/api'
 import { holds, useMe } from '@/lib/auth'
@@ -17,6 +17,9 @@ import type { MerchantRecord } from './types'
 
 export const Badge = ({ children }: { children: string }) => <span className="ml-2 rounded border border-border px-1.5 py-0.5 text-xs font-normal text-muted-foreground">{children}</span>
 
+/** Folds text the way the server makes an alias key (ADR-0058, merchants.AliasKey): NFC, white space collapsed, lower case. */
+export const foldName = (s: string) => s.normalize('NFC').split(/\s+/).filter(Boolean).join(' ').toLowerCase().normalize('NFC')
+
 /** /merchants: the merchant records transactions are matched to. Names derive from bank text, so the whole screen needs merchants:read. */
 export function MerchantsPage() {
   const me = useMe()
@@ -24,14 +27,20 @@ export function MerchantsPage() {
   const canWrite = holds(me.data?.grants, 'merchants:write')
   const [showArchived, setShowArchived] = useState(false)
   const [find, setFind] = useState('')
-  const deferred = useDeferredValue(find.trim().toLowerCase())
+  const deferred = useDeferredValue(foldName(find))
   const [adding, setAdding] = useState(false)
   const [notice, setNotice] = useState<string>()
+  // A deleted merchant's page is gone: it navigates here with this one-shot state so focus lands on the heading.
+  const focusTitle = useLocation({ select: (l) => (l.state as { focusTitle?: boolean }).focusTitle === true })
+  const titleRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => {
+    if (focusTitle) titleRef.current?.focus()
+  }, [focusTitle])
   const list = useMerchants(showArchived)
   useLoadAll(list)
   const all = list.data ?? []
   // The server filters only by archived: names and aliases are searched here, over every loaded record.
-  const items = deferred ? all.filter((m) => m.display_name.toLowerCase().includes(deferred) || m.aliases.some((a) => a.key.includes(deferred))) : all
+  const items = deferred ? all.filter((m) => foldName(m.display_name).includes(deferred) || m.aliases.some((a) => a.key.includes(deferred))) : all
 
   if (!holds(me.data?.grants, 'merchants:read') && me.data) {
     return (
@@ -44,7 +53,7 @@ export function MerchantsPage() {
   return (
     <section className="space-y-6" aria-labelledby="merchants-title">
       <header className="space-y-2">
-        <h1 id="merchants-title" className="text-2xl font-semibold">Merchants</h1>
+        <h1 id="merchants-title" ref={titleRef} tabIndex={-1} className="text-2xl font-semibold focus:outline-none">Merchants</h1>
         <p className="text-sm text-muted-foreground">
           A merchant record is a display name and the alias names that transactions are matched by. Your confirmations and corrections, and the categories and labels you assign, belong to the record, so renaming it changes
           nothing else. Nothing is merged automatically: two spellings stay two merchants until you merge them. Merchant identity is presentation only; it never changes an amount or a payment status.

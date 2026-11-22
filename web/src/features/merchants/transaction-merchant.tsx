@@ -11,7 +11,7 @@ import { Mono } from '@/components/mono'
 import { QueryState } from '@/components/query-state'
 import { useLoadAll } from '@/features/organisation/api'
 import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
-import { clearTransactionMerchantReview, merchantsKey, reviewTransactionMerchant, txMerchantKey, useMerchants, useMerchantSources, useTransactionMerchant } from './api'
+import { clearTransactionMerchantReview, merchantsKey, reviewTransactionMerchant, txMerchantKey, useMerchant, useMerchants, useMerchantSources, useTransactionMerchant } from './api'
 import { merchantProblem } from './problems'
 import type { MerchantSource, TransactionMerchant } from './types'
 
@@ -39,17 +39,17 @@ const WHY: Record<TransactionMerchant['state'], string> = {
  * not allow remote images, and loading one would tell a third party about the transaction. The neutral icon is used.
  * Hidden without merchants:read.
  */
-export function MerchantDisclosure({ transactionId, subject }: { transactionId: string; subject: string }) {
+export function MerchantDisclosure({ transactionId, subject, inline }: { transactionId: string; subject: string; inline?: boolean }) {
   const me = useMe()
   const [open, setOpen] = useState(false)
   const panel = useId()
   if (!holds(me.data?.grants, 'merchants:read')) return null
   return (
-    <div className="space-y-2">
+    <div className={inline ? 'contents' : 'space-y-2'}>
       <Button variant="ghost" size="sm" className="h-auto min-h-8 py-1 text-foreground underline underline-offset-4" aria-expanded={open} aria-controls={panel} aria-label={`Merchant of ${subject}`} onClick={() => setOpen(!open)}>
         Merchant
       </Button>
-      <div id={panel} hidden={!open}>
+      <div id={panel} hidden={!open} className={inline ? 'basis-full' : undefined}>
         {open && <MerchantPanel transactionId={transactionId} canWrite={holds(me.data?.grants, 'merchants:write')} />}
       </div>
     </div>
@@ -60,6 +60,18 @@ export function MerchantPanel({ transactionId, canWrite }: { transactionId: stri
   const q = useTransactionMerchant(transactionId, true)
   const sources = useMerchantSources()
   return <QueryState query={q} label="the merchant">{(m) => <Panel m={m} sources={sources.data ?? []} canWrite={canWrite} />}</QueryState>
+}
+
+/**
+ * Organise for the merchant record of a transaction. The record is read first: an archived one is read-only (the server
+ * refuses new assignments to it, ADR-0058), and a merged one shows no control (its assignments moved; ADR-0062).
+ * While the record is unread the control is locked, never offered as writable.
+ */
+function MerchantOrganise({ merchantId, name }: { merchantId: string; name: string | null }) {
+  const rec = useMerchant(merchantId)
+  if (rec.data?.merged_into) return <p className="text-xs text-muted-foreground" data-testid="merchant-merged">This merchant was merged into another, so its category and labels moved there.</p>
+  const locked = rec.data?.archived ? 'This merchant is archived, so nothing new can be put on it. Unarchive it to change its category and labels.' : rec.data ? undefined : 'Checking whether this merchant is archived…'
+  return <OrganiseDisclosure objectType="merchant" objectId={merchantId} subject={`the merchant ${name}`} locked={locked} />
 }
 
 function Panel({ m, sources, canWrite }: { m: TransactionMerchant; sources: MerchantSource[]; canWrite: boolean }) {
@@ -124,7 +136,7 @@ function Panel({ m, sources, canWrite }: { m: TransactionMerchant; sources: Merc
       <FormError message={error ? merchantProblem(error) : undefined} />
       {saved && <p role="status" className="text-xs font-medium">{saved}</p>}
       {busy && <p role="status" className="text-xs text-muted-foreground">Saving… not saved until the server confirms.</p>}
-      {shown && m.merchant_id && <OrganiseDisclosure objectType="merchant" objectId={m.merchant_id} subject={`the merchant ${m.name}`} />}
+      {shown && m.merchant_id && <MerchantOrganise merchantId={m.merchant_id} name={m.name} />}
       {canWrite ? (
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">

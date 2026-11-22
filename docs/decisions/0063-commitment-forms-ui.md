@@ -32,15 +32,18 @@ archive endpoint**: stopping a commitment is `end_date`, and DELETE removes it (
    operator decision).
 5. **How an edit affects occurrences is stated from the server's rules, not invented** (ADR-0027 point 4 and 6): name, kind, priority, notes,
    match tolerance and leeway never touch occurrences; a changed amount, schedule, start or end date applies from the effective date forward
-   (default today in the reporting zone); paid occurrences never change; unpaid ones due before it keep their terms, overdue ones included;
-   unpaid ones on or after it are rewritten or removed; empty months get the new occurrence. The optional "Apply changed terms from" field sends
+   (default today in the reporting zone); paid occurrences never change; for amount and schedule, unpaid ones due before it keep their terms,
+   overdue ones included, and unpaid ones on or after it are rewritten or removed; empty months get the new occurrence. A changed start or end date
+   is different: whatever the effective date, the server removes unpaid occurrences due before the new start date or after the new end date,
+   overdue ones included (cancelled instead when only deleted payments refer to them, D31); occurrences with payment evidence or a status
+   override stay. When an edit moves the end date before today or the start date later, the form says so and needs an explicit confirmation. The optional "Apply changed terms from" field sends
    `effective_from` only together with such a change.
-6. **End = set the end date, with Undo.** "End commitment" opens a dialog with an end date and PATCHes `end_date` (no `effective_from`: the
-   server's default keeps past and overdue unpaid occurrences). The notice that follows offers **Undo**, a second PATCH restoring the earlier end
-   date (or none); like every save it is shown only once the server confirms. Because the PATCH is also applied from today, the unpaid
-   occurrences the end removed come back from the current terms. The notice goes when the page is left; later the end date can still be edited.
-7. **Delete has a confirmation and no Undo**, because the API has no restore. The dialog says what the server does (removes the commitment and
-   its unpaid occurrences, refuses with 409 when any occurrence has payment evidence) and points to End as the safe way to stop. A refusal keeps
+6. **End = set the end date, with Undo.** "End commitment" opens a dialog with an end date and PATCHes `end_date` (no `effective_from`: it makes no difference to the
+   dates, because the server removes unpaid occurrences after the new end date even when overdue). An end date before today shows a warning
+   and needs an explicit confirmation. The notice that follows offers **Undo**, a second PATCH restoring the earlier end
+   date (or none); like every save it is shown only once the server confirms. The PATCH is applied from today, so only the
+   removed occurrences from today on come back; overdue ones the end removed do not. The notice goes when the page is left; later the end date can still be edited.
+7. **Delete has a confirmation and no Undo**, because the API has no restore. The dialog says what the server does (removes the commitment, its unpaid occurrences and its category, label and bucket assignments, archives it when cancelled history remains, refuses with 409 when any occurrence has payment evidence) and points to End as the safe way to stop. A refusal keeps
    the dialog open with the server's message.
 8. **Grants.** Without `commitments:write` the New and Delete/End controls are hidden and the form is read-only with a note naming the missing
    grant; the server still decides every request.
@@ -55,8 +58,7 @@ archive endpoint**: stopping a commitment is `end_date`, and DELETE removes it (
 
 ## Consequences
 
-- **Conservative choices, not operator decisions:** the End dialog never reaches back over overdue unpaid occurrences (use the edit form's
-  "Apply changed terms from" for that); a currency change is allowed in the form and left to the server (it refuses it while a deferral plan is
+- **Conservative choices, not operator decisions:** the End dialog does reach back: it removes overdue unpaid occurrences after the new end date, as the server does, so it warns and asks for confirmation when the date is before today; End, Undo and Delete are disabled while the form has unsaved entries, so they are never discarded; a currency change is allowed in the form and left to the server (it refuses it while a deferral plan is
   active); the End dialog's default date is the browser's today, not the reporting zone's (the dialog states the date it will send).
 - Open product decisions that stay open: concurrent-edit policy (a conflict discards the entries), whether delete should become an archive that
   can be restored, and whether Undo should survive leaving the page.

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from '@tanstack/react-form'
 import { Button } from '@/components/ui/button'
 import { Input, Select } from '@/components/ui/input'
@@ -38,6 +38,10 @@ export interface CommitmentFormProps {
   readOnly?: boolean
   /** In edit mode: whether the entries differ from what was loaded, from the caller's point of view (drives the note about occurrences). */
   occurrenceNote?: (v: FormValues) => string | null
+  /** In edit mode: a warning (and the need to confirm it) when this edit removes overdue unpaid occurrences. */
+  consequenceWarning?: (v: FormValues) => string | null
+  /** Reports whether the entries differ from what was loaded. */
+  onDirtyChange?: (dirty: boolean) => void
   /** After a version conflict: drops the entries and loads what the server holds now. */
   onReload?: () => void
   onCancel: () => void
@@ -47,6 +51,11 @@ export function CommitmentForm(p: CommitmentFormProps) {
   const [serverErrors, setServerErrors] = useState<Partial<Record<keyof FormValues, string>>>({})
   const [formError, setFormError] = useState<string>()
   const [conflict, setConflict] = useState(false)
+  const [invalid, setInvalid] = useState(0)
+  const [attempt, setAttempt] = useState(0)
+  const [confirmedFor, setConfirmedFor] = useState<string>()
+  const [confirmMissing, setConfirmMissing] = useState(false)
+  const formEl = useRef<HTMLFormElement>(null)
   const form = useForm({
     defaultValues: p.initial,
     validators: {
@@ -76,6 +85,11 @@ export function CommitmentForm(p: CommitmentFormProps) {
     },
   })
   const ro = !!p.readOnly
+
+  // After a failed check: focus the first invalid control, so the keyboard and a screen reader land on the problem.
+  useEffect(() => {
+    if (attempt > 0) formEl.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
+  }, [attempt])
 
   // A field's message: the client check first, else what the server said. Typing in the field clears the server's message.
   function err(name: keyof FormValues, meta: { errors: unknown[] }): string | undefined {
@@ -143,15 +157,37 @@ export function CommitmentForm(p: CommitmentFormProps) {
 
   return (
     <form
+      ref={formEl}
       noValidate
       aria-label={p.mode === 'create' ? 'New commitment' : 'Edit commitment'}
       className="space-y-4"
       onSubmit={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        void form.handleSubmit()
+        const count = Object.keys(validate(form.state.values)).length
+        const warning = p.consequenceWarning?.(form.state.values) ?? null
+        setConfirmMissing(false)
+        if (count === 0 && warning && confirmedFor !== warning) {
+          // Nothing is sent until the warning is confirmed.
+          setInvalid(0)
+          setConfirmMissing(true)
+          setAttempt((a) => a + 1)
+          return
+        }
+        void form.handleSubmit().then(() => {
+          setInvalid(count)
+          if (count > 0) setAttempt((a) => a + 1)
+        })
       }}
     >
+      {p.onDirtyChange && (
+        <form.Subscribe selector={(s) => !s.isDefaultValue}>{(dirty) => <DirtyReporter dirty={dirty} onChange={p.onDirtyChange!} />}</form.Subscribe>
+      )}
+      {invalid > 0 && (
+        <div role="alert" className="rounded-md border border-status-error bg-status-error-bg p-3 text-sm font-medium text-status-error">
+          {invalid === 1 ? '1 field needs attention' : `${invalid} fields need attention`}. Nothing was sent; the first one is focused.
+        </div>
+      )}
       {formError && <StatusBadge status="save_failed" />}
       <FormError message={formError} />
       {conflict && p.onReload && (
@@ -244,14 +280,34 @@ export function CommitmentForm(p: CommitmentFormProps) {
         <form.Subscribe selector={(s) => s.values}>
           {(v) => {
             const note = p.occurrenceNote!(v)
+            const warning = p.consequenceWarning?.(v) ?? null
             return (
               <fieldset className={box} disabled={ro}>
                 <legend className={legend}>How this edit reaches occurrences</legend>
                 <p className="text-sm text-muted-foreground" data-testid="occurrence-note">
                   {note}
                 </p>
+                {warning && (
+                  <div className="space-y-2 rounded-md border border-status-error bg-status-error-bg p-3 text-sm" data-testid="removal-warning">
+                    <p className="font-medium text-status-error">{warning}</p>
+                    <label className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-1 size-4"
+                        checked={confirmedFor === warning}
+                        aria-invalid={confirmMissing && confirmedFor !== warning ? true : undefined}
+                        onChange={(e) => {
+                          setConfirmedFor(e.target.checked ? warning : undefined)
+                          setConfirmMissing(false)
+                        }}
+                      />
+                      <span>I understand that these occurrences will be removed.</span>
+                    </label>
+                    {confirmMissing && confirmedFor !== warning && <p className="font-medium text-status-error">Confirm this before saving.</p>}
+                  </div>
+                )}
                 {text('effectiveFrom', 'Apply changed terms from (optional)', {
-                  hint: 'YYYY-MM-DD. Empty means today in the reporting time zone, so overdue unpaid occurrences keep their old terms. An earlier date also rewrites earlier unpaid occurrences; paid ones never change.',
+                  hint: 'YYYY-MM-DD. Empty means today in the reporting time zone: changed amounts or schedule then reach only occurrences from today on (a new start or end date still removes unpaid ones outside it, overdue included). An earlier date also rewrites earlier unpaid occurrences; paid ones never change.',
                   placeholder: 'YYYY-MM-DD',
                 })}
               </fieldset>
@@ -277,4 +333,9 @@ export function CommitmentForm(p: CommitmentFormProps) {
       )}
     </form>
   )
+}
+
+function DirtyReporter({ dirty, onChange }: { dirty: boolean; onChange: (d: boolean) => void }) {
+  useEffect(() => onChange(dirty), [dirty, onChange])
+  return null
 }

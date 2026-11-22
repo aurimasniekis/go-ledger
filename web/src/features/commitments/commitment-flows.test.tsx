@@ -263,7 +263,7 @@ describe('end and delete', () => {
     expect(await within(dialog).findByText('The end date cannot be before the start date.')).toBeInTheDocument()
     expect(calls.some((c) => c.method === 'PATCH')).toBe(false)
     await user.clear(date)
-    await user.type(date, '2026-02-01')
+    await user.type(date, '2099-02-01')
     await user.click(within(dialog).getByRole('button', { name: 'End commitment' }))
     expect(await within(dialog).findByText('end_date must not be before start_date')).toBeInTheDocument()
   })
@@ -298,6 +298,125 @@ describe('end and delete', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete commitment' }))
     expect(await within(dialog).findByText(/dependent records and cannot be deleted/)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Rent', hidden: true })).toBeInTheDocument()
+  })
+})
+
+describe('honest consequences, unsaved entries and announced errors', () => {
+  it('says what ending does to overdue unpaid occurrences, and needs a confirmation for a date before today', async () => {
+    const user = userEvent.setup()
+    const calls = installApi({
+      ...signedIn(),
+      'GET /api/v1/commitments/c-rent': ok(commitment()),
+      'PATCH /api/v1/commitments/c-rent': ok(commitment({ end_date: '2026-02-01', version: 4 })),
+    })
+    renderApp('/commitments/c-rent')
+    await user.click(await screen.findByRole('button', { name: 'End commitment' }))
+    const dialog = await screen.findByRole('dialog', { name: 'End Rent' })
+    expect(dialog).toHaveTextContent(/even when they are overdue/)
+    expect(dialog).not.toHaveTextContent(/overdue ones stay/)
+    const date = within(dialog).getByLabelText('End date')
+    await user.clear(date)
+    await user.type(date, '2026-02-01')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/before today.*including overdue ones/)
+    await user.click(within(dialog).getByRole('button', { name: 'End commitment' }))
+    expect(within(dialog).getByText('Confirm this before ending the commitment.')).toBeInTheDocument()
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false)
+    await user.click(within(dialog).getByRole('checkbox', { name: /I understand/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'End commitment' }))
+    expect(await screen.findByText(/now ends on/)).toHaveTextContent(/overdue ones included.*only from today on/)
+    expect(calls.filter((c) => c.method === 'PATCH')[0]!.body).toEqual({ end_date: '2026-02-01', version: 3 })
+  })
+
+  it('warns, and needs a confirmation, when the form moves the end date before today or the start date later', async () => {
+    const user = userEvent.setup()
+    const calls = installApi({
+      ...signedIn(),
+      'GET /api/v1/commitments/c-rent': ok(commitment()),
+      'PATCH /api/v1/commitments/c-rent': ok(commitment({ start_date: '2026-03-01', version: 4 })),
+    })
+    renderApp('/commitments/c-rent')
+    const start = await screen.findByLabelText('Start date')
+    await waitFor(() => expect(start).toBeEnabled())
+    await user.clear(start)
+    await user.type(start, '2026-03-01')
+    expect(screen.getByTestId('occurrence-note')).toHaveTextContent(/whatever the date below.*overdue ones too/)
+    expect(screen.getByTestId('removal-warning')).toHaveTextContent(/start date moves later.*including overdue ones/)
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(await screen.findByText('Confirm this before saving.')).toBeInTheDocument()
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false)
+    await user.click(screen.getByRole('checkbox', { name: /I understand/ }))
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true))
+  })
+
+  it('does not let End, Undo or Delete discard unsaved entries', async () => {
+    const user = userEvent.setup()
+    installApi({ ...signedIn(), 'GET /api/v1/commitments/c-rent': ok(commitment()) })
+    renderApp('/commitments/c-rent')
+    const name = await ready()
+    expect(screen.getByRole('button', { name: 'End commitment' })).toBeEnabled()
+    await user.type(name, ' Two')
+    expect(screen.getByRole('button', { name: 'End commitment' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Delete commitment' })).toBeDisabled()
+    expect(screen.getByText(/unsaved changes in the form above/)).toBeInTheDocument()
+    expect(name).toHaveValue('Rent Two')
+  })
+
+  it('keeps unsaved entries made after an End when Undo is pressed: Undo waits until the form is saved or reloaded', async () => {
+    const user = userEvent.setup()
+    installApi({
+      ...signedIn(),
+      'GET /api/v1/commitments/c-rent': ok(commitment()),
+      'PATCH /api/v1/commitments/c-rent': ok(commitment({ end_date: '2026-12-31', version: 4 })),
+    })
+    renderApp('/commitments/c-rent')
+    await user.click(await screen.findByRole('button', { name: 'End commitment' }))
+    const dialog = await screen.findByRole('dialog', { name: 'End Rent' })
+    await user.clear(within(dialog).getByLabelText('End date'))
+    await user.type(within(dialog).getByLabelText('End date'), '2099-12-31')
+    await user.click(within(dialog).getByRole('button', { name: 'End commitment' }))
+    await screen.findByText(/now ends on/)
+    const undo = screen.getByRole('button', { name: /Undo/ })
+    expect(undo).toBeEnabled()
+    await user.type(await screen.findByLabelText('Name'), ' Two')
+    expect(undo).toBeDisabled()
+    expect(screen.getByLabelText('Name')).toHaveValue('Rent Two')
+  })
+
+  it('announces a failed check with a count and focuses the first invalid control', async () => {
+    const user = userEvent.setup()
+    installApi({ ...signedIn() })
+    renderApp('/commitments/new')
+    await user.click(await screen.findByRole('button', { name: 'Create commitment' }))
+    const alert = await screen.findByText(/fields need attention/)
+    expect(alert.closest('[role="alert"]')).not.toBeNull()
+    expect(alert).toHaveTextContent(/^[2-9]\d* fields need attention/)
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveFocus())
+    expect(screen.getByLabelText('Name')).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('clears the Saved note once the user edits again', async () => {
+    const user = userEvent.setup()
+    let get = commitment()
+    installApi({
+      ...signedIn(),
+      'GET /api/v1/commitments/c-rent': () => ok(get),
+      'PATCH /api/v1/commitments/c-rent': () => ok((get = commitment({ notes: 'x', version: 4 }))),
+    })
+    renderApp('/commitments/c-rent')
+    await user.type(await screen.findByLabelText('Notes (optional)'), 'x')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(await screen.findByText('Saved')).toBeInTheDocument()
+    await user.type(await screen.findByLabelText('Notes (optional)'), 'y')
+    await waitFor(() => expect(screen.queryByText('Saved')).toBeNull())
+  })
+
+  it('names the assignments in the delete confirmation', async () => {
+    const user = userEvent.setup()
+    installApi({ ...signedIn(), 'GET /api/v1/commitments/c-rent': ok(commitment()) })
+    renderApp('/commitments/c-rent')
+    await user.click(await screen.findByRole('button', { name: 'Delete commitment' }))
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(/category, label and bucket assignments/)
   })
 })
 

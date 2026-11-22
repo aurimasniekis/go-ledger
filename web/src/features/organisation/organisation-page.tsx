@@ -28,6 +28,7 @@ import { KIND_NAME, KINDS, type BucketMember, type Definition, type Kind } from 
 /** Why a change was not saved, in words: nothing is shown as saved until the server accepted it. */
 export function problemText(e: unknown): string {
   if (e instanceof NetworkError) return 'Not saved: there is no connection to the server. Nothing was changed.'
+  if (e instanceof ApiError && e.code === 'merchant_archived') return 'This merchant is archived or merged, so nothing new can be put on it. Unarchive it first (a merged merchant stays merged). Nothing was changed.'
   if (e instanceof ApiError && e.code === 'version_conflict') return 'This was changed elsewhere. The list is reloaded: check it and try again. Nothing was changed.'
   return e instanceof Error ? e.message : 'Something went wrong. Nothing was changed.'
 }
@@ -49,7 +50,7 @@ export function OrganisationPage() {
           Assign them where the item is shown: open <strong>Organise</strong> on an occurrence, a bank account or a suggested payment.
         </p>
         <p className="text-sm text-muted-foreground">
-          Archiving keeps a definition and everything assigned to it, and only stops new use. Deleting is for one that nothing uses, or that you move to another first. Merchants cannot be organised yet: they have no record of their own.
+          Archiving keeps a definition and everything assigned to it, and only stops new use. Deleting is for one that nothing uses, or that you move to another first. Merchants are organised on their own page ({'/merchants/<id>'}), and that needs the administrator-only merchants:read and merchants:write grants as well.
         </p>
         {!canWrite && <p className="text-sm text-muted-foreground">You can read these but not change them: your token or role does not hold organisation:write.</p>}
       </header>
@@ -74,13 +75,12 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
   const [rowError, setRowError] = useState<string>()
   const noticeBox = useRef<HTMLDivElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
+  // Set by a successful delete: only then must the closing dialog not hand focus back (its trigger is gone).
+  const deletedRef = useRef(false)
   // A row that was archived or deleted takes the focused button with it: focus follows the change to its notice (which holds Undo).
-  // After a Delete the dialog hands focus back to the page a moment after it closes; the notice takes it once that has happened.
+  // After a successful delete the dialog does not hand focus back (onCloseAutoFocus below), so nothing competes with the notice.
   useEffect(() => {
-    if (!notice) return
-    noticeBox.current?.focus()
-    const t = setTimeout(() => noticeBox.current?.focus(), 50)
-    return () => clearTimeout(t)
+    if (notice) noticeBox.current?.focus()
   }, [notice])
   // Children for the parent hint come from the whole list, not the filtered one: archived children and a name filter must not hide them.
   const everyCategory = useAllDefinitions('category', undefined, kind === 'category')
@@ -233,6 +233,13 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
       </Dialog>
       <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent
+          onCloseAutoFocus={(e) => {
+            // Cancel, Escape and overlay clicks keep the shared return-focus to the Delete trigger.
+            if (deletedRef.current) {
+              e.preventDefault()
+              deletedRef.current = false
+            }
+          }}
           title={`Delete ${deleting?.name ?? names.one}`}
           description={`Deleting cannot be undone. Archive it instead to keep the history. A ${names.one} that is still assigned is only deleted after you move its assignments to another.`}
         >
@@ -242,6 +249,7 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
               definition={deleting}
               onDone={async (n) => {
                 const d = deleting
+                deletedRef.current = true
                 setDeleting(null)
                 await refresh()
                 setNotice({ text: `${d.name} was deleted${n > 0 ? `; ${n} assignment${n === 1 ? '' : 's'} moved to the replacement` : ''}.` })
@@ -442,10 +450,10 @@ function MembersList({ bucket, canWrite }: { bucket: Definition; canWrite: boole
           ) : (
             <ul className="space-y-2" aria-label="Members">
               {members.map((m) => (
-                <li key={m.object_type + m.object_id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                  <MemberName m={m} />
+                <li key={m.object_type + m.object_id} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="min-w-0 break-words"><MemberName m={m} /></span>
                   {canWrite && (
-                    <Button variant="outline" size="sm" disabled={remove.isPending} aria-label={`Remove ${m.object_type} ${m.object_id} from ${bucket.name}`} onClick={() => remove.mutate(m)}>
+                    <Button variant="outline" size="sm" className="min-h-8 shrink-0 whitespace-nowrap" disabled={remove.isPending} aria-label={`Remove ${m.object_type} ${m.object_id} from ${bucket.name}`} onClick={() => remove.mutate(m)}>
                       {remove.isPending && remove.variables?.object_id === m.object_id ? 'Removing…' : 'Remove'}
                     </Button>
                   )}

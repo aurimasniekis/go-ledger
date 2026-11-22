@@ -221,7 +221,7 @@ func TestMergeMovesEverythingAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Aliases != 1 || res.Decisions != 1 || res.Enrichments != 1 || res.Categories != 1 || res.Labels != 2 || res.Kept != 1 || len(res.Into.Aliases) != 2 {
+	if res.Aliases != 1 || res.Decisions != 1 || res.Enrichments != 1 || res.Categories != 1 || res.Labels != 2 || res.Kept != 1 || res.Replaced != 2 || len(res.Into.Aliases) != 2 {
 		t.Fatalf("merge result: %+v", res)
 	}
 	as, err := os.Get(f.ctx, objA)
@@ -360,8 +360,12 @@ func TestDeleteRefusesMergedMerchants(t *testing.T) {
 	if err := f.ms.DeleteEntity(f.ctx, alice, a.ID, a.Version); !errors.Is(err, merchants.ErrInUse) {
 		t.Fatalf("deleting the merchant others were merged into: %v", err)
 	}
-	if err := f.ms.DeleteEntity(f.ctx, alice, b.ID, b.Version); !errors.Is(err, merchants.ErrInUse) {
+	err = f.ms.DeleteEntity(f.ctx, alice, b.ID, b.Version)
+	if !errors.Is(err, merchants.ErrMergedAway) {
 		t.Fatalf("deleting a merged merchant: %v", err)
+	}
+	if errors.Is(err, merchants.ErrInUse) {
+		t.Fatalf("a merged-away merchant reports ErrInUse too: %v", err)
 	}
 	if got, err := f.ms.GetEntity(f.ctx, b.ID); err != nil || got.MergedInto != a.ID {
 		t.Fatalf("merged id after the refusals: %+v %v", got, err)

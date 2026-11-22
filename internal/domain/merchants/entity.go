@@ -110,6 +110,10 @@ type MergeResult struct {
 	Categories  int
 	Labels      int
 	Kept        int
+	// Replaced counts the automatic (rule or model) assignments of the
+	// remaining merchant dropped because the merged one had the person's own
+	// for the same slot.
+	Replaced int
 }
 
 // Errors of the merchant records.
@@ -122,9 +126,14 @@ var (
 	ErrArchived = errors.New("the merchant is archived")
 	// ErrMerged means the merchant was merged into another and cannot change.
 	ErrMerged = errors.New("the merchant was merged into another merchant")
-	// ErrInUse means a decision or an organisation assignment still refers to
-	// the merchant, so it cannot be deleted (archive or merge it instead).
-	ErrInUse = errors.New("decisions or assignments refer to the merchant: archive or merge it instead")
+	// ErrInUse means a decision, an organisation assignment or a merchant
+	// merged into this one still refers to the merchant, so it cannot be
+	// deleted (archive or merge it instead).
+	ErrInUse = errors.New("decisions, assignments or merged merchants refer to the merchant: archive or merge it instead")
+	// ErrMergedAway means a merchant that was merged into another cannot be
+	// deleted: its id keeps resolving to the merchant it was merged into. The
+	// HTTP API reports it as merchant_in_use.
+	ErrMergedAway = errors.New("the merchant was merged into another merchant and its id still resolves to it, so it cannot be deleted")
 	// ErrMergeSelf means a merge named the same merchant twice.
 	ErrMergeSelf = errors.New("a merchant cannot be merged into itself")
 	// ErrNoAlias means the merchant has no such alias.

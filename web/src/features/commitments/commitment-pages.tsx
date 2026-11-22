@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { Undo2 } from 'lucide-react'
@@ -17,9 +17,10 @@ import { holds, useMe } from '@/lib/auth'
 import { isIsoDate } from '@/lib/format'
 import { CommitmentForm } from './commitment-form'
 import { commitmentKey, createCommitment, deleteCommitment, patchCommitment, useCommitment, useInvalidateCommitments } from './api'
-import { changesOccurrences, createBody, describeSchedule, emptyValues, patchBody, toValues, type FormValues } from './form-model'
+import { changesOccurrences, createBody, describeSchedule, emptyValues, overdueRemovalWarning, patchBody, todayIso, toValues, type FormValues } from './form-model'
 import { kindLabel, type Commitment } from './types'
 
+const UNSAVED = 'You have unsaved changes in the form above. Save them or reload the page before ending, undoing or deleting, so they are not lost.'
 const NO_WRITE = 'Your role can read commitments but not change them (it lacks commitments:write), so the form is read-only. The server decides what is allowed.'
 
 function Heading({ children, id }: { children: string; id: string }) {
@@ -72,7 +73,8 @@ export function occurrenceNote(c: Commitment, v: FormValues): string {
   if (!changesOccurrences(p)) {
     return 'These changes do not touch any occurrence: the name, kind, priority, notes, match tolerance and grace do not affect due dates or amounts.'
   }
-  return 'The amount, schedule or dates you changed apply from the date below forward (today by default). Occurrences already marked paid never change. Unpaid ones due before that date keep their old terms, including overdue ones. Unpaid ones on or after it are rewritten to the new terms, or removed when the new terms schedule nothing that month; months with none get the new occurrence. Payment records and bank matches stay as they are.'
+  const dates = 'start_date' in p || 'end_date' in p
+  return `A changed amount or schedule applies from the date below forward (today by default). Occurrences already marked paid never change. Unpaid ones due before that date keep their old terms, overdue ones included. Unpaid ones on or after it are rewritten to the new terms, or removed when the new terms schedule nothing that month; months with none get the new occurrence.${dates ? ' A changed start or end date is different: whatever the date below, unpaid occurrences due before the new start date or after the new end date are removed (or cancelled when only deleted payments refer to them), overdue ones too. Occurrences with a payment or a status override you set stay.' : ''} Payment records and bank matches stay as they are.`
 }
 
 function SavedNote({ children }: { children: string }) {
@@ -96,6 +98,12 @@ export function EditCommitmentPage({ id, created }: { id: string; created?: bool
   const [ended, setEnded] = useState<{ previous: string | null; on: string } | null>(null)
   const [endOpen, setEndOpen] = useState(false)
   const [delOpen, setDelOpen] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  // Typing again means the "Saved" note no longer describes what is on screen.
+  const onDirty = useCallback((d: boolean) => {
+    setDirty(d)
+    if (d) setSaved(null)
+  }, [])
 
   if (q.isPending) return <LoadingState label="the commitment" />
   if (q.isError && !q.data) {
@@ -153,6 +161,7 @@ export function EditCommitmentPage({ id, created }: { id: string; created?: bool
           key={ended.on + ended.previous}
           ended={ended}
           commitment={c}
+          blocked={dirty}
           onUndone={async (u) => {
             await apply(u)
             setEnded(null)
@@ -169,6 +178,8 @@ export function EditCommitmentPage({ id, created }: { id: string; created?: bool
         initial={toValues(c)}
         readOnly={!canWrite}
         occurrenceNote={(v) => occurrenceNote(c, v)}
+        consequenceWarning={(v) => overdueRemovalWarning(c, v)}
+        onDirtyChange={onDirty}
         onReload={() => {
           void q.refetch().then(() => setReloadKey((k) => k + 1))
         }}
@@ -188,16 +199,17 @@ export function EditCommitmentPage({ id, created }: { id: string; created?: bool
         <div className="space-y-3 rounded-md border border-border bg-surface p-3 sm:p-4">
           <h2 className="text-sm font-semibold">Stop this commitment</h2>
           <p className="text-sm text-muted-foreground">
-            <strong>End it</strong> sets its end date: later unpaid occurrences are removed, and everything already paid or overdue stays on the record. You can undo it right after. <strong>Delete it</strong> removes the commitment and its unpaid occurrences; the server refuses when any occurrence has payment evidence, and there is no undo.
+            <strong>End it</strong> sets its end date: unpaid occurrences due after it are removed, or cancelled when only deleted payments refer to them, even when they are overdue. Occurrences with a payment or a status override you set stay. Undo restores the earlier end date and regenerates occurrences only from today on. <strong>Delete it</strong> removes the commitment, its unpaid occurrences and its category, label and bucket assignments; the server refuses when any occurrence has payment evidence, and there is no undo.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setEndOpen(true)}>
+            <Button variant="outline" disabled={dirty} onClick={() => setEndOpen(true)}>
               End commitment
             </Button>
-            <Button variant="outline" onClick={() => setDelOpen(true)}>
+            <Button variant="outline" disabled={dirty} onClick={() => setDelOpen(true)}>
               Delete commitment
             </Button>
           </div>
+          {dirty && <p role="status" className="text-sm">{UNSAVED}</p>}
         </div>
       )}
 
@@ -217,7 +229,7 @@ export function EditCommitmentPage({ id, created }: { id: string; created?: bool
         open={delOpen}
         onOpenChange={setDelOpen}
         title={`Delete ${c.name}?`}
-        description="This removes the commitment and its unpaid occurrences from the monthly view and the outlook. If any occurrence has payment evidence the server refuses and nothing changes: end the commitment instead. A deletion cannot be undone here."
+        description="This removes the commitment, its unpaid occurrences and its category, label and bucket assignments from the monthly view and the outlook. If cancelled history remains the server archives the commitment instead, so it is hidden but its history is kept. If any occurrence has payment evidence the server refuses and nothing changes: end the commitment instead. A deletion cannot be undone here."
         confirmLabel="Delete commitment"
         onConfirm={async () => {
           await deleteCommitment(id, c.version)
@@ -236,7 +248,7 @@ function EndDialog({ open, onOpenChange, commitment, onEnd }: { open: boolean; o
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         title={`End ${commitment.name}`}
-        description="The last day the commitment applies, inclusive. Unpaid occurrences after it are removed from today forward. Paid and overdue ones stay."
+        description="The last day the commitment applies, inclusive. Unpaid occurrences due after it are removed, or cancelled when only deleted payments refer to them, even when they are overdue. Occurrences with a payment or a status override you set stay."
       >
         {open && <EndForm commitment={commitment} onCancel={() => onOpenChange(false)} onEnd={async (on) => { await onEnd(on); onOpenChange(false) }} />}
       </DialogContent>
@@ -249,7 +261,10 @@ function EndForm({ commitment, onCancel, onEnd }: { commitment: Commitment; onCa
   const [error, setError] = useState<string>()
   const [fieldError, setFieldError] = useState<string>()
   const [pending, setPending] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+  const [confirmMissing, setConfirmMissing] = useState(false)
   const busy = useRef(false)
+  const retro = isIsoDate(on.trim()) && on.trim() < todayIso()
   return (
     <form
       noValidate
@@ -261,6 +276,7 @@ function EndForm({ commitment, onCancel, onEnd }: { commitment: Commitment; onCa
         setFieldError(undefined)
         if (!isIsoDate(on.trim())) return setFieldError('Enter the date as YYYY-MM-DD.')
         if (on.trim() < commitment.start_date) return setFieldError('The end date cannot be before the start date.')
+        if (retro && !confirmed) return setConfirmMissing(true)
         busy.current = true
         setPending(true)
         try {
@@ -278,6 +294,18 @@ function EndForm({ commitment, onCancel, onEnd }: { commitment: Commitment; onCa
       <Field label="End date" name="end-date" hint="YYYY-MM-DD" error={fieldError}>
         {(c) => <Input {...c} value={on} disabled={pending} autoFocus onChange={(e) => setOn(e.target.value)} />}
       </Field>
+      {retro && (
+        <div role="alert" className="space-y-2 rounded-md border border-status-error bg-status-error-bg p-3 text-sm">
+          <p className="font-medium text-status-error">
+            {on.trim()} is before today. Unpaid occurrences due after it will be removed, including overdue ones, so they disappear from the monthly view and the outlook. Undo does not bring back occurrences before today.
+          </p>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" className="mt-1 size-4" checked={confirmed} disabled={pending} aria-invalid={confirmMissing && !confirmed ? true : undefined} onChange={(e) => { setConfirmed(e.target.checked); setConfirmMissing(false) }} />
+            <span>I understand that these occurrences will be removed.</span>
+          </label>
+          {confirmMissing && !confirmed && <p className="font-medium text-status-error">Confirm this before ending the commitment.</p>}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>
           Cancel
@@ -292,24 +320,25 @@ function EndForm({ commitment, onCancel, onEnd }: { commitment: Commitment; onCa
 }
 
 /** The notice after ending: the end is confirmed by the server, and Undo puts the earlier end date (or none) back, also confirmed by the server. */
-function EndedNotice({ ended, commitment, onUndone, onDismiss }: { ended: { previous: string | null; on: string }; commitment: Commitment; onUndone: (c: Commitment) => Promise<void>; onDismiss: () => void }) {
+function EndedNotice({ ended, commitment, blocked, onUndone, onDismiss }: { ended: { previous: string | null; on: string }; commitment: Commitment; blocked: boolean; onUndone: (c: Commitment) => Promise<void>; onDismiss: () => void }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
   return (
     <div role="status" className="space-y-2 rounded-md border border-border-control bg-surface p-3 text-sm">
       <p>
-        <StatusBadge status="paid" label="Saved" /> {commitment.name} now ends on <DateText value={ended.on} />. Unpaid occurrences after it were removed; paid and overdue ones stay.
+        <StatusBadge status="paid" label="Saved" /> {commitment.name} now ends on <DateText value={ended.on} />. Unpaid occurrences due after it were removed, overdue ones included; occurrences with a payment or a status override you set stay. Undo restores the end date and regenerates occurrences only from today on, so an overdue one that was removed does not come back.
       </p>
+      {blocked && <p>{UNSAVED}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           variant="outline"
           size="sm"
-          disabled={pending}
+          disabled={pending || blocked}
           onClick={async () => {
             setPending(true)
             setError(undefined)
             try {
-              // From today, as the server does by default: the removed future occurrences come back from the current terms.
+              // From today, as the server does by default: removed occurrences from today on come back from the current terms; earlier ones do not.
               await onUndone(await patchCommitment(commitment.id, commitment.version, { end_date: ended.previous }))
             } catch (e) {
               setError(e instanceof Error ? e.message : 'The undo failed.')

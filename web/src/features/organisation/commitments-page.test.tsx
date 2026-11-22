@@ -18,7 +18,8 @@ describe('organise commitments page', () => {
     const calls = installApi({
       ...signedIn(undefined, ALL_GRANTS),
       'GET /api/v1/commitments': page([
-        { id: 'c-a', name: 'Rent', kind: 'bill' },
+        { id: 'c-a', name: 'Rent', kind: 'bill', amount: { amount: '850.00', currency: 'EUR' }, schedule: { version: 1, frequency: 'monthly', interval: 1, day: 5 }, start_date: '2026-01-05', end_date: null },
+        { id: 'c-ann', name: 'Insurance', kind: 'bill', schedule: { version: 1, frequency: 'annual', day: 5, month: 3 } },
         { id: 'c-old', name: 'Old gym', kind: 'subscription' },
       ]),
       'GET /api/v1/organisation/commitment/c-old': ok(assignments()),
@@ -28,7 +29,13 @@ describe('organise commitments page', () => {
     })
     renderApp('/commitments')
     const list = await screen.findByRole('list', { name: 'Commitments' })
-    expect(within(list).getAllByRole('listitem')).toHaveLength(2)
+    expect(within(list).getAllByRole('listitem')).toHaveLength(3)
+    const rent = within(list).getAllByRole('listitem')[0]!
+    expect(rent).toHaveTextContent('850.00')
+    expect(rent).toHaveTextContent('EUR')
+    expect(rent).toHaveTextContent('Monthly on the 5th')
+    expect(rent).toHaveTextContent('2026-01-05')
+    expect(within(list).getAllByRole('listitem')[1]).toHaveTextContent('Yearly on March 5')
     // Nothing about organisation is read until a row's Organise is opened.
     expect(calls.some((c) => c.path.startsWith('/api/v1/organisation/'))).toBe(false)
     await user.click(within(list).getByRole('button', { name: 'Organise Old gym' }))
@@ -37,10 +44,18 @@ describe('organise commitments page', () => {
     expect(within(panel).getByLabelText('Category for Old gym')).toBeInTheDocument()
   })
 
-  it('is linked from the account menu for a role that can read organisation', async () => {
+  it('does not link the page from the primary navigation without commitments:read', async () => {
+    installApi({ ...signedIn(undefined, ['organisation:read']), 'GET /api/v1/occurrences/summary': { json: { month: '2026-11', as_of: '2026-11-21', items: [], totals: [], freshness: { computed_at: '2026-11-21T12:00:00Z', occurrences_changed_at: null, bank: { available: false, note: '' } } } } })
+    renderApp('/account/security')
+    const primary = within(await screen.findByRole('navigation', { name: 'Primary' }))
+    expect(await primary.findByRole('link', { name: 'Organisation' })).toBeInTheDocument()
+    expect(primary.queryByRole('link', { name: 'Commitments' })).toBeNull()
+  })
+
+  it('is linked from the primary navigation for a role that can read commitments', async () => {
     installApi({ ...signedIn(undefined, ALL_GRANTS), 'GET /api/v1/commitments': page([]) })
     renderApp('/commitments')
     expect(await screen.findByText('No commitments yet')).toBeInTheDocument()
-    expect(screen.getAllByRole('link', { name: 'Organise commitments', hidden: true }).length).toBeGreaterThan(0)
+    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('link', { name: 'Commitments' })).toHaveAttribute('href', '/commitments')
   })
 })
