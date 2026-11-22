@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -40,8 +42,9 @@ func TestMCPOrganisationJourney(t *testing.T) {
 	if r := call(t, c, "create_label", map[string]any{"name": "X", "parent_id": food.ID}); !r.IsError || !strings.Contains(resultText(r), "invalid arguments") {
 		t.Errorf("a label with a parent must be refused by the schema: %s", resultText(r))
 	}
-	if r := call(t, c, "set_object_category", map[string]any{"object_type": "merchant", "object_id": fakeID, "category_id": nil}); !r.IsError || !strings.Contains(resultText(r), "invalid arguments") {
-		t.Errorf("a merchant is not an MCP object type: %s", resultText(r))
+	// An unknown object type is still refused by the schema.
+	if r := call(t, c, "set_object_category", map[string]any{"object_type": "widget", "object_id": fakeID, "category_id": nil}); !r.IsError || !strings.Contains(resultText(r), "invalid arguments") {
+		t.Errorf("an unknown object type: %s", resultText(r))
 	}
 
 	cm := decodeJSONText[struct{ ID string }](t, call(t, c, "create_commitment", newCommitmentArgs("Rent")))
@@ -111,5 +114,84 @@ func TestMCPOrganisationJourney(t *testing.T) {
 		} else if tl.Kind != mcpserver.KindDestructive {
 			t.Errorf("%s: kind %v, want destructive", name, tl.Kind)
 		}
+	}
+}
+
+// TestMCPMerchantOrganisation: the organisation tools take object_type
+// merchant, named by the merchant record's id (task O5, ADR-0058). The
+// merchants grant is needed besides the organisation grant, checked before the
+// call (the tool says which one is missing) and again by the route; the
+// assignments are the person's and survive renaming the merchant.
+func TestMCPMerchantOrganisation(t *testing.T) {
+	f := newMCPFixture(t, mcpOpts{})
+	secret, _ := f.token(t, f.admin, "organisation:write", "merchants:write")
+	c := f.connect(t, secret)
+
+	req, _ := http.NewRequest("POST", f.ts.URL+"/api/v1/merchants", strings.NewReader(`{"display_name":"Acme Shop"}`))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var m struct{ ID string }
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil || resp.StatusCode != http.StatusCreated || m.ID == "" {
+		t.Fatalf("create merchant: %d %v", resp.StatusCode, err)
+	}
+	cat := decodeJSONText[ledgerclient.Definition](t, call(t, c, "create_category", map[string]any{"name": "Shopping"}))
+	lbl := decodeJSONText[ledgerclient.Definition](t, call(t, c, "create_label", map[string]any{"name": "Reviewed"}))
+
+	a := decodeJSONText[ledgerclient.ObjectAssignments](t, call(t, c, "set_object_category", map[string]any{"object_type": "merchant", "object_id": m.ID, "category_id": cat.ID}))
+	if a.ObjectType != "merchant" || a.ObjectID != m.ID || a.Category == nil || a.Category.Origin != "user" {
+		t.Fatalf("category on a merchant: %+v", a)
+	}
+	if r := call(t, c, "add_object_label", map[string]any{"object_type": "merchant", "object_id": m.ID, "label_id": lbl.ID}); r.IsError {
+		t.Fatal(resultText(r))
+	}
+	got := decodeJSONText[ledgerclient.ObjectAssignments](t, call(t, c, "get_object_organisation", map[string]any{"object_type": "merchant", "object_id": m.ID}))
+	if len(got.Labels) != 1 || got.Category == nil || len(got.Buckets) != 0 {
+		t.Fatalf("assignments: %+v", got)
+	}
+	// A name is no merchant identifier (the route answers 400).
+	if r := call(t, c, "get_object_organisation", map[string]any{"object_type": "merchant", "object_id": fakeID}); !r.IsError || !strings.Contains(resultText(r), "not_found") {
+		t.Errorf("an unknown merchant id: %s", resultText(r))
+	}
+	// A bucket holds commitments and accounts only.
+	if r := call(t, c, "add_bucket_member", map[string]any{"id": fakeID, "object_type": "merchant", "object_id": m.ID}); !r.IsError || !strings.Contains(resultText(r), "invalid arguments") {
+		t.Errorf("a merchant in a bucket: %s", resultText(r))
+	}
+
+	// Each missing grant is named, and nothing changes.
+	orgOnly, _ := f.token(t, f.admin, "organisation:write")
+	if r := call(t, f.connect(t, orgOnly), "set_object_category", map[string]any{"object_type": "merchant", "object_id": m.ID, "category_id": nil}); !r.IsError || !strings.Contains(resultText(r), "merchants:write") {
+		t.Errorf("organisation:write alone: %s", resultText(r))
+	}
+	if r := call(t, f.connect(t, orgOnly), "get_object_organisation", map[string]any{"object_type": "merchant", "object_id": m.ID}); !r.IsError || !strings.Contains(resultText(r), "merchants:read") {
+		t.Errorf("organisation read without merchants:read: %s", resultText(r))
+	}
+	merchOnly, _ := f.token(t, f.admin, "merchants:write")
+	if r := call(t, f.connect(t, merchOnly), "remove_object_label", map[string]any{"object_type": "merchant", "object_id": m.ID, "label_id": lbl.ID}); !r.IsError || !strings.Contains(resultText(r), "organisation:write") {
+		t.Errorf("merchants:write alone: %s", resultText(r))
+	}
+	// A read token for both grants may read, not write.
+	both, _ := f.token(t, f.admin, "organisation:read", "merchants:read")
+	bc := f.connect(t, both)
+	if r := call(t, bc, "get_object_organisation", map[string]any{"object_type": "merchant", "object_id": m.ID}); r.IsError {
+		t.Errorf("read with both read grants: %s", resultText(r))
+	}
+	if r := call(t, bc, "reset_object_category", map[string]any{"object_type": "merchant", "object_id": m.ID}); !r.IsError || !strings.Contains(resultText(r), "write") {
+		t.Errorf("reset with read grants: %s", resultText(r))
+	}
+	still := decodeJSONText[ledgerclient.ObjectAssignments](t, call(t, c, "get_object_organisation", map[string]any{"object_type": "merchant", "object_id": m.ID}))
+	if still.Category == nil || len(still.Labels) != 1 {
+		t.Errorf("a refused call changed the merchant: %+v", still)
+	}
+	// Other object types need no merchants grant.
+	if r := call(t, f.connect(t, orgOnly), "get_object_organisation", map[string]any{"object_type": "commitment", "object_id": fakeID}); r.IsError && strings.Contains(resultText(r), "merchants:") {
+		t.Errorf("a commitment must not need a merchants grant: %s", resultText(r))
+	}
+	if r := call(t, c, "reset_object_category", map[string]any{"object_type": "merchant", "object_id": m.ID}); r.IsError {
+		t.Errorf("reset: %s", resultText(r))
 	}
 }

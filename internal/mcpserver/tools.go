@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -55,6 +56,10 @@ type Tool struct {
 	Method string
 	Path   string
 	Grant  authz.Grant
+	// ObjectGrants names a grant needed in addition to Grant when the
+	// object_type argument has the given value (a merchant's assignments need
+	// the admin-only merchants grant, as the route requires).
+	ObjectGrants map[string]authz.Grant
 	// IfMatchArg names the top-level argument sent as the If-Match version
 	// (such as "version"); empty when the operation takes none. It must be a
 	// required integer argument and is not part of the body.
@@ -548,6 +553,9 @@ func Doc() string {
 	var b strings.Builder
 	for _, t := range registry() {
 		fmt.Fprintf(&b, "### `%s`\n\n%s\n\n- Kind: %s\n- Operation: `%s /api/v1%s`\n- Grant: `%s`\n", t.Name, t.Description, t.Kind, t.Method, t.Path, t.Grant)
+		for _, ot := range slices.Sorted(maps.Keys(t.ObjectGrants)) {
+			fmt.Fprintf(&b, "- Also needs `%s` when object_type is `%s`\n", t.ObjectGrants[ot], ot)
+		}
 		schema, _ := json.MarshalIndent(t.Schema, "", "  ")
 		fmt.Fprintf(&b, "\n<details><summary>Input schema</summary>\n\n```json\n%s\n```\n\n</details>\n\n", schema)
 	}
@@ -559,24 +567,28 @@ var (
 	grantOrganisationWrite = authz.G(authz.ResourceOrganisation, authz.ActionWrite)
 )
 
-// orgObjectTypes are the object types organisation tools take. A merchant is
-// left out: its assignments are keyed by a provisional name key (ADR-0053,
-// point 7) and need the admin-only merchants grant, which no organisation tool
-// declares.
+var (
+	grantMerchantsRead  = authz.G(authz.ResourceMerchants, authz.ActionRead)
+	grantMerchantsWrite = authz.G(authz.ResourceMerchants, authz.ActionWrite)
+)
+
+// merchantObjectGrants is the extra grant a tool needs for object_type
+// merchant (task O5, ADR-0062): the merchants grant of the route's own gate.
+func merchantObjectGrants(g authz.Grant) map[string]authz.Grant {
+	return map[string]authz.Grant{string(organisation.ObjectMerchant): g}
+}
+
 func orgObjectTypes() []string {
 	var out []string
 	for _, t := range organisation.ObjectTypes() {
-		if t != organisation.ObjectMerchant {
-			out = append(out, string(t))
-		}
+		out = append(out, string(t))
 	}
 	return out
 }
-
 func objectArgs(extra map[string]any, required ...string) map[string]any {
 	props := map[string]any{
-		"object_type": map[string]any{"type": "string", "enum": orgObjectTypes(), "description": "What the object is: transaction, commitment or account."},
-		"object_id":   idArg("transaction, commitment or account"),
+		"object_type": map[string]any{"type": "string", "enum": orgObjectTypes(), "description": "What the object is: transaction, commitment, account or merchant. A merchant also needs the merchants:read grant (reads) or merchants:write (changes)."},
+		"object_id":   idArg("transaction, commitment, account or merchant record"),
 	}
 	for k, v := range extra {
 		props[k] = v
@@ -652,20 +664,20 @@ func organisationTools() []Tool {
 		Tool{Name: "remove_bucket_member", Title: "Take an object out of a bucket", Method: "DELETE", Path: "/buckets/{id}/members/{object_type}/{object_id}", Grant: grantOrganisationWrite, Kind: KindDestructive,
 			Description: "Take a commitment or account out of a bucket. Reversible with add_bucket_member.",
 			Schema:      object(bucketMember, "id", "object_type", "object_id")},
-		Tool{Name: "get_object_organisation", Title: "Get what is assigned to an object", Method: "GET", Path: "/organisation/{object_type}/{object_id}", Grant: grantOrganisationRead, Kind: KindRead,
-			Description: "Read the category, labels (and the labels the person removed) and buckets of a transaction, commitment or account. Every category and label says its origin (user, rule or model: the person's word outranks a rule's, which outranks a model's), who set it, when, and whether it is inherited from the pending transaction this booking superseded.",
+		Tool{Name: "get_object_organisation", Title: "Get what is assigned to an object", Method: "GET", Path: "/organisation/{object_type}/{object_id}", Grant: grantOrganisationRead, ObjectGrants: merchantObjectGrants(grantMerchantsRead), Kind: KindRead,
+			Description: "Read the category, labels (and the labels the person removed) and buckets of a transaction, commitment, account or merchant. Every category and label says its origin (user, rule or model: the person's word outranks a rule's, which outranks a model's), who set it, when, and whether it is inherited from the pending transaction this booking superseded.",
 			Schema:      objectArgs(nil)},
-		Tool{Name: "set_object_category", Title: "Set the category of an object", Method: "PUT", Path: "/organisation/{object_type}/{object_id}/category", Grant: grantOrganisationWrite, Kind: KindWrite,
-			Description: "Set the category of a transaction, commitment or account as the person's choice: it is never replaced by a rule, a model or a bank refresh. category_id null records that the person chose no category. An archived category is refused (definition_archived). Last write wins; the audit log keeps the history.",
+		Tool{Name: "set_object_category", Title: "Set the category of an object", Method: "PUT", Path: "/organisation/{object_type}/{object_id}/category", Grant: grantOrganisationWrite, ObjectGrants: merchantObjectGrants(grantMerchantsWrite), Kind: KindWrite,
+			Description: "Set the category of a transaction, commitment, account or merchant as the person's choice: it is never replaced by a rule, a model or a bank refresh. category_id null records that the person chose no category. An archived category is refused (definition_archived). Last write wins; the audit log keeps the history.",
 			Schema: objectArgs(map[string]any{"category_id": map[string]any{"type": []string{"string", "null"}, "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
 				"description": "The category identifier, or null for no category. Required: send null explicitly."}}, "category_id")},
-		Tool{Name: "reset_object_category", Title: "Hand the category back to automatic assignment", Method: "DELETE", Path: "/organisation/{object_type}/{object_id}/category", Grant: grantOrganisationWrite, Kind: KindDestructive,
+		Tool{Name: "reset_object_category", Title: "Hand the category back to automatic assignment", Method: "DELETE", Path: "/organisation/{object_type}/{object_id}/category", Grant: grantOrganisationWrite, ObjectGrants: merchantObjectGrants(grantMerchantsWrite), Kind: KindDestructive,
 			Description: "Remove the person's category decision (a chosen category or a chosen none), so a rule or model may assign one again. A category that is only inherited from a pending transaction is refused (review_inherited): reset it on the pending transaction.",
 			Schema:      objectArgs(nil)},
-		Tool{Name: "add_object_label", Title: "Put a label on an object", Method: "PUT", Path: "/organisation/{object_type}/{object_id}/labels/{label_id}", Grant: grantOrganisationWrite, Kind: KindWrite,
-			Description: "Put an active label on a transaction, commitment or account as the person's choice. Idempotent; it undoes an earlier removal of the same label.",
+		Tool{Name: "add_object_label", Title: "Put a label on an object", Method: "PUT", Path: "/organisation/{object_type}/{object_id}/labels/{label_id}", Grant: grantOrganisationWrite, ObjectGrants: merchantObjectGrants(grantMerchantsWrite), Kind: KindWrite,
+			Description: "Put an active label on a transaction, commitment, account or merchant (by merchant record id) as the person's choice. Idempotent; it undoes an earlier removal of the same label.",
 			Schema:      objectArgs(map[string]any{"label_id": idArg("label")}, "label_id")},
-		Tool{Name: "remove_object_label", Title: "Take a label off an object", Method: "DELETE", Path: "/organisation/{object_type}/{object_id}/labels/{label_id}", Grant: grantOrganisationWrite, Kind: KindDestructive,
+		Tool{Name: "remove_object_label", Title: "Take a label off an object", Method: "DELETE", Path: "/organisation/{object_type}/{object_id}/labels/{label_id}", Grant: grantOrganisationWrite, ObjectGrants: merchantObjectGrants(grantMerchantsWrite), Kind: KindDestructive,
 			Description: "Take a label off an object as the person's choice; rules and models do not add it back. Reversible with add_object_label.",
 			Schema:      objectArgs(map[string]any{"label_id": idArg("label")}, "label_id")},
 	)

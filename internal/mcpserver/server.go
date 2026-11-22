@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -107,7 +108,7 @@ func NewServer(o Options) (*mcp.Server, error) {
 		srv.AddTool(&mcp.Tool{
 			Name:        t.Name,
 			Title:       t.Title,
-			Description: t.Description + " Needs the " + t.Grant.String() + " grant.",
+			Description: t.Description + " Needs the " + t.Grant.String() + " grant" + extraGrants(t) + ".",
 			InputSchema: &sc,
 			Meta:        mcp.Meta{"ledger/grant": t.Grant.String(), "ledger/kind": t.Kind.String()},
 			Annotations: &mcp.ToolAnnotations{
@@ -123,6 +124,17 @@ func NewServer(o Options) (*mcp.Server, error) {
 		srv.AddResource(&mcp.Resource{URI: r.URI, Name: r.Name, Title: r.Title, Description: r.Description, MIMEType: "application/json"}, s.resourceHandler(r))
 	}
 	return srv, nil
+}
+
+// extraGrants says, for the description, what a tool needs for a given
+// object type besides its own grant.
+func extraGrants(t Tool) string {
+	var parts []string
+	for ot, g := range t.ObjectGrants {
+		parts = append(parts, " (and "+g.String()+" for object_type "+ot+")")
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "")
 }
 
 func boolPtr(b bool) *bool { return &b }
@@ -149,6 +161,12 @@ func (s *server) toolHandler(t *boundTool) mcp.ToolHandler {
 		if havePrincipal && !p.Allows(t.Grant) {
 			outcome = "denied"
 			return denied(t.Name, t.Grant), nil
+		}
+		if ot, ok := args["object_type"].(string); ok && havePrincipal {
+			if g, ok := t.ObjectGrants[ot]; ok && !p.Allows(g) {
+				outcome = "denied"
+				return denied(t.Name, g), nil
+			}
 		}
 		r, err := buildRequest(t.Tool, args)
 		if err != nil {

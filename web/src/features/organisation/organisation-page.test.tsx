@@ -189,6 +189,45 @@ describe('organisation page', () => {
     await waitFor(() => expect(notice).toHaveFocus())
   })
 
+  it('returns focus to the Delete trigger on Cancel and on Escape', async () => {
+    const user = userEvent.setup()
+    installApi(routes({}))
+    renderApp('/organisation')
+    for (const close of ['cancel', 'escape']) {
+      const trigger = await screen.findByRole('button', { name: 'Delete Home' })
+      await user.click(trigger)
+      const dlg = await screen.findByRole('dialog', { name: 'Delete Home' })
+      if (close === 'cancel') await user.click(within(dlg).getByRole('button', { name: 'Cancel' }))
+      else await user.keyboard('{Escape}')
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Delete Home' })).toHaveFocus())
+    }
+  })
+
+  it('moves focus to the notice after Delete even when the list refetch is slow', async () => {
+    const user = userEvent.setup()
+    let gone = false
+    installApi(
+      routes({
+        'GET /api/v1/categories': async () => {
+          if (gone) await new Promise((r) => setTimeout(r, 300))
+          return page(gone ? [FOOD, GROC] : [FOOD, GROC, HOME])
+        },
+        ['DELETE /api/v1/categories/' + HOME.id]: () => {
+          gone = true
+          return ok({ reassigned: 0 })
+        },
+      }),
+    )
+    renderApp('/organisation')
+    await user.click(await screen.findByRole('button', { name: 'Delete Home' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Delete Home' })
+    await user.click(within(dlg).getByRole('button', { name: 'Delete Home' }))
+    const notice = (await screen.findByText(/Home was deleted/)).closest('[role="status"]') as HTMLElement
+    await waitFor(() => expect(notice).toHaveFocus())
+    expect(document.body).not.toHaveFocus()
+  })
+
   it('still says a category has children when the list is filtered by name or hides archived children', async () => {
     const user = userEvent.setup()
     const kid = def('category', 'F02', 'Dining', { parent_id: FOOD.id, archived: true })

@@ -1177,6 +1177,9 @@ func queryIDs(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]string,
 	return out, rows.Err()
 }
 
+// maxSelected is [organisation.MaxSelected]; a variable only so a test can lower it.
+var maxSelected = organisation.MaxSelected
+
 // Select returns the IDs of the objects of type t whose effective category and
 // labels satisfy f, sorted.
 func (s *Store) Select(ctx context.Context, t organisation.ObjectType, f organisation.Filter) ([]string, error) {
@@ -1254,7 +1257,7 @@ func (s *Store) Select(ctx context.Context, t organisation.ObjectType, f organis
 			}
 			slices.Sort(cand)
 		}
-		if len(cand) > organisation.MaxSelected {
+		if len(cand) > maxSelected {
 			return organisation.ErrTooManyObjects
 		}
 		catSet := map[string]bool{}

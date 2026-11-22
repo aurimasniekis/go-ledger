@@ -15,22 +15,25 @@ const content =
  * Remembers the element focused when the dialog content mounted (it is still the opener at that moment).
  * It must run inside the portal: the DialogContent wrapper itself is mounted while the dialog is closed.
  */
-function useReturnFocus(custom?: () => boolean) {
+function useReturnFocus(own?: (e: Event) => void, custom?: () => boolean) {
   const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null))
   return (e: Event) => {
+    // A caller's own onCloseAutoFocus runs first and can opt out with preventDefault (its opener is gone).
+    own?.(e)
+    if (e.defaultPrevented) return
     e.preventDefault()
     // A caller that has a better target (a notice the change produced) takes focus itself and says so by returning true.
     if (custom?.()) return
     focusFirstUsable([opener])
   }
 }
-function ReturningContent({ focusInstead, ...props }: ComponentProps<typeof DialogPrimitive.Content> & { focusInstead?: () => boolean }) {
-  const returnFocus = useReturnFocus(focusInstead)
-  return <DialogPrimitive.Content onCloseAutoFocus={returnFocus} {...props} />
+function ReturningContent({ onCloseAutoFocus, focusInstead, ...props }: ComponentProps<typeof DialogPrimitive.Content> & { focusInstead?: () => boolean }) {
+  const returnFocus = useReturnFocus(onCloseAutoFocus, focusInstead)
+  return <DialogPrimitive.Content {...props} onCloseAutoFocus={returnFocus} />
 }
-function ReturningAlertContent(props: ComponentProps<typeof AlertPrimitive.Content>) {
-  const returnFocus = useReturnFocus()
-  return <AlertPrimitive.Content onCloseAutoFocus={returnFocus} {...props} />
+function ReturningAlertContent({ onCloseAutoFocus, ...props }: ComponentProps<typeof AlertPrimitive.Content>) {
+  const returnFocus = useReturnFocus(onCloseAutoFocus)
+  return <AlertPrimitive.Content {...props} onCloseAutoFocus={returnFocus} />
 }
 
 export const Dialog = DialogPrimitive.Root
