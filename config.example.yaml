@@ -5,40 +5,50 @@
 # Pass it with --config or LEDGER_CONFIG. Every key can also be set with an
 # environment variable (LEDGER_ plus the dotted key in upper case with dots
 # turned into underscores) and, except secrets, a flag of the same name as the
-# key. Precedence, highest first: flags, environment variables, this file,
-# built-in defaults. Unknown keys and wrong types are rejected. Durations are
-# written like "30s". Secrets never go in this file.
+# key. Precedence, highest first: flags, environment variables (the real
+# environment, then .env), this file, the value stored through the Management
+# API (runtime settings only, see each key), built-in defaults. A key that any
+# of the first three sets is pinned: the API shows it with its source and
+# refuses to change it. Unknown keys and wrong types are rejected. Durations
+# are written like "30s". Secrets never go in this file.
 
 http:
 
   # Address the HTTP server listens on, as host:port. The default accepts
   # local connections only; use :8080 to listen on every interface.
   # Environment: LEDGER_HTTP_LISTEN  Flag: --http.listen
+  # Deployment setting: configuration only; the API shows it read-only.
   listen: "127.0.0.1:8080"
 
   # Maximum time to read a request's headers.
   # Environment: LEDGER_HTTP_READ_HEADER_TIMEOUT  Flag: --http.read_header_timeout
+  # Deployment setting: configuration only; the API shows it read-only.
   read_header_timeout: "10s"
 
   # Maximum time to read an entire request, body included.
   # Environment: LEDGER_HTTP_READ_TIMEOUT  Flag: --http.read_timeout
+  # Deployment setting: configuration only; the API shows it read-only.
   read_timeout: "30s"
 
   # Maximum time to write a response.
   # Environment: LEDGER_HTTP_WRITE_TIMEOUT  Flag: --http.write_timeout
+  # Deployment setting: configuration only; the API shows it read-only.
   write_timeout: "60s"
 
   # Maximum time an idle keep-alive connection stays open.
   # Environment: LEDGER_HTTP_IDLE_TIMEOUT  Flag: --http.idle_timeout
+  # Deployment setting: configuration only; the API shows it read-only.
   idle_timeout: "120s"
 
   # How long graceful shutdown waits for in-flight requests before closing
   # connections.
   # Environment: LEDGER_HTTP_SHUTDOWN_TIMEOUT  Flag: --http.shutdown_timeout
+  # Deployment setting: configuration only; the API shows it read-only.
   shutdown_timeout: "15s"
 
   # Maximum size of a request body in bytes.
   # Environment: LEDGER_HTTP_MAX_BODY_BYTES  Flag: --http.max_body_bytes
+  # Deployment setting: configuration only; the API shows it read-only.
   max_body_bytes: 1048576
 
   # Address of the management listener that serves /metrics, /healthz and
@@ -47,6 +57,7 @@ http:
   # with --http.management_listen=; a blank environment variable counts as
   # unset) serves them on the main listener instead.
   # Environment: LEDGER_HTTP_MANAGEMENT_LISTEN  Flag: --http.management_listen
+  # Deployment setting: configuration only; the API shows it read-only.
   management_listen: "127.0.0.1:9090"
 
   # IP addresses or CIDR ranges of reverse proxies whose forwarding headers
@@ -57,6 +68,7 @@ http:
   # warning when X-Forwarded-For arrives from an untrusted loopback or private
   # address.
   # Environment: LEDGER_HTTP_TRUSTED_PROXIES  Flag: --http.trusted_proxies
+  # Deployment setting: configuration only; the API shows it read-only.
   trusted_proxies: []
 
 database:
@@ -64,20 +76,25 @@ database:
   # Path of the SQLite database file. The directory is created if it is
   # missing.
   # Environment: LEDGER_DATABASE_PATH  Flag: --database.path
+  # Deployment setting: configuration only; the API shows it read-only.
   path: "data/ledger.db"
 
   # How long a statement waits for a locked database before failing.
   # Environment: LEDGER_DATABASE_BUSY_TIMEOUT  Flag: --database.busy_timeout
+  # Deployment setting: configuration only; the API shows it read-only.
   busy_timeout: "5s"
 
 log:
 
   # Minimum log level.
   # Environment: LEDGER_LOG_LEVEL  Flag: --log.level  Allowed: debug, info, warn, error
+  # Runtime setting (group logging): also changeable through the Management
+  # API unless a configuration layer sets it.
   level: "info"
 
   # Log output format: json for machines, text for people.
   # Environment: LEDGER_LOG_FORMAT  Flag: --log.format  Allowed: text, json
+  # Deployment setting: configuration only; the API shows it read-only.
   format: "json"
 
 reporting:
@@ -90,6 +107,8 @@ reporting:
   # reclassifies dates; its audit entry is recorded once the audit log exists.
   # 'Local' is not accepted.
   # Environment: LEDGER_REPORTING_TIMEZONE  Flag: --reporting.timezone
+  # Runtime setting (group reporting): also changeable through the Management
+  # API unless a configuration layer sets it.
   timezone: ""
 
   # ISO 4217 code of the reporting currency, for example EUR: the outlook adds
@@ -98,6 +117,8 @@ reporting:
   # rest as excluded (decision D5). Empty means no converted total unless a
   # request asks for one.
   # Environment: LEDGER_REPORTING_CURRENCY  Flag: --reporting.currency
+  # Runtime setting (group reporting): also changeable through the Management
+  # API unless a configuration layer sets it.
   currency: ""
 
   # Secret kek.value: Key-encryption key for stored credentials (TOTP secrets
@@ -113,6 +134,7 @@ kek:
   # Path of a file that contains the key-encryption key. Alternative to
   # LEDGER_KEK_VALUE; trailing newlines are ignored.
   # Environment: LEDGER_KEK_FILE  Flag: --kek.file
+  # Deployment setting: configuration only; the API shows it read-only.
   file: ""
 
 events:
@@ -123,17 +145,23 @@ events:
     # or published, and turning it on later does not replay changes made while
     # it was off.
     # Environment: LEDGER_EVENTS_PULSE_ENABLED  Flag: --events.pulse.enabled
+    # Runtime setting (group pulse): also changeable through the Management
+    # API unless a configuration layer sets it.
     enabled: false
 
     # Event source stamped on every published event (the envelope's source
     # field): 1 to 128 printable characters.
     # Environment: LEDGER_EVENTS_PULSE_SOURCE  Flag: --events.pulse.source
+    # Runtime setting (group pulse): also changeable through the Management
+    # API unless a configuration layer sets it.
     source: "ledger"
 
     # Pulse server URL; must use the tls:// scheme, for example
     # tls://pulse.example.com:4222. Required when events.pulse.enabled is
     # true. Nothing connects while publishing is off.
     # Environment: LEDGER_EVENTS_PULSE_URL  Flag: --events.pulse.url
+    # Runtime setting (group pulse): also changeable through the Management
+    # API unless a configuration layer sets it.
     url: ""
 
     # Path of the Pulse .creds file (user JWT and key seed). Required when
@@ -141,15 +169,19 @@ events:
     # is read by the Pulse client, never copied, and its path and content are
     # never logged.
     # Environment: LEDGER_EVENTS_PULSE_CREDS_FILE  Flag: --events.pulse.creds_file
+    # Deployment setting: configuration only; the API shows it read-only.
     creds_file: ""
 
     # Optional PEM file with an extra CA to trust for the Pulse server, added
     # to the system roots. Certificate verification is never disabled.
     # Environment: LEDGER_EVENTS_PULSE_CA_FILE  Flag: --events.pulse.ca_file
+    # Deployment setting: configuration only; the API shows it read-only.
     ca_file: ""
 
     # Connection name shown on the Pulse server.
     # Environment: LEDGER_EVENTS_PULSE_NAME  Flag: --events.pulse.name
+    # Runtime setting (group pulse): also changeable through the Management
+    # API unless a configuration layer sets it.
     name: "ledger"
 
 banking:
@@ -161,6 +193,8 @@ banking:
   # loopback). Empty means connecting a bank (and reconnecting) is switched
   # off; refreshing and disconnecting existing connections still work.
   # Environment: LEDGER_BANKING_REDIRECT_URL  Flag: --banking.redirect_url
+  # Runtime setting (group banking): also changeable through the Management
+  # API unless a configuration layer sets it.
   redirect_url: ""
 
   # How long a started bank consent may wait for the bank's redirect. After it
@@ -168,12 +202,16 @@ banking:
   # never connected becomes failed (consent_expired). Between 1 minute and 24
   # hours.
   # Environment: LEDGER_BANKING_CONSENT_TTL  Flag: --banking.consent_ttl
+  # Runtime setting (group banking): also changeable through the Management
+  # API unless a configuration layer sets it.
   consent_ttl: "1h"
 
   # How old the last successful refresh of a bank account may be before its
   # data is shown as stale (and the background scheduler refreshes it).
   # Between 1 minute and 30 days.
   # Environment: LEDGER_BANKING_STALE_AFTER  Flag: --banking.stale_after
+  # Runtime setting (group banking): also changeable through the Management
+  # API unless a configuration layer sets it.
   stale_after: "24h"
 
   enable_banking:
@@ -181,6 +219,8 @@ banking:
     # Enable Banking API base URL. Sandbox and production applications use the
     # same host; the environment belongs to the application.
     # Environment: LEDGER_BANKING_ENABLE_BANKING_BASE_URL  Flag: --banking.enable_banking.base_url
+    # Runtime setting (group banking): also changeable through the Management
+    # API unless a configuration layer sets it.
     base_url: "https://api.enablebanking.com"
 
     app:
@@ -191,6 +231,7 @@ banking:
       # that reaches only the accounts linked to it in the Enable Banking
       # Control Panel. Neither mode is the sandbox.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_ENABLED  Flag: --banking.enable_banking.app.enabled
+      # Deployment setting: configuration only; the API shows it read-only.
       enabled: false
 
       # Ledger's name for this application, recorded on every connection made
@@ -198,16 +239,19 @@ banking:
       # enablebanking-app or enablebanking-developer. Changing it orphans
       # existing connections.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_NAME  Flag: --banking.enable_banking.app.name
+      # Deployment setting: configuration only; the API shows it read-only.
       name: ""
 
       # Application id from the Enable Banking Control Panel (a UUID, sent as
       # the JWT kid). Required when the application is enabled. Never logged.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_APP_ID  Flag: --banking.enable_banking.app.app_id
+      # Deployment setting: configuration only; the API shows it read-only.
       app_id: ""
 
       # Environment the application was registered in at Enable Banking.
       # sandbox is for testing with simulated banks; it is not a mode.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_ENVIRONMENT  Flag: --banking.enable_banking.app.environment  Allowed: production, sandbox
+      # Deployment setting: configuration only; the API shows it read-only.
       environment: "production"
 
       # Secret banking.enable_banking.app.private_key: PEM-encoded RSA private key
@@ -219,6 +263,7 @@ banking:
       # Alternative to the private_key variable. Only the path is
       # configuration; the key is never logged.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_APP_PRIVATE_KEY_FILE  Flag: --banking.enable_banking.app.private_key_file
+      # Deployment setting: configuration only; the API shows it read-only.
       private_key_file: ""
 
     developer:
@@ -229,6 +274,7 @@ banking:
       # that reaches only the accounts linked to it in the Enable Banking
       # Control Panel. Neither mode is the sandbox.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_ENABLED  Flag: --banking.enable_banking.developer.enabled
+      # Deployment setting: configuration only; the API shows it read-only.
       enabled: false
 
       # Ledger's name for this application, recorded on every connection made
@@ -236,16 +282,19 @@ banking:
       # enablebanking-app or enablebanking-developer. Changing it orphans
       # existing connections.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_NAME  Flag: --banking.enable_banking.developer.name
+      # Deployment setting: configuration only; the API shows it read-only.
       name: ""
 
       # Application id from the Enable Banking Control Panel (a UUID, sent as
       # the JWT kid). Required when the application is enabled. Never logged.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_APP_ID  Flag: --banking.enable_banking.developer.app_id
+      # Deployment setting: configuration only; the API shows it read-only.
       app_id: ""
 
       # Environment the application was registered in at Enable Banking.
       # sandbox is for testing with simulated banks; it is not a mode.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_ENVIRONMENT  Flag: --banking.enable_banking.developer.environment  Allowed: production, sandbox
+      # Deployment setting: configuration only; the API shows it read-only.
       environment: "production"
 
       # Secret banking.enable_banking.developer.private_key: PEM-encoded RSA
@@ -257,6 +306,7 @@ banking:
       # Alternative to the private_key variable. Only the path is
       # configuration; the key is never logged.
       # Environment: LEDGER_BANKING_ENABLE_BANKING_DEVELOPER_PRIVATE_KEY_FILE  Flag: --banking.enable_banking.developer.private_key_file
+      # Deployment setting: configuration only; the API shows it read-only.
       private_key_file: ""
 
   refresh:
@@ -265,12 +315,16 @@ banking:
     # connections are only refreshed on request. Retries of one read and the
     # provider's daily fetch budget are not configurable.
     # Environment: LEDGER_BANKING_REFRESH_ENABLED  Flag: --banking.refresh.enabled
+    # Runtime setting (group banking): also changeable through the Management
+    # API unless a configuration layer sets it.
     enabled: true
 
     # Time between successful background refreshes of a connection. Banks
     # commonly allow about four background fetches a day; the scheduler also
     # keeps to the provider's daily budget whatever this is set to.
     # Environment: LEDGER_BANKING_REFRESH_INTERVAL  Flag: --banking.refresh.interval
+    # Runtime setting (group banking): also changeable through the Management
+    # API unless a configuration layer sets it.
     interval: "6h"
 
     # How long after a refresh of a bank connection finished (whoever started
@@ -279,12 +333,16 @@ banking:
     # UI, the CLI and MCP; the background refresh is not held back. 0s
     # switches it off; at most 24h (decision D-B6c).
     # Environment: LEDGER_BANKING_REFRESH_REQUEST_COOLDOWN  Flag: --banking.refresh.request_cooldown
+    # Runtime setting (group banking): also changeable through the Management
+    # API unless a configuration layer sets it.
     request_cooldown: "5m"
 
     # Longest wait after failed refreshes. The wait starts at 15 minutes and
     # doubles per consecutive failure. A rate limit waits at least 6 hours, or
     # the provider's Retry-After (at most 24 hours).
     # Environment: LEDGER_BANKING_REFRESH_MAX_BACKOFF  Flag: --banking.refresh.max_backoff
+    # Runtime setting (group banking): also changeable through the Management
+    # API unless a configuration layer sets it.
     max_backoff: "6h"
 
 rates:
@@ -296,11 +354,15 @@ rates:
   # shown with their age. Turning it on sends currency codes (never amounts or
   # account data) to the Frankfurter service.
   # Environment: LEDGER_RATES_ENABLED  Flag: --rates.enabled
+  # Runtime setting (group rates): also changeable through the Management API
+  # unless a configuration layer sets it.
   enabled: false
 
   # Frankfurter base URL. https only (plain http only for a loopback test
   # server).
   # Environment: LEDGER_RATES_BASE_URL  Flag: --rates.base_url
+  # Runtime setting (group rates): also changeable through the Management API
+  # unless a configuration layer sets it.
   base_url: "https://api.frankfurter.dev"
 
   # Frankfurter provider key whose rates are used, for example ECB (European
@@ -309,6 +371,8 @@ rates:
   # blend of its providers. Rates of different sources are cached apart and
   # never mixed; changing this stops using the rates of the old source.
   # Environment: LEDGER_RATES_SOURCE  Flag: --rates.source
+  # Runtime setting (group rates): also changeable through the Management API
+  # unless a configuration layer sets it.
   source: "ECB"
 
   # Time between background refreshes of the rates from every currency in use
@@ -317,17 +381,23 @@ rates:
   # value. Needs reporting.currency; without it nothing is refreshed in the
   # background.
   # Environment: LEDGER_RATES_REFRESH_INTERVAL  Flag: --rates.refresh_interval
+  # Runtime setting (group rates): also changeable through the Management API
+  # unless a configuration layer sets it.
   refresh_interval: "24h"
 
   # How old a cached rate may get before it is treated as stale and left out
   # of converted totals (decision D11: 5 days): measured from when it was last
   # retrieved, and from its date to the date it is used for. 24h or more.
   # Environment: LEDGER_RATES_STALE_AFTER  Flag: --rates.stale_after
+  # Runtime setting (group rates): also changeable through the Management API
+  # unless a configuration layer sets it.
   stale_after: "120h"
 
   # Time limit for one request to Frankfurter (1s to 2m). A request that
   # exceeds it counts as an outage: cached rates stay in use.
   # Environment: LEDGER_RATES_TIMEOUT  Flag: --rates.timeout
+  # Runtime setting (group rates): also changeable through the Management API
+  # unless a configuration layer sets it.
   timeout: "15s"
 
 merchants:
@@ -356,35 +426,46 @@ merchants:
       # url, and you are responsible for the service's terms: see attribution,
       # store_logo_ref and retention.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_ENABLED  Flag: --merchants.enrichment.remote.enabled
+      # Runtime setting (group merchant_enrichment): also changeable through
+      # the Management API unless a configuration layer sets it.
       enabled: false
 
       # Lookup endpoint of the remote service (POST, JSON; see ADR-0054 for
       # the contract). https only (plain http only for a loopback test
       # server), no credentials or query. Required when enabled.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_URL  Flag: --merchants.enrichment.remote.url
+      # Runtime setting (group merchant_enrichment): also changeable through
+      # the Management API unless a configuration layer sets it.
       url: ""
 
       # Path of a file with the bearer key for the remote service (trailing
       # newlines ignored). The key is read at startup, sent only to the
       # configured URL and never logged. Optional.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_API_KEY_FILE  Flag: --merchants.enrichment.remote.api_key_file
+      # Deployment setting: configuration only; the API shows it read-only.
       api_key_file: ""
 
       # Optional ISO 3166-1 alpha-2 country code sent with each lookup as a
       # hint, for example LT. Empty means no country is sent.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_COUNTRY  Flag: --merchants.enrichment.remote.country
+      # Runtime setting (group merchant_enrichment): also changeable through
+      # the Management API unless a configuration layer sets it.
       country: ""
 
       # Time limit for one lookup (1s to 1m). A failure or timeout leaves the
       # transaction without a remote answer and never delays or fails an
       # import.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_TIMEOUT  Flag: --merchants.enrichment.remote.timeout
+      # Runtime setting (group merchant_enrichment): also changeable through
+      # the Management API unless a configuration layer sets it.
       timeout: "10s"
 
       # Attribution text the service's licence requires, for example 'Logos by
       # Example Service'. Shown with identities that came from it (GET
       # /api/v1/merchants/sources). Up to 200 characters.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_ATTRIBUTION  Flag: --merchants.enrichment.remote.attribution
+      # Runtime setting (group merchant_enrichment): also changeable through
+      # the Management API unless a configuration layer sets it.
       attribution: ""
 
       # Keep the logo reference the service returns. Leave false unless its
@@ -392,6 +473,8 @@ merchants:
       # name with a neutral icon. Logos are never downloaded or copied by
       # Ledger.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_STORE_LOGO_REF  Flag: --merchants.enrichment.remote.store_logo_ref
+      # Runtime setting (group merchant_enrichment): also changeable through
+      # the Management API unless a configuration layer sets it.
       store_logo_ref: false
 
       # How long answers from the remote service are kept (the longest a
@@ -402,6 +485,8 @@ merchants:
       # turned off: answers it cached are deleted when they pass it (0 keeps
       # them until replaced, which never happens once it is off).
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_RETENTION  Flag: --merchants.enrichment.remote.retention
+      # Runtime setting (group merchant_enrichment): also changeable through
+      # the Management API unless a configuration layer sets it.
       retention: "720h"
 
 auth:
@@ -416,11 +501,15 @@ auth:
     # while this is false, the host can issue a one-time sign-in with ledger
     # auth recovery-sign-in (docs/oidc.md).
     # Environment: LEDGER_AUTH_PASSWORD_ENABLED  Flag: --auth.password.enabled
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     enabled: true
 
     # Minimum password length in bytes (1 to 1024). Length is the only rule:
     # there are no composition rules.
     # Environment: LEDGER_AUTH_PASSWORD_MIN_LENGTH  Flag: --auth.password.min_length
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     min_length: 12
 
   session:
@@ -428,16 +517,22 @@ auth:
     # A session not used for this long ends. Must not exceed the absolute
     # timeout.
     # Environment: LEDGER_AUTH_SESSION_IDLE_TIMEOUT  Flag: --auth.session.idle_timeout
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     idle_timeout: "30m"
 
     # A session ends this long after sign-in, however much it is used.
     # Environment: LEDGER_AUTH_SESSION_ABSOLUTE_TIMEOUT  Flag: --auth.session.absolute_timeout
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     absolute_timeout: "12h"
 
     # How long a password check counts as recent for sensitive actions
     # (credential changes, token creation, user management). After it, the
     # user confirms their password again.
     # Environment: LEDGER_AUTH_SESSION_REAUTH_WINDOW  Flag: --auth.session.reauth_window
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     reauth_window: "10m"
 
   sign_in:
@@ -445,16 +540,22 @@ auth:
     # Failed sign-ins (and re-authentications) allowed per username within
     # auth.sign_in.window before further attempts for it are refused with 429.
     # Environment: LEDGER_AUTH_SIGN_IN_ACCOUNT_MAX_FAILURES  Flag: --auth.sign_in.account_max_failures
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     account_max_failures: 10
 
     # Failed sign-ins allowed per client address (an IPv6 address counts as
     # its /64) within auth.sign_in.window before further attempts from it are
     # refused with 429.
     # Environment: LEDGER_AUTH_SIGN_IN_ADDRESS_MAX_FAILURES  Flag: --auth.sign_in.address_max_failures
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     address_max_failures: 30
 
     # Sliding window over which failed sign-ins are counted.
     # Environment: LEDGER_AUTH_SIGN_IN_WINDOW  Flag: --auth.sign_in.window
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     window: "15m"
 
     # Lifetime of the device cookie a browser gets at each complete password
@@ -466,6 +567,8 @@ auth:
     # device cookies. Default 2160h (90 days), accepted by the operator (D30,
     # 2026-11-21).
     # Environment: LEDGER_AUTH_SIGN_IN_DEVICE_COOKIE_TTL  Flag: --auth.sign_in.device_cookie_ttl
+    # Runtime setting (group auth): also changeable through the Management API
+    # unless a configuration layer sets it.
     device_cookie_ttl: "2160h"
 
   oidc:
@@ -475,11 +578,15 @@ auth:
     # signed in; an identity that is not linked gets no access unless
     # auth.oidc.provisioning.enabled is true.
     # Environment: LEDGER_AUTH_OIDC_ENABLED  Flag: --auth.oidc.enabled
+    # Runtime setting (group oidc): also changeable through the Management API
+    # unless a configuration layer sets it.
     enabled: false
 
     # Name of the identity provider shown on the sign-in page and recorded in
     # audit entries: 1 to 64 printable characters.
     # Environment: LEDGER_AUTH_OIDC_NAME  Flag: --auth.oidc.name
+    # Runtime setting (group oidc): also changeable through the Management API
+    # unless a configuration layer sets it.
     name: "Single sign-on"
 
     # Issuer URL of the provider, exactly as its discovery document states it
@@ -488,11 +595,15 @@ auth:
     # loopback test provider). Links are keyed by issuer and subject: changing
     # the issuer leaves every existing link unusable.
     # Environment: LEDGER_AUTH_OIDC_ISSUER  Flag: --auth.oidc.issuer
+    # Runtime setting (group oidc): also changeable through the Management API
+    # unless a configuration layer sets it.
     issuer: ""
 
     # Client ID registered for Ledger at the provider. Required when
     # auth.oidc.enabled is true.
     # Environment: LEDGER_AUTH_OIDC_CLIENT_ID  Flag: --auth.oidc.client_id
+    # Runtime setting (group oidc): also changeable through the Management API
+    # unless a configuration layer sets it.
     client_id: ""
 
     # Secret auth.oidc.client_secret: Client secret registered for Ledger at the
@@ -503,6 +614,7 @@ auth:
     # client_secret variable; trailing newlines are ignored. Only the path is
     # configuration; the secret is never logged.
     # Environment: LEDGER_AUTH_OIDC_CLIENT_SECRET_FILE  Flag: --auth.oidc.client_secret_file
+    # Deployment setting: configuration only; the API shows it read-only.
     client_secret_file: ""
 
     # Callback URL registered at the provider: Ledger's external address
@@ -510,12 +622,16 @@ auth:
     # https://ledger.example.com/api/v1/auth/oidc/callback. https only (plain
     # http only on loopback).
     # Environment: LEDGER_AUTH_OIDC_REDIRECT_URL  Flag: --auth.oidc.redirect_url
+    # Runtime setting (group oidc): also changeable through the Management API
+    # unless a configuration layer sets it.
     redirect_url: ""
 
     # Scopes requested (a list in YAML, comma separated in the variable). Must
     # include openid. email and profile only fill in display data and a
     # provisioned account's username; identity is never taken from them.
     # Environment: LEDGER_AUTH_OIDC_SCOPES  Flag: --auth.oidc.scopes
+    # Runtime setting (group oidc): also changeable through the Management API
+    # unless a configuration layer sets it.
     scopes: ["openid", "email", "profile"]
 
     # Ask users who have Ledger TOTP enabled for their code after an OIDC
@@ -523,11 +639,15 @@ auth:
     # default, decision D16) trusts the identity provider's own
     # authentication.
     # Environment: LEDGER_AUTH_OIDC_REQUIRE_2FA  Flag: --auth.oidc.require_2fa
+    # Runtime setting (group oidc): also changeable through the Management API
+    # unless a configuration layer sets it.
     require_2fa: false
 
     # Clock difference tolerated when checking ID token times (exp, nbf, iat,
     # auth_time): 0 to 5m.
     # Environment: LEDGER_AUTH_OIDC_CLOCK_SKEW  Flag: --auth.oidc.clock_skew
+    # Runtime setting (group oidc): also changeable through the Management API
+    # unless a configuration layer sets it.
     clock_skew: "1m"
 
     provisioning:
@@ -536,10 +656,14 @@ auth:
       # is linked to no account signs in, and link it. Off by default: unknown
       # identities are refused. Accounts are never matched by email address.
       # Environment: LEDGER_AUTH_OIDC_PROVISIONING_ENABLED  Flag: --auth.oidc.provisioning.enabled
+      # Runtime setting (group oidc): also changeable through the Management
+      # API unless a configuration layer sets it.
       enabled: false
 
       # Role of accounts created by provisioning.
       # Environment: LEDGER_AUTH_OIDC_PROVISIONING_ROLE  Flag: --auth.oidc.provisioning.role  Allowed: administrator, read-only
+      # Runtime setting (group oidc): also changeable through the Management
+      # API unless a configuration layer sets it.
       role: "read-only"
 
   # Require two-factor authentication (TOTP) for everyone. A signed-in user
@@ -549,6 +673,8 @@ auth:
   # on, users cannot disable their own TOTP (the host command ledger auth
   # reset-2fa can).
   # Environment: LEDGER_AUTH_REQUIRE_2FA  Flag: --auth.require_2fa
+  # Runtime setting (group auth): also changeable through the Management API
+  # unless a configuration layer sets it.
   require_2fa: false
 
 mcp:
@@ -559,23 +685,31 @@ mcp:
   # stdio mode (ledger mcp stdio) is a separate client-side command and is not
   # affected.
   # Environment: LEDGER_MCP_ENABLED  Flag: --mcp.enabled
+  # Runtime setting (group mcp): also changeable through the Management API
+  # unless a configuration layer sets it.
   enabled: true
 
   # Sustained MCP requests allowed per API token per minute (1 to 100000);
   # more are refused with 429 rate_limited and Retry-After. Counted in memory
   # per process, reset on restart.
   # Environment: LEDGER_MCP_REQUESTS_PER_MINUTE  Flag: --mcp.requests_per_minute
+  # Runtime setting (group mcp): also changeable through the Management API
+  # unless a configuration layer sets it.
   requests_per_minute: 120
 
   # Most MCP requests one API token may send at once before the per-minute
   # rate applies (1 to 10000).
   # Environment: LEDGER_MCP_BURST  Flag: --mcp.burst
+  # Runtime setting (group mcp): also changeable through the Management API
+  # unless a configuration layer sets it.
   burst: 30
 
   # Maximum size of one MCP request body in bytes (1024 to 16777216); larger
   # bodies are refused with 413. The general http.max_body_bytes applies as
   # well.
   # Environment: LEDGER_MCP_MAX_REQUEST_BYTES  Flag: --mcp.max_request_bytes
+  # Runtime setting (group mcp): also changeable through the Management API
+  # unless a configuration layer sets it.
   max_request_bytes: 262144
 
       # Secret decisions.providers.openrouter.api_key: OpenRouter API key. Secret:
@@ -592,6 +726,7 @@ decisions:
       # Path of a file that contains the OpenRouter API key. Alternative to
       # the api_key variable; trailing newlines are ignored.
       # Environment: LEDGER_DECISIONS_PROVIDERS_OPENROUTER_API_KEY_FILE  Flag: --decisions.providers.openrouter.api_key_file
+      # Deployment setting: configuration only; the API shows it read-only.
       api_key_file: ""
 
       # Upstream providers OpenRouter may forward Ledger's requests to (a list
@@ -600,6 +735,8 @@ decisions:
       # may use OpenRouter (decision D13). Consent for another provider never
       # covers an upstream reached through OpenRouter.
       # Environment: LEDGER_DECISIONS_PROVIDERS_OPENROUTER_ALLOWED_UPSTREAMS  Flag: --decisions.providers.openrouter.allowed_upstreams
+      # Runtime setting (group decision_providers.openrouter): also changeable
+      # through the Management API unless a configuration layer sets it.
       allowed_upstreams: []
 
       # Secret decisions.providers.openai.api_key: API key of this decision
@@ -614,6 +751,7 @@ decisions:
       # Alternative to the api_key variable; trailing newlines are ignored.
       # Only the path is configuration; the key is never logged.
       # Environment: LEDGER_DECISIONS_PROVIDERS_OPENAI_API_KEY_FILE  Flag: --decisions.providers.openai.api_key_file
+      # Deployment setting: configuration only; the API shows it read-only.
       api_key_file: ""
 
       # Secret decisions.providers.anthropic.api_key: API key of this decision
@@ -628,6 +766,7 @@ decisions:
       # Alternative to the api_key variable; trailing newlines are ignored.
       # Only the path is configuration; the key is never logged.
       # Environment: LEDGER_DECISIONS_PROVIDERS_ANTHROPIC_API_KEY_FILE  Flag: --decisions.providers.anthropic.api_key_file
+      # Deployment setting: configuration only; the API shows it read-only.
       api_key_file: ""
 
       # Secret decisions.providers.typesafe.api_key: API key of this decision
@@ -642,6 +781,7 @@ decisions:
       # Alternative to the api_key variable; trailing newlines are ignored.
       # Only the path is configuration; the key is never logged.
       # Environment: LEDGER_DECISIONS_PROVIDERS_TYPESAFE_API_KEY_FILE  Flag: --decisions.providers.typesafe.api_key_file
+      # Deployment setting: configuration only; the API shows it read-only.
       api_key_file: ""
 
   tasks:
@@ -654,6 +794,8 @@ decisions:
       # another. Suggestions are kept apart from bank facts and are only
       # suggestions: a failure never changes anything.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_ENABLED  Flag: --decisions.tasks.categorisation.enabled
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       enabled: false
 
       # Decision provider for this task: openrouter, openai, anthropic or
@@ -661,11 +803,15 @@ decisions:
       # tasks only (categorisation, label_suggestion, payment_matching), not
       # alerts.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_PROVIDER  Flag: --decisions.tasks.categorisation.provider
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       provider: ""
 
       # Model identifier at the provider. Required when the task is enabled.
       # The model the provider reports is recorded with every suggestion.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_MODEL  Flag: --decisions.tasks.categorisation.model
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       model: ""
 
       # Capability the task needs: decide (a choice among candidates:
@@ -673,12 +819,16 @@ decisions:
       # text: alerts). Empty means the task's own; any other value than the
       # task's is refused.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_CAPABILITY  Flag: --decisions.tasks.categorisation.capability
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       capability: ""
 
       # Time limit for one run of the task on one provider, retries included
       # (1s to 2m). A run that exceeds it ends without a suggestion and
       # changes nothing.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_TIMEOUT  Flag: --decisions.tasks.categorisation.timeout
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       timeout: "30s"
 
       # Most requests the task may send per calendar month (UTC), every
@@ -686,18 +836,24 @@ decisions:
       # 1000000). Once reached, the task makes no suggestions until the next
       # month. The default of 500 is a proposal awaiting the operator.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_MONTHLY_REQUESTS  Flag: --decisions.tasks.categorisation.monthly_requests
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       monthly_requests: 500
 
       # Retries of a request the provider refused before generating anything
       # (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A
       # response that was generated, even a broken one, is never retried.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_RETRIES  Flag: --decisions.tasks.categorisation.retries
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       retries: 2
 
       # Mark suggestions for automatic application instead of review. Allowed
       # for categorisation only (decision D13); an applied suggestion is
       # always reversible and never replaces a person's choice.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_AUTO_APPLY  Flag: --decisions.tasks.categorisation.auto_apply
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       auto_apply: false
 
       # Fields this task may send to its provider (a list in YAML, comma
@@ -710,6 +866,8 @@ decisions:
       # candidate_names. Applies to the main provider; fallback providers use
       # their defaults.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_FIELDS  Flag: --decisions.tasks.categorisation.fields
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       fields: []
 
       # Explicit fallback providers, as provider:model entries tried in order
@@ -717,6 +875,8 @@ decisions:
       # separated in the variable). Empty (the default) means no fallback:
       # there is never an automatic one. Each needs its own consent and key.
       # Environment: LEDGER_DECISIONS_TASKS_CATEGORISATION_FALLBACK  Flag: --decisions.tasks.categorisation.fallback
+      # Runtime setting (group decision_tasks.categorisation): also changeable
+      # through the Management API unless a configuration layer sets it.
       fallback: []
 
     label_suggestion:
@@ -727,6 +887,9 @@ decisions:
       # another. Suggestions are kept apart from bank facts and are only
       # suggestions: a failure never changes anything.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_ENABLED  Flag: --decisions.tasks.label_suggestion.enabled
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       enabled: false
 
       # Decision provider for this task: openrouter, openai, anthropic or
@@ -734,11 +897,17 @@ decisions:
       # tasks only (categorisation, label_suggestion, payment_matching), not
       # alerts.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_PROVIDER  Flag: --decisions.tasks.label_suggestion.provider
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       provider: ""
 
       # Model identifier at the provider. Required when the task is enabled.
       # The model the provider reports is recorded with every suggestion.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_MODEL  Flag: --decisions.tasks.label_suggestion.model
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       model: ""
 
       # Capability the task needs: decide (a choice among candidates:
@@ -746,12 +915,18 @@ decisions:
       # text: alerts). Empty means the task's own; any other value than the
       # task's is refused.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_CAPABILITY  Flag: --decisions.tasks.label_suggestion.capability
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       capability: ""
 
       # Time limit for one run of the task on one provider, retries included
       # (1s to 2m). A run that exceeds it ends without a suggestion and
       # changes nothing.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_TIMEOUT  Flag: --decisions.tasks.label_suggestion.timeout
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       timeout: "30s"
 
       # Most requests the task may send per calendar month (UTC), every
@@ -759,18 +934,27 @@ decisions:
       # 1000000). Once reached, the task makes no suggestions until the next
       # month. The default of 500 is a proposal awaiting the operator.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_MONTHLY_REQUESTS  Flag: --decisions.tasks.label_suggestion.monthly_requests
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       monthly_requests: 500
 
       # Retries of a request the provider refused before generating anything
       # (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A
       # response that was generated, even a broken one, is never retried.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_RETRIES  Flag: --decisions.tasks.label_suggestion.retries
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       retries: 2
 
       # Mark suggestions for automatic application instead of review. Allowed
       # for categorisation only (decision D13); an applied suggestion is
       # always reversible and never replaces a person's choice.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_AUTO_APPLY  Flag: --decisions.tasks.label_suggestion.auto_apply
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       auto_apply: false
 
       # Fields this task may send to its provider (a list in YAML, comma
@@ -783,6 +967,9 @@ decisions:
       # candidate_names. Applies to the main provider; fallback providers use
       # their defaults.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_FIELDS  Flag: --decisions.tasks.label_suggestion.fields
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       fields: []
 
       # Explicit fallback providers, as provider:model entries tried in order
@@ -790,6 +977,9 @@ decisions:
       # separated in the variable). Empty (the default) means no fallback:
       # there is never an automatic one. Each needs its own consent and key.
       # Environment: LEDGER_DECISIONS_TASKS_LABEL_SUGGESTION_FALLBACK  Flag: --decisions.tasks.label_suggestion.fallback
+      # Runtime setting (group decision_tasks.label_suggestion): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       fallback: []
 
     alerts:
@@ -800,6 +990,8 @@ decisions:
       # another. Suggestions are kept apart from bank facts and are only
       # suggestions: a failure never changes anything.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_ENABLED  Flag: --decisions.tasks.alerts.enabled
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       enabled: false
 
       # Decision provider for this task: openrouter, openai, anthropic or
@@ -807,11 +999,15 @@ decisions:
       # tasks only (categorisation, label_suggestion, payment_matching), not
       # alerts.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_PROVIDER  Flag: --decisions.tasks.alerts.provider
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       provider: ""
 
       # Model identifier at the provider. Required when the task is enabled.
       # The model the provider reports is recorded with every suggestion.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_MODEL  Flag: --decisions.tasks.alerts.model
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       model: ""
 
       # Capability the task needs: decide (a choice among candidates:
@@ -819,12 +1015,16 @@ decisions:
       # text: alerts). Empty means the task's own; any other value than the
       # task's is refused.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_CAPABILITY  Flag: --decisions.tasks.alerts.capability
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       capability: ""
 
       # Time limit for one run of the task on one provider, retries included
       # (1s to 2m). A run that exceeds it ends without a suggestion and
       # changes nothing.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_TIMEOUT  Flag: --decisions.tasks.alerts.timeout
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       timeout: "30s"
 
       # Most requests the task may send per calendar month (UTC), every
@@ -832,18 +1032,24 @@ decisions:
       # 1000000). Once reached, the task makes no suggestions until the next
       # month. The default of 500 is a proposal awaiting the operator.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_MONTHLY_REQUESTS  Flag: --decisions.tasks.alerts.monthly_requests
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       monthly_requests: 500
 
       # Retries of a request the provider refused before generating anything
       # (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A
       # response that was generated, even a broken one, is never retried.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_RETRIES  Flag: --decisions.tasks.alerts.retries
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       retries: 2
 
       # Mark suggestions for automatic application instead of review. Allowed
       # for categorisation only (decision D13); an applied suggestion is
       # always reversible and never replaces a person's choice.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_AUTO_APPLY  Flag: --decisions.tasks.alerts.auto_apply
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       auto_apply: false
 
       # Fields this task may send to its provider (a list in YAML, comma
@@ -856,6 +1062,8 @@ decisions:
       # candidate_names. Applies to the main provider; fallback providers use
       # their defaults.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_FIELDS  Flag: --decisions.tasks.alerts.fields
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       fields: []
 
       # Explicit fallback providers, as provider:model entries tried in order
@@ -863,6 +1071,8 @@ decisions:
       # separated in the variable). Empty (the default) means no fallback:
       # there is never an automatic one. Each needs its own consent and key.
       # Environment: LEDGER_DECISIONS_TASKS_ALERTS_FALLBACK  Flag: --decisions.tasks.alerts.fallback
+      # Runtime setting (group decision_tasks.alerts): also changeable through
+      # the Management API unless a configuration layer sets it.
       fallback: []
 
     payment_matching:
@@ -873,6 +1083,9 @@ decisions:
       # another. Suggestions are kept apart from bank facts and are only
       # suggestions: a failure never changes anything.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_ENABLED  Flag: --decisions.tasks.payment_matching.enabled
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       enabled: false
 
       # Decision provider for this task: openrouter, openai, anthropic or
@@ -880,11 +1093,17 @@ decisions:
       # tasks only (categorisation, label_suggestion, payment_matching), not
       # alerts.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_PROVIDER  Flag: --decisions.tasks.payment_matching.provider
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       provider: ""
 
       # Model identifier at the provider. Required when the task is enabled.
       # The model the provider reports is recorded with every suggestion.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_MODEL  Flag: --decisions.tasks.payment_matching.model
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       model: ""
 
       # Capability the task needs: decide (a choice among candidates:
@@ -892,12 +1111,18 @@ decisions:
       # text: alerts). Empty means the task's own; any other value than the
       # task's is refused.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_CAPABILITY  Flag: --decisions.tasks.payment_matching.capability
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       capability: ""
 
       # Time limit for one run of the task on one provider, retries included
       # (1s to 2m). A run that exceeds it ends without a suggestion and
       # changes nothing.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_TIMEOUT  Flag: --decisions.tasks.payment_matching.timeout
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       timeout: "30s"
 
       # Most requests the task may send per calendar month (UTC), every
@@ -905,18 +1130,27 @@ decisions:
       # 1000000). Once reached, the task makes no suggestions until the next
       # month. The default of 500 is a proposal awaiting the operator.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_MONTHLY_REQUESTS  Flag: --decisions.tasks.payment_matching.monthly_requests
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       monthly_requests: 500
 
       # Retries of a request the provider refused before generating anything
       # (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A
       # response that was generated, even a broken one, is never retried.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_RETRIES  Flag: --decisions.tasks.payment_matching.retries
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       retries: 2
 
       # Mark suggestions for automatic application instead of review. Allowed
       # for categorisation only (decision D13); an applied suggestion is
       # always reversible and never replaces a person's choice.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_AUTO_APPLY  Flag: --decisions.tasks.payment_matching.auto_apply
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       auto_apply: false
 
       # Fields this task may send to its provider (a list in YAML, comma
@@ -929,6 +1163,9 @@ decisions:
       # candidate_names. Applies to the main provider; fallback providers use
       # their defaults.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_FIELDS  Flag: --decisions.tasks.payment_matching.fields
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       fields: []
 
       # Explicit fallback providers, as provider:model entries tried in order
@@ -936,6 +1173,9 @@ decisions:
       # separated in the variable). Empty (the default) means no fallback:
       # there is never an automatic one. Each needs its own consent and key.
       # Environment: LEDGER_DECISIONS_TASKS_PAYMENT_MATCHING_FALLBACK  Flag: --decisions.tasks.payment_matching.fallback
+      # Runtime setting (group decision_tasks.payment_matching): also
+      # changeable through the Management API unless a configuration layer
+      # sets it.
       fallback: []
 
 alerts:
@@ -947,11 +1187,15 @@ alerts:
   # only, never the message or any amount) and needs events.pulse.enabled. A
   # dismissed alert is never sent again.
   # Environment: LEDGER_ALERTS_CHANNELS  Flag: --alerts.channels
+  # Runtime setting (group alerts): also changeable through the Management API
+  # unless a configuration layer sets it.
   channels: []
 
   # Raise a consent-expiring alert when a bank connection's consent ends
   # within this many days (1 to 365), or has ended.
   # Environment: LEDGER_ALERTS_CONSENT_HORIZON_DAYS  Flag: --alerts.consent_horizon_days
+  # Runtime setting (group alerts): also changeable through the Management API
+  # unless a configuration layer sets it.
   consent_horizon_days: 14
 
   # How often the alert detectors run (1m to 24h), besides after every bank
@@ -959,4 +1203,6 @@ alerts:
   # amount changes and overdue occurrences with no matching payment, and
   # resolve an alert when its condition no longer holds.
   # Environment: LEDGER_ALERTS_INTERVAL  Flag: --alerts.interval
+  # Runtime setting (group alerts): also changeable through the Management API
+  # unless a configuration layer sets it.
   interval: "1h"

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -30,6 +31,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/logging"
 	"github.com/aurimasniekis/go-ledger/internal/metrics"
 	"github.com/aurimasniekis/go-ledger/internal/redact"
+	"github.com/aurimasniekis/go-ledger/internal/settings"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
@@ -186,6 +188,11 @@ var permissionMatrix = map[string]string{
 	"GET /api/v1/alerts":                                                      "decisions:read",
 	"GET /api/v1/alerts/{id}":                                                 "decisions:read",
 	"POST /api/v1/alerts/{id}/dismiss":                                        "decisions:write",
+	"GET /api/v1/settings":                                                    "settings:read",
+	"GET /api/v1/settings/deployment":                                         "settings:read",
+	"GET /api/v1/settings/{group}":                                            "settings:read",
+	"PATCH /api/v1/settings/{group}":                                          "settings:write",
+	"DELETE /api/v1/settings/{group}":                                         "settings:write",
 	"GET /api/v1/rates":                                                       "rates:read",
 	"GET /api/v1/rates/status":                                                "rates:read",
 	"POST /api/v1/rates/refreshes":                                            "rates:write",
@@ -235,6 +242,10 @@ type apiFixture struct {
 	job         *fx.RefreshJob
 	rateDeps    *httpapi.RatesDeps
 	metrics     *metrics.App
+	// settings is the runtime settings service behind /settings and logLevel
+	// the log level its logging group drives.
+	settings *settings.Service
+	logLevel *slog.LevelVar
 }
 
 // addAdmin creates one more administrator with the fixture password, for the
@@ -271,6 +282,13 @@ func newAPIFixture(t *testing.T) *apiFixture {
 // newAPIFixtureIn is [newAPIFixture] with the given reporting time zone.
 func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	t.Helper()
+	return newAPIFixtureEnv(t, zone, nil)
+}
+
+// newAPIFixtureEnv is [newAPIFixtureIn] with extra configuration environment
+// variables (to pin runtime settings, ADR-0066 point 5).
+func newAPIFixtureEnv(t *testing.T, zone calendar.Zone, env map[string]string) *apiFixture {
+	t.Helper()
 	ctx := context.Background()
 	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "ledger.db"), store.Options{})
 	if err != nil {
@@ -306,6 +324,10 @@ func newAPIFixtureIn(t *testing.T, zone calendar.Zone) *apiFixture {
 	// double; the outlook's stays unset so its tests never reach it.
 	f.ratesDouble, f.job, f.metrics, f.rateDeps = newRatesRig(t, db, al, clock)
 	parts.rateCache = f.rateDeps
+	// The runtime settings routes (S1) run on the real settings service and
+	// store; the logging group is live as ledger serve binds it.
+	f.settings, f.logLevel = newSettingsRig(t, db, al, env)
+	parts.settings = f.settings
 	authn := httpapi.AuthenticatorFunc(func(r *http.Request) (authz.Principal, error) {
 		id := r.Header.Get("X-Test-User")
 		if id == "" {

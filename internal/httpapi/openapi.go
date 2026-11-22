@@ -116,6 +116,9 @@ type Deps struct {
 	// RateCache serves the exchange-rate routes (FX2c, ADR-0048); nil answers
 	// them with 503.
 	RateCache *RatesDeps
+	// Settings serves the runtime settings routes (task S1, ADR-0066); nil
+	// answers them with 503.
+	Settings SettingsService
 	// ConvertTimeout bounds the outlook's conversion phase (see
 	// [outlook.Service.ConvertTimeout]); zero means unbounded.
 	ConvertTimeout    time.Duration
@@ -173,6 +176,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerBankConnections(s, d.Banking)
 	registerMatching(s, d.Matching)
 	registerRates(s, d.RateCache, d.Now)
+	registerSettings(s, d.Settings)
 	registerOutlook(s, outlook.Service{
 		Months:      monthview.Service{Occurrences: d.Occurrences, Payments: d.Payments, Grace: d.Grace, Deferrals: plans},
 		Commitments: d.Commitments, Banks: d.Banks, Buckets: d.Organisation, Rates: d.Rates, ConvertTimeout: d.ConvertTimeout, Today: todayFn, Now: d.Now, BankStaleAfter: d.BankStaleAfter, Zone: d.Zone,

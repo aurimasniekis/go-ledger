@@ -175,6 +175,17 @@ This ADR decides which settings move into the database and the API, how they com
 - Live apply of the reporting zone is a redesign of `reporting.Service` and its consumers, not wiring. S3 is sized for it.
 - Not decided here: nothing. L7 keeps the review UI and the decision settings screens; X3 keeps the TypeSafe consent texts; X2b keeps the rule language and engine.
 
+## Implementation notes (S1)
+
+Choices of the S1 implementation where the text above left room:
+
+- **Both grants.** The generic routes are declared `settings:read` and `settings:write`, because a route has one declared access. A group of the `integrations` grant (`merchant_enrichment`, `pulse`) additionally needs `integrations:read` or `integrations:write`, checked in the handler, and the list shows it only to callers that hold it. Every member of those two groups is sensitive, so until S2 only reads matter. S2 may replace this with an "either grant" access rule when it adds declarative access.
+- **Flat member names.** Members keep their registry names as top-level members, dotted names flat (`refresh.interval`), so a validation error and a merge patch name the same thing as the configuration key.
+- **Lists and DELETE.** `GET /settings` and `GET /settings/deployment` return one page (`items`, `next_cursor` null): the sets are fixed. `DELETE` returns 200 with the group after the reset.
+- **Singleton groups only.** `/settings/{group}` serves singleton groups. Keyed objects (decision providers and tasks) are served at their own paths by S8 and are 404 here.
+- **Reserved codes.** `secret_unreadable` and `reclassification_required` exist in the error enumeration, the client and the OpenAPI document; S2 and S3 raise them.
+- **Deployment view.** Secrets, `*_file` paths and the Enable Banking application identifiers are shown as `set`/`unset` only.
+
 ## Implementation tasks
 
 One worker each, in go-ledger unless marked. "Sensitive" means point 19 applies.

@@ -3847,6 +3847,190 @@ paths:
                 $ref: "#/components/schemas/RatesRefreshRun"
         default:
           $ref: "#/components/responses/Error"
+  /settings:
+    get:
+      operationId: listSettings
+      x-ledger-access: settings:read
+      summary: List the runtime settings groups
+      description: |
+        The singleton runtime settings groups (ADR-0066) with their version,
+        when they were last written (null while nothing was stored), whether any
+        member is pinned by a configuration layer, and their apply state. Groups
+        of the `integrations` grant (merchant_enrichment, pulse) are listed only to
+        callers that also hold integrations:read. Always one page: the set is
+        fixed. Keyed objects (decision providers and tasks), bank applications,
+        consents and rules have routes of their own.
+      tags: [settings]
+      responses:
+        "200":
+          description: The groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SettingsGroupSummary"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+  /settings/deployment:
+    get:
+      operationId: getDeploymentSettings
+      x-ledger-access: settings:read
+      summary: Deployment settings (read-only)
+      description: |
+        The configuration-only keys of ADR-0066 point 2 (database, listeners,
+        timeouts, trusted proxies, log format, the key-encryption key and the
+        keys that name a secret file) with the configuration layer each value
+        comes from. They are never writable through the API. Secrets, secret-file
+        paths and application identifiers are shown as set or unset only. The
+        fixed policy constants (matching windows, outbox limits, refresh budget)
+        are code, not configuration, and are not listed.
+      tags: [settings]
+      responses:
+        "200":
+          description: The deployment settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DeploymentSetting"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+  /settings/{group}:
+    parameters:
+      - name: group
+        in: path
+        required: true
+        description: A singleton settings group name.
+        schema:
+          $ref: "#/components/schemas/SettingsGroupName"
+    get:
+      operationId: getSettingsGroup
+      x-ledger-access: settings:read
+      summary: Get a settings group
+      description: |
+        The effective values of the group, with the version (also in ETag),
+        the source of every member (default, api, or the configuration layer
+        flag, environment, dotenv, yaml or file), the pinned members and the
+        apply state. Precedence of a member's value, highest first: flags,
+        environment, .env file, YAML file, the value stored through this API,
+        the built-in default. A group always exists: until it is first written
+        it is synthesised with version 1. Secrets are never returned; a secret
+        member has read-only companions `<name>_set`, `<name>_set_at` and
+        `<name>_source`. Groups of the `integrations` grant also need
+        integrations:read. Unknown groups and keyed objects are 404.
+      tags: [settings]
+      responses:
+        "200":
+          description: The group.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsGroup"
+        "403":
+          description: The caller lacks the group's own grant (integrations:read for the integrations groups), besides the usual authorization refusals.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateSettingsGroup
+      x-ledger-access: settings:write
+      summary: Change members of a settings group
+      description: |
+        A JSON Merge Patch (RFC 7396, ADR-0015) naming members exactly as the
+        representation does (dotted names such as `refresh.interval` are flat
+        members). A value sets the member; null removes the stored value, so
+        the member falls back to configuration or the default. Needs the
+        version in If-Match or the body; the first write to a group that has
+        no stored row yet names version 1, and a concurrent first write loses
+        with 409 version_conflict. An empty patch, or one that changes
+        nothing, keeps the version and records nothing. The whole would-be
+        configuration is validated with the rules startup uses (400
+        validation_failed with one error per configuration key); the commit
+        and its audit entry settings.updated (group and member names, never
+        values) are one transaction. A member that a configuration layer sets
+        is pinned: 409 setting_pinned names the keys and layers, never a value.
+        Read-only members (version aside) are 400. Until the sign-in gate and
+        sealed secrets land (task S2), every sensitive member and every secret
+        is refused as not writable through the API yet (400), and so is the
+        reporting zone until task S3 (reclassification, code
+        reclassification_required). After the commit the group's component
+        is notified; a failure to apply does not roll the setting back and is
+        reported in apply_state. Groups of the `integrations` grant also need
+        integrations:write.
+      tags: [settings]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/SettingsPatch"
+      responses:
+        "200":
+          description: The group after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsGroup"
+        "409":
+          description: "Code `version_conflict` (stale version, with the current representation), `setting_pinned` (a named key is set by a configuration layer), `secret_unreadable` (a stored integration secret does not open with the current key; task S2) or `reclassification_required` (a zone change without reclassify: true; task S3)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: resetSettingsGroup
+      x-ledger-access: settings:write
+      summary: Reset a settings group to its defaults
+      description: |
+        Removes every stored member that no configuration layer pins, so each
+        falls back to configuration or the default (the destroy of a Terraform
+        settings resource). Stored values of pinned members are kept and apply
+        again when the pin goes away. Needs If-Match. A group without a stored
+        row changes nothing and keeps version 1. Audited as settings.reset
+        (group and member names). The same gates as PATCH apply to stored
+        sensitive members. The group stays: it always exists for the API.
+      tags: [settings]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The group after the reset.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsGroup"
+        default:
+          $ref: "#/components/responses/Error"
   /deferral-plans:
     get:
       operationId: listDeferralPlans
@@ -5768,6 +5952,8 @@ tags:
     description: Links between bank transactions and occurrences (allocations), with suggestions, confirmations, corrections, unmatching, reversal and the undo of a confirmation (unconfirm).
   - name: rates
     description: Cached exchange rates with provenance and freshness, and refreshing them on request (administrators).
+  - name: settings
+    description: "Runtime settings (ADR-0066): effective values with their source, the read-only deployment settings, and changing what no configuration layer pins (administrators)."
   - name: tokens
     description: API tokens (Authorization Bearer); your own, and everyone's for administrators.
 components:
@@ -7492,6 +7678,361 @@ components:
           additionalProperties:
             type: string
             maxLength: 256
+    SettingsGroupName:
+      type: string
+      enum: [reporting, banking, rates, merchant_enrichment, auth, oidc, pulse, mcp, logging, alerts]
+    SettingsApplyState:
+      type: object
+      required: [state]
+      description: |
+        Whether the group's values are in force: applied; failed (a component could not rebuild after the last write, the setting stays committed; code is a stable error code, never a value); restart_required (stored and valid, but no component applies the group live yet, so it takes effect at the next start).
+      properties:
+        state:
+          type: string
+          enum: [applied, failed, restart_required]
+        code:
+          type: string
+        at:
+          type: string
+          format: date-time
+    SettingsGroupSummary:
+      type: object
+      required: [group, grant, version, updated_at, pinned, apply_state]
+      properties:
+        group:
+          $ref: "#/components/schemas/SettingsGroupName"
+        grant:
+          type: string
+          enum: [settings, integrations]
+          description: The resource whose grant the group needs.
+        version:
+          $ref: "#/components/schemas/Version"
+        updated_at:
+          type: [string, "null"]
+          format: date-time
+        pinned:
+          type: boolean
+          description: Whether any member is set by a configuration layer.
+        apply_state:
+          $ref: "#/components/schemas/SettingsApplyState"
+    SettingsGroupMeta:
+      type: object
+      required: [version, updated_at, sources, pinned, apply_state]
+      properties:
+        version:
+          $ref: "#/components/schemas/Version"
+        updated_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the group was last written; null while it has no stored row.
+        sources:
+          type: object
+          description: For every member except secrets, where its effective value comes from.
+          additionalProperties:
+            type: string
+            enum: [default, api, captured, yaml, environment, dotenv, flag, file]
+        pinned:
+          type: array
+          description: The members a configuration layer sets; writes to them are 409 setting_pinned.
+          items:
+            type: string
+        apply_state:
+          $ref: "#/components/schemas/SettingsApplyState"
+    SettingsGroup:
+      description: One settings group; the schema depends on the group in the path.
+      oneOf:
+        - $ref: "#/components/schemas/SettingsReporting"
+        - $ref: "#/components/schemas/SettingsBanking"
+        - $ref: "#/components/schemas/SettingsRates"
+        - $ref: "#/components/schemas/SettingsMerchantEnrichment"
+        - $ref: "#/components/schemas/SettingsAuth"
+        - $ref: "#/components/schemas/SettingsOidc"
+        - $ref: "#/components/schemas/SettingsPulse"
+        - $ref: "#/components/schemas/SettingsMcp"
+        - $ref: "#/components/schemas/SettingsLogging"
+        - $ref: "#/components/schemas/SettingsAlerts"
+    SettingsPatch:
+      type: object
+      description: |
+        A merge patch of one group: members named as in the group's schema (see SettingsGroup), null to remove a stored value, and optionally version. Read-only members are refused.
+      properties:
+        version:
+          $ref: "#/components/schemas/Version"
+      additionalProperties: true
+    DeploymentSetting:
+      type: object
+      required: [key, source]
+      properties:
+        key:
+          type: string
+          description: The configuration key.
+        source:
+          type: string
+          enum: [default, yaml, environment, dotenv, flag, file]
+        value:
+          description: The effective value. Absent for secrets, secret-file paths and application identifiers.
+        set:
+          type: boolean
+          description: For a withheld value, whether it has one.
+    SettingsReporting:
+      description: |
+        Runtime settings group `reporting` (grant settings): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "timezone":
+              type: string
+              description: "Configuration key `reporting.timezone`. Changing the zone reclassifies dates: refused until task S3 adds the explicit reclassify rule."
+            "currency":
+              type: string
+              description: "Configuration key `reporting.currency`."
+    SettingsBanking:
+      description: |
+        Runtime settings group `banking` (grant settings): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "redirect_url":
+              type: string
+              description: "Configuration key `banking.redirect_url`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "consent_ttl":
+              type: string
+              description: "Configuration key `banking.consent_ttl`. A duration with a unit, such as 30s or 6h."
+            "stale_after":
+              type: string
+              description: "Configuration key `banking.stale_after`. A duration with a unit, such as 30s or 6h."
+            "refresh.enabled":
+              type: boolean
+              description: "Configuration key `banking.refresh.enabled`."
+            "refresh.interval":
+              type: string
+              description: "Configuration key `banking.refresh.interval`. A duration with a unit, such as 30s or 6h."
+            "refresh.request_cooldown":
+              type: string
+              description: "Configuration key `banking.refresh.request_cooldown`. A duration with a unit, such as 30s or 6h."
+            "refresh.max_backoff":
+              type: string
+              description: "Configuration key `banking.refresh.max_backoff`. A duration with a unit, such as 30s or 6h."
+            "enable_banking.base_url":
+              type: string
+              description: "Configuration key `banking.enable_banking.base_url`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+    SettingsRates:
+      description: |
+        Runtime settings group `rates` (grant settings): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "enabled":
+              type: boolean
+              description: "Configuration key `rates.enabled`."
+            "base_url":
+              type: string
+              description: "Configuration key `rates.base_url`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "source":
+              type: string
+              description: "Configuration key `rates.source`."
+            "refresh_interval":
+              type: string
+              description: "Configuration key `rates.refresh_interval`. A duration with a unit, such as 30s or 6h."
+            "stale_after":
+              type: string
+              description: "Configuration key `rates.stale_after`. A duration with a unit, such as 30s or 6h."
+            "timeout":
+              type: string
+              description: "Configuration key `rates.timeout`. A duration with a unit, such as 30s or 6h."
+    SettingsMerchantEnrichment:
+      description: |
+        Runtime settings group `merchant_enrichment` (grant integrations): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "enabled":
+              type: boolean
+              description: "Configuration key `merchants.enrichment.remote.enabled`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "url":
+              type: string
+              description: "Configuration key `merchants.enrichment.remote.url`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "country":
+              type: string
+              description: "Configuration key `merchants.enrichment.remote.country`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "timeout":
+              type: string
+              description: "Configuration key `merchants.enrichment.remote.timeout`. Sensitive: refused through the API until the sign-in gate lands (task S2). A duration with a unit, such as 30s or 6h."
+            "attribution":
+              type: string
+              description: "Configuration key `merchants.enrichment.remote.attribution`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "store_logo_ref":
+              type: boolean
+              description: "Configuration key `merchants.enrichment.remote.store_logo_ref`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "retention":
+              type: string
+              description: "Configuration key `merchants.enrichment.remote.retention`. Sensitive: refused through the API until the sign-in gate lands (task S2). A duration with a unit, such as 30s or 6h."
+    SettingsAuth:
+      description: |
+        Runtime settings group `auth` (grant settings): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "password.enabled":
+              type: boolean
+              description: "Configuration key `auth.password.enabled`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "password.min_length":
+              type: integer
+              description: "Configuration key `auth.password.min_length`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "session.idle_timeout":
+              type: string
+              description: "Configuration key `auth.session.idle_timeout`. Sensitive: refused through the API until the sign-in gate lands (task S2). A duration with a unit, such as 30s or 6h."
+            "session.absolute_timeout":
+              type: string
+              description: "Configuration key `auth.session.absolute_timeout`. Sensitive: refused through the API until the sign-in gate lands (task S2). A duration with a unit, such as 30s or 6h."
+            "session.reauth_window":
+              type: string
+              description: "Configuration key `auth.session.reauth_window`. Sensitive: refused through the API until the sign-in gate lands (task S2). A duration with a unit, such as 30s or 6h."
+            "sign_in.account_max_failures":
+              type: integer
+              description: "Configuration key `auth.sign_in.account_max_failures`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "sign_in.address_max_failures":
+              type: integer
+              description: "Configuration key `auth.sign_in.address_max_failures`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "sign_in.window":
+              type: string
+              description: "Configuration key `auth.sign_in.window`. Sensitive: refused through the API until the sign-in gate lands (task S2). A duration with a unit, such as 30s or 6h."
+            "sign_in.device_cookie_ttl":
+              type: string
+              description: "Configuration key `auth.sign_in.device_cookie_ttl`. Sensitive: refused through the API until the sign-in gate lands (task S2). A duration with a unit, such as 30s or 6h."
+            "require_2fa":
+              type: boolean
+              description: "Configuration key `auth.require_2fa`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+    SettingsOidc:
+      description: |
+        Runtime settings group `oidc` (grant settings): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "enabled":
+              type: boolean
+              description: "Configuration key `auth.oidc.enabled`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "name":
+              type: string
+              description: "Configuration key `auth.oidc.name`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "issuer":
+              type: string
+              description: "Configuration key `auth.oidc.issuer`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "client_id":
+              type: string
+              description: "Configuration key `auth.oidc.client_id`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            client_secret:
+              type: string
+              description: "Configuration key `auth.oidc.client_secret`. Sensitive: refused through the API until the sign-in gate lands (task S2). Write-only secret: never returned."
+              writeOnly: true
+            client_secret_set:
+              type: boolean
+              readOnly: true
+              description: Whether a value exists, from any source.
+            client_secret_set_at:
+              type: [string, "null"]
+              format: date-time
+              readOnly: true
+              description: When a stored value was written; null until sealed secrets exist (task S2).
+            client_secret_source:
+              type: string
+              enum: [api, environment, dotenv, file]
+              readOnly: true
+              description: Where the value comes from; absent when none is set.
+            "redirect_url":
+              type: string
+              description: "Configuration key `auth.oidc.redirect_url`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "scopes":
+              type: array
+              items:
+                type: string
+              description: "Configuration key `auth.oidc.scopes`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "require_2fa":
+              type: boolean
+              description: "Configuration key `auth.oidc.require_2fa`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "clock_skew":
+              type: string
+              description: "Configuration key `auth.oidc.clock_skew`. Sensitive: refused through the API until the sign-in gate lands (task S2). A duration with a unit, such as 30s or 6h."
+            "provisioning.enabled":
+              type: boolean
+              description: "Configuration key `auth.oidc.provisioning.enabled`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "provisioning.role":
+              type: string
+              enum: ["administrator", "read-only"]
+              description: "Configuration key `auth.oidc.provisioning.role`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+    SettingsPulse:
+      description: |
+        Runtime settings group `pulse` (grant integrations): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "enabled":
+              type: boolean
+              description: "Configuration key `events.pulse.enabled`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "url":
+              type: string
+              description: "Configuration key `events.pulse.url`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "source":
+              type: string
+              description: "Configuration key `events.pulse.source`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "name":
+              type: string
+              description: "Configuration key `events.pulse.name`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+    SettingsMcp:
+      description: |
+        Runtime settings group `mcp` (grant settings): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "enabled":
+              type: boolean
+              description: "Configuration key `mcp.enabled`."
+            "requests_per_minute":
+              type: integer
+              description: "Configuration key `mcp.requests_per_minute`."
+            "burst":
+              type: integer
+              description: "Configuration key `mcp.burst`."
+            "max_request_bytes":
+              type: integer
+              description: "Configuration key `mcp.max_request_bytes`."
+    SettingsLogging:
+      description: |
+        Runtime settings group `logging` (grant settings): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "level":
+              type: string
+              enum: ["debug", "info", "warn", "error"]
+              description: "Configuration key `log.level`."
+    SettingsAlerts:
+      description: |
+        Runtime settings group `alerts` (grant settings): the effective value of every member as a top-level member, then the read-only members below. Members that are not settings are read-only.
+      allOf:
+        - $ref: "#/components/schemas/SettingsGroupMeta"
+        - type: object
+          properties:
+            "channels":
+              type: array
+              items:
+                type: string
+              description: "Configuration key `alerts.channels`. Sensitive: refused through the API until the sign-in gate lands (task S2)."
+            "consent_horizon_days":
+              type: integer
+              description: "Configuration key `alerts.consent_horizon_days`."
+            "interval":
+              type: string
+              description: "Configuration key `alerts.interval`. A duration with a unit, such as 30s or 6h."
     CachedRate:
       type: object
       description: One cached exchange rate with its provenance, freshness and revision (FX2c, ADR-0048). One unit of base is worth value units of quote. The fields shared with ExchangeRate have the same meaning.
@@ -8329,6 +8870,9 @@ components:
           description: Stable machine-readable code. The set only grows.
           enum:
             - validation_failed
+            - setting_pinned
+            - secret_unreadable
+            - reclassification_required
             - unauthenticated
             - forbidden
             - not_found

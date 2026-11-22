@@ -57,6 +57,12 @@ const (
 	// those routes need organisation:write as well (and merchants:write for a
 	// merchant). Administrators only, like the other model and bank facing grants.
 	ResourceDecisions Resource = "decisions"
+	// ResourceIntegrations is everything that sends data out of Ledger or holds
+	// an integration secret (ADR-0066 point 18): merchant enrichment and Pulse
+	// publishing settings today, later bank applications, decision providers,
+	// tasks and consents. Administrators only. Settings routes of these groups
+	// need settings:read or settings:write as well as this grant.
+	ResourceIntegrations Resource = "integrations"
 	// ResourceMerchants is the merchant identity of bank transactions (task E1,
 	// ADR-0051): reading a transaction's merchant, its enrichment and the
 	// decision about it, and confirming, correcting, rejecting or clearing that
@@ -74,6 +80,15 @@ const (
 	// (decision D-FX-R, task FX4); converted totals in the outlook and month
 	// views do not need this grant.
 	ResourceRates Resource = "rates"
+	// ResourceRules is the matching rules (ADR-0066 point 8; the rules API is
+	// task X2b). Administrators only: an expression holds fragments of bank
+	// text, which decision D29 keeps from read-only users.
+	ResourceRules Resource = "rules"
+	// ResourceSettings is the runtime settings of the application, planning,
+	// authentication and operational groups (ADR-0066): reading them with the
+	// source of every value, and changing the ones no configuration layer pins.
+	// Administrators only. Secrets are never readable through it.
+	ResourceSettings Resource = "settings"
 	// ResourceTokens is every user's API tokens: listing and revoking them
 	// (task A4). A user manages their own tokens with a session, whatever
 	// their role; this grant is for administering everyone's.
@@ -99,9 +114,12 @@ var vocabulary = []ResourceInfo{
 	{Name: ResourceCommitments, Description: "Recurring commitment definitions: kind, amount, schedule, dates, priority and notes.", Actions: []Action{ActionRead, ActionWrite}},
 	{Name: ResourceConnections, Description: "Bank connections: connect, reconnect, refresh, disconnect, and read accounts, balances and freshness.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceDecisions, Description: "Model suggestions and in-app alerts: read them with their provenance; accept, correct, reject or revert a suggestion; dismiss an alert. Accepting or correcting also needs organisation:write.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
+	{Name: ResourceIntegrations, Description: "Integration settings and secrets: merchant enrichment and Pulse publishing today; bank applications, decision providers, tasks and consents later. Secrets are write-only.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceMerchants, Description: "Merchant identity of bank transactions: the enrichment, and confirming, correcting or rejecting it.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceOrganisation, Description: "Categories, labels and buckets, and assigning them to transactions, commitments, accounts and merchants.", Actions: []Action{ActionRead, ActionWrite}},
 	{Name: ResourceRates, Description: "Cached exchange rates with provider, source, rate date and freshness; write asks the rate provider for fresh rates.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
+	{Name: ResourceRules, Description: "Matching rules: expressions that may hold bank-text fragments, so administrators only.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
+	{Name: ResourceSettings, Description: "Runtime settings (reporting, banking, rates, sign-in, MCP, logging, alerts and more): read them with the source of each value, and change those no configuration layer pins.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceTokens, Description: "Every user's API tokens: list them and revoke them. Never the tokens themselves.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceUsers, Description: "User accounts, their roles and whether they are disabled.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 }
