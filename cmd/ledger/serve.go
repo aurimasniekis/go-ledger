@@ -91,6 +91,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// through the redactor, which knows the configured secrets.
 	eb := cfg.Banking.EnableBanking
 	redact.Default().Add(cfg.KEK.Value, eb.App.PrivateKey, eb.Developer.PrivateKey, eb.App.AppID, eb.Developer.AppID, cfg.Auth.OIDC.ClientSecret)
+	for _, p := range decisionProviderNames {
+		redact.Default().Add(cfg.Decisions.APIKey(p))
+	}
 	log, err := logging.New(stderr, cfg.Log.Level, cfg.Log.Format, redact.Default())
 	if err != nil {
 		say(stderr, "ledger: "+err.Error())
@@ -288,6 +291,13 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		return 1
 	}
 	parts.rates = rateSvc
+	// Decision providers (L1, ADR-0060): nothing runs them yet (L6), but an
+	// enabled task must be servable, so a misconfiguration stops startup.
+	if _, err := buildDecisions(cfg.Decisions, db, auditLog, time.Now); err != nil {
+		log.Error("invalid decision-provider settings", "error", err.Error())
+		_ = ln.Close()
+		return 1
+	}
 	// The rates routes (FX2c, ADR-0048) list the cache and trigger a refresh. The
 	// provider is optional, so its state is reported (status route, metrics)
 	// and never gates readiness.
