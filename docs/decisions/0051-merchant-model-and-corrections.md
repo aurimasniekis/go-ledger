@@ -38,9 +38,11 @@ This task builds the model and the person's corrections so that any source, or n
    ADR-0020), and both merchant tables are keyed by its identifier and never touched by the import path. Tests re-import
    the same data and book a pending item in place and check the decisions stand. A booking can also arrive under a new
    key: the refresh then marks the pending row `superseded_by` the booked one, and a decision made about the pending row
-   must not be lost. When the booked transaction has no decision of its own, resolution inherits the nearest decision
-   found along the `superseded_by` chain (bounded depth) and marks it `review_inherited`; a decision on the booking
-   replaces it (and clearing that decision makes the inherited one apply again). Nothing is copied or rewritten, so
+   must not be lost. When the booked transaction has no decision of its own, resolution inherits the most recent decision
+   found along the `superseded_by` chain (bounded depth; a tie goes to the lower transaction ID) and marks it
+   `review_inherited`; a decision on the booking replaces it (and clearing that decision makes the inherited one apply
+   again). The inherited decision is cleared on the pending transaction only: clearing it on the booking is refused
+   (409 `review_inherited`, which names the pending transaction). Nothing is copied or rewritten, so
    nothing can go stale. An inherited confirmation is checked against the booking's own enrichment like any other
    (decision 7). Corrections and rejections carry over unchanged.
 6. **What is shown.** `Resolve` returns a name and logo only when the person confirmed or corrected it, or an unreviewed
@@ -59,7 +61,7 @@ This task builds the model and the person's corrections so that any source, or n
    from bank text, decision D13): `GET /api/v1/transactions/{id}/merchant`, `PUT .../merchant/review` with
    `{decision, name?}` and `DELETE .../merchant/review` (take the decision back). Decisions are last-write-wins, with no
    If-Match: one person, one decision per transaction, and the audit log keeps the history. Audit actions
-   `merchant.confirmed`, `merchant.corrected`, `merchant.rejected`, `merchant.review_cleared` carry the earlier decision
+   `merchant.confirmed`, `merchant.corrected`, `merchant.rejected`, `merchant.review_cleared` carry the decision they replace (none, inherited, confirmed, corrected or rejected)
    and the channel, never a name (free text).
 
 ## What remains (D15 and follow-ups)

@@ -114,13 +114,25 @@ func getReview(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (*merc
 // maxSupersedeDepth bounds the walk over a chain of superseded rows.
 const maxSupersedeDepth = 8
 
+// newerReview orders decisions for inheritance: the later decision wins, and
+// a tie goes to the lower transaction ID, so the answer never depends on row
+// order.
+func newerReview(a, b *merchants.Review) bool {
+	if !a.DecidedAt.Equal(b.DecidedAt) {
+		return a.DecidedAt.After(b.DecidedAt)
+	}
+	return a.TransactionID < b.TransactionID
+}
+
 // inheritedReview finds the decision a pending transaction left behind when
 // its booking arrived under a new key: bankfacts links the old row to the new
 // one with superseded_by, and the person's decision was made about the old
-// row. It follows the chain back (nearest first) and returns the first
-// decision found, or nil.
+// row. It walks the chain back (bounded depth, each row once) and returns the
+// most recent decision along it, or nil. A booking can have several superseded
+// rows, so the choice is by decision time, not by walk order.
 func inheritedReview(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (*merchants.Review, error) {
 	seen := map[banking.TransactionID]bool{id: true}
+	var best *merchants.Review
 	frontier := []banking.TransactionID{id}
 	for depth := 0; depth < maxSupersedeDepth && len(frontier) > 0; depth++ {
 		var next []banking.TransactionID
@@ -153,15 +165,41 @@ func inheritedReview(ctx context.Context, tx *sql.Tx, id banking.TransactionID) 
 				if err != nil {
 					return nil, err
 				}
-				if r != nil {
-					return r, nil
+				if r != nil && (best == nil || newerReview(r, best)) {
+					best = r
 				}
 				next = append(next, p)
 			}
 		}
 		frontier = next
 	}
-	return nil, nil
+	return best, nil
+}
+
+// Audit values of the decision a change replaces (the from detail).
+const (
+	fromNone      = "none"
+	fromInherited = "inherited"
+)
+
+// decisionBefore names the decision a change replaces: the transaction's own
+// decision, else fromInherited when one is inherited, else fromNone.
+func decisionBefore(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (string, error) {
+	prev, err := getReview(ctx, tx, id)
+	if err != nil {
+		return "", err
+	}
+	if prev != nil {
+		return string(prev.Decision), nil
+	}
+	inherited, err := inheritedReview(ctx, tx, id)
+	if err != nil {
+		return "", err
+	}
+	if inherited != nil {
+		return fromInherited, nil
+	}
+	return fromNone, nil
 }
 
 func (s *Store) resolveTx(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (merchants.Merchant, error) {
@@ -273,13 +311,6 @@ func (s *Store) event(ctx context.Context, tx *sql.Tx, a audit.Action, actor aud
 		Details: map[string]string{"from": from, "via": string(via)}})
 }
 
-func fromOf(r *merchants.Review) string {
-	if r == nil {
-		return "none"
-	}
-	return string(r.Decision)
-}
-
 // Review records the person's decision about a transaction's merchant,
 // replacing an earlier one, and returns the merchant as it resolves now. A
 // confirmation needs an identified merchant and keeps the name it confirmed
@@ -308,7 +339,7 @@ func (s *Store) Review(ctx context.Context, actor audit.Actor, id banking.Transa
 			}
 			name = e.Name
 		}
-		prev, err := getReview(ctx, tx, id)
+		from, err := decisionBefore(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -324,7 +355,7 @@ func (s *Store) Review(ctx context.Context, actor audit.Actor, id banking.Transa
 			string(id), string(req.Decision), name, string(kind), user, string(via), store.Timestamp{Time: at}); err != nil {
 			return err
 		}
-		if err := s.event(ctx, tx, reviewActions[req.Decision], actor, id, fromOf(prev), at); err != nil {
+		if err := s.event(ctx, tx, reviewActions[req.Decision], actor, id, from, at); err != nil {
 			return err
 		}
 		m, err = s.resolveTx(ctx, tx, id)
@@ -335,7 +366,8 @@ func (s *Store) Review(ctx context.Context, actor audit.Actor, id banking.Transa
 
 // ClearReview removes the person's decision, so the merchant resolves from the
 // enrichment alone again. It returns [merchants.ErrNoReview] when there is
-// none.
+// none, and [merchants.ErrReviewInherited] when the only decision is inherited
+// from a superseded pending transaction: that one is cleared instead.
 func (s *Store) ClearReview(ctx context.Context, actor audit.Actor, id banking.TransactionID) (merchants.Merchant, error) {
 	at := s.now().UTC()
 	var m merchants.Merchant
@@ -348,12 +380,19 @@ func (s *Store) ClearReview(ctx context.Context, actor audit.Actor, id banking.T
 			return err
 		}
 		if prev == nil {
+			inherited, err := inheritedReview(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if inherited != nil {
+				return merchants.ErrReviewInherited
+			}
 			return merchants.ErrNoReview
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM merchant_reviews WHERE transaction_id = ?", string(id)); err != nil {
 			return err
 		}
-		if err := s.event(ctx, tx, audit.MerchantReviewCleared, actor, id, fromOf(prev), at); err != nil {
+		if err := s.event(ctx, tx, audit.MerchantReviewCleared, actor, id, string(prev.Decision), at); err != nil {
 			return err
 		}
 		m, err = s.resolveTx(ctx, tx, id)
