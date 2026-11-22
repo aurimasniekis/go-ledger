@@ -2,9 +2,10 @@ import { QueryClient } from '@tanstack/react-query'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { setCsrfToken } from '@/lib/api'
+import { ApiError, setCsrfToken } from '@/lib/api'
 import { ALL_GRANTS, fail, installApi, none, ok, renderApp, signedIn } from '@/test/fake-api'
 import { def } from './fixtures'
+import { problemText } from './organisation-page'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -29,6 +30,17 @@ function routes(extra: Record<string, Parameters<typeof installApi>[0][string]> 
 }
 
 describe('organisation page', () => {
+  it('points merchants to their own page and no longer says they cannot be organised', async () => {
+    installApi(routes())
+    renderApp('/organisation')
+    expect(await screen.findByText(/organised on their own page \(\/merchants\/<id>\).*merchants:read and merchants:write/)).toBeInTheDocument()
+    expect(screen.queryByText(/cannot be organised yet/)).toBeNull()
+  })
+
+  it('words a refused merchant assignment (409 merchant_archived)', () => {
+    expect(problemText(new ApiError(409, { code: 'merchant_archived', message: 'x' }))).toMatch(/archived or merged.*Nothing was changed/)
+  })
+
   it('lists categories as a two-level tree, labels and buckets, asking the server not to list archived ones', async () => {
     const calls = installApi(routes())
     renderApp('/organisation')

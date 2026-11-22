@@ -194,8 +194,22 @@ describe('transaction merchant', () => {
 
 describe('organising the merchant of a transaction', () => {
   it('offers Organise for the merchant record only when a name is shown, keyed by the record id', async () => {
-    panel({ ['GET ' + url]: ok(txMerchant({ state: 'corrected', fallback: false, name: 'Lidl', merchant_id: 'L00-id' })) })
+    panel({ ['GET ' + url]: ok(txMerchant({ state: 'corrected', fallback: false, name: 'Lidl', merchant_id: 'L00-id' })), ['GET /api/v1/merchants/L00-id']: ok(merchant('L00', 'Lidl', { id: 'L00-id' })) })
     expect(await screen.findByRole('button', { name: 'Organise the merchant Lidl' })).toBeInTheDocument()
+  })
+
+  it('locks Organise while the merchant record is archived, and shows no control for a merged one', async () => {
+    panel({ ['GET ' + url]: ok(txMerchant({ state: 'corrected', fallback: false, name: 'Lidl', merchant_id: 'L00-id' })), ['GET /api/v1/merchants/L00-id']: ok(merchant('L00', 'Lidl', { id: 'L00-id', archived: true, archived_at: '2026-11-20T10:00:00Z' })) })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Organise the merchant Lidl' }))
+    expect(await screen.findByText(/This merchant is archived, so nothing new can be put on it/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Save/ })).toBeNull()
+  })
+
+  it('shows no Organise control for a merged merchant', async () => {
+    panel({ ['GET ' + url]: ok(txMerchant({ state: 'corrected', fallback: false, name: 'Lidl', merchant_id: 'L00-id' })), ['GET /api/v1/merchants/L00-id']: ok(merchant('L00', 'Lidl', { id: 'L00-id', archived: true, merged_into: 'X-id' })) })
+    expect(await screen.findByTestId('merchant-merged')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Organise/ })).toBeNull()
   })
 
   it('offers nothing when no name is shown, even if a record is known', async () => {
