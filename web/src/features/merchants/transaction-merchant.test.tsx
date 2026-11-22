@@ -156,6 +156,15 @@ describe('transaction merchant', () => {
     expect(screen.queryByRole('button', { name: 'Take my decision back' })).toBeNull()
   })
 
+  it('keeps Organise locked, and says the record could not be read, when the merchant record fails to load', async () => {
+    panel({ ['GET ' + url]: ok(txMerchant({ state: 'corrected', fallback: false, name: 'Lidl', merchant_id: 'L00-id' })), ['GET /api/v1/merchants/L00-id']: fail(404, 'not_found', 'no such merchant') })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Organise the merchant Lidl' }))
+    expect(await screen.findByText(/could not read the merchant record/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Checking whether this merchant is archived/)).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Save/ })).toBeNull()
+  })
+
   it('offers no change without merchants:write', async () => {
     panel({ ['GET ' + url]: ok(txMerchant()) }, ['merchants:read'])
     await screen.findByTestId('merchant-name')

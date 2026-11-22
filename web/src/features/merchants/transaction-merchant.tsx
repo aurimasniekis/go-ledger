@@ -70,7 +70,7 @@ export function MerchantPanel({ transactionId, canWrite }: { transactionId: stri
 function MerchantOrganise({ merchantId, name }: { merchantId: string; name: string | null }) {
   const rec = useMerchant(merchantId)
   if (rec.data?.merged_into) return <p className="text-xs text-muted-foreground" data-testid="merchant-merged">This merchant was merged into another, so its category and labels moved there.</p>
-  const locked = rec.data?.archived ? 'This merchant is archived, so nothing new can be put on it. Unarchive it to change its category and labels.' : rec.data ? undefined : 'Checking whether this merchant is archived…'
+  const locked = rec.isError ? 'Could not read the merchant record, so its category and labels stay locked until it loads.' : rec.data?.archived ? 'This merchant is archived, so nothing new can be put on it. Unarchive it to change its category and labels.' : rec.data ? undefined : 'Checking whether this merchant is archived…'
   return <OrganiseDisclosure objectType="merchant" objectId={merchantId} subject={`the merchant ${name}`} locked={locked} />
 }
 
