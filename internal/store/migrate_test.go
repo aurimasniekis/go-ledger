@@ -250,6 +250,28 @@ func TestConcurrentOpenMigratesOnce(t *testing.T) {
 	}
 }
 
+// TestPreMigrationBackupNameCollision covers two openers that read the same
+// schema version and build the same backup name (same clock reading): the
+// second must pick a free name, not fail Open.
+func TestPreMigrationBackupNameCollision(t *testing.T) {
+	path := tempPath(t)
+	openTest(t, path, Options{Migrations: exampleSet(t, 1)})
+	conn, err := rawDB(t, path).Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	at := time.Date(2026, 1, 2, 3, 4, 5, 6, time.UTC)
+	for range 3 {
+		if err := backupBeforeMigrate(context.Background(), conn, path, 1, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if b := backups(t, path); len(b) != 3 {
+		t.Fatalf("backups = %v, want 3 distinct files", b)
+	}
+}
+
 func backups(t *testing.T, path string) []string {
 	t.Helper()
 	m, err := filepath.Glob(path + ".pre-v*.bak")
