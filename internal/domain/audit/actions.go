@@ -245,6 +245,8 @@ var Definitions = map[Action][]Field{
 	DeferralPlanUndone:           deferralFields(),
 	DeferralAdjustmentAdded:      deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
 	DeferralAdjustmentRemoved:    deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
+	DeferralAdjustmentPaid:       deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
+	DeferralAdjustmentUnpaid:     deferralFields(f("adjustment_id"), f("kind", "fee", "interest", "other")),
 
 	BankConnectionStarted:          {f("provider"), f("application")},
 	BankConnectionReconnectStarted: {f("provider"), f("application")},

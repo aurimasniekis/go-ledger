@@ -129,3 +129,76 @@ func TestPlannedMonthAndTotals(t *testing.T) {
 		t.Errorf("no adjustments: %s", got)
 	}
 }
+
+func TestMissedIsDerivedFromDateAndWhatIsStillOwed(t *testing.T) {
+	o := occ() // due 2026-10-15, 50.00 EUR
+	plan := func(planned string) deferrals.Plan {
+		return deferrals.Plan{ID: "p", OccurrenceID: o.ID, PlannedDate: d(planned), Type: deferrals.TypePersonal}
+	}
+	today := d("2026-11-20")
+	cases := []struct {
+		name string
+		p    deferrals.Plan
+		st   payments.State
+		want bool
+	}{
+		{"date passed, still owed", plan("2026-11-19"), state(o, "", today), true},
+		{"partly paid, rest still owed", plan("2026-11-19"), state(o, "10.00", today), true},
+		{"date is today: not missed yet", plan("2026-11-20"), state(o, "", today), false},
+		{"date ahead (revised later)", plan("2026-12-01"), state(o, "", today), false},
+		{"paid clears it", plan("2026-11-19"), state(o, "50.00", today), false},
+	}
+	for _, c := range cases {
+		if got := c.p.Missed(c.st, today); got != c.want {
+			t.Errorf("%s: Missed = %v, want %v", c.name, got, c.want)
+		}
+	}
+	// The due-day move probe: due day 2, plan 2026-10-20, then the due day is
+	// moved to the 28th. On 2026-10-25 the plan date has passed but the
+	// occurrence is not overdue, so the plan is not missed; once it is overdue
+	// (and the plan date is past) it is.
+	moved := occ()
+	moved.DueDate = d("2026-10-28")
+	probe := deferrals.Plan{ID: "p", OccurrenceID: moved.ID, PlannedDate: d("2026-10-20"), Type: deferrals.TypePersonal}
+	if probe.Missed(state(moved, "", d("2026-10-25")), d("2026-10-25")) {
+		t.Error("the occurrence is not overdue yet (due day moved to the 28th): not missed")
+	}
+	if !probe.Missed(state(moved, "", d("2026-10-29")), d("2026-10-29")) {
+		t.Error("overdue and past the plan date: missed")
+	}
+	// D-DF-b 2a: a fee still planned after the plan date makes the plan missed
+	// for the fee, even when the principal is paid; paying or removing it clears it.
+	withFee := plan("2026-11-19")
+	withFee.Adjustments = []deferrals.Adjustment{{ID: "a", Kind: deferrals.AdjustmentFee, Amount: money.MustParse("3.00", "EUR")}}
+	if r := withFee.MissedReason(state(o, "50.00", today), today); r != deferrals.MissedFee || !withFee.Missed(state(o, "50.00", today), today) {
+		t.Errorf("principal paid, fee planned: reason %q, want fee", r)
+	}
+	if r := withFee.MissedReason(state(o, "", today), today); r != deferrals.MissedPrincipal {
+		t.Errorf("principal and fee owed: reason %q, want principal first", r)
+	}
+	if r := withFee.MissedReason(state(o, "50.00", d("2026-11-19")), d("2026-11-19")); r != "" {
+		t.Errorf("fee on the plan date: reason %q, want none", r)
+	}
+	paidAt := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	withFee.Adjustments[0].PaidAt = &paidAt
+	if r := withFee.MissedReason(state(o, "50.00", today), today); r != "" {
+		t.Errorf("fee marked paid: reason %q, want none", r)
+	}
+	removedFee := plan("2026-11-19")
+	rmAt := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	removedFee.Adjustments = []deferrals.Adjustment{{ID: "a", Kind: deferrals.AdjustmentFee, Amount: money.MustParse("3.00", "EUR"), RemovedAt: &rmAt}}
+	if r := removedFee.MissedReason(state(o, "50.00", today), today); r != "" {
+		t.Errorf("fee removed: reason %q, want none", r)
+	}
+	undone := plan("2026-11-19")
+	at := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	undone.UndoneAt = &at
+	if undone.Missed(state(o, "", today), today) {
+		t.Error("an undone plan is never missed")
+	}
+	cancelled := state(o, "", today)
+	cancelled.Status = payments.StatusCancelled
+	if plan("2026-11-19").Missed(cancelled, today) {
+		t.Error("a cancelled occurrence owes nothing, so its plan is not missed")
+	}
+}

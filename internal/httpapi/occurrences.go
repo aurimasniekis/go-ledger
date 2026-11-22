@@ -87,8 +87,9 @@ type monthTotalsJSON struct {
 	OverdueCount         int            `json:"overdue_count"`
 	UnconvertedEvidenceN int            `json:"unconverted_evidence_count"`
 	// Planned is what is planned to be paid this month (DF1, ADR-0050):
-	// outstanding - deferred_out + carried_in + adjustments. Each
-	// outstanding amount is planned in exactly one month.
+	// outstanding - deferred_out + carried_in + adjustments (fees still
+	// planned: neither removed nor marked paid, whether or not the principal is
+	// paid). Each outstanding amount is planned in exactly one month.
 	Planned     money.Money `json:"planned"`
 	DeferredOut money.Money `json:"deferred_out"`
 	CarriedIn   money.Money `json:"carried_in"`

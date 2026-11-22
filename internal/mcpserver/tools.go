@@ -158,7 +158,7 @@ func coreTools() []Tool {
 		{
 			Name: "get_month_summary", Title: "Get the monthly view", Method: "GET", Path: "/occurrences/summary",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.",
+			Description: "The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed and missed_reason (plan date passed: principal still owed, or a fee still planned). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.",
 			Schema:      object(map[string]any{"month": monthArg("The reporting month, such as 2026-11.")}, "month"),
 		},
 		{
@@ -316,7 +316,7 @@ func deferralTools() []Tool {
 		{
 			Name: "list_deferral_plans", Title: "List deferral plans", Method: "GET", Path: "/deferral-plans",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees, the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). Filters combine; a repeated filter accepts any of its values.",
+			Description: "List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees (each with its paid marker), the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). missed is true when the plan's date has passed while the occurrence is overdue and still owes something (missed_reason principal) or while a recorded fee is still planned, even when the principal is paid (missed_reason fee); it is derived when read, is not payment state and clears when the occurrence is paid and every fee is paid or removed, or the plan is revised or undone. Filters combine; a repeated filter accepts any of its values.",
 			Schema: object(pagingArgs(map[string]any{
 				"occurrence_id": map[string]any{"type": "array", "items": idArg("occurrence"), "description": "Only plans of these occurrences."},
 				"commitment_id": map[string]any{"type": "array", "items": idArg("commitment"), "description": "Only plans of these commitments' occurrences."},
@@ -327,13 +327,13 @@ func deferralTools() []Tool {
 		{
 			Name: "get_deferral_plan", Title: "Get a deferral plan", Method: "GET", Path: "/deferral-plans/{id}",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "Get one deferral plan, including its version (needed to revise or undo it) and its adjustments.",
+			Description: "Get one deferral plan, including its version (needed to revise or undo it), its adjustments with their paid markers, and missed and missed_reason (plan date passed: principal still owed, or a fee still planned).",
 			Schema:      object(map[string]any{"id": idArg("deferral plan")}, "id"),
 		},
 		{
 			Name: "list_deferral_plan_history", Title: "List a deferral plan's history", Method: "GET", Path: "/deferral-plans/{id}/history",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "Every change of a deferral plan, oldest first: created, revised, adjustments added or removed, undone, each with the type and planned date after it, who made it and how, and the reason recorded with it.",
+			Description: "Every change of a deferral plan, oldest first: created, revised, adjustments added, removed, marked paid or unpaid, undone, each with the type and planned date after it, who made it and how, and the reason recorded with it.",
 			Schema:      object(pagingArgs(map[string]any{"id": idArg("deferral plan")}), "id"),
 		},
 		{
@@ -362,13 +362,13 @@ func deferralTools() []Tool {
 		{
 			Name: "undo_deferral_plan", Title: "Undo a deferral plan", Method: "POST", Path: "/deferral-plans/{id}/undo",
 			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindDestructive,
-			Description: "End an active plan: the occurrence's outstanding amount is planned in its own month again. Nothing about the occurrence or its payments changes; the plan is kept as history and cannot be revised afterwards (a new plan can be made). Destructive; confirm with the person first.",
+			Description: "End an active plan: the occurrence's outstanding amount is planned in its own month again. Refused while a fee is still planned (deferral_adjustments_unpaid): mark it paid or remove it first. Nothing about the occurrence or its payments changes; the plan is kept as history and cannot be revised afterwards (a new plan can be made). Destructive; confirm with the person first.",
 			Schema:      object(map[string]any{"id": idArg("deferral plan"), "version": versionArg("deferral plan"), "reason": reason}, "id", "version"),
 		},
 		{
 			Name: "add_deferral_adjustment", Title: "Record a fee on a deferral plan", Method: "POST", Path: "/deferral-plans/{id}/adjustments",
 			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindWrite,
-			Description: "Record an explicit fee, interest or other charge the person states for an active plan, in the plan's currency. It adds to the planned total of the plan's month while the occurrence still owes something; it never changes the occurrence's amount. Never infer a fee. Not idempotent: calling it twice records two charges.",
+			Description: "Record an explicit fee, interest or other charge the person states for an active plan, in the plan's currency. It adds to the planned total of the plan's month, under its own currency, and stays planned until it is marked paid (mark_deferral_adjustment_paid) or removed, even after the occurrence's principal is paid; it never changes the occurrence's amount and is never payment evidence for it. Never infer a fee. Not idempotent: calling it twice records two charges.",
 			Schema: object(map[string]any{
 				"id":      idArg("deferral plan"),
 				"version": versionArg("deferral plan"),
@@ -381,6 +381,26 @@ func deferralTools() []Tool {
 			Name: "remove_deferral_adjustment", Title: "Remove a fee from a deferral plan", Method: "DELETE", Path: "/deferral-plans/{id}/adjustments/{adjustment_id}",
 			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindDestructive,
 			Description: "Remove an adjustment of an active plan; it is kept as history and no longer counts. Destructive; confirm with the person first.",
+			Schema: object(map[string]any{
+				"id":            idArg("deferral plan"),
+				"adjustment_id": idArg("adjustment"),
+				"version":       versionArg("deferral plan"),
+			}, "id", "adjustment_id", "version"),
+		},
+		{
+			Name: "mark_deferral_adjustment_paid", Title: "Mark a deferral plan fee paid", Method: "POST", Path: "/deferral-plans/{id}/adjustments/{adjustment_id}/paid",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindWrite,
+			Description: "Record that the person paid a fee, interest or other adjustment of an active plan, so it is no longer planned. Only on the person's statement. It is not payment evidence for the occurrence and does not touch its principal. Reversible with unmark_deferral_adjustment_paid; marking an already paid adjustment is refused (deferral_adjustment_paid).",
+			Schema: object(map[string]any{
+				"id":            idArg("deferral plan"),
+				"adjustment_id": idArg("adjustment"),
+				"version":       versionArg("deferral plan"),
+			}, "id", "adjustment_id", "version"),
+		},
+		{
+			Name: "unmark_deferral_adjustment_paid", Title: "Clear a deferral plan fee's paid marker", Method: "POST", Path: "/deferral-plans/{id}/adjustments/{adjustment_id}/unpaid",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindWrite,
+			Description: "Reverse mark_deferral_adjustment_paid: the adjustment is planned again. Refused when it is not marked paid (deferral_adjustment_not_paid).",
 			Schema: object(map[string]any{
 				"id":            idArg("deferral plan"),
 				"adjustment_id": idArg("adjustment"),
