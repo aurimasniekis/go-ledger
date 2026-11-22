@@ -21,6 +21,10 @@ export function journeyDates(now = new Date()) {
   return { prevMonth, prevMonthName: monthName(prev), currentMonth: month(new Date(Date.UTC(y, m, 1))), nextMonth: month(new Date(Date.UTC(y, m + 1, 1))), day: (d) => prevMonth + '-' + pad(d) }
 }
 
+// The commitments journey (CM-UI) has its own server instance (the bank double on the next port is unused: it only keeps the server's setup common).
+export const COMMITMENTS_LEDGER_PORT = 18085
+export const COMMITMENTS_BANK_PORT = 18086
+
 // The deferral journey (DF3) has its own server instance: own ports, own bank data, own database.
 export const DEFERRAL_LEDGER_PORT = 18083
 export const DEFERRAL_BANK_PORT = 18084

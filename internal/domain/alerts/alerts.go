@@ -81,16 +81,27 @@ func ConsentExpiring(connectionID string, expires, today calendar.Date, horizonD
 		Key: "consent_expiring:" + connectionID + ":" + expires.String(), Facts: map[string]string{"expires_on": expires.String()}, Message: msg}, true
 }
 
-// AmountChanged is the condition for a commitment whose amount changed from
-// one value to another (the same or another currency); false when unchanged.
-func AmountChanged(commitmentID string, from, to money.Money) (Condition, bool) {
-	if !from.IsValid() || !to.IsValid() || from.Identical(to) {
+// AmountChanged is the condition for a commitment whose most recent matched
+// bank payment (paid) differs from the expected amount of the occurrence it
+// paid (for example a price rise). In the same currency any non-zero
+// difference counts; in another currency it is reported as a currency
+// difference and nothing is converted. False when they are identical.
+func AmountChanged(commitmentID, occurrenceID string, expected, paid money.Money) (Condition, bool) {
+	if !expected.IsValid() || !paid.IsValid() || expected.Identical(paid) {
 		return Condition{}, false
 	}
+	facts := map[string]string{"occurrence_id": occurrenceID,
+		"expected_amount": expected.Amount().String(), "expected_currency": expected.Currency().String(),
+		"paid_amount": paid.Amount().String(), "paid_currency": paid.Currency().String()}
+	msg := fmt.Sprintf("The latest matched payment was %s but %s was expected.", paid, expected)
+	if expected.Currency() != paid.Currency() {
+		facts["currency_differs"] = "true"
+		msg = fmt.Sprintf("The latest matched payment was in %s but %s was expected (not converted).", paid.Currency(), expected)
+	}
 	return Condition{Kind: KindAmountChanged, ObjectType: ObjectCommitment, ObjectID: commitmentID,
-		Key:     "commitment_amount_changed:" + commitmentID + ":" + to.String(),
-		Facts:   map[string]string{"from_amount": from.Amount().String(), "from_currency": from.Currency().String(), "to_amount": to.Amount().String(), "to_currency": to.Currency().String()},
-		Message: fmt.Sprintf("Commitment amount changed from %s to %s.", from, to)}, true
+		Key:     "commitment_amount_changed:" + commitmentID + ":" + expected.String() + ":" + paid.String(),
+		Facts:   facts,
+		Message: msg}, true
 }
 
 // UnmatchedOverdue is the condition for an occurrence past its due date with

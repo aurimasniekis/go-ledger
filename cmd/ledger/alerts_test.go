@@ -111,7 +111,7 @@ func TestPulseAlertChannelRecordsNothingWhenPulseIsOff(t *testing.T) {
 	db := alertTestDB(t)
 	st := alertstore.New(db, store.NewAuditLog(db), nil, nil)
 	svc := alerts.New(st, nil, pulseAlertChannel(db, alertOutbox(t, db, false)))
-	cond, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNC", moneypkg.MustParse("10.00", "EUR"), moneypkg.MustParse("12.00", "EUR"))
+	cond, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNC", "o1", moneypkg.MustParse("10.00", "EUR"), moneypkg.MustParse("12.00", "EUR"))
 	if res, err := svc.Raise(t.Context(), audit.System, cond); err != nil || !res.Created || len(res.Delivery) != 0 {
 		t.Fatalf("%+v %v", res, err)
 	}

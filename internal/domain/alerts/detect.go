@@ -10,6 +10,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 )
@@ -132,14 +133,17 @@ func (d *Detector) consent(ctx context.Context, today calendar.Date) (map[string
 // occurrenceBased reads the occurrences of the lookback window once and builds
 // the overdue and the amount-change conditions from them.
 //
-// A commitment's amount changed when its current amount differs from the
-// amount of its most recent past occurrence: occurrences keep the amount they
-// were generated with, so the difference is the edit, and it stops holding by
-// itself once an occurrence with the new amount has fallen due. Nothing is
-// converted: a different currency is a change shown as itself.
+// A commitment's amount changed when the most recent matched bank payment of
+// one of its past, non-cancelled occurrences differs from that occurrence's
+// expected amount (a price rise, say) and the commitment's current amount does
+// not already equal what was paid. It stops holding when the commitment is
+// updated to match or a later matched payment equals the expected amount.
+// Manual payments are not bank payments and a partly paid occurrence is not a
+// price change, so neither is a baseline. Nothing is converted: a different
+// currency is reported as a currency difference.
 func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (overdue, changed map[string]Condition, err error) {
 	overdue, changed = map[string]Condition{}, map[string]Condition{}
-	latest := map[string]monthview.Row{}
+	latest := map[string]paidRow{}
 	for i := -Lookback; i <= 0; i++ {
 		month, err := today.YearMonth().AddMonths(i)
 		if err != nil {
@@ -156,9 +160,11 @@ func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (ov
 					overdue[cond.Key] = cond
 				}
 			}
-			if o.DueDate.Before(today) {
-				if prev, ok := latest[o.CommitmentID]; !ok || prev.Occurrence.DueDate.Before(o.DueDate) {
-					latest[o.CommitmentID] = r
+			if o.DueDate.Before(today) && r.State.Status != payments.StatusCancelled && r.State.Status != payments.StatusPartiallyPaid {
+				if p, ok := latestBankPayment(r); ok {
+					if prev, ok := latest[o.CommitmentID]; !ok || p.date.After(prev.date) || (p.date == prev.date && prev.row.Occurrence.DueDate.Before(o.DueDate)) {
+						latest[o.CommitmentID] = p
+					}
 				}
 			}
 		}
@@ -171,7 +177,10 @@ func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (ov
 		}
 		for _, c := range page {
 			if r, ok := latest[c.ID]; ok {
-				if cond, ok := AmountChanged(c.ID, r.Occurrence.Amount, c.Amount); ok {
+				if r.paid.Identical(c.Amount) {
+					continue // the commitment was updated to match
+				}
+				if cond, ok := AmountChanged(c.ID, r.row.Occurrence.ID, r.row.Occurrence.Amount, r.paid); ok {
 					changed[cond.Key] = cond
 				}
 			}
@@ -181,6 +190,41 @@ func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (ov
 		}
 		after = page[199].ID
 	}
+}
+
+// paidRow is the most recent matched bank payment of an occurrence: what was
+// paid (the bank evidence in the currency of its newest piece) and when.
+type paidRow struct {
+	row  monthview.Row
+	paid money.Money
+	date calendar.Date
+}
+
+// latestBankPayment sums the occurrence's bank evidence in the currency of the
+// newest piece; false when it has no bank evidence.
+func latestBankPayment(r monthview.Row) (paidRow, bool) {
+	var newest *payments.Evidence
+	for i := range r.Evidence {
+		ev := &r.Evidence[i]
+		if ev.Kind == payments.EvidenceBankTransaction && ev.Amount.IsValid() && (newest == nil || ev.Date.After(newest.Date)) {
+			newest = ev
+		}
+	}
+	if newest == nil {
+		return paidRow{}, false
+	}
+	sum := newest.Amount
+	for i := range r.Evidence {
+		ev := &r.Evidence[i]
+		if ev != newest && ev.Kind == payments.EvidenceBankTransaction && ev.Amount.IsValid() && ev.Amount.Currency() == sum.Currency() {
+			s, err := sum.Add(ev.Amount)
+			if err != nil {
+				return paidRow{}, false
+			}
+			sum = s
+		}
+	}
+	return paidRow{row: r, paid: sum, date: newest.Date}, true
 }
 
 // reconcile raises every wanted condition and resolves the open alerts of the

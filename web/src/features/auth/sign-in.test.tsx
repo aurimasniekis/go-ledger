@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fail, installApi, ok, renderApp, session, signedIn } from '@/test/fake-api'
 import { setCsrfToken } from '@/lib/api'
 import { safeRedirect } from '@/features/auth/sign-in'
+import { makeQueryClient } from '@/lib/query'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -34,6 +35,74 @@ describe('sign-in redirect', () => {
     expect(url).toContain('/sign-in')
     for (const secret of ['S3CRET', 'C0DE', 'callback', 'frag']) expect(decodeURIComponent(url)).not.toContain(secret)
     expect(new URL(url, 'http://x').searchParams.get('redirect')).toBe('/connections')
+  })
+
+  it('detects the bank return whatever the letter case of the address', async () => {
+    const history = createMemoryHistory({ initialEntries: ['/Connections/Callback/?state=S3CRET&code=C0DE'] })
+    installApi(signedOut)
+    render(<App history={history} />)
+    expect(await screen.findByTestId('bank-incomplete')).toBeInTheDocument()
+    expect(decodeURIComponent(history.location.href)).not.toMatch(/S3CRET|C0DE/)
+  })
+
+  it('removes the code from the address when the session check fails otherwise, and still completes after Try again', async () => {
+    const user = userEvent.setup()
+    let up = false
+    const done = { id: 'c1', institution: { id: 'B', name: 'Fake Bank', country: 'FI' } }
+    const calls = installApi({
+      ...signedIn(),
+      'GET /api/v1/auth/session': () => (up ? ok(session()) : fail(429, 'rate_limited', 'try later')),
+      'POST /api/v1/bank-connections/complete': ok(done),
+      'GET /api/v1/bank-connections': ok({ items: [], next_cursor: null }),
+    })
+    const history = createMemoryHistory({ initialEntries: ['/connections/callback?state=S3CRET&code=C0DE'] })
+    render(<App history={history} />)
+    await screen.findByRole('button', { name: 'Try again' })
+    await waitFor(() => expect(history.location.href).toBe('/connections/callback'))
+    expect(calls.filter((c) => c.path.endsWith('/complete'))).toHaveLength(0)
+    // From here on the held code is handed to the page in memory: it never re-enters the address or the history state.
+    const seen: string[] = []
+    const stop = history.subscribe(({ location }) => seen.push(location.href + ' ' + JSON.stringify(location.state)))
+    up = true
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText(/Fake Bank is connected/)).toBeInTheDocument()
+    stop()
+    expect(calls.filter((c) => c.path.endsWith('/complete'))).toHaveLength(1)
+    expect(calls.find((c) => c.path.endsWith('/complete'))!.body).toEqual({ state: 'S3CRET', code: 'C0DE' })
+    for (const entry of [...seen, history.location.href + ' ' + JSON.stringify(history.location.state)]) expect(decodeURIComponent(entry)).not.toMatch(/S3CRET|C0DE|state=|code=/)
+  })
+
+  it('drops the held code when Try again finds a session confined to enrolment, and never completes it after enrolling', async () => {
+    const user = userEvent.setup()
+    let now: 'down' | 'confined' | 'enrolled' = 'down'
+    const confined = session({ two_factor: { enabled: false, required: true, enrollment_required: true } })
+    const calls = installApi({
+      ...signedIn(),
+      'GET /api/v1/auth/session': () => (now === 'down' ? fail(429, 'rate_limited', 'try later') : ok(now === 'confined' ? confined : session())),
+      'GET /api/v1/auth/two-factor': ok({ enabled: false, method: null, enabled_at: null, recovery_codes_remaining: 0, required: true, pending_enrollment_until: null }),
+      'POST /api/v1/bank-connections/complete': ok({ id: 'c1', institution: { id: 'B', name: 'Fake Bank', country: 'FI' } }),
+      'GET /api/v1/bank-connections': ok({ items: [], next_cursor: null }),
+    })
+    const client = makeQueryClient()
+    const history = createMemoryHistory({ initialEntries: ['/connections/callback?state=S3CRET&code=C0DE'] })
+    render(<App history={history} client={client} />)
+    await screen.findByRole('button', { name: 'Try again' })
+    await waitFor(() => expect(history.location.href).toBe('/connections/callback'))
+    now = 'confined'
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('heading', { name: 'Account security' })).toBeInTheDocument()
+    expect(screen.getAllByRole('note').map((n) => n.textContent).join(' ')).toMatch(/bank connection was not completed/)
+    // Enrolment finishes: the session is refetched and no longer confined.
+    const seen: string[] = []
+    const stop = history.subscribe(({ location }) => seen.push(location.href))
+    now = 'enrolled'
+    await client.invalidateQueries({ queryKey: ['session'] })
+    expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, 50))
+    stop()
+    expect(calls.filter((c) => c.path.endsWith('/complete'))).toHaveLength(0)
+    expect(history.location.pathname).toBe('/account/security')
+    for (const href of [...seen, history.location.href]) expect(decodeURIComponent(href)).not.toMatch(/S3CRET|C0DE|callback/)
   })
 
   it('drops the fragment from the remembered place', async () => {

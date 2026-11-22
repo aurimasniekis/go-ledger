@@ -33,9 +33,9 @@ describe('organise commitments page', () => {
     const rent = within(list).getAllByRole('listitem')[0]!
     expect(rent).toHaveTextContent('850.00')
     expect(rent).toHaveTextContent('EUR')
-    expect(rent).toHaveTextContent('Monthly on day 5')
+    expect(rent).toHaveTextContent('Monthly on the 5th')
     expect(rent).toHaveTextContent('2026-01-05')
-    expect(within(list).getAllByRole('listitem')[1]).toHaveTextContent('Yearly on 5 March')
+    expect(within(list).getAllByRole('listitem')[1]).toHaveTextContent('Yearly on March 5')
     // Nothing about organisation is read until a row's Organise is opened.
     expect(calls.some((c) => c.path.startsWith('/api/v1/organisation/'))).toBe(false)
     await user.click(within(list).getByRole('button', { name: 'Organise Old gym' }))

@@ -81,6 +81,7 @@ func (f *fixture) newTasks(t *testing.T, autoApply bool, replies ...decisionstes
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.ds.UseCategoryResetter(te.os)
 	return te, decisiontasks.New(svc, f.ds, te.os)
 }
 
@@ -211,6 +212,40 @@ func TestAutoApplyIsModelOriginAuditedAndReversible(t *testing.T) {
 	// The model is not asked again about what a person took back.
 	if again, _ := svc.SuggestCategory(f.ctx, te.facts()); again.Skipped != decisiontasks.SkipDeclined {
 		t.Fatalf("%+v", again)
+	}
+}
+
+// The category reset and the reversal record are one transaction: when the
+// record cannot be written, the category stays, nothing is audited as a revert,
+// and the revert can be tried again.
+func TestRevertIsAtomicWhenTheReversalRecordFails(t *testing.T) {
+	f := newFixture(t, true)
+	te, svc := f.newTasks(t, true, decisionstest.Reply{Output: pickFirst})
+	out, _ := svc.SuggestCategory(f.ctx, te.facts())
+	id := out.Result.Suggestion.ID
+	if _, err := execWrite(f, "CREATE TRIGGER fail_reversal BEFORE INSERT ON decision_suggestion_reversals BEGIN SELECT RAISE(ABORT, 'record refused'); END"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Revert(f.ctx, alice, id); err == nil || errors.Is(err, decisions.ErrNotReversible) {
+		t.Fatalf("revert: %v", err)
+	}
+	if c := te.category(); c == nil || c.Origin != org.OriginModel || c.Category.ID != te.groceries.ID {
+		t.Fatalf("the category changed although the record failed: %+v", c)
+	}
+	if rev, _ := f.ds.Reverted(f.ctx, id); rev {
+		t.Fatal("a reversal is recorded")
+	}
+	if _, err := execWrite(f, "DROP TRIGGER fail_reversal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Revert(f.ctx, alice, id); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if te.category() != nil {
+		t.Fatal("the category is still there after the retry")
+	}
+	if rev, _ := f.ds.Reverted(f.ctx, id); !rev {
+		t.Fatal("no reversal recorded after the retry")
 	}
 }
 
@@ -418,7 +453,7 @@ func TestAlertWordingIsLabelledAndOptional(t *testing.T) {
 	st := alertstore.New(f.db, f.rec, func() time.Time { return t0 }, nil)
 	svc := alerts.New(st, decisiontasks.NewAlertWording(runner, f.ds))
 	today := calendar.MustDate(2026, 11, 1)
-	c1, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNC", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
+	c1, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNC", "o1", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
 	r, err := svc.Raise(f.ctx, decisiontasks.SystemActor, c1)
 	if err != nil || r.Alert.Wording == nil || r.Alert.Wording.Provider != "openai" || r.Alert.Wording.Model != "m1-2026" {
 		t.Fatalf("%+v %v", r, err)
@@ -484,7 +519,7 @@ func TestWordingFailureDoesNotSkipChannelsAndModelTextIsFrozen(t *testing.T) {
 	st := alertstore.New(f.db, f.rec, func() time.Time { return t0 }, nil)
 	var sent int
 	svc := alerts.New(st, failingWords{}, alerts.Channel{Name: "pulse", Notify: func(context.Context, alerts.Alert) error { sent++; return nil }})
-	c, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNG", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
+	c, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNG", "o1", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
 	r, err := svc.Raise(f.ctx, decisiontasks.SystemActor, c)
 	if err != nil || !r.Created || r.WordingErr == nil || sent != 1 {
 		t.Fatalf("%+v sent=%d %v", r, sent, err)

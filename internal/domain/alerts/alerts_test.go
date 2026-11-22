@@ -29,11 +29,11 @@ func TestConditions(t *testing.T) {
 	}
 
 	eur := money.MustParse("10.00", "EUR")
-	if _, ok := alerts.AmountChanged("m", eur, eur); ok {
+	if _, ok := alerts.AmountChanged("m", "o", eur, eur); ok {
 		t.Error("an unchanged amount raised")
 	}
-	c, ok := alerts.AmountChanged("m", eur, money.MustParse("10.00", "USD"))
-	if !ok || c.Facts["from_currency"] != "EUR" || c.Facts["to_currency"] != "USD" {
+	c, ok := alerts.AmountChanged("m", "o", eur, money.MustParse("10.00", "USD"))
+	if !ok || c.Facts["expected_currency"] != "EUR" || c.Facts["paid_currency"] != "USD" || c.Facts["currency_differs"] != "true" {
 		t.Errorf("a currency change must be shown as itself, never converted: %+v %v", c, ok)
 	}
 

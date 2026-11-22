@@ -168,39 +168,81 @@ func TestDetectorOverdueRaisesAndResolvesWhenPaidOrCancelled(t *testing.T) {
 	}
 }
 
-func TestDetectorAmountChangeFromTheLatestPastOccurrence(t *testing.T) {
+func bankPaid(r monthview.Row, id string, on calendar.Date, amount money.Money) monthview.Row {
+	r.Evidence = append(r.Evidence, payments.Evidence{Kind: payments.EvidenceBankTransaction, ID: id, OccurrenceID: r.Occurrence.ID, Amount: amount, Date: on})
+	return r
+}
+
+func TestDetectorAmountChangeFromTheLatestMatchedBankPayment(t *testing.T) {
 	e := newDetectEnv(t)
-	rent := commitments.Commitment{ID: "k-rent", Fields: commitments.Fields{Amount: eur("500.00")}}
-	e.cmts.list = []commitments.Commitment{rent}
+	sub := commitments.Commitment{ID: "k-sub", Fields: commitments.Fields{Amount: eur("10.00")}}
+	e.cmts.list = []commitments.Commitment{sub}
 	oct, nov := calendar.MustDate(2026, 10, 1), calendar.MustDate(2026, 11, 1)
-	e.mon.rows[oct.YearMonth()] = []monthview.Row{row("o1", "k-rent", oct, "500.00", payments.StatusPaid)}
-	e.mon.rows[nov.YearMonth()] = []monthview.Row{row("o2", "k-rent", nov, "500.00", payments.StatusPaid)}
+	e.mon.rows[oct.YearMonth()] = []monthview.Row{bankPaid(row("o1", "k-sub", oct, "10.00", payments.StatusPaid), "b1", oct, eur("10.00"))}
 	if rep := e.run(t); rep.Raised != 0 {
-		t.Fatalf("an unchanged amount raised: %+v", rep)
+		t.Fatalf("a payment equal to the expected amount raised: %+v", rep)
 	}
-	// The amount is edited: past occurrences keep what they were generated with.
-	e.cmts.list[0].Amount = eur("550.00")
+	// A price rise: the bank payment is above the expected amount.
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{bankPaid(row("o2", "k-sub", nov, "10.00", payments.StatusPaid), "b2", nov, eur("12.50"))}
 	if rep := e.run(t); rep.Raised != 1 {
 		t.Fatalf("%+v", rep)
 	}
 	a := e.sent[0]
-	if a.Kind != alerts.KindAmountChanged || a.Facts["from_amount"] != "500.00" || a.Facts["to_amount"] != "550.00" || a.Facts["to_currency"] != "EUR" {
+	if a.Kind != alerts.KindAmountChanged || a.ObjectID != "k-sub" || a.Facts["expected_amount"] != "10.00" || a.Facts["paid_amount"] != "12.50" ||
+		a.Facts["paid_currency"] != "EUR" || a.Facts["expected_currency"] != "EUR" || a.Facts["currency_differs"] != "" {
 		t.Fatalf("%+v", a)
 	}
-	// Another edit is a new situation: the old alert is resolved, a new one raised.
-	e.cmts.list[0].Amount = eur("560.00")
+	// A cheaper payment is any non-zero difference too: a new situation.
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{bankPaid(row("o2", "k-sub", nov, "10.00", payments.StatusPaid), "b2", nov, eur("9.99"))}
 	if rep := e.run(t); rep.Raised != 1 || rep.Resolved != 1 {
 		t.Fatalf("%+v", rep)
 	}
-	// Once an occurrence with the new amount has fallen due, nothing differs: resolved.
-	e.mon.rows[nov.YearMonth()] = []monthview.Row{row("o2", "k-rent", calendar.MustDate(2026, 11, 20), "560.00", payments.StatusPaid)}
+	// The commitment is updated to what is being paid: resolved.
+	e.cmts.list[0].Amount = eur("9.99")
 	if rep := e.run(t); rep.Resolved != 1 || e.state(t, alerts.KindAmountChanged)[alerts.StateOpen] != 0 {
 		t.Fatalf("%+v", rep)
 	}
-	// A different currency is shown as itself, never converted.
-	e.cmts.list[0].Amount = money.MustParse("560.00", "USD")
-	if rep := e.run(t); rep.Raised != 1 || e.sent[len(e.sent)-1].Facts["to_currency"] != "USD" || e.sent[len(e.sent)-1].Facts["from_currency"] != "EUR" {
+	// Back to a differing payment, then a later matched payment equals the expected amount: resolved.
+	e.cmts.list[0].Amount = eur("10.00")
+	if rep := e.run(t); rep.Raised != 1 {
 		t.Fatalf("%+v", rep)
+	}
+	dec := calendar.MustDate(2026, 11, 15)
+	e.mon.rows[nov.YearMonth()] = append(e.mon.rows[nov.YearMonth()], bankPaid(row("o3", "k-sub", dec, "10.00", payments.StatusPaid), "b3", dec, eur("10.00")))
+	if rep := e.run(t); rep.Resolved != 1 || e.state(t, alerts.KindAmountChanged)[alerts.StateOpen] != 0 {
+		t.Fatalf("%+v", rep)
+	}
+}
+
+func TestDetectorAmountChangeIgnoresCancelledManualAndPartialBaselines(t *testing.T) {
+	e := newDetectEnv(t)
+	e.cmts.list = []commitments.Commitment{{ID: "k-x", Fields: commitments.Fields{Amount: eur("10.00")}}}
+	oct, nov := calendar.MustDate(2026, 10, 1), calendar.MustDate(2026, 11, 1)
+	e.mon.rows[oct.YearMonth()] = []monthview.Row{bankPaid(row("o1", "k-x", oct, "10.00", payments.StatusPaid), "b1", oct, eur("10.00"))}
+	// A newer cancelled occurrence with a differing bank payment is never the baseline.
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{
+		bankPaid(row("o2", "k-x", nov, "10.00", payments.StatusCancelled), "b2", nov, eur("99.00")),
+		bankPaid(row("o3", "k-x", calendar.MustDate(2026, 11, 2), "10.00", payments.StatusPartiallyPaid), "b3", calendar.MustDate(2026, 11, 2), eur("4.00")),
+	}
+	manual := row("o4", "k-x", calendar.MustDate(2026, 11, 3), "10.00", payments.StatusPaid)
+	manual.Evidence = []payments.Evidence{{Kind: payments.EvidenceManual, ID: "m1", OccurrenceID: "o4", Amount: eur("77.00"), Date: calendar.MustDate(2026, 11, 3)}}
+	e.mon.rows[nov.YearMonth()] = append(e.mon.rows[nov.YearMonth()], manual)
+	if rep := e.run(t); rep.Raised != 0 {
+		t.Fatalf("a cancelled, partial or manual payment was a baseline: %+v", rep)
+	}
+}
+
+func TestDetectorAmountChangeInAnotherCurrencyIsNotConverted(t *testing.T) {
+	e := newDetectEnv(t)
+	e.cmts.list = []commitments.Commitment{{ID: "k-fx", Fields: commitments.Fields{Amount: eur("10.00")}}}
+	oct := calendar.MustDate(2026, 10, 1)
+	e.mon.rows[oct.YearMonth()] = []monthview.Row{bankPaid(row("o1", "k-fx", oct, "10.00", payments.StatusPaid), "b1", oct, money.MustParse("10.00", "USD"))}
+	if rep := e.run(t); rep.Raised != 1 {
+		t.Fatalf("%+v", rep)
+	}
+	a := e.sent[0]
+	if a.Facts["currency_differs"] != "true" || a.Facts["paid_currency"] != "USD" || a.Facts["expected_currency"] != "EUR" || a.Facts["paid_amount"] != "10.00" {
+		t.Fatalf("%+v", a)
 	}
 }
 

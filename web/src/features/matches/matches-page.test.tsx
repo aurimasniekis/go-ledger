@@ -7,6 +7,7 @@ import { fail, installApi, ok, renderApp, signedIn, type Handler, type Req } fro
 import { match, occurrence } from './fixtures'
 import { replacedIds } from './replace-manual'
 import type { PaymentMatch } from './types'
+import { shortRef } from './match-card'
 
 let calls: Req[]
 let store: PaymentMatch[]
@@ -685,7 +686,7 @@ describe('ambiguity and reasons in plain words', () => {
     const cards = await screen.findAllByRole('article', { name: 'Rent' })
     expect(cards).toHaveLength(2)
     // Identical-looking competitors stay distinguishable by a short transaction reference.
-    expect(cards.map((c) => within(c).getByTestId('bank-ref').textContent)).toEqual([expect.stringContaining('…tx-a'), expect.stringContaining('…tx-b')])
+    expect(cards.map((c) => within(c).getByTestId('bank-ref').textContent)).toEqual([expect.stringMatching(/^tx-a/), expect.stringMatching(/^tx-b/)])
     for (const card of cards) {
       expect(within(card).getByTestId('competing')).toHaveTextContent('2 suggestions compete for this occurrence')
       expect(card).toHaveTextContent('2 bank transactions could pay this occurrence, so a person has to choose.')
@@ -694,6 +695,33 @@ describe('ambiguity and reasons in plain words', () => {
       expect(card).not.toHaveTextContent('several_transactions')
       expect(card).not.toHaveTextContent('date_outside_window')
     }
+  })
+
+  it('shows the short transaction id in mono, exposes the full id as text for keyboard, screen reader and touch, and says the bank reported separate transactions', async () => {
+    const base = match('a').transaction
+    const longId = 'bank-tx-0000111122223333'
+    const other = 'bank-tx-0000111144445555'
+    store = [match('a', { transaction_id: longId, transaction: { ...base, id: longId } }), match('b', { occurrence_id: 'occ-a', transaction_id: other, transaction: { ...base, id: other } })]
+    start()
+    const [a, b] = await screen.findAllByRole('article', { name: 'Rent' })
+    const refA = within(a!).getByTestId('bank-ref')
+    const refB = within(b!).getByTestId('bank-ref')
+    expect(refA).toHaveTextContent('…22223333')
+    expect(refB).toHaveTextContent('…44445555')
+    expect(refA).toHaveClass('font-mono')
+    expect(refA).toHaveAttribute('title', longId)
+    // The full id is real text (visually hidden), not only a title attribute.
+    expect(within(refA).getByText(longId)).toHaveClass('sr-only')
+    expect(refB).toHaveTextContent(other)
+    expect(refB).toHaveAttribute('title', other)
+    expect(within(a!).getByTestId('competing')).toHaveTextContent('The bank reported these as separate transactions')
+    expect(a).not.toHaveTextContent('same text')
+  })
+
+  it('shortens only ids longer than eight characters', () => {
+    expect(shortRef('tx-a')).toBe('tx-a')
+    expect(shortRef('12345678')).toBe('12345678')
+    expect(shortRef('012345678')).toBe('…12345678')
   })
 
   it('does not call a single suggestion ambiguous', async () => {

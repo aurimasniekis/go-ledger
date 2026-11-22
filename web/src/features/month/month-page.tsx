@@ -99,6 +99,7 @@ export function MonthPage({ month }: { month: string }) {
         filterNote={bucketFilter.note}
         offline={!online}
         canViewConnections={holds(me.data?.grants, 'connections:read')}
+        canWriteCommitments={holds(me.data?.grants, 'commitments:write')}
         waiting={waiting}
         notice={
           <>

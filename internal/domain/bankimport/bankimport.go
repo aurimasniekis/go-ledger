@@ -193,6 +193,10 @@ type AccountResult struct {
 	// Err is the first failure of the account's refresh; nil on success.
 	Err    error
 	Counts banking.RefreshCounts
+	// Inserted lists the transactions this refresh stored for the first
+	// time, in the order they were stored; updates and unchanged rows are not
+	// listed. The decision triggers ask about these only.
+	Inserted []banking.TransactionID
 }
 
 // Result is the outcome of one refresh.
@@ -388,7 +392,7 @@ func (r *refresh) run() (Result, error) {
 			}
 			r.recordFailure(book, ar.ID, stop)
 		} else {
-			ar.Err = r.account(ar.ID, a, &ar.Counts)
+			ar.Err = r.account(ar.ID, a, &ar.Counts, &ar.Inserted)
 			if ar.Err != nil && stops(ar.Err) {
 				stop = ar.Err
 			}
@@ -460,7 +464,7 @@ func (r *refresh) recordFailure(book context.Context, id banking.AccountID, caus
 // account refreshes one account: balances, then its transaction windows,
 // oldest first. It returns the first failure; a failure of the balances
 // does not skip the transactions unless it ends the run.
-func (r *refresh) account(id banking.AccountID, a banking.Account, c *banking.RefreshCounts) error {
+func (r *refresh) account(id banking.AccountID, a banking.Account, c *banking.RefreshCounts, inserted *[]banking.TransactionID) error {
 	book := context.WithoutCancel(r.ctx)
 	sync, err := r.e.facts.BeginAccountRefresh(r.ctx, id, r.e.now())
 	if err != nil {
@@ -468,7 +472,7 @@ func (r *refresh) account(id banking.AccountID, a banking.Account, c *banking.Re
 	}
 	first := r.balances(id, a, c)
 	if first == nil || !stops(first) {
-		if err := r.transactions(id, a, sync, c); err != nil && first == nil {
+		if err := r.transactions(id, a, sync, c, inserted); err != nil && first == nil {
 			first = err
 		}
 	}
@@ -513,7 +517,7 @@ func (r *refresh) balances(id banking.AccountID, a banking.Account, c *banking.R
 	return nil
 }
 
-func (r *refresh) transactions(id banking.AccountID, a banking.Account, sync banking.AccountSync, c *banking.RefreshCounts) error {
+func (r *refresh) transactions(id banking.AccountID, a banking.Account, sync banking.AccountSync, c *banking.RefreshCounts, inserted *[]banking.TransactionID) error {
 	// Bank dates carry no zone; the window ends on today's UTC date, and an
 	// item dated later (a bank ahead of UTC) arrives with the next refresh.
 	now := r.e.now()
@@ -554,6 +558,7 @@ func (r *refresh) transactions(id banking.AccountID, a banking.Account, sync ban
 			switch u.Outcome {
 			case banking.OutcomeInserted:
 				c.TransactionsInserted++
+				*inserted = append(*inserted, u.ID)
 			case banking.OutcomeUpdated:
 				c.TransactionsUpdated++
 			case banking.OutcomeUnchanged:

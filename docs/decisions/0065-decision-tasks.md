@@ -49,7 +49,7 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
 7. **Alerts** (`internal/domain/alerts`, store `internal/store/alerts`, migration 0032): three kinds from D13. Conditions
    are built by Ledger code (`ConsentExpiring`, `AmountChanged`, `UnmatchedOverdue`) with exact decimal facts and their
    currencies (a currency change is shown as itself, never converted) and a deterministic message. Raising is idempotent
-   by a key that includes what makes the situation new (expiry date, new amount, due date). An open alert **or a dismissed
+   by a key that includes what makes the situation new (expiry date, expected and paid amounts, due date). An open alert **or a dismissed
    one** for the key counts as existing (raising it returns `created=false`, sends nothing): a person's dismissal sticks
    and a scheduled detector cannot bring it back. Only a `resolved` alert lets the same key be raised again (the condition
    stopped holding and returned). An alert is only ever closed (dismissed by a person, resolved when the condition stops
@@ -74,13 +74,20 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
    pass at startup, passes never overlap). It only reads. Three detectors, each reconciling its kind: it raises what holds
    and resolves the *open* alerts of the kind whose condition stopped holding (`Resolve`). A dismissed alert is never
    raised again and never resolved (section 7).
+   - **Order after a refresh:** `serve` runs the alert pass after automatic payment matching (and before merchant
+     enrichment), so a payment the refresh just brought in is matched before "overdue, unmatched" is judged. There is no
+     serve-level test of this order (the hook is a closure inside `runServe`).
    - **Consent expiry:** connections that are active or reconnect-required and hold a consent end; raised within
      `alerts.consent_horizon_days` (default 14) of that date in the reporting zone, or after it. Renewing changes the
      expiry date, so the old alert resolves.
-   - **Commitment amount change:** the commitment's current amount differs from the amount of its most recent past,
-     non-cancelled occurrence (occurrences keep the amount they were generated with, so the difference is the edit; no
-     amount history is stored). It resolves by itself once an occurrence with the new amount has fallen due. A currency
-     change is reported as itself, never converted.
+   - **Commitment amount change** (decision C-L6e-amount-change): the most recent *matched bank payment* of a commitment's
+     past, non-cancelled occurrence differs from that occurrence's expected amount (for example a subscription price
+     rise). Manual payments and partly paid occurrences are never the baseline. In the same currency any non-zero
+     difference counts and the alert shows the expected and the paid amount exactly (decimal strings with currency, no
+     float); in another currency it is reported as a currency difference (`currency_differs`) and nothing is converted. It
+     resolves once the commitment's amount is updated to equal what was paid, or a later matched payment equals the
+     expected amount. The person's own edit of the commitment is not an alert. A split bank payment is summed per
+     occurrence in the currency of its newest piece.
    - **Overdue unmatched:** occurrences whose derived status is overdue with an outstanding amount, as the monthly view
      derives it (a partially paid or deferred-but-paid one is not). Resolves when paid, matched, cancelled or removed.
    The occurrence detectors read the current month and the 13 before it. An alert about an older occurrence is neither
@@ -89,19 +96,27 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
 12. **Channels.** `alerts.channels` (default empty: in-app only) lists the channels that also receive a *newly raised*
    alert. The only one is `pulse`, which needs `events.pulse.enabled` (startup is refused otherwise). It enqueues
    `evt.ledger.alert.raised.<alert id>` (`ledger.alert.raised.v1`; kind, object type, object id only: no message, amount or
-   bank text) in the outbox, in its own transaction after the alert is stored: a failure is logged and never loses the
-   alert, and it is not retried for that alert (the alert exists, so a later run does not raise it again). See
+   bank text) in the outbox, in its own transaction after the alert is stored. The enqueue is best-effort: a failure, or a crash between the two
+   transactions, is logged at most and loses that event (never the alert), and it is not retried for that alert (the alert exists, so a later run does not raise it again). See
    [docs/events.md](../events.md).
 
 ## Limitations and what is not built (kept visible)
 
 - **No HTTP routes, CLI commands or UI** for suggestions or alerts, and so no OpenAPI change: they belong to L7 (review UI
   and settings) and the MCP and Terraform tasks. Grants for them are decided there.
-- **No runner calls the suggestion services yet.** Nothing in `serve` triggers `SuggestCategory`/`SuggestLabels` for new
-  transactions and nothing reads transaction facts and the merchant's transfer classification for them (the caller builds
-  `Facts`). (The alert detectors do run, see "Alert detectors" below.) Wiring
-  these to a trigger (after import) and to the real data is a follow-up that needs L7's settings and the decision adapters
-  (L2 to L5, none exist in this build, so an enabled decision task still stops startup as ADR-0060 says).
+- **Triggers (L6d).** `decisiontasks.Trigger` runs after a refresh that stored something, for the transactions that
+  refresh inserted (`bankimport.AccountResult.Inserted`; updates and unchanged rows are never asked about). It builds
+  `Facts` from the stored transaction (description, amount, booking date) and calls `SuggestCategory` and
+  `SuggestLabels` for each enabled task. `serve` runs it in a background goroutine, one pass at a time, so the import
+  never waits for a model and never fails because of one; a failure (an error or a reason such as an outage, no consent
+  or an exhausted budget) is logged and counted in `RefreshStats`. Pending and declined objects are skipped by the
+  tasks themselves, so a repeated refresh asks nothing new. Nothing classifies a merchant as a transfer yet, so `serve`
+  gives no merchant lookup and the merchant name is never sent (fail closed); a lookup can be added where the
+  classification exists. The revert is atomic: `decisions.Store.RevertAutomatic` runs the conditional reset (the
+  organisation store's `ResetAutomaticCategoryWith`) and the reversal record in one transaction. Transactions that
+  arrived while no task was enabled are not asked about later. The trigger status is not on the API or UI yet (L7).
+- **The suggestion services still need L7's settings and the decision adapters** (L2 to L5, none exist in this build, so an
+  enabled decision task still stops startup as ADR-0060 says).
 - Retention of suggestions and alerts is not decided (ADR-0060 lists it as open).
 - Migration number 0032 may need renumbering if another branch merges a 0032 first.
 

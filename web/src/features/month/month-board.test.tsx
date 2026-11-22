@@ -77,6 +77,16 @@ describe('MonthBoard states', () => {
     expect(screen.queryByText(/Stale/)).toBeNull()
   })
 
+  it('empty: offers New commitment to a role that can write commitments, and only to it', () => {
+    board({ data: summary([]), canWriteCommitments: true })
+    expect(screen.getByRole('link', { name: 'New commitment' })).toHaveAttribute('href', '/commitments/new')
+  })
+
+  it('empty: offers no New commitment link without commitments:write', () => {
+    board({ data: summary([]) })
+    expect(screen.queryByRole('link', { name: 'New commitment' })).toBeNull()
+  })
+
   it('the month controls are a labelled group, not a navigation landmark', () => {
     board({ data: summary([]) })
     expect(screen.getByRole('group', { name: 'Month' })).toBeInTheDocument()
