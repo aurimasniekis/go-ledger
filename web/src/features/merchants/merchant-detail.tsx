@@ -14,6 +14,7 @@ import { FormError } from '@/components/form-error'
 import { Mono } from '@/components/mono'
 import { QueryState } from '@/components/query-state'
 import { useLoadAll } from '@/features/organisation/api'
+import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
 import { addAlias, archiveMerchant, deleteMerchant, mergeMerchants, merchantKey, merchantsKey, removeAlias, renameMerchant, useMerchant, useMerchants } from './api'
 import { Badge } from './merchants-page'
 import { isConflict, merchantProblem } from './problems'
@@ -157,6 +158,13 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
       )}
       {canWrite && !merged && !active && <p id="merge-why" className="text-xs text-muted-foreground">Unarchive this merchant to merge another into it: only an active merchant can remain.</p>}
 
+      {!merged && (
+        <section aria-labelledby="merchant-organise" className="space-y-2">
+          <h2 id="merchant-organise" className="text-xl font-semibold">Category and labels</h2>
+          <p className="text-sm text-muted-foreground">Assigned to this merchant record, so they survive a rename or a new alias. A category or label you choose here is your own word; automatic assignment never changes it.</p>
+          <OrganiseDisclosure objectType="merchant" objectId={m.id} subject={m.display_name} locked={m.archived ? 'This merchant is archived: assignments can be read but not changed. Unarchive it to change them.' : undefined} />
+        </section>
+      )}
       <Aliases m={m} canWrite={canWrite && !merged} pending={pending} onAdd={(name) => alias.mutateAsync({ add: name })} onRemove={(a) => alias.mutate({ remove: a.id, name: a.name })} />
 
       <Dialog open={renaming} onOpenChange={setRenaming}>

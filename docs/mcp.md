@@ -2918,11 +2918,12 @@ Take a commitment or account out of a bucket. Reversible with add_bucket_member.
 
 ### `get_object_organisation`
 
-Read the category, labels (and the labels the person removed) and buckets of a transaction, commitment or account. Every category and label says its origin (user, rule or model: the person's word outranks a rule's, which outranks a model's), who set it, when, and whether it is inherited from the pending transaction this booking superseded.
+Read the category, labels (and the labels the person removed) and buckets of a transaction, commitment, account or merchant. Every category and label says its origin (user, rule or model: the person's word outranks a rule's, which outranks a model's), who set it, when, and whether it is inherited from the pending transaction this booking superseded.
 
 - Kind: read
 - Operation: `GET /api/v1/organisation/{object_type}/{object_id}`
 - Grant: `organisation:read`
+- Also needs `merchants:read` when object_type is `merchant`
 
 <details><summary>Input schema</summary>
 
@@ -2931,16 +2932,17 @@ Read the category, labels (and the labels the person removed) and buckets of a t
   "additionalProperties": false,
   "properties": {
     "object_id": {
-      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "description": "The transaction, commitment, account or merchant record identifier (26 upper-case characters).",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
     "object_type": {
-      "description": "What the object is: transaction, commitment or account.",
+      "description": "What the object is: transaction, commitment, account or merchant. A merchant also needs the merchants:read grant (reads) or merchants:write (changes).",
       "enum": [
         "transaction",
         "commitment",
-        "account"
+        "account",
+        "merchant"
       ],
       "type": "string"
     }
@@ -2957,11 +2959,12 @@ Read the category, labels (and the labels the person removed) and buckets of a t
 
 ### `set_object_category`
 
-Set the category of a transaction, commitment or account as the person's choice: it is never replaced by a rule, a model or a bank refresh. category_id null records that the person chose no category. An archived category is refused (definition_archived). Last write wins; the audit log keeps the history.
+Set the category of a transaction, commitment, account or merchant as the person's choice: it is never replaced by a rule, a model or a bank refresh. category_id null records that the person chose no category. An archived category is refused (definition_archived). Last write wins; the audit log keeps the history.
 
 - Kind: write
 - Operation: `PUT /api/v1/organisation/{object_type}/{object_id}/category`
 - Grant: `organisation:write`
+- Also needs `merchants:write` when object_type is `merchant`
 
 <details><summary>Input schema</summary>
 
@@ -2978,16 +2981,17 @@ Set the category of a transaction, commitment or account as the person's choice:
       ]
     },
     "object_id": {
-      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "description": "The transaction, commitment, account or merchant record identifier (26 upper-case characters).",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
     "object_type": {
-      "description": "What the object is: transaction, commitment or account.",
+      "description": "What the object is: transaction, commitment, account or merchant. A merchant also needs the merchants:read grant (reads) or merchants:write (changes).",
       "enum": [
         "transaction",
         "commitment",
-        "account"
+        "account",
+        "merchant"
       ],
       "type": "string"
     }
@@ -3010,6 +3014,7 @@ Remove the person's category decision (a chosen category or a chosen none), so a
 - Kind: destructive
 - Operation: `DELETE /api/v1/organisation/{object_type}/{object_id}/category`
 - Grant: `organisation:write`
+- Also needs `merchants:write` when object_type is `merchant`
 
 <details><summary>Input schema</summary>
 
@@ -3018,16 +3023,17 @@ Remove the person's category decision (a chosen category or a chosen none), so a
   "additionalProperties": false,
   "properties": {
     "object_id": {
-      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "description": "The transaction, commitment, account or merchant record identifier (26 upper-case characters).",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
     "object_type": {
-      "description": "What the object is: transaction, commitment or account.",
+      "description": "What the object is: transaction, commitment, account or merchant. A merchant also needs the merchants:read grant (reads) or merchants:write (changes).",
       "enum": [
         "transaction",
         "commitment",
-        "account"
+        "account",
+        "merchant"
       ],
       "type": "string"
     }
@@ -3044,11 +3050,12 @@ Remove the person's category decision (a chosen category or a chosen none), so a
 
 ### `add_object_label`
 
-Put an active label on a transaction, commitment or account as the person's choice. Idempotent; it undoes an earlier removal of the same label.
+Put an active label on a transaction, commitment, account or merchant (by merchant record id) as the person's choice. Idempotent; it undoes an earlier removal of the same label.
 
 - Kind: write
 - Operation: `PUT /api/v1/organisation/{object_type}/{object_id}/labels/{label_id}`
 - Grant: `organisation:write`
+- Also needs `merchants:write` when object_type is `merchant`
 
 <details><summary>Input schema</summary>
 
@@ -3062,16 +3069,17 @@ Put an active label on a transaction, commitment or account as the person's choi
       "type": "string"
     },
     "object_id": {
-      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "description": "The transaction, commitment, account or merchant record identifier (26 upper-case characters).",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
     "object_type": {
-      "description": "What the object is: transaction, commitment or account.",
+      "description": "What the object is: transaction, commitment, account or merchant. A merchant also needs the merchants:read grant (reads) or merchants:write (changes).",
       "enum": [
         "transaction",
         "commitment",
-        "account"
+        "account",
+        "merchant"
       ],
       "type": "string"
     }
@@ -3094,6 +3102,7 @@ Take a label off an object as the person's choice; rules and models do not add i
 - Kind: destructive
 - Operation: `DELETE /api/v1/organisation/{object_type}/{object_id}/labels/{label_id}`
 - Grant: `organisation:write`
+- Also needs `merchants:write` when object_type is `merchant`
 
 <details><summary>Input schema</summary>
 
@@ -3107,16 +3116,17 @@ Take a label off an object as the person's choice; rules and models do not add i
       "type": "string"
     },
     "object_id": {
-      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "description": "The transaction, commitment, account or merchant record identifier (26 upper-case characters).",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
     "object_type": {
-      "description": "What the object is: transaction, commitment or account.",
+      "description": "What the object is: transaction, commitment, account or merchant. A merchant also needs the merchants:read grant (reads) or merchants:write (changes).",
       "enum": [
         "transaction",
         "commitment",
-        "account"
+        "account",
+        "merchant"
       ],
       "type": "string"
     }

@@ -45,6 +45,22 @@ test('the merge preview says what moves and that it cannot be undone in place', 
   await expect(dlg.getByRole('button', { name: 'Merge', exact: true })).toBeEnabled()
 })
 
+test('a merchant record can be organised by its id', async ({ page }) => {
+  await stub(page)
+  await page.route('**/api/v1/me', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ kind: 'user', user_id: 'u1', token_id: null, role: 'administrator', grants: ['commitments:read', 'merchants:read', 'merchants:write', 'organisation:read', 'organisation:write'] }) }))
+  await page.route('**/api/v1/organisation/merchant/m1', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ object_type: 'merchant', object_id: 'm1', category: null, labels: [], removed_labels: [], buckets: [] }) }))
+  await page.route('**/api/v1/categories*', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], next_cursor: null }) }))
+  await page.route('**/api/v1/labels*', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], next_cursor: null }) }))
+  await page.route('**/api/v1/buckets*', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], next_cursor: null }) }))
+  await page.goto('/merchants/m1')
+  await page.getByRole('button', { name: 'Organise Lidl' }).click()
+  const panel = page.getByRole('group', { name: 'Organisation of Lidl' })
+  await expect(panel).toContainText('No category yet')
+  await expect(panel.getByRole('heading', { name: 'Buckets' })).toHaveCount(0)
+})
+
 for (const path of ['/merchants', '/merchants/m1']) {
   test('at 390 px nothing scrolls sideways: ' + path, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })

@@ -10,8 +10,8 @@ export const KIND_NAME: Record<Kind, { one: string; many: string }> = {
   bucket: { one: 'bucket', many: 'buckets' },
 }
 
-/** What an assignment can be made on. A merchant is left out: it has no record of its own yet (decision D-MER). */
-export type ObjectType = 'transaction' | 'commitment' | 'account'
+/** What an assignment can be made on. A merchant is named by its record id (ADR-0058) and needs the administrator-only merchants grants too. */
+export type ObjectType = 'transaction' | 'commitment' | 'account' | 'merchant'
 
 export interface Definition {
   id: string
@@ -49,7 +49,7 @@ export interface LabelAssignment {
   inherited: boolean
 }
 export interface ObjectAssignments {
-  object_type: ObjectType | 'merchant'
+  object_type: ObjectType
   object_id: string
   category: CategoryAssignment | null
   labels: LabelAssignment[]
