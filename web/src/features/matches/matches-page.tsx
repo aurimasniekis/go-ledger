@@ -8,7 +8,7 @@ import { QueryState } from '@/components/query-state'
 import { Amount } from '@/components/formatted'
 import { ApiError } from '@/lib/api'
 import { useOnline } from '@/lib/connection'
-import { useOptimisticSave } from '@/lib/optimistic-save'
+import { isVersionConflict, useOptimisticSave } from '@/lib/optimistic-save'
 import { usePagedList } from '@/lib/paged'
 import { matchAction, matchesKey, runMatching } from './api'
 import { describeAction, MatchCard, OFFLINE_NOTE_ID, subjectText, type Subject } from './match-card'
@@ -53,6 +53,8 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
     },
   })
   useEffect(() => box.current?.focus(), [undo.isSuccess])
+  // After these refusals the undo can never work on this match: the button goes, so it is not offered again.
+  const undoGone = undo.isError && UNDO_FINAL.includes(undo.error instanceof ApiError ? undo.error.code : '')
   return (
     <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3 text-sm">
       {undo.isSuccess ? (
@@ -74,9 +76,9 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
             {action === 'confirm' && saved.counts_as_evidence && ' It now counts as payment for the occurrence.'}
             {(action === 'reject' || action === 'unmatch' || action === 'reverse') && ' This decision is final; the pair will not be suggested again.'}
           </p>
-          {action === 'confirm' && <p className="text-xs">Undo puts it back as a suggestion. It is offered only while nothing else has changed this occurrence; Unmatch in the Confirmed list is final.</p>}
+          {action === 'confirm' && <p className="text-xs">Undo puts it back as a suggestion. It works only while nothing else has changed this match or occurrence; Unmatch in the Confirmed list is final.</p>}
           <div className="flex flex-wrap items-center gap-2">
-            {undoable && (
+            {undoable && !undoGone && (
               <Button variant="outline" size="sm" className="h-auto min-h-8 whitespace-normal py-1 text-left aria-disabled:opacity-50" aria-disabled={undo.isPending || undefined} onClick={() => { if (!undo.isPending) undo.mutate() }}>
                 {undo.isPending ? 'Undoing…' : action === 'confirm' ? 'Undo confirmation' : 'Undo this correction'}
               </Button>
@@ -95,12 +97,16 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
   )
 }
 
+/** Refusals after which Undo cannot work any more (the change stays as saved). */
+const UNDO_FINAL = ['match_undo_window_closed', 'match_undo_not_decider', 'invalid_match_state']
+
 /** Why an undo failed, in words; the server's own codes say whether the undo window closed or someone else decided. */
 function undoErrorText(e: Error, action: MatchAction): string {
   const code = e instanceof ApiError ? e.code : ''
   if (action === 'confirm' && code === 'match_undo_window_closed') return 'Undo is no longer possible: something else changed this match or occurrence since. The match stays confirmed. If it is wrong, use Unmatch in the Confirmed list (final).'
   if (action === 'confirm' && code === 'match_undo_not_decider') return 'Only the person who confirmed this match can undo it. The match stays confirmed.'
   if (action === 'confirm' && code === 'invalid_match_state') return 'This match was not a suggestion before, so it cannot go back to one. Use Unmatch in the Confirmed list (final).'
+  if (isVersionConflict(e)) return 'Something else changed this match since you saved it, so the undo was not applied. The match stays as it is now; reload the list to see its current state.'
   return e.message
 }
 
@@ -176,7 +182,7 @@ export function MatchesPage() {
             </Button>
           ))}
         </div>
-        <RunMatching offline={offline} />
+        {state !== 'closed' && <RunMatching offline={offline} />}
       </div>
       {offline && (
         <p id={OFFLINE_NOTE_ID} className="text-sm text-muted-foreground">

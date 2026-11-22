@@ -10,7 +10,7 @@ import { ProvenanceMarker } from '@/features/month/provenance'
 import { isZeroAmount, monthLabel, utcStamp } from '@/features/month/month'
 import { useSession } from '@/lib/auth'
 import { Bot, KeyRound } from 'lucide-react'
-import { AMBIGUITY_CODES, actorPhrase, decisionLine, deciderMarker, historyVerb, originLine, plainReason } from './explain'
+import { AMBIGUITY_CODES, actorPhrase, decisionLine, deciderMarker, historyVerb, originLine, plainReason, wasUnmatched } from './explain'
 import { matchAction, matchesKey, useCommitmentName, useOccurrence, type ActionInput } from './api'
 import type { MatchAction, MatchState, PaymentMatch } from './types'
 
@@ -210,7 +210,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
       {m.state === 'confirmed' && (m.counts_as_evidence
         ? <><StatusBadge status="paid" label="Confirmed, counts as payment" /><ProvenanceMarker kind="bank" /></>
         : <StatusBadge status="stale" label="Confirmed, not counting" />)}
-      {m.state === 'rejected' && <span className="rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium">Rejected</span>}
+      {m.state === 'rejected' && <span className="rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium">{wasUnmatched(m) ? 'Unmatched' : 'Rejected'}</span>}
       {m.state === 'reversed' && <span className="rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium">Reversed</span>}
       {marker && (
         <span data-decider={marker.kind} className="inline-flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
@@ -251,7 +251,12 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           )}
         </dd>
         <dt className="text-muted-foreground">Allocated</dt>
-        <dd className="min-w-0"><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction pays this occurrence</dd>
+        <dd className="min-w-0">
+          {m.state === 'rejected' && !wasUnmatched(m) ? <>Amount proposed <Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction; it did not count as payment</>
+            : wasUnmatched(m) ? <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction no longer counts: unmatched</>
+            : m.state === 'reversed' ? <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction no longer counts: payment reversed</>
+            : <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction pays this occurrence</>}
+        </dd>
         {shortfall && (
           <>
             <dt className="text-muted-foreground">Short</dt>

@@ -30,6 +30,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   setCsrfToken(null)
 })
 
@@ -826,5 +827,74 @@ describe('the Closed list: rejected and reversed matches, read only', () => {
     expect(await screen.findByText(/Nothing is closed yet/)).toBeInTheDocument()
     await user.selectOptions(screen.getByLabelText('Origin'), 'user')
     expect(await screen.findByText(/No closed matches fit these filters/)).toBeInTheDocument()
+  })
+})
+
+describe('Undo after a refusal, and the Closed card wording', () => {
+  const confirmThenUndo = async (code: string, status = 409) => {
+    extra['POST /api/v1/payment-matches/a/confirm'] = () => {
+      store = [match('a', { state: 'confirmed', version: 2, counts_as_evidence: true })]
+      return ok(store[0])
+    }
+    extra['POST /api/v1/payment-matches/a/unconfirm'] = () => fail(status, code, 'raw server text')
+    start()
+    await userEvent.click(within(await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })).getByRole('button', { name: 'Confirm match' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Undo confirmation' }, { timeout: 5000 }))
+    return screen.findByRole('alert')
+  }
+
+  it.each([
+    ['match_undo_window_closed', 'Undo is no longer possible'],
+    ['match_undo_not_decider', 'Only the person who confirmed this match can undo it.'],
+    ['invalid_match_state', 'This match was not a suggestion before, so it cannot go back to one.'],
+  ])('%s: says why and no longer offers Undo confirmation', async (code, text) => {
+    const alert = await confirmThenUndo(code)
+    expect(alert).toHaveTextContent(text)
+    expect(alert).not.toHaveTextContent('raw server text')
+    expect(screen.queryByRole('button', { name: 'Undo confirmation' })).not.toBeInTheDocument()
+  })
+
+  it('a version conflict shows our own message, not the server text, and keeps Undo offered', async () => {
+    const alert = await confirmThenUndo('version_conflict')
+    expect(alert).toHaveTextContent('Something else changed this match since you saved it')
+    expect(alert).not.toHaveTextContent('raw server text')
+    expect(screen.getByRole('button', { name: 'Undo confirmation' })).toBeInTheDocument()
+  })
+
+  it('words the undo hint as working only while nothing else changed the match or occurrence', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm'] = () => ok(match('a', { state: 'confirmed', version: 2, counts_as_evidence: true }))
+    start()
+    await userEvent.click(within(await screen.findByRole('article', { name: 'Rent' })).getByRole('button', { name: 'Confirm match' }))
+    expect(await screen.findByText(/It works only while nothing else has changed this match or occurrence; Unmatch in the Confirmed list is final\./)).toBeInTheDocument()
+  })
+
+  it('the Closed view has no Run matching button, and its cards say what did not count and when they closed', async () => {
+    store = [
+      match('a', { state: 'rejected', version: 2, decided_at: '2026-11-25T09:30:00Z', decided_by: { kind: 'user', user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA', via: 'session' }, history: [{ action: 'rejected', state: 'rejected', amount: { amount: '10.00', currency: 'EUR' }, by: { kind: 'user', user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA' }, reason: null, at: '2026-11-25T09:30:00Z' }] }),
+      match('b', { state: 'rejected', version: 3, decided_by: { kind: 'user', user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA', via: 'token' }, history: [{ action: 'unmatched', state: 'rejected', amount: { amount: '10.00', currency: 'EUR' }, by: { kind: 'user', user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA' }, reason: null, at: '2026-11-25T09:30:00Z' }] }),
+      match('c', { state: 'reversed', version: 3, decided_by: { kind: 'token', user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA', via: 'mcp' } }),
+    ]
+    extra['GET /api/v1/occurrences/occ-b'] = ok(occurrence('b'))
+    extra['GET /api/v1/occurrences/occ-c'] = ok(occurrence('c'))
+    extra['GET /api/v1/commitments/c-b'] = ok({ id: 'c-b', name: 'Gym' })
+    extra['GET /api/v1/commitments/c-c'] = ok({ id: 'c-c', name: 'Phone' })
+    extra['GET /api/v1/payment-matches'] = (r) => ok({ items: store.filter((m) => r.query.getAll('state').includes(m.state)), next_cursor: null })
+    start()
+    expect(await screen.findByRole('button', { name: 'Run matching now' })).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole('button', { name: 'Closed' }))
+    const list = await screen.findByRole('list', { name: 'Closed matches' })
+    expect(screen.queryByRole('button', { name: 'Run matching now' })).not.toBeInTheDocument()
+    const rejected = await within(list).findByRole('article', { name: 'Rent' })
+    expect(rejected).toHaveTextContent(/Amount proposed 10\.00 EUR.*of this transaction; it did not count as payment/)
+    expect(rejected).not.toHaveTextContent('pays this occurrence')
+    expect(rejected).toHaveTextContent('Rejected by you. Closed 2026-11-25 09:30 UTC.')
+    const unmatched = await within(list).findByRole('article', { name: 'Gym' })
+    expect(within(unmatched).getByText('Unmatched', { selector: 'span' })).toBeInTheDocument()
+    expect(within(unmatched).queryByText('Rejected', { selector: 'span' })).not.toBeInTheDocument()
+    expect(unmatched).toHaveTextContent('Unmatched by you, via an API token (it had counted as payment).')
+    expect(unmatched).toHaveTextContent(/10\.00 EUR.*of this transaction no longer counts: unmatched/)
+    const reversed = await within(list).findByRole('article', { name: 'Phone' })
+    expect(reversed).toHaveTextContent('no longer counts: payment reversed')
+    expect(reversed).not.toHaveTextContent('pays this occurrence')
   })
 })
