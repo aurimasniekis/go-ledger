@@ -197,11 +197,12 @@ func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (ov
 
 // isBaseline reports whether an occurrence's bank payment may be the baseline
 // of the amount-change alert: not cancelled, not partly paid, no manual
-// payment among its evidence, and no confirmed shortfall within tolerance.
+// payment among its evidence, no confirmed shortfall within tolerance, and
+// no status that comes from an applied override (decision C-L6e-amount-override).
 func isBaseline(r monthview.Row) bool {
 	s := r.State
 	return s.Status != payments.StatusCancelled && s.Status != payments.StatusPartiallyPaid &&
-		s.ManualEvidenceCount == 0 && s.Shortfall.Sign() <= 0
+		s.ManualEvidenceCount == 0 && s.Shortfall.Sign() <= 0 && !s.OverrideApplied
 }
 
 // paidRow is the most recent matched bank payment of an occurrence: what was
