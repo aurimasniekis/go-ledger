@@ -74,6 +74,7 @@ func buildDecisionTrigger(svc *decisions.Service, cfg config.Decisions, db *stor
 	dc, _ := cfg.Domain()
 	st := decstore.New(db, aw, now, nil)
 	st.UseCategoryResetter(org)
+	st.UseAssigner(org)
 	return &decisiontasks.Trigger{
 		Tasks:   decisiontasks.New(svc, st, org),
 		Source:  facts,

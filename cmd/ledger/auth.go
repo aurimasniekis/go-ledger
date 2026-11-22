@@ -130,6 +130,8 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.
 	}
 	org := organisationstore.New(db, al, now, nil)
 	sugg := decstore.New(db, al, now, nil)
+	sugg.UseCategoryResetter(org)
+	sugg.UseAssigner(org)
 	return apiParts{suggestions: sugg, suggestionTasks: decisiontasks.New(nil, sugg, org), alerts: alertstore.New(db, al, now, nil), users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil),
 		matches: matchstore.New(db, al, now, nil), merchants: merchantstore.New(db, al, now), organisation: org, deferrals: deferralstore.New(db, al, now, nil), auth: svc, db: db,
 		tokens: tokens.NewService(tokenstore.New(db, al), us, tokens.Options{Now: now})}, nil

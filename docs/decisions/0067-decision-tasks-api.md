@@ -15,18 +15,21 @@ client, the CLI and MCP open. The review UI is task L7.
    checked in the handler against the suggestion's object. A `decisions:write` token alone can reject suggestions and dismiss alerts
    but cannot reach an assignment. MCP tools carry the route's `decisions` grant; the server names the second grant when it is missing.
 3. **Provenance.** Every suggestion carries `suggested_by {provider, model, label}` and `provenance: "suggested by provider/model"`,
-   and keeps them after it is accepted. An alert carries `model_text {text, provider, model, label, provenance}` or null; `message`
+   and keeps them after it is accepted. An alert carries `model_text {text, provider, model, label, provenance: "worded by provider/model"}` or null; `message`
    is always Ledger's own text.
-4. **State.** The API `state` is the stored state, or `reverted` when an accepted auto-applied suggestion has a reversal row (the
+4. **Atomic decisions.** Accept and correct make the assignment and decide the suggestion in one transaction
+   (`DecideSettingCategory`/`DecideAddingLabels` in the decisions store run the decision as the last step of the organisation store's transaction): two decisions at the same moment end with one winner,
+   the other gets `suggestion_not_pending`, and its assignment is rolled back.
+5. **State.** The API `state` is the stored state, or `reverted` when an accepted auto-applied suggestion has a reversal row (the
    stored state stays `accepted`; `reversal` says who and when). The filter `state=accepted` excludes reverted ones. A correction is
    a rejection with the person's own answer and reads `rejected` (the audit action `decision_suggestion.corrected` tells them apart).
    Alerts show `open`, `dismissed` (a person) or `resolved` (the condition stopped holding) with `closed_at`.
-5. **Errors** (all 409, codes added to the Error enum): `suggestion_not_pending` (`ErrNotPending`), `not_reversible`
+6. **Errors** (all 409, codes added to the Error enum): `suggestion_not_pending` (`ErrNotPending`), `not_reversible`
    (`ErrNotReversible`: not auto-applied, already reverted, or the category changed since), `assignment_changed`
    (`organisation.ErrAssignmentChanged`), `nothing_to_apply` (the model chose none), `wrong_task`, `alert_not_open`. An archived
    category or label is `definition_archived` and the suggestion stays pending.
-6. **Audit** is the stores' own (`decision_suggestion.*`, `alert.closed`, and the organisation assignment events); the routes add none.
-7. **Wiring.** `ledger serve` builds the task service without a decision runner: reviewing never calls a model. The stores gained
+7. **Audit** is the stores' own (`decision_suggestion.*`, `alert.closed`, and the organisation assignment events); the routes add none.
+8. **Wiring.** `ledger serve` builds the task service without a decision runner: reviewing never calls a model. The stores gained
    list queries (`ListSuggestions`, `SuggestionView`, `Find`); suggestions join the reversal row for the derived state.
 
 ## Limitations

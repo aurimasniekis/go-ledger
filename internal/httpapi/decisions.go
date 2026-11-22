@@ -179,7 +179,7 @@ func toAlertJSON(a alerts.Alert) alertJSON {
 		out.Facts = map[string]string{}
 	}
 	if w := a.Wording; w != nil {
-		out.ModelText = &modelTextJSON{Text: w.Text, modelJSON: toModelJSON(w.Provider, w.Model), Provenance: "suggested by " + w.Provider + "/" + w.Model}
+		out.ModelText = &modelTextJSON{Text: w.Text, modelJSON: toModelJSON(w.Provider, w.Model), Provenance: "worded by " + w.Provider + "/" + w.Model}
 	}
 	return out
 }

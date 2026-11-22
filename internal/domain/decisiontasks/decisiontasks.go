@@ -41,6 +41,12 @@ type Runner interface {
 type Suggestions interface {
 	Suggestion(ctx context.Context, id string) (decisions.Suggestion, error)
 	Decide(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action) (decisions.Suggestion, error)
+	// DecideSettingCategory sets the object's category as the person's and
+	// decides the suggestion in one transaction: a suggestion no longer pending
+	// ([decisions.ErrNotPending]) rolls the assignment back.
+	DecideSettingCategory(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action, obj organisation.ObjectRef, categoryID *string) (decisions.Suggestion, error)
+	// DecideAddingLabels is DecideSettingCategory for adding labels.
+	DecideAddingLabels(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action, obj organisation.ObjectRef, labelIDs []string) (decisions.Suggestion, error)
 	// RevertAutomatic resets the object's category (only while it is still the
 	// model's) and records the reversal in one transaction.
 	RevertAutomatic(ctx context.Context, actor audit.Actor, id string, obj organisation.ObjectRef, source, categoryID string) error
@@ -334,18 +340,13 @@ func (s *Service) Accept(ctx context.Context, actor audit.Actor, id string) (dec
 		if sg.Decision.Choice == nil {
 			return sg, ErrNothingToApply
 		}
-		if _, err := s.org.SetCategory(ctx, actor, obj, sg.Decision.Choice); err != nil {
-			return sg, err
-		}
+		return s.sugg.DecideSettingCategory(ctx, actor, id, decisions.StateAccepted, audit.DecisionSuggestionAccepted, obj, sg.Decision.Choice)
 	default:
 		if len(sg.Decision.Choices) == 0 {
 			return sg, ErrNothingToApply
 		}
-		if _, err := s.org.AddLabels(ctx, actor, obj, sg.Decision.Choices); err != nil {
-			return sg, err
-		}
+		return s.sugg.DecideAddingLabels(ctx, actor, id, decisions.StateAccepted, audit.DecisionSuggestionAccepted, obj, sg.Decision.Choices)
 	}
-	return s.sugg.Decide(ctx, actor, id, decisions.StateAccepted, audit.DecisionSuggestionAccepted)
 }
 
 // Correction is the person's own answer in place of the model's.
@@ -367,15 +368,10 @@ func (s *Service) Correct(ctx context.Context, actor audit.Actor, id string, c C
 	}
 	switch sg.Task {
 	case decisions.TaskCategorisation:
-		if _, err := s.org.SetCategory(ctx, actor, obj, c.CategoryID); err != nil {
-			return sg, err
-		}
+		return s.sugg.DecideSettingCategory(ctx, actor, id, decisions.StateRejected, audit.DecisionSuggestionCorrected, obj, c.CategoryID)
 	default:
-		if _, err := s.org.AddLabels(ctx, actor, obj, c.LabelIDs); err != nil {
-			return sg, err
-		}
+		return s.sugg.DecideAddingLabels(ctx, actor, id, decisions.StateRejected, audit.DecisionSuggestionCorrected, obj, c.LabelIDs)
 	}
-	return s.sugg.Decide(ctx, actor, id, decisions.StateRejected, audit.DecisionSuggestionCorrected)
 }
 
 // Reject turns a pending suggestion down; nothing is assigned, and the model

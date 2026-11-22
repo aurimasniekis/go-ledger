@@ -323,7 +323,7 @@ func TestDecisionTasksAPI(t *testing.T) {
 	a := asMap(t, list[0])
 	mt := asMap(t, a["model_text"])
 	if a["id"] != al1.ID || a["state"] != "open" || a["closed_at"] != nil || asMap(t, a["facts"])["outstanding"] != "500.00" || asMap(t, a["facts"])["currency"] != "EUR" ||
-		mt["text"] != "Rent is late." || mt["label"] != "openai/gpt-test" || mt["provenance"] != "suggested by openai/gpt-test" || asMap(t, list[1])["model_text"] != nil {
+		mt["text"] != "Rent is late." || mt["label"] != "openai/gpt-test" || mt["provenance"] != "worded by openai/gpt-test" || asMap(t, list[1])["model_text"] != nil {
 		t.Errorf("alert: %v", a)
 	}
 	for name, v := range map[string]string{"state": "state=gone", "kind": "kind=x", "object_type": "object_type=x", "unknown": "colour=red"} {
@@ -360,5 +360,32 @@ func TestDecisionTasksAPI(t *testing.T) {
 	}
 	if code, m, _ := admin.do("GET", "/api/v1/audit?action=alert.closed", ""); code != 200 || len(asList(t, m["items"])) != 1 {
 		t.Errorf("audit alert.closed: %d %v", code, m)
+	}
+
+	// Every action that can change an assignment is gated alike: decisions:write
+	// alone is not enough, and a merchant also needs merchants:write.
+	for _, tc := range []struct{ name, scopes, object string }{
+		{"decisions:write alone, commitment", "decisions:write", "commitment"},
+		{"decisions:write alone, merchant", "decisions:write", "merchant"},
+		{"merchant without merchants:write", "decisions:write,organisation:write", "merchant"},
+	} {
+		for _, action := range []struct{ path, body string }{
+			{"accept", "{}"}, {"correct", `{"category_id":"` + food + `"}`}, {"revert", "{}"},
+		} {
+			obj := resource.NewID()
+			if tc.object == "commitment" {
+				obj = newCommitment("Gate " + action.path)
+			}
+			sg := record(decisions.TaskCategorisation, tc.object, obj, choice(food), action.path == "revert")
+			if code, m, _ := tok(tc.scopes).do("POST", "/api/v1/suggestions/"+sg.ID+"/"+action.path, action.body); code != 403 {
+				t.Errorf("%s %s: %d %v", action.path, tc.name, code, m)
+			}
+			if got, err := sugg.Suggestion(ctx, sg.ID); err != nil || got.State != decisions.StatePending {
+				t.Errorf("%s %s changed the suggestion: %v %v", action.path, tc.name, got.State, err)
+			}
+			if id, _ := category(tc.object, obj); id != "" {
+				t.Errorf("%s %s assigned %s", action.path, tc.name, id)
+			}
+		}
 	}
 }

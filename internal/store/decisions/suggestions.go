@@ -180,31 +180,89 @@ func (s *Store) Decide(ctx context.Context, actor audit.Actor, id string, to dec
 	if to == decisions.StatePending || !to.Valid() {
 		return decisions.Suggestion{}, errors.New("decisions: a suggestion moves to accepted, rejected or superseded")
 	}
-	now := s.now().UTC()
 	var out decisions.Suggestion
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, "UPDATE decision_suggestions SET state = ?, decided_at = ?, version = version + 1 WHERE id = ? AND state = 'pending'", string(to), store.Timestamp{Time: now}, id)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			var one int
-			if err := tx.QueryRowContext(ctx, "SELECT 1 FROM decision_suggestions WHERE id = ?", id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
-				return resource.ErrNotFound
-			} else if err != nil {
-				return err
-			}
-			return decisions.ErrNotPending
-		}
-		if out, err = scanSuggestion(tx.QueryRowContext(ctx, "SELECT "+suggestionColumns+" FROM decision_suggestions WHERE id = ?", id)); err != nil {
-			return err
-		}
-		if action == "" {
-			return nil
-		}
-		return s.audit.WriteAudit(ctx, tx, suggestionEvent(action, actor, out, now))
+		var err error
+		out, err = s.decideTx(ctx, tx, actor, id, to, action)
+		return err
 	})
 	return out, err
+}
+
+// Assigner makes the person's assignments inside a transaction the caller
+// supplies a step for (internal/store/organisation implements it).
+type Assigner interface {
+	SetCategoryWith(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, categoryID *string, inTx func(ctx context.Context, tx *sql.Tx) error) (organisation.Assignments, error)
+	AddLabelsWith(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, labelIDs []string, inTx func(ctx context.Context, tx *sql.Tx) error) (organisation.Assignments, error)
+}
+
+// UseAssigner sets the organisation store the Decide...ing methods assign
+// through. Both stores must use the same database.
+func (s *Store) UseAssigner(a Assigner) { s.assigner = a }
+
+// DecideSettingCategory sets the object's category as the person's and decides
+// the suggestion in one transaction. The suggestion must still be pending at
+// that point, so of two decisions made at the same moment one wins and the
+// other's assignment is rolled back ([decisions.ErrNotPending]): the object
+// never holds an assignment of a decision the suggestion does not show.
+func (s *Store) DecideSettingCategory(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action, obj organisation.ObjectRef, categoryID *string) (decisions.Suggestion, error) {
+	return s.decideAssigning(ctx, actor, id, to, action, func(decide func(context.Context, *sql.Tx) error) error {
+		_, err := s.assigner.SetCategoryWith(ctx, actor, obj, categoryID, decide)
+		return err
+	})
+}
+
+// DecideAddingLabels is [Store.DecideSettingCategory] for adding labels (all
+// or none).
+func (s *Store) DecideAddingLabels(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action, obj organisation.ObjectRef, labelIDs []string) (decisions.Suggestion, error) {
+	return s.decideAssigning(ctx, actor, id, to, action, func(decide func(context.Context, *sql.Tx) error) error {
+		_, err := s.assigner.AddLabelsWith(ctx, actor, obj, labelIDs, decide)
+		return err
+	})
+}
+
+func (s *Store) decideAssigning(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action, assign func(decide func(context.Context, *sql.Tx) error) error) (decisions.Suggestion, error) {
+	if to == decisions.StatePending || !to.Valid() {
+		return decisions.Suggestion{}, errors.New("decisions: a suggestion moves to accepted, rejected or superseded")
+	}
+	if s.assigner == nil {
+		return decisions.Suggestion{}, errors.New("decisions: no assigner is set")
+	}
+	var out decisions.Suggestion
+	err := assign(func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		out, err = s.decideTx(ctx, tx, actor, id, to, action)
+		return err
+	})
+	if err != nil {
+		return decisions.Suggestion{}, err
+	}
+	return out, nil
+}
+
+func (s *Store) decideTx(ctx context.Context, tx *sql.Tx, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action) (decisions.Suggestion, error) {
+	now := s.now().UTC()
+	res, err := tx.ExecContext(ctx, "UPDATE decision_suggestions SET state = ?, decided_at = ?, version = version + 1 WHERE id = ? AND state = 'pending'", string(to), store.Timestamp{Time: now}, id)
+	if err != nil {
+		return decisions.Suggestion{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var one int
+		if err := tx.QueryRowContext(ctx, "SELECT 1 FROM decision_suggestions WHERE id = ?", id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
+			return decisions.Suggestion{}, resource.ErrNotFound
+		} else if err != nil {
+			return decisions.Suggestion{}, err
+		}
+		return decisions.Suggestion{}, decisions.ErrNotPending
+	}
+	out, err := scanSuggestion(tx.QueryRowContext(ctx, "SELECT "+suggestionColumns+" FROM decision_suggestions WHERE id = ?", id))
+	if err != nil {
+		return out, err
+	}
+	if action == "" {
+		return out, nil
+	}
+	return out, s.audit.WriteAudit(ctx, tx, suggestionEvent(action, actor, out, now))
 }
 
 // RecordReversal records that a person took back an auto-applied suggestion's
