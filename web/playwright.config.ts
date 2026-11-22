@@ -7,6 +7,7 @@ import { defineConfig, devices } from '@playwright/test'
 // the frontend and the binary first (`make build-full`). Tests are offline.
 // Run: E2E_LEDGER_BIN=../bin/ledger pnpm test:e2e
 const port = 18080
+const journeyPort = 18081 // journey-server.mjs
 // Opt-in for sandboxed hosts where Chromium crashes: PLAYWRIGHT_SINGLE_PROCESS=1
 // starts it with --single-process. Off by default; see CONTRIBUTING.md.
 const singleProcess = process.env.PLAYWRIGHT_SINGLE_PROCESS === '1'
@@ -27,7 +28,8 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
+  webServer: [
+    {
     command: `${process.env.E2E_LEDGER_BIN ?? '../bin/ledger'} serve`,
     // Synthetic values for a throwaway server: no real key, no real data. The store
     // needs a file path (not :memory:), so each run gets its own temporary database.
@@ -39,5 +41,13 @@ export default defineConfig({
     url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: false,
     timeout: 30_000,
-  },
+    },
+    // The offline main journey (U3, e2e/journey.spec.ts): the same binary with a simulated Enable Banking API.
+    {
+      command: `node e2e/journey-server.mjs ${process.env.E2E_LEDGER_BIN ?? '../bin/ledger'}`,
+      url: `http://127.0.0.1:${journeyPort}/`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
+  ],
 })

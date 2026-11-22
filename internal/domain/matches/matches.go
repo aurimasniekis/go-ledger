@@ -171,6 +171,12 @@ type Event struct {
 	By     Decider
 	Reason *string
 	At     time.Time
+	// Replaced lists the manual payment records this change marked replaced
+	// by the match (a confirmation "as the payment I recorded", decision D45,
+	// ADR-0049); Restored those it made count again (an unconfirm or unmatch
+	// of such a confirmation). Both are empty for other changes.
+	Replaced []string
+	Restored []string
 }
 
 // Match is a payment match with the bank fact it refers to and its history.
@@ -343,6 +349,22 @@ var (
 	// ErrNotUnconfirmable refuses an unconfirm of a match that was never a
 	// suggestion: a match a person created confirmed is undone by unmatching.
 	ErrNotUnconfirmable = fmt.Errorf("%w: only a confirmed suggestion can go back to suggested; unmatch a match created confirmed", ErrTransition)
+	// ErrActorReplace refuses a confirmation that replaces manual payments
+	// by automation: only a person says a bank payment is the one they
+	// recorded (decision D45).
+	ErrActorReplace = errors.New("only a user or a token can confirm a match as replacing manual payments")
+	// ErrReplaceNotFound names a manual payment to replace that does not
+	// exist.
+	ErrReplaceNotFound = errors.New("no manual payment has this identifier")
+	// ErrReplaceOtherOccurrence refuses to replace a manual payment of
+	// another occurrence than the match's.
+	ErrReplaceOtherOccurrence = errors.New("the manual payment belongs to another occurrence than the match")
+	// ErrReplaceUnavailable refuses to replace a manual payment that no
+	// longer counts: it was deleted or another match already replaces it.
+	ErrReplaceUnavailable = errors.New("the manual payment was deleted or is already replaced by a match")
+	// ErrReplaceCurrency refuses to replace a manual payment in another
+	// currency than the match: amounts are never converted.
+	ErrReplaceCurrency = errors.New("the manual payment is in another currency than the match; amounts are never converted")
 	// ErrDuplicate refuses a second open (suggested or confirmed) match of
 	// the same transaction and occurrence.
 	ErrDuplicate = errors.New("the transaction and the occurrence already have an open match")
@@ -521,6 +543,47 @@ type Store interface {
 	Reverse(ctx context.Context, actor audit.Actor, id string, expected int64, reason *string) (Change, error)
 	// Unconfirm takes back a confirmation: the match is a suggestion again,
 	// as it was before it was confirmed (decision D42 1a, ADR-0045). Only the
-	// person who confirmed it may, and only inside the undo window.
+	// person who confirmed it may, and only inside the undo window. Manual
+	// payments the confirmation replaced count again.
 	Unconfirm(ctx context.Context, actor audit.Actor, id string, expected int64, reason *string) (Change, error)
+	// ConfirmReplacing confirms a suggestion "as the payment I recorded"
+	// (decision D45, ADR-0049): in the same write it marks the listed manual
+	// payments of the match's occurrence replaced by the match, so they stop
+	// counting and the bank match pays the occurrence instead.
+	ConfirmReplacing(ctx context.Context, actor audit.Actor, id string, expected int64, r Replacement) (Change, error)
+}
+
+// MaxReplaced is the most manual payments one confirmation may replace.
+const MaxReplaced = 20
+
+// Replacement is a confirmation that replaces manual payment records
+// (decision D45, ADR-0049).
+type Replacement struct {
+	// ManualPaymentIDs are the records the bank payment is: 1 to
+	// [MaxReplaced], each once, all of the match's occurrence.
+	ManualPaymentIDs []string
+	// AllowOverpayment lets the confirmation take the occurrence's
+	// remaining evidence past its amount, as for Confirm.
+	AllowOverpayment bool
+	Reason           *string
+}
+
+// Validate checks r on its own (not against stored data).
+func (r Replacement) Validate() []commitments.FieldError {
+	var errs []commitments.FieldError
+	switch n := len(r.ManualPaymentIDs); {
+	case n == 0:
+		errs = append(errs, commitments.FieldError{Field: "manual_payment_ids", Message: "manual_payment_ids needs at least one manual payment"})
+	case n > MaxReplaced:
+		errs = append(errs, commitments.FieldError{Field: "manual_payment_ids", Message: fmt.Sprintf("manual_payment_ids lists at most %d manual payments", MaxReplaced)})
+	}
+	seen := make(map[string]bool, len(r.ManualPaymentIDs))
+	for _, id := range r.ManualPaymentIDs {
+		if seen[id] {
+			errs = append(errs, commitments.FieldError{Field: "manual_payment_ids", Message: "manual_payment_ids lists a manual payment twice"})
+			break
+		}
+		seen[id] = true
+	}
+	return append(errs, ValidateReason(r.Reason)...)
 }

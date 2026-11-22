@@ -577,9 +577,11 @@ describe('"Already paid" says where the existing payment comes from (N1)', () =>
     expect(within(card).getByRole('button', { name: 'Reject suggestion' }).className).not.toContain('bg-primary')
   })
 
-  it('drops the stale "a person has to choose" line', async () => {
-    const { card } = await cardWith(pay({ bank_evidence_count: 1 }), { reason: 'automatic match not confirmed: 2 candidates for the occurrence (ambiguous)' })
+  it('drops the stale "a person has to choose" lines by engine code, and keeps the other sentences', async () => {
+    const reason = 'automatic match not confirmed: several_transactions (2 candidate transactions for this occurrence); date_outside_window (9 days from the due date; at most 3); description similarity 80/100 (a hint only)'
+    const { card } = await cardWith(pay({ bank_evidence_count: 1 }), { reason })
     expect(card).not.toHaveTextContent('a person has to choose')
+    expect(card).toHaveTextContent('It is 9 days from the due date; automatic confirmation allows at most 3.')
   })
 })
 

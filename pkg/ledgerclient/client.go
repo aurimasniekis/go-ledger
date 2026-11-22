@@ -116,12 +116,19 @@ func New(baseURL, token string, opts ...Option) (*Client, error) {
 	return &Client{base: u.Scheme + "://" + u.Host, token: token, hc: hc, slow: &slow, ua: s.ua}, nil
 }
 
-// httpFor picks the HTTP client for a call: refreshes wait longer.
+// httpFor picks the HTTP client for a call: a refresh waits longer. Only POST /bank-connections/{id}/refresh qualifies;
+// a GET of that path, or any other path, keeps the ordinary timeout.
 func (c *Client) httpFor(method, path string) *http.Client {
-	if method == http.MethodPost && strings.HasPrefix(path, "/bank-connections/") && strings.HasSuffix(path, "/refresh") {
+	if strings.EqualFold(method, http.MethodPost) && isBankRefreshPath(path) {
 		return c.slow
 	}
 	return c.hc
+}
+
+// isBankRefreshPath reports whether path is /bank-connections/{id}/refresh with a non-empty id, segment by segment.
+func isBankRefreshPath(path string) bool {
+	seg := strings.Split(path, "/")
+	return len(seg) == 4 && seg[0] == "" && seg[1] == "bank-connections" && seg[2] != "" && seg[3] == "refresh"
 }
 
 func isLoopback(host string) bool {

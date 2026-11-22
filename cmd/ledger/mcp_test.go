@@ -591,6 +591,9 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"unconfirm_payment_match": func() (string, string, string) {
 			return "POST", "/payment-matches/" + fakeID + "/unconfirm", `{"version":1}`
 		},
+		"confirm_payment_match_replacing": func() (string, string, string) {
+			return "POST", "/payment-matches/" + fakeID + "/confirm-replacing", `{"version":1,"manual_payment_ids":["` + fakeID + `"]}`
+		},
 		"run_payment_matching": func() (string, string, string) { return "POST", "/payment-matching/runs", "{}" },
 		"record_manual_payment": func() (string, string, string) {
 			return "POST", "/occurrences/" + fakeID + "/manual-payments", `{"amount":{"amount":"1.00","currency":"EUR"},"paid_on":"2026-11-01"}`
@@ -619,18 +622,19 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"create_commitment": newCommitmentArgs("Parity 2"),
 		"delete_commitment": {"id": "01JD3Y4C8V9M2Q7W5R6T0XZBNT", "version": 1},
 
-		"list_payment_matches":    nil,
-		"get_payment_match":       {"id": fakeID},
-		"create_payment_match":    createMatchArgs(),
-		"confirm_payment_match":   {"id": fakeID, "version": 1},
-		"correct_payment_match":   {"id": fakeID, "version": 1, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}},
-		"reject_payment_match":    {"id": fakeID, "version": 1},
-		"unmatch_payment_match":   {"id": fakeID, "version": 1},
-		"reverse_payment_match":   {"id": fakeID, "version": 1},
-		"unconfirm_payment_match": {"id": fakeID, "version": 1},
-		"run_payment_matching":    nil,
-		"record_manual_payment":   {"id": fakeID, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}, "paid_on": "2026-11-01"},
-		"delete_manual_payment":   {"id": fakeID, "payment_id": fakeID, "version": 1},
+		"list_payment_matches":            nil,
+		"get_payment_match":               {"id": fakeID},
+		"create_payment_match":            createMatchArgs(),
+		"confirm_payment_match":           {"id": fakeID, "version": 1},
+		"correct_payment_match":           {"id": fakeID, "version": 1, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}},
+		"reject_payment_match":            {"id": fakeID, "version": 1},
+		"unmatch_payment_match":           {"id": fakeID, "version": 1},
+		"reverse_payment_match":           {"id": fakeID, "version": 1},
+		"unconfirm_payment_match":         {"id": fakeID, "version": 1},
+		"confirm_payment_match_replacing": {"id": fakeID, "version": 1, "manual_payment_ids": []string{fakeID}},
+		"run_payment_matching":            nil,
+		"record_manual_payment":           {"id": fakeID, "amount": map[string]any{"amount": "1.00", "currency": "EUR"}, "paid_on": "2026-11-01"},
+		"delete_manual_payment":           {"id": fakeID, "payment_id": fakeID, "version": 1},
 
 		"list_bank_applications":  nil,
 		"list_bank_institutions":  {"application": "fake-app", "country": "FI"},

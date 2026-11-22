@@ -49,9 +49,18 @@ function splitParts(s: string): string[] {
   return out.filter(Boolean)
 }
 
+/** One sentence of the engine's reason, with the engine's code for it (null when the sentence is not a code). */
+export interface ReasonLine {
+  code: string | null
+  text: string
+}
+
+/** Codes that mean a person has to choose between candidates. Matched by code, never by the wording of the sentence. */
+export const AMBIGUITY_CODES: readonly string[] = ['several_transactions', 'several_occurrences']
+
 export interface PlainReason {
   /** Why it was not confirmed, or how it was confirmed, one sentence each. Empty when the reason is not the engine's. */
-  lines: string[]
+  lines: ReasonLine[]
   /** The description-similarity note, always worded as a hint. */
   hint: string | null
   /** A reason written by a person (or text this screen does not know): shown as it is. */
@@ -64,19 +73,19 @@ export function plainReason(reason: string | null): PlainReason {
   const m = /^automatic match (confirmed|not confirmed): (.*)$/.exec(reason)
   if (!m) return { lines: [], hint: null, verbatim: reason }
   let hint: string | null = null
-  const lines: string[] = []
+  const lines: ReasonLine[] = []
   const body = m[2]!.replace(/(?:; )?description similarity (\d+)\/100 \(a hint only\)\s*$/, (_, s: string) => {
     hint = `The description looks ${s}% similar. That is a hint, not proof.`
     return ''
   })
   if (m[1] === 'confirmed') {
-    if (body) lines.push(`Confirmed automatically: ${body}.`)
+    if (body) lines.push({ code: null, text: `Confirmed automatically: ${body}.` })
   } else {
     const refused = /^the store refused the automatic confirmation \(store_refused: ([a-z_]+)\)$/.exec(body)
-    if (refused) lines.push(`The automatic confirmation was refused (${refused[1]!.replace(/_/g, ' ')}), so a person has to decide.`)
+    if (refused) lines.push({ code: 'store_refused', text: `The automatic confirmation was refused (${refused[1]!.replace(/_/g, ' ')}), so a person has to decide.` })
     else for (const part of splitParts(body)) {
       const p = PART.exec(part)
-      lines.push(p ? sentence(p[1]!, p[2]) : part)
+      lines.push(p ? { code: p[1]!, text: sentence(p[1]!, p[2]) } : { code: null, text: part })
     }
   }
   return { lines, hint, verbatim: null }

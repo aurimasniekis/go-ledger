@@ -35,7 +35,9 @@ import (
 // tables must refer to commitment_occurrences(id) with ON DELETE RESTRICT, so
 // the database also refuses to drop a paid occurrence.
 var DefaultEvidence = []string{
-	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id AND mp.deleted_at IS NULL)",
+	// A manual payment replaced by a bank match (D45, ADR-0049) does not
+	// count itself: the confirmed match below does.
+	"EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.occurrence_id = o.id AND mp.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM manual_payment_replacements r WHERE r.manual_payment_id = mp.id AND r.restored_at IS NULL))",
 	// Payment matches (X1, ADR-0035): a confirmed match keeps its occurrence
 	// even while its transaction does not count (no longer reported), and a
 	// reversed one is payment history that is kept too. Suggestions and

@@ -84,6 +84,15 @@ async function datesOnOneLine(page: Page) {
   }
 }
 
+// The number of rows the header's links and controls take: items on one row are centred on the same line (their heights
+// differ), so count the distinct centres, 8 px apart or more.
+const headerRows = (page: Page) =>
+  page.getByRole('banner').evaluate((h) => {
+    const items = [...h.querySelectorAll('a, button, select')].filter((el) => (el as HTMLElement).offsetParent !== null)
+    const centres = items.map((el) => { const b = el.getBoundingClientRect(); return b.top + b.height / 2 }).sort((a, b) => a - b)
+    return centres.reduce((n, c, i) => (i === 0 || c - centres[i - 1]! >= 8 ? n + 1 : n), 0)
+  })
+
 // An administrator also holds connections:read, so the header has four links: it is still two rows at 390 px.
 test.describe('390 CSS px wide, an administrator with connections:read', () => {
   test.use({ viewport: { width: 390, height: 844 } })
@@ -94,16 +103,47 @@ test.describe('390 CSS px wide, an administrator with connections:read', () => {
     await expect(nav.getByRole('link', { name: 'Bank connections' })).toBeVisible()
     await expect(nav.getByRole('link', { name: 'Payment matches' })).toBeVisible()
     await shot(page, 'header-390-admin')
-    const rows = await page.getByRole('banner').evaluate((h) => {
-      const items = [...h.querySelectorAll('a, button, select')].filter((el) => (el as HTMLElement).offsetParent !== null)
-      // Items on one row are centred on the same line (their heights differ): count the distinct centres, 8 px apart or more.
-      const centres = items.map((el) => { const b = el.getBoundingClientRect(); return b.top + b.height / 2 }).sort((a, b) => a - b)
-      return centres.reduce((n, c, i) => (i === 0 || c - centres[i - 1]! >= 8 ? n + 1 : n), 0)
-    })
-    expect(rows, 'rows in the header').toBe(2)
+    expect(await headerRows(page), 'rows in the header').toBe(2)
     await noOverflow(page)
   })
 })
+
+// Between the phone and desktop layouts (640 to 830 CSS px) the header was three rows where the full link names wrapped;
+// the links take their short names below 768 px, so it is at most two rows across the range.
+test.describe('640 to 830 CSS px wide, an administrator with connections:read', () => {
+  test.use({ viewport: { width: 640, height: 800 } })
+  test('the header is at most two rows and nothing overflows', async ({ page }) => {
+    await signedIn(page, ['commitments:read', 'users:read', 'tokens:read', 'connections:read'])
+    await page.goto('/month?month=2026-11')
+    for (const width of [640, 700, 767, 768, 800, 830]) {
+      await page.setViewportSize({ width, height: 800 })
+      expect(await headerRows(page), `rows in the header at ${width} px`).toBeLessThanOrEqual(2)
+      await noOverflow(page)
+    }
+  })
+})
+
+// The header is at most two rows at every width from 320 to 1280 CSS px, with and without connections:read. The administrator
+// has the longest link row (the 320, 340, 360 and 390 px cases are the phone widths it was checked at first).
+// "Monthly" keeps its full word on a phone (WCAG 2.5.3: the visible label is part of the accessible name "Monthly view").
+const adminGrants = ['commitments:read', 'users:read', 'tokens:read', 'connections:read']
+const memberGrants = ['commitments:read', 'users:read', 'tokens:read']
+const headerWidths = Array.from({ length: 1280 - 320 + 1 }, (_, i) => 320 + i)
+for (const [label, grants] of [['an administrator with connections:read', adminGrants], ['without connections:read', memberGrants]] as const) {
+  test.describe('320 to 1280 CSS px wide, ' + label, () => {
+    test.use({ viewport: { width: 320, height: 640 } })
+    test('the header is at most two rows and nothing overflows', async ({ page }) => {
+      test.setTimeout(120_000)
+      await signedIn(page, [...grants])
+      await page.goto('/month?month=2026-11')
+      for (const width of headerWidths) {
+        await page.setViewportSize({ width, height: 640 })
+        expect(await headerRows(page), `rows in the header at ${width} px`).toBeLessThanOrEqual(2)
+        await noOverflow(page)
+      }
+    })
+  })
+}
 
 // One extra phone width (375), kept separate so the browser is launched for as few extra pages as possible.
 test.describe('375 CSS px wide', () => {

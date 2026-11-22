@@ -139,6 +139,9 @@ func TestPaymentMatchRequests(t *testing.T) {
 	if _, err := c.UnconfirmPaymentMatch(ctx, "m1", 6, &why); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := c.ConfirmPaymentMatchReplacing(ctx, "m1", 7, MatchReplacement{ManualPaymentIDs: []string{"p1", "p2"}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := c.RunPaymentMatching(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +154,7 @@ func TestPaymentMatchRequests(t *testing.T) {
 		`POST /api/v1/payment-matches/m1/unmatch  if-match="4" {}`,
 		`POST /api/v1/payment-matches/m1/reject  if-match="5" {}`,
 		`POST /api/v1/payment-matches/m1/unconfirm  if-match="6" {"reason":"returned"}`,
+		`POST /api/v1/payment-matches/m1/confirm-replacing  if-match="7" {"manual_payment_ids":["p1","p2"]}`,
 		`POST /api/v1/payment-matching/runs  if-match= {}`,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -400,6 +404,38 @@ func TestBankConnectionRequestShape(t *testing.T) {
 	}
 	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
 		t.Errorf("requests:\n%s\nwant:\n%s", strings.Join(seen, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// Only POST /bank-connections/{id}/refresh takes the refresh client: the method and each path segment must match exactly.
+func TestHTTPForRefreshClientIsOnlyForPostRefresh(t *testing.T) {
+	c, err := New("https://ledger.example.com", secretToken, WithTimeout(time.Second), WithRefreshTimeout(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		method, path string
+		slow         bool
+	}{
+		{http.MethodPost, "/bank-connections/bc_1/refresh", true},
+		{"post", "/bank-connections/bc_1/refresh", true},
+		{http.MethodGet, "/bank-connections/bc_1/refresh", false},
+		{http.MethodPost, "/bank-connections/bc_1", false},
+		{http.MethodPost, "/bank-connections/bc_1/reconnect", false},
+		{http.MethodPost, "/bank-connections/bc_1/refresh/extra", false},
+		{http.MethodPost, "/bank-connections//refresh", false},
+		{http.MethodPost, "/bank-connections/refresh", false},
+		{http.MethodPost, "/other/bc_1/refresh", false},
+		{http.MethodPost, "/bank-connections/bc_1/refreshed", false},
+	}
+	for _, tc := range cases {
+		want := c.hc
+		if tc.slow {
+			want = c.slow
+		}
+		if got := c.httpFor(tc.method, tc.path); got != want {
+			t.Errorf("%s %s: got the refresh client %v, want %v", tc.method, tc.path, got == c.slow, tc.slow)
+		}
 	}
 }
 

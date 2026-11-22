@@ -410,6 +410,14 @@ func (c *Client) UnconfirmPaymentMatch(ctx context.Context, id string, version i
 	return c.matchAction(ctx, opUnconfirmMatch, id, version, MatchDecision{Reason: reason})
 }
 
+// ConfirmPaymentMatchReplacing confirms a suggested match "as the payment I
+// recorded" (ADR-0049): the listed manual payments of its occurrence are
+// marked replaced by it and stop counting, so the payment is not counted
+// twice. UnconfirmPaymentMatch inside the undo window makes them count again.
+func (c *Client) ConfirmPaymentMatchReplacing(ctx context.Context, id string, version int64, in MatchReplacement) (*PaymentMatch, error) {
+	return c.matchAction(ctx, opReplaceMatch, id, version, in)
+}
+
 // CorrectPaymentMatch changes the allocated amount of a suggested or
 // confirmed match.
 func (c *Client) CorrectPaymentMatch(ctx context.Context, id string, version int64, in MatchCorrection) (*PaymentMatch, error) {
