@@ -58,6 +58,8 @@ jobs:
           GOBIN="$RUNNER_TEMP/tools" go install "github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}"
           GOBIN="$RUNNER_TEMP/tools" go install "github.com/anchore/syft/cmd/syft@${SYFT_VERSION}"
           echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+      - name: Set up Docker Buildx (multi-platform image builds)
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Check the GoReleaser configuration
         run: goreleaser check
       # Without a tag (a dispatch) the run is a snapshot. --skip=publish keeps the images local and pushes nothing.
@@ -120,6 +122,8 @@ jobs:
           GOBIN="$RUNNER_TEMP/tools" go install "github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}"
           GOBIN="$RUNNER_TEMP/tools" go install "github.com/anchore/syft/cmd/syft@${SYFT_VERSION}"
           echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+      - name: Set up Docker Buildx (multi-platform image builds)
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to Docker Hub
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
