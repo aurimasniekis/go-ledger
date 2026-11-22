@@ -30,6 +30,9 @@ type App struct {
 	RatesLastSuccess *Gauge   // Unix time of the last run that refreshed every currency
 	RatesLastRun     *Gauge   // Unix time of the last finished run, whatever its outcome
 	RatesProvider    *Gauge   // 1 when a rate provider is configured, else 0
+	// DecisionQuestions counts the decision tasks' questions after a bank
+	// refresh (L6d, ADR-0065) by task and outcome.
+	DecisionQuestions *Counter // task, outcome
 
 	eventsPublished *Counter
 	eventsDuplicate *Counter
@@ -66,6 +69,8 @@ func NewApp(version string) *App {
 		"Unix time the last exchange-rate refresh finished, whatever its outcome; absent until one has since the process started.")
 	a.RatesProvider = r.NewGauge("ledger_rates_provider_enabled",
 		"1 when an exchange-rate provider is configured (rates.enabled), else 0. The provider is optional and never gates readiness.")
+	a.DecisionQuestions = r.NewCounter("ledger_decision_questions_total",
+		"Decision-task questions asked after a bank refresh, by task (categorisation, label_suggestion, or transactions when the stored transactions could not be read) and outcome: asked (answered), skipped (nothing to ask: already pending or decided) or failed (not answered: provider error, outage, no consent or an exhausted budget). Labels carry no transaction data.", "task", "outcome")
 	a.eventsPublished = r.NewCounter("ledger_events_published_total", "Events acknowledged by Pulse.")
 	a.eventsDuplicate = r.NewCounter("ledger_events_duplicate_total", "Published events Pulse reported as already stored (deduplicated by event id); a subset of published.")
 	a.eventsFailed = r.NewCounter("ledger_events_failed_total", "Events given up on: not delivered within the retry window, or never publishable.")
@@ -124,6 +129,10 @@ func (a *App) RatesRefreshed(trigger string, success bool, at time.Time) {
 		a.RatesLastSuccess.Set(float64(at.Unix()))
 	}
 }
+
+// DecisionQuestion implements decisiontasks.Meter: it counts one question. The
+// task and outcome are closed sets, so cardinality is fixed.
+func (a *App) DecisionQuestion(task, outcome string) { a.DecisionQuestions.Inc(task, outcome) }
 
 // SetRatesProvider sets the provider-configured gauge.
 func (a *App) SetRatesProvider(enabled bool) {

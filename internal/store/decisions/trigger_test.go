@@ -1,6 +1,7 @@
 package decisions_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/decisions"
 	"github.com/aurimasniekis/go-ledger/internal/domain/decisions/decisionstest"
 	"github.com/aurimasniekis/go-ledger/internal/domain/decisiontasks"
+	"github.com/aurimasniekis/go-ledger/internal/metrics"
 )
 
 // The decision triggers (L6d): a fake provider only, no network and no model.
@@ -19,7 +21,7 @@ import (
 func (te *taskEnv) trigger(svc *decisiontasks.Service, enabled func(decisions.TaskName) bool, merchants decisiontasks.MerchantLookup) (*decisiontasks.Trigger, *int) {
 	failed := new(int)
 	return &decisiontasks.Trigger{Tasks: svc, Source: te.facts_(), Merchants: merchants, Enabled: enabled,
-		OnError: func(decisions.TaskName) { *failed++ }}, failed
+		OnError: func(decisions.TaskName, error) { *failed++ }}, failed
 }
 
 func (te *taskEnv) facts_() decisiontasks.TransactionSource { return te.fixture.facts }
@@ -48,6 +50,55 @@ func TestTriggerAsksOnceForANewTransaction(t *testing.T) {
 	st = tr.AfterRefresh(f.ctx, te.newOne())
 	if st.Skipped != 1 || st.Asked != 0 || te.provider.Calls() != 1 {
 		t.Fatalf("pending: %+v calls=%d", st, te.provider.Calls())
+	}
+}
+
+// Every question is counted by task and outcome on the metric, and a failed
+// one reaches OnError with its error. No transaction data is in a label.
+func TestTriggerCountsQuestionsOnTheMetric(t *testing.T) {
+	app := metrics.NewApp("test")
+	f := newFixture(t, true)
+	te, svc := f.newTasks(t, false, decisionstest.Reply{Output: pickFirst})
+	tr, _ := te.trigger(svc, catOnly, nil)
+	tr.Meter = app
+	tr.AfterRefresh(f.ctx, te.newOne()) // asked
+	tr.AfterRefresh(f.ctx, te.newOne()) // skipped: the suggestion is pending
+
+	// No scripted reply: the question fails.
+	f2 := newFixture(t, true)
+	te2, svc2 := f2.newTasks(t, false)
+	tr2, _ := te2.trigger(svc2, catOnly, nil)
+	tr2.Meter = app
+	var errs []error
+	tr2.OnError = func(task decisions.TaskName, err error) {
+		if task != decisions.TaskCategorisation {
+			t.Errorf("OnError task %q", task)
+		}
+		errs = append(errs, err)
+	}
+	if st := tr2.AfterRefresh(f2.ctx, te2.newOne()); st.Failed != 1 {
+		t.Fatalf("failed pass: %+v", st)
+	}
+	if len(errs) != 1 || errs[0] == nil {
+		t.Fatalf("OnError got %v", errs)
+	}
+
+	var b bytes.Buffer
+	if err := app.Registry.Write(&b); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, want := range []string{
+		"ledger_decision_questions_total{task=\"categorisation\",outcome=\"asked\"} 1\n",
+		"ledger_decision_questions_total{task=\"categorisation\",outcome=\"skipped\"} 1\n",
+		"ledger_decision_questions_total{task=\"categorisation\",outcome=\"failed\"} 1\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if id := string(te.tx.ID); id == "" || strings.Contains(out, id) {
+		t.Errorf("a transaction ID is empty or reached the metric output")
 	}
 }
 
