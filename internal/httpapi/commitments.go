@@ -40,14 +40,35 @@ type commitmentJSON struct {
 	Notes     *string               `json:"notes"`
 	// MatchTolerance is null when the user set none (ADR-0039).
 	MatchTolerance *money.Money `json:"match_tolerance"`
-	Version        int64        `json:"version"`
-	CreatedAt      time.Time    `json:"created_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
+	// Leeway is null when the user recorded nothing; kind "unknown" is the
+	// user's explicit statement that they do not know (ADR-0052).
+	Leeway    *leewayJSON `json:"leeway"`
+	Version   int64       `json:"version"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+// leewayJSON is the API representation of a commitment's leeway; every
+// member is always present, null when not given.
+type leewayJSON struct {
+	Kind         commitments.LeewayKind `json:"kind"`
+	Days         *int                   `json:"days"`
+	Until        *calendar.Date         `json:"until"`
+	Conditions   *string                `json:"conditions"`
+	Consequences *string                `json:"consequences"`
+	Source       *string                `json:"source"`
+}
+
+func toLeewayJSON(l *commitments.Leeway) *leewayJSON {
+	if l == nil {
+		return nil
+	}
+	return &leewayJSON{Kind: l.Kind, Days: l.Days, Until: l.Until, Conditions: l.Conditions, Consequences: l.Consequences, Source: l.Source}
 }
 
 func toCommitmentJSON(c commitments.Commitment) commitmentJSON {
 	return commitmentJSON{ID: c.ID, Name: c.Name, Kind: c.Kind, Amount: c.Amount, Schedule: c.Schedule, StartDate: c.StartDate,
-		EndDate: c.EndDate, Priority: c.Priority, Notes: c.Notes, MatchTolerance: c.MatchTolerance, Version: c.Version, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
+		EndDate: c.EndDate, Priority: c.Priority, Notes: c.Notes, MatchTolerance: c.MatchTolerance, Leeway: toLeewayJSON(c.Leeway), Version: c.Version, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 }
 
 // editableJSON is the part of a commitment a client writes: the body of a
@@ -64,10 +85,11 @@ type editableJSON struct {
 	// MatchTolerance is omitted when nil, so a patch target without one
 	// matches a create body without one.
 	MatchTolerance *money.Money `json:"match_tolerance,omitempty"`
+	Leeway         *leewayJSON  `json:"leeway,omitempty"`
 }
 
 // commitmentMembers are the writable members, in the order errors are listed.
-var commitmentMembers = []string{"name", "kind", "amount", "schedule", "start_date", "end_date", "priority", "notes", "match_tolerance"}
+var commitmentMembers = []string{"name", "kind", "amount", "schedule", "start_date", "end_date", "priority", "notes", "match_tolerance", "leeway"}
 
 // requiredCommitmentMembers cannot be absent from a create or null in a patch.
 var requiredCommitmentMembers = map[string]bool{"name": true, "kind": true, "amount": true, "schedule": true, "start_date": true}
@@ -222,6 +244,9 @@ func decodeCommitment(doc map[string]json.RawMessage) (commitments.Fields, []com
 			f.MatchTolerance = &t
 		}
 	}
+	if raw, ok := present("leeway"); ok {
+		f.Leeway = decodeLeeway(raw, fail)
+	}
 	for _, e := range f.Validate() {
 		top, _, _ := strings.Cut(e.Field, ".")
 		if !bad[top] {
@@ -234,6 +259,61 @@ func decodeCommitment(doc map[string]json.RawMessage) (commitments.Fields, []com
 	}
 	slices.SortStableFunc(errs, func(a, b commitments.FieldError) int { return rank(a) - rank(b) })
 	return f, errs
+}
+
+// decodeLeeway decodes the leeway object, naming the member that is wrong.
+// Members not given are null; the kind is required.
+func decodeLeeway(raw json.RawMessage, fail func(member, field, msg string)) *commitments.Leeway {
+	const example = `leeway must be an object such as {"kind":"period","days":5}`
+	var m map[string]json.RawMessage
+	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) || json.Unmarshal(raw, &m) != nil {
+		fail("leeway", "leeway", example)
+		return nil
+	}
+	var unknown []string
+	for k := range m {
+		if !slices.Contains([]string{"kind", "days", "until", "conditions", "consequences", "source"}, k) {
+			unknown = append(unknown, k)
+		}
+	}
+	slices.Sort(unknown)
+	for _, k := range unknown {
+		fail("leeway", "leeway."+k, "unknown field "+k)
+	}
+	l := &commitments.Leeway{}
+	bad := len(unknown) > 0
+	get := func(k string, into any, what string) {
+		raw, ok := m[k]
+		if !ok || isJSONNull(raw) {
+			return
+		}
+		if json.Unmarshal(raw, into) != nil {
+			fail("leeway", "leeway."+k, "leeway."+k+" must be "+what)
+			bad = true
+		}
+	}
+	var kind string
+	get("kind", &kind, "a string")
+	l.Kind = commitments.LeewayKind(kind)
+	get("days", &l.Days, "a whole number")
+	var until *string
+	get("until", &until, "a date YYYY-MM-DD")
+	if until != nil {
+		d, err := calendar.ParseDate(*until)
+		if err != nil {
+			fail("leeway", "leeway.until", "leeway.until must be a date YYYY-MM-DD")
+			bad = true
+		} else {
+			l.Until = &d
+		}
+	}
+	get("conditions", &l.Conditions, "a string")
+	get("consequences", &l.Consequences, "a string")
+	get("source", &l.Source, "a string")
+	if bad {
+		return nil
+	}
+	return l
 }
 
 // decodeAmount decodes {"amount":"12.50","currency":"EUR"}, naming the
@@ -497,7 +577,7 @@ func registerCommitments(s *Server, st commitments.Store, todayFn today) {
 // 7396) and decodes the result.
 func applyCommitmentPatch(cur commitments.Commitment, patch MergePatch) (commitments.Fields, []commitments.FieldError, error) {
 	target, err := json.Marshal(editableJSON{Name: cur.Name, Kind: cur.Kind, Amount: cur.Amount, Schedule: cur.Schedule,
-		StartDate: cur.StartDate, EndDate: cur.EndDate, Priority: cur.Priority, Notes: cur.Notes, MatchTolerance: cur.MatchTolerance})
+		StartDate: cur.StartDate, EndDate: cur.EndDate, Priority: cur.Priority, Notes: cur.Notes, MatchTolerance: cur.MatchTolerance, Leeway: toLeewayJSON(cur.Leeway)})
 	if err != nil {
 		return commitments.Fields{}, nil, Internal(err)
 	}

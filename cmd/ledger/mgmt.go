@@ -90,8 +90,8 @@ var mgmtVerbs = map[string]map[string]verb{
 	"commitments": {
 		"list":   {"list [--kind K]... [--priority P]... [--currency C]... [--limit N] [--cursor C] [--all]", commitmentsList},
 		"get":    {"get <id>", commitmentsGet},
-		"create": {"create --name N --kind K --amount 12.50 --currency EUR --frequency monthly|annual [--interval N] [--month M] --day D --start-date YYYY-MM-DD [--end-date D] [--priority P] [--notes T] [--match-tolerance 0.50]", commitmentsCreate},
-		"update": {"update <id> [--version N] [--effective-from D] [--name N] [--kind K] [--amount A] [--currency C] [--frequency F] [--interval N] [--month M] [--day D] [--start-date D] [--end-date D | --clear-end-date] [--priority P | --clear-priority] [--notes T | --clear-notes] [--match-tolerance A | --clear-match-tolerance]", commitmentsUpdate},
+		"create": {"create --name N --kind K --amount 12.50 --currency EUR --frequency monthly|annual [--interval N] [--month M] --day D --start-date YYYY-MM-DD [--end-date D] [--priority P] [--notes T] [--match-tolerance 0.50] [--leeway unknown|none|period|deadline] [--leeway-days N] [--leeway-until D] [--leeway-conditions T] [--leeway-consequences T] [--leeway-source T]", commitmentsCreate},
+		"update": {"update <id> [--version N] [--effective-from D] [--name N] [--kind K] [--amount A] [--currency C] [--frequency F] [--interval N] [--month M] [--day D] [--start-date D] [--end-date D | --clear-end-date] [--priority P | --clear-priority] [--notes T | --clear-notes] [--match-tolerance A | --clear-match-tolerance] [--leeway KIND] [--leeway-days N] [--leeway-until D] [--leeway-conditions T] [--leeway-consequences T] [--leeway-source T] [--clear-leeway]", commitmentsUpdate},
 		"delete": {"delete <id> [--version N]", commitmentsDelete},
 	},
 	"occurrences": {

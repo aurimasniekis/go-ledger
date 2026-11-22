@@ -170,7 +170,7 @@ func coreTools() []Tool {
 		{
 			Name: "create_commitment", Title: "Create a commitment", Method: "POST", Path: "/commitments",
 			Grant: grantCommitmentsWrite, Kind: KindWrite,
-			Description: "Create a recurring commitment. Its occurrences are generated from the schedule. The same validation as the HTTP API applies; field errors name the member that is wrong. Optionally sets match_tolerance for automatic payment matching. Not idempotent: calling it twice creates two commitments. If the answer is reported as too large to return, the commitment WAS created: find it with list_commitments instead of calling this again.",
+			Description: "Create a recurring commitment. Its occurrences are generated from the schedule. The same validation as the HTTP API applies; field errors name the member that is wrong. Optionally sets match_tolerance for automatic payment matching and leeway (the grace the creditor allows, only as the person states it: never guess it, and use kind 'unknown' when they say they do not know; omit it when they said nothing). Not idempotent: calling it twice creates two commitments. If the answer is reported as too large to return, the commitment WAS created: find it with list_commitments instead of calling this again.",
 			Schema: object(map[string]any{
 				"name":       map[string]any{"type": "string", "minLength": 1, "description": "Display name."},
 				"kind":       enum("What kind of commitment it is.", commitments.Kinds()),
@@ -182,6 +182,16 @@ func coreTools() []Tool {
 				"notes":      map[string]any{"type": []string{"string", "null"}, "description": "Free-form notes."},
 				"match_tolerance": map[string]any{"oneOf": []any{moneyArg(), map[string]any{"type": "null"}},
 					"description": "Optional, in the commitment's currency; omit or null for none. How far a booked bank payment may fall short of amount and still be confirmed automatically. A payment above amount is never confirmed automatically."},
+				"leeway": map[string]any{"type": []string{"object", "null"}, "additionalProperties": false, "required": []string{"kind"},
+					"description": "Optional; omit when the person said nothing. What the person knows about the grace after a due date. kind unknown: they do not know. none: no grace. period: days (1 to 365) after each due date. deadline: until a fixed date. Never infer it from payment history or from the commitment's name.",
+					"properties": map[string]any{
+						"kind":         map[string]any{"type": "string", "enum": []string{"unknown", "none", "period", "deadline"}},
+						"days":         map[string]any{"type": []string{"integer", "null"}, "minimum": 1, "maximum": 365, "description": "Only for kind period."},
+						"until":        map[string]any{"type": []string{"string", "null"}, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "Only for kind deadline, YYYY-MM-DD."},
+						"conditions":   map[string]any{"type": []string{"string", "null"}, "maxLength": 500, "description": "What the grace depends on."},
+						"consequences": map[string]any{"type": []string{"string", "null"}, "maxLength": 500, "description": "Known fees or other consequences of paying late."},
+						"source":       map[string]any{"type": []string{"string", "null"}, "maxLength": 200, "description": "Where the information comes from."},
+					}},
 			}, "name", "kind", "amount", "schedule", "start_date"),
 		},
 		{

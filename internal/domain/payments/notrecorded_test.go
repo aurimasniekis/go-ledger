@@ -4,7 +4,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
@@ -47,7 +46,10 @@ func TestNotRecordedBoundary(t *testing.T) {
 // it not_recorded.
 func TestNotRecordedIsNotOverdueAndCanBePaid(t *testing.T) {
 	created := d("2026-04-01")
-	grace := func(_ occurrences.Occurrence) (calendar.Date, bool) { return d("2026-04-30"), true }
+	until := d("2026-04-30")
+	grace := func(_ occurrences.Occurrence) payments.Grace {
+		return payments.Grace{Recorded: true, Kind: "deadline", Until: &until}
+	}
 	st := payments.Derive(occ, payments.Facts{CommitmentCreatedOn: created}, d("2026-05-01"), grace)
 	if st.GraceUntil != nil || st.Status != payments.StatusNotRecorded || st.Outstanding.String() != "50.00 EUR" {
 		t.Fatalf("unpaid: %+v", st)

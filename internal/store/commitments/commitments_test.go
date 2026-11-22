@@ -273,7 +273,7 @@ func TestSchemaKeepsDefinitionsApart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(cols, ","); got != "id,name,kind,amount,currency,schedule,start_date,end_date,priority,notes,created_at,updated_at,version,deleted_at,match_tolerance_amount,match_tolerance_currency" {
+	if got := strings.Join(cols, ","); got != "id,name,kind,amount,currency,schedule,start_date,end_date,priority,notes,created_at,updated_at,version,deleted_at,match_tolerance_amount,match_tolerance_currency,leeway_kind,leeway_days,leeway_until,leeway_conditions,leeway_consequences,leeway_source" {
 		t.Fatalf("columns %s", got)
 	}
 	insert := func(amount, schedule, start, end, kind, priority string) error {

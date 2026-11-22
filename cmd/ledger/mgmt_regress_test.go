@@ -303,7 +303,7 @@ func TestPatchMembersMatchWhatTheCLISends(t *testing.T) {
 		[]string{"commitments", "update", "c1", "--version", "1", "--effective-from", "2026-01-01", "--name", "n", "--kind", "server",
 			"--amount", "1.00", "--currency", "EUR", "--frequency", "monthly", "--interval", "1", "--day", "3", "--start-date", "2026-01-01",
 			"--end-date", "2030-01-01", "--priority", "essential", "--notes", "n", "--match-tolerance", "0.50"},
-		[]string{"commitments", "update", "c1", "--version", "1", "--clear-end-date", "--clear-priority", "--clear-notes", "--clear-match-tolerance"},
+		[]string{"commitments", "update", "c1", "--version", "1", "--clear-end-date", "--clear-priority", "--clear-notes", "--clear-match-tolerance", "--clear-leeway"},
 	)
 	if want := schemaMembers("/commitments/{id}"); !slices.Equal(commitments, want) {
 		t.Errorf("commitments PATCH: the CLI sends %v, openapi.yaml allows %v", commitments, want)
