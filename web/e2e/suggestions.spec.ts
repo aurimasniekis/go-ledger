@@ -18,6 +18,7 @@ async function stub(page: Page) {
   const sugs = [sug('s1'), sug('s2', { object_id: 'c2', decision: { choice: 'cat2', choices: [], confidence: null } })]
   const alerts = [{ id: 'a1', kind: 'consent_expiring', object_type: 'bank_connection', object_id: 'bc1', facts: { days_left: '5' }, message: 'The consent for this bank connection ends in 5 days.', model_text: null, state: 'open', created_at: now, closed_at: null, version: 1 }]
   const posts: string[] = []
+  const conflict = new Set<string>()
   await page.route('**/api/v1/auth/session', (r) =>
     r.fulfill(json({ user_id: 'u1', csrf_token: 'x', recent_auth_until: now, two_factor: { enabled: false, required: false, enrollment_required: false },
       session: { id: 's1', current: true, created_at: now, last_seen_at: now, authenticated_at: now, idle_expires_at: now, expires_at: now, user_agent: 'e2e', address: '192.0.2.1' } })))
@@ -31,9 +32,14 @@ async function stub(page: Page) {
     return r.fulfill(json({ items: sugs.filter((s) => st.includes(s.state as string)), next_cursor: null }))
   })
   await page.route('**/api/v1/suggestions/*/*', (r) => {
-    const [, id, action] = new URL(r.request().url()).pathname.match(/suggestions\/([^/]+)\/([^/]+)$/)!
+    const [, id = '', action = ''] = new URL(r.request().url()).pathname.match(/suggestions\/([^/]+)\/([^/]+)$/)!
     posts.push(id + ':' + action)
     const s = sugs.find((x) => x.id === id)!
+    if (conflict.has(id)) {
+      s.state = 'accepted'
+      conflict.delete(id)
+      return r.fulfill(json({ code: 'suggestion_not_pending', message: 'already decided', request_id: 'req_e2e' }, 409))
+    }
     s.state = action === 'accept' ? 'accepted' : 'rejected'
     return r.fulfill(json(s))
   })
@@ -46,7 +52,7 @@ async function stub(page: Page) {
     posts.push('a1:dismiss')
     return r.fulfill(json(alerts[0]))
   })
-  return posts
+  return { posts, conflict }
 }
 
 async function noOverflow(page: Page) {
@@ -55,7 +61,7 @@ async function noOverflow(page: Page) {
 }
 
 test('review: provenance is visible, accept and reject by keyboard-reachable buttons, alerts dismiss', async ({ page }) => {
-  const posts = await stub(page)
+  const { posts } = await stub(page)
   await page.goto('/suggestions')
   await expect(page.getByRole('heading', { level: 1, name: 'Suggestions and alerts' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Suggestions', exact: true }).first()).toBeAttached()
@@ -75,6 +81,26 @@ test('review: provenance is visible, accept and reject by keyboard-reachable but
   await page.getByRole('button', { name: 'Dismiss', exact: true }).last().click()
   await expect(page.getByText(/Dismissed: "Bank consent expiring"/)).toBeVisible()
   expect(posts).toEqual(['s1:accept', 's2:reject', 'a1:dismiss'])
+})
+
+test('a refused accept is explained on the page and keeps focus after the card leaves', async ({ page }) => {
+  const { conflict } = await stub(page)
+  conflict.add('s1')
+  await page.goto('/suggestions')
+  await page.getByRole('article').first().getByRole('button', { name: 'Accept' }).click()
+  const note = page.getByRole('alert').filter({ hasText: 'already decided' })
+  await expect(note).toBeVisible()
+  await expect(page.getByRole('article')).toHaveCount(1)
+  await expect(note).toBeFocused()
+})
+
+test('Correct moves focus into the form and Cancel returns it', async ({ page }) => {
+  await stub(page)
+  await page.goto('/suggestions')
+  await page.getByRole('button', { name: 'Correct…' }).first().click()
+  await expect(page.getByLabel('Your category')).toBeFocused()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByRole('button', { name: 'Correct…' }).first()).toBeFocused()
 })
 
 for (const s of [

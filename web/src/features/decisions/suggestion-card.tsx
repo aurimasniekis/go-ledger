@@ -1,15 +1,15 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Bot, CircleCheck, CircleX, History, Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
-import { FormError } from '@/components/form-error'
 import { Mono } from '@/components/mono'
 import { ApiError } from '@/lib/api'
 import { formatInstantUtc } from '@/lib/format'
 import { holds } from '@/lib/auth'
 import { useCommitmentName } from '@/features/matches/api'
+import { useMerchant } from '@/features/merchants/api'
 import { orgKey } from '@/features/organisation/api'
 import type { Definition } from '@/features/organisation/types'
 import { ACTION_ERRORS, correctSuggestion, decisionsKey, suggestionAction } from './api'
@@ -60,11 +60,12 @@ export function choiceName(id: string, list: Definition[], names: Names, kind: '
 
 export function ObjectRef({ type, id }: { type: string; id: string }) {
   const commitment = useCommitmentName(type === 'commitment' ? id : undefined)
+  const merchant = useMerchant(id, type === 'merchant')
   if (type === 'commitment')
     return (
       <span>
         commitment{' '}
-        <Link to="/commitments" className="underline underline-offset-4">
+        <Link to="/commitments/$id" params={{ id }} className="underline underline-offset-4">
           {commitment.data ?? <Mono>{id}</Mono>}
         </Link>
       </span>
@@ -74,7 +75,7 @@ export function ObjectRef({ type, id }: { type: string; id: string }) {
       <span>
         merchant{' '}
         <Link to="/merchants/$id" params={{ id }} className="underline underline-offset-4">
-          <Mono>{id}</Mono>
+          {merchant.data?.display_name ?? <Mono>{id}</Mono>}
         </Link>
       </span>
     )
@@ -103,16 +104,27 @@ export interface CardProps {
   offline: boolean
   /** The server answered: say what was saved. */
   onSaved: (message: string) => void
+  /** The action was refused or failed: the page says why. It is the page, not this card, that says so, because the reload that follows may remove the card. */
+  onFailed: (message: string) => void
 }
 
 /**
  * One model suggestion. It is a proposal, never an assignment: the provider and model that made it are shown with it
  * and stay after it is decided. Nothing is saved until the server answers; a refusal says why and changes nothing.
  */
-export function SuggestionCard({ suggestion: s, names, grants, offline, onSaved }: CardProps) {
+export function SuggestionCard({ suggestion: s, names, grants, offline, onSaved, onFailed }: CardProps) {
   const qc = useQueryClient()
   const titleId = useId()
   const [correcting, setCorrecting] = useState(false)
+  const correctBtn = useRef<HTMLButtonElement>(null)
+  const restoreFocus = useRef(false)
+  // Cancel unmounts the form: focus goes back to the button that opened it, not to the top of the page.
+  useEffect(() => {
+    if (restoreFocus.current && !correcting) {
+      restoreFocus.current = false
+      correctBtn.current?.focus()
+    }
+  }, [correcting])
   const isCategory = s.task === 'categorisation'
   const choiceText = isCategory
     ? s.decision.choice
@@ -135,17 +147,18 @@ export function SuggestionCard({ suggestion: s, names, grants, offline, onSaved 
           : a.kind === 'reject'
             ? `Rejected: nothing was assigned. The suggestion (${s.provenance}) stays recorded as rejected.`
             : a.kind === 'revert'
-              ? `Reverted: the automatic category assignment was taken back (${s.provenance}).`
+              ? `Reverted: the automatic assignment was taken back (${s.provenance}).`
               : `Corrected: your own answer was assigned instead. The suggestion (${s.provenance}) is recorded as rejected.`,
       )
     },
-    // Whatever the outcome, the server's list is the truth: reload it (a refused action usually means it moved elsewhere).
+    // The explanation goes to the page: a refusal usually means the suggestion moved elsewhere, and the reload below then removes this card.
+    onError: (e) => onFailed(e instanceof ApiError ? (ACTION_ERRORS[e.code] ?? e.message) : 'Could not reach the server. Nothing was saved.'),
+    // Whatever the outcome, the server's list is the truth: reload it.
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: decisionsKey })
       void qc.invalidateQueries({ queryKey: orgKey })
     },
   })
-  const failure = run.error instanceof ApiError ? (ACTION_ERRORS[run.error.code] ?? run.error.message) : run.error ? 'Could not reach the server. Nothing was saved.' : undefined
   const busy = run.isPending
   const off = offline || busy
   const assign = canAssign(grants, s)
@@ -155,9 +168,9 @@ export function SuggestionCard({ suggestion: s, names, grants, offline, onSaved 
   return (
     <article aria-labelledby={titleId} className="space-y-2 rounded-md border border-border bg-surface p-3 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id={titleId} className="font-semibold">
+        <h2 id={titleId} className="font-semibold">
           {TASK_LABEL[s.task]} for <ObjectRef type={s.object_type} id={s.object_id} />
-        </h3>
+        </h2>
         <SuggestionStateChip state={s.state} />
       </div>
       <p>
@@ -185,12 +198,11 @@ export function SuggestionCard({ suggestion: s, names, grants, offline, onSaved 
       )}
       {s.state === 'rejected' && <p className="text-xs text-muted-foreground">Rejected, or replaced by a person's own answer (a correction is recorded as a rejection of this suggestion).</p>}
       {s.state === 'pending' && (
-        <p className="text-xs text-muted-foreground">Model output is a proposal. Accepting makes it your own assignment; nothing is assigned until you do.</p>
+        <p className="text-xs text-muted-foreground">Model output is a proposal. Accepting makes it your own assignment; nothing is assigned until you do. Accept, Correct and Reject are final: they cannot be undone from here.</p>
       )}
       {busy && <StatusBadge status="pending" label="Not saved yet" />}
-      <FormError message={failure} />
       {s.state === 'pending' && correcting && (
-        <CorrectForm s={s} names={names} busy={off} onCancel={() => setCorrecting(false)} onSubmit={(answer) => run.mutate({ kind: 'correct', answer })} />
+        <CorrectForm s={s} names={names} busy={off} onCancel={() => { restoreFocus.current = true; setCorrecting(false) }} onSubmit={(answer) => run.mutate({ kind: 'correct', answer })} />
       )}
       {s.state === 'pending' && !correcting && (
         <div className="flex flex-wrap gap-2">
@@ -200,7 +212,7 @@ export function SuggestionCard({ suggestion: s, names, grants, offline, onSaved 
             </Button>
           )}
           {assign && (
-            <Button size="sm" variant="outline" className="min-h-9" disabled={off || names.unavailable} onClick={() => setCorrecting(true)}>
+            <Button ref={correctBtn} size="sm" variant="outline" className="min-h-9" disabled={off || names.unavailable} onClick={() => setCorrecting(true)}>
               Correct…
             </Button>
           )}
@@ -217,7 +229,7 @@ export function SuggestionCard({ suggestion: s, names, grants, offline, onSaved 
       {revertible && assign && (
         <Button size="sm" variant="outline" className="min-h-9" disabled={off} onClick={() => run.mutate({ kind: 'revert' })}>
           <History aria-hidden className="size-4" />
-          Revert automatic category
+          Revert automatic assignment
         </Button>
       )}
     </article>
@@ -227,6 +239,12 @@ export function SuggestionCard({ suggestion: s, names, grants, offline, onSaved 
 /** The person's own answer. A category: one of the active categories, or none. Labels: at least one. */
 function CorrectForm({ s, names, busy, onCancel, onSubmit }: { s: Suggestion; names: Names; busy: boolean; onCancel: () => void; onSubmit: (a: { categoryId: string | null } | { labelIds: string[] }) => void }) {
   const selectId = useId()
+  const firstRef = useRef<HTMLSelectElement>(null)
+  const fieldsetRef = useRef<HTMLFieldSetElement>(null)
+  // Opening the form moves focus into it.
+  useEffect(() => {
+    ;(firstRef.current ?? fieldsetRef.current)?.focus()
+  }, [])
   const [category, setCategory] = useState<string>(s.decision.choice ?? '')
   const [labels, setLabels] = useState<string[]>([])
   const isCategory = s.task === 'categorisation'
@@ -244,7 +262,7 @@ function CorrectForm({ s, names, busy, onCancel, onSubmit }: { s: Suggestion; na
       {isCategory ? (
         <div className="space-y-1">
           <label htmlFor={selectId} className="font-medium">Your category</label>
-          <select id={selectId} className="block min-h-10 w-full max-w-xs rounded-md border border-border-control bg-background px-2" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <select ref={firstRef} id={selectId} className="block min-h-10 w-full max-w-xs rounded-md border border-border-control bg-background px-2" value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="">No category</option>
             {cats.map((c) => (
               <option key={c.id} value={c.id}>{categoryName(c, names.categories)}</option>
@@ -252,7 +270,7 @@ function CorrectForm({ s, names, busy, onCancel, onSubmit }: { s: Suggestion; na
           </select>
         </div>
       ) : (
-        <fieldset className="space-y-1">
+        <fieldset ref={fieldsetRef} tabIndex={-1} className="space-y-1">
           <legend className="font-medium">Your labels</legend>
           {names.labels.filter((l) => !l.archived).map((l) => (
             <label key={l.id} className="flex min-h-8 items-center gap-2">
@@ -263,7 +281,7 @@ function CorrectForm({ s, names, busy, onCancel, onSubmit }: { s: Suggestion; na
           {!submitOk && <p className="text-xs text-muted-foreground">Choose at least one label.</p>}
         </fieldset>
       )}
-      <p className="text-xs text-muted-foreground">Your answer is assigned as your own decision and this suggestion is recorded as rejected.</p>
+      <p className="text-xs text-muted-foreground">Saving assigns your answer as your own decision, even if it is the same as the model's, and records this suggestion as rejected. This cannot be undone from here.</p>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" className="min-h-9" disabled={busy || !submitOk}>Save my answer</Button>
         <Button type="button" size="sm" variant="ghost" className="min-h-9" onClick={onCancel}>Cancel</Button>

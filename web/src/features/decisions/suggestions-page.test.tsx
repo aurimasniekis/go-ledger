@@ -119,6 +119,37 @@ describe('suggestions review', () => {
     expect(screen.queryByText(/Accepted:/)).not.toBeInTheDocument()
   })
 
+  it('keeps the explanation and its focus when the reload removes the card (the server flipped to accepted)', async () => {
+    const user = userEvent.setup()
+    extra['POST /api/v1/suggestions/sg-a/accept'] = () => {
+      sugs = [suggestion('a', { state: 'accepted', decided_at: '2026-11-21T10:00:00Z' })]
+      return fail(409, 'suggestion_not_pending', 'x')
+    }
+    start()
+    await user.click(await screen.findByRole('button', { name: 'Accept' }, T))
+    const note = await screen.findByRole('alert', undefined, T)
+    expect(note).toHaveTextContent('already decided')
+    await waitFor(() => expect(screen.queryByRole('article')).not.toBeInTheDocument(), T)
+    expect(screen.getByRole('alert')).toHaveTextContent('already decided')
+    expect(note).toHaveFocus()
+  })
+
+  it('moves focus into the Correct form and back to Correct… on Cancel', async () => {
+    const user = userEvent.setup()
+    start()
+    await user.click(await screen.findByRole('button', { name: 'Correct…' }, T))
+    expect(await screen.findByLabelText('Your category')).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Correct…' })).toHaveFocus())
+  })
+
+  it('says before the click that a decision cannot be undone from here', async () => {
+    start()
+    const card = await screen.findByRole('article', { name: /Category suggestion for/ }, T)
+    expect(card).toHaveTextContent('cannot be undone from here')
+    expect(within(card).getByRole('heading', { level: 2 })).toBeInTheDocument()
+  })
+
   it('offers only reject without the organisation write grant', async () => {
     grants = ['decisions:read', 'decisions:write']
     start()
@@ -138,9 +169,9 @@ describe('suggestions review', () => {
     expect(items).toHaveLength(3)
     expect(screen.getAllByText('Reverted').length).toBeGreaterThan(0)
     expect(screen.getByText('Superseded by a newer suggestion')).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: /Revert automatic category/ })).toHaveLength(1)
-    await user.click(screen.getByRole('button', { name: /Revert automatic category/ }))
-    expect(await screen.findByText(/Reverted: the automatic category assignment/, undefined, T)).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /Revert automatic assignment/ })).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: /Revert automatic assignment/ }))
+    expect(await screen.findByText(/Reverted: the automatic assignment/, undefined, T)).toBeInTheDocument()
   })
 
   it('shows a failed load with a retry, never an empty list', async () => {
@@ -169,6 +200,21 @@ describe('alerts', () => {
     expect(await screen.findByText(/Dismissed: "Overdue with no matched payment"/, undefined, T)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Closed alerts' }))
     expect(await screen.findByText('Dismissed', { selector: 'span' }, T)).toBeInTheDocument()
+  })
+
+  it('explains a refused dismissal on the page after the closed alert leaves the open list', async () => {
+    const user = userEvent.setup()
+    alerts = [alert('a')]
+    extra['POST /api/v1/alerts/al-a/dismiss'] = () => {
+      alerts = [alert('a', { state: 'dismissed', closed_at: '2026-11-22T10:00:00Z' })]
+      return fail(409, 'alert_not_open', 'x')
+    }
+    start()
+    await user.click(await screen.findByRole('button', { name: 'Open alerts' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }, T))
+    expect(await screen.findByRole('alert', undefined, T)).toHaveTextContent('already closed')
+    await waitFor(() => expect(screen.queryByRole('article')).not.toBeInTheDocument(), T)
+    expect(screen.getByRole('alert')).toHaveTextContent('already closed')
   })
 
   it('hides Dismiss without decisions:write', async () => {

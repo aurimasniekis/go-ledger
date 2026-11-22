@@ -33,7 +33,10 @@ export function SuggestionsPage() {
   const me = useMe()
   const grants = me.data?.grants
   const [view, setView] = useState<View>('review')
-  const [done, setDone] = useState<string | null>(null)
+  // One notice for the whole page: a save, or a refusal. It lives here because the reload after an action can remove the card that raised it.
+  const [done, setDoneState] = useState<{ text: string; refused: boolean } | null>(null)
+  const setDone = (text: string | null) => setDoneState(text ? { text, refused: false } : null)
+  const setFailed = (text: string) => setDoneState({ text, refused: true })
   const doneRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (done) doneRef.current?.focus()
@@ -67,15 +70,15 @@ export function SuggestionsPage() {
           </Button>
         ))}
       </div>
-      {offline && <p className="text-sm text-muted-foreground">You are offline. What is shown is the last data that loaded; every action is off until the connection is back.</p>}
+      {offline && <p role="status" className="text-sm text-muted-foreground">You are offline. What is shown is the last data that loaded; every action is off until the connection is back.</p>}
       {names.unavailable && !isAlerts && (
         <p role="note" className="text-sm text-muted-foreground">
           Category and label names could not be read{orgRead ? '' : ' (needs the organisation read grant)'}, so choices show as identifiers and correcting is off.
         </p>
       )}
       {done && (
-        <div ref={doneRef} tabIndex={-1} role="status" className="flex flex-wrap items-center gap-2 rounded-md border border-border-control bg-surface p-3 text-sm">
-          <span>{done}</span>
+        <div ref={doneRef} tabIndex={-1} role={done.refused ? 'alert' : 'status'} className="flex flex-wrap items-center gap-2 rounded-md border border-border-control bg-surface p-3 text-sm">
+          <span>{done.text}</span>
           <Button variant="ghost" size="sm" onClick={() => setDone(null)}>Dismiss</Button>
         </div>
       )}
@@ -89,9 +92,9 @@ export function SuggestionsPage() {
                 {items.map((it) => (
                   <li key={it.id}>
                     {isAlerts ? (
-                      <AlertCard alert={it as Alert} grants={grants} offline={offline} onSaved={setDone} />
+                      <AlertCard alert={it as Alert} grants={grants} offline={offline} onSaved={setDone} onFailed={setFailed} />
                     ) : (
-                      <SuggestionCard suggestion={it as Suggestion} names={names} grants={grants} offline={offline} onSaved={setDone} />
+                      <SuggestionCard suggestion={it as Suggestion} names={names} grants={grants} offline={offline} onSaved={setDone} onFailed={setFailed} />
                     )}
                   </li>
                 ))}
