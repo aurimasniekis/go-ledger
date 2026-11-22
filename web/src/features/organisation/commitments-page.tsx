@@ -12,7 +12,7 @@ interface CommitmentRow {
   name: string
   kind: string
   amount?: { amount: string; currency: string }
-  schedule?: { frequency: string; interval: number; day: number; month: number }
+  schedule?: { frequency: string; interval?: number; day: number; month?: number }
   start_date?: string
   end_date?: string | null
 }
@@ -20,8 +20,8 @@ interface CommitmentRow {
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
 function scheduleText(s: NonNullable<CommitmentRow['schedule']>): string {
-  if (s.frequency === 'annual') return `Yearly on ${s.day} ${MONTHS[s.month - 1] ?? ''}`.trim()
-  return s.interval > 1 ? `Every ${s.interval} months on day ${s.day}` : `Monthly on day ${s.day}`
+  if (s.frequency === 'annual') return `Yearly on ${s.day} ${MONTHS[(s.month ?? 0) - 1] ?? ''}`.trim()
+  return (s.interval ?? 1) > 1 ? `Every ${s.interval} months on day ${s.day}` : `Monthly on day ${s.day}`
 }
 
 /**

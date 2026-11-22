@@ -74,8 +74,10 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
   const [rowError, setRowError] = useState<string>()
   const noticeBox = useRef<HTMLDivElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
+  // Set by a successful delete: only then must the closing dialog not hand focus back (its trigger is gone).
+  const deletedRef = useRef(false)
   // A row that was archived or deleted takes the focused button with it: focus follows the change to its notice (which holds Undo).
-  // The Delete dialog does not hand focus back on close (onCloseAutoFocus below), so nothing competes with the notice.
+  // After a successful delete the dialog does not hand focus back (onCloseAutoFocus below), so nothing competes with the notice.
   useEffect(() => {
     if (notice) noticeBox.current?.focus()
   }, [notice])
@@ -230,7 +232,13 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
       </Dialog>
       <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
+          onCloseAutoFocus={(e) => {
+            // Cancel, Escape and overlay clicks keep the shared return-focus to the Delete trigger.
+            if (deletedRef.current) {
+              e.preventDefault()
+              deletedRef.current = false
+            }
+          }}
           title={`Delete ${deleting?.name ?? names.one}`}
           description={`Deleting cannot be undone. Archive it instead to keep the history. A ${names.one} that is still assigned is only deleted after you move its assignments to another.`}
         >
@@ -240,6 +248,7 @@ function DefinitionSection({ kind, canWrite }: { kind: Kind; canWrite: boolean }
               definition={deleting}
               onDone={async (n) => {
                 const d = deleting
+                deletedRef.current = true
                 setDeleting(null)
                 await refresh()
                 setNotice({ text: `${d.name} was deleted${n > 0 ? `; ${n} assignment${n === 1 ? '' : 's'} moved to the replacement` : ''}.` })
