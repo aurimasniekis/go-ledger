@@ -64,10 +64,11 @@ func buildDecisions(cfg config.Decisions, db *store.DB, aw store.AuditWriter, no
 // buildDecisionTrigger returns what asks the decision tasks about the
 // transactions a bank refresh stored (L6d, ADR-0065), or nil when svc is nil
 // (no task enabled). It never fails an import: the import engine calls it after
-// the refresh was stored, and every failure is logged. No merchant lookup is
+// the refresh was stored, every question is counted on meter and every failure
+// is logged. No merchant lookup is
 // given: nothing classifies a merchant as a transfer yet (ADR-0060 note N4), so
 // the merchant name is never sent rather than sent for a transfer.
-func buildDecisionTrigger(svc *decisions.Service, cfg config.Decisions, db *store.DB, aw store.AuditWriter, now func() time.Time, facts banking.FactStore, org *organisationstore.Store, log *slog.Logger) *decisiontasks.Trigger {
+func buildDecisionTrigger(svc *decisions.Service, cfg config.Decisions, db *store.DB, aw store.AuditWriter, now func() time.Time, facts banking.FactStore, org *organisationstore.Store, log *slog.Logger, meter decisiontasks.Meter) *decisiontasks.Trigger {
 	if svc == nil {
 		return nil
 	}
@@ -78,6 +79,9 @@ func buildDecisionTrigger(svc *decisions.Service, cfg config.Decisions, db *stor
 		Tasks:   decisiontasks.New(svc, st, org),
 		Source:  facts,
 		Enabled: func(n decisions.TaskName) bool { return dc.Tasks[n].Enabled },
-		Log:     log,
+		Meter:   meter,
+		OnError: func(task decisions.TaskName, err error) {
+			log.Warn("decision task after a bank refresh failed", "task", string(task), "error", err.Error())
+		},
 	}
 }

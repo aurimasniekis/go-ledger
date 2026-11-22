@@ -77,7 +77,10 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
   `Facts` from the stored transaction (description, amount, booking date) and calls `SuggestCategory` and
   `SuggestLabels` for each enabled task. `serve` runs it in a background goroutine, one pass at a time, so the import
   never waits for a model and never fails because of one; a failure (an error or a reason such as an outage, no consent
-  or an exhausted budget) is logged and counted in `RefreshStats`. Pending and declined objects are skipped by the
+  or an exhausted budget) is logged, counted in `RefreshStats` and on the `ledger_decision_questions_total` metric (by task
+  and outcome, no transaction data). **A failed question is not retried:** the transaction is not in a later refresh's
+  inserted set, so it gets no suggestion and is not asked about again. A re-ask or backfill action for such transactions is
+  planned with L7. Pending and declined objects are skipped by the
   tasks themselves, so a repeated refresh asks nothing new. Nothing classifies a merchant as a transfer yet, so `serve`
   gives no merchant lookup and the merchant name is never sent (fail closed); a lookup can be added where the
   classification exists. The revert is atomic: `decisions.Store.RevertAutomatic` runs the conditional reset (the
