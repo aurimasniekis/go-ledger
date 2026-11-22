@@ -150,6 +150,8 @@ var unversionedTables = map[string]string{
 	"device_cookies":                 "known-browser cookie hashes (ADR-0026 amendment, D23-1b), issued and rotated by sign-in and deleted when replaced, expired or the password changes; never read or edited as an API object",
 	"occurrence_status_overrides":    "append-only override history (ADR-0031); rows only change state, and concurrency is the occurrence's version, which every override change increases",
 	"payment_match_events":           "append-only payment match history (ADR-0035); a trigger refuses updates, and concurrency is the match's version",
+	"merchant_enrichments":           "lookup answers of merchant sources (ADR-0051), keyed by transaction and written only by the enrichment path; a later answer replaces an earlier one and never edits it through the API",
+	"merchant_reviews":               "one merchant decision per transaction (ADR-0051), keyed by transaction and set or cleared through the review routes; it carries its own version, and a decision replaces the earlier one",
 	"deferral_plan_events":           "append-only deferral plan history (ADR-0050); triggers refuse updates and deletes, and concurrency is the plan's version",
 	"deferral_plan_adjustments":      "explicit fees and charges on a deferral plan (ADR-0050): rows only gain their removal once and are never deleted; concurrency is the plan's version, which every change increases",
 	"manual_payment_replacements":    "replacement history of manual payments (ADR-0049): rows only gain their restoration once and are never deleted; concurrency is the match's and the occurrence's version, which every change increases",

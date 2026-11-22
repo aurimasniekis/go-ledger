@@ -3065,6 +3065,112 @@ paths:
                 $ref: "#/components/schemas/PaymentMatchingRun"
         default:
           $ref: "#/components/responses/Error"
+  /transactions/{id}/merchant:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The bank transaction's ID.
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getTransactionMerchant
+      x-ledger-access: merchants:read
+      summary: A bank transaction's merchant
+      description: |
+        The merchant identity of a bank transaction (task E1, ADR-0051), resolved
+        from the lookup source's enrichment and the person's decision, with both
+        records kept apart in the answer. name and logo_ref are set only when
+        the identity may be shown: the person confirmed or corrected it, or the
+        source is reliable (confidence at or above the reliability threshold, a
+        named default of 800 permille; decision D15 chose a local curated
+        mapping plus the person's confirmations, offline). Everything else is explicit
+        in state (uncertain, ambiguous, none, unavailable, not_looked_up,
+        rejected) and fallback is true: use a neutral presentation. The bank's
+        own description, counterparty and amount are never changed by merchant
+        identity, and it never affects payment status. 404 for a transaction
+        that does not exist. Administrators only (merchant names derive from
+        bank text).
+      tags: [merchants]
+      responses:
+        "200":
+          description: The merchant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Merchant"
+        default:
+          $ref: "#/components/responses/Error"
+  /transactions/{id}/merchant/review:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The bank transaction's ID.
+        schema:
+          $ref: "#/components/schemas/ID"
+    put:
+      operationId: reviewTransactionMerchant
+      x-ledger-access: merchants:write
+      summary: Confirm, correct or reject a merchant
+      description: |
+        Records the person's decision about a transaction's merchant, replacing
+        an earlier one: confirmed (the enrichment's identified name is right;
+        409 nothing_to_confirm when there is none, for instance when it is
+        ambiguous), corrected (name is the merchant) or rejected (there is no
+        merchant to show). The decision is stored apart from the bank
+        transaction and the enrichment, so a re-import or a new lookup does not
+        remove it. When a pending transaction is booked under a new key, the
+        decision made about the pending one carries over to the booking
+        (review_inherited); a new decision on the booking replaces it. A confirmation that the source later contradicts (another
+        name) stops applying and is reported as confirmation_outdated. Audited
+        as merchant.confirmed, merchant.corrected or merchant.rejected (never
+        with the name). Last write wins: there is no version check.
+      tags: [merchants]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [confirmed, corrected, rejected]
+                name:
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 200
+                  description: The merchant's name; required for corrected and refused for the others. Runs of white space are collapsed.
+      responses:
+        "200":
+          description: The merchant after the decision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Merchant"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: clearTransactionMerchantReview
+      x-ledger-access: merchants:write
+      summary: Take a merchant decision back
+      description: |
+        Removes the person's decision, so the merchant resolves from the
+        enrichment alone again. 404 when the transaction has no decision.
+        Audited as merchant.review_cleared.
+      tags: [merchants]
+      responses:
+        "200":
+          description: The merchant without the decision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Merchant"
+        default:
+          $ref: "#/components/responses/Error"
   /rates:
     get:
       operationId: listRates
@@ -3565,6 +3671,8 @@ tags:
     description: Dated occurrences generated from commitment definitions, their payment state, manual payments and status overrides.
   - name: bank-connections
     description: Connecting banks, consent, reconnecting, refreshing on request, and each account's freshness.
+  - name: merchants
+    description: Merchant identity of bank transactions, the enrichment, and confirming, correcting or rejecting it (administrators).
   - name: outlook
     description: The outlook against recorded commitments, compared with bank balances; never money that is safe to spend.
   - name: payment-matches
@@ -4638,6 +4746,111 @@ components:
             is still that person's.
           type: [string, "null"]
           enum: [session, token, mcp, system, null]
+    Merchant:
+      type: object
+      description: |
+        The merchant of a bank transaction (task E1, ADR-0051). name, logo_ref
+        and identity_source are null when no identity may be shown (fallback is
+        then true). enrichment (the source's answer) and review (the person's
+        decision) are the two records it is resolved from; neither contains an
+        amount or a payment status.
+      required: [transaction_id, state, name, logo_ref, identity_source, fallback, needs_review, confirmation_outdated, review_inherited, enrichment, review]
+      properties:
+        transaction_id:
+          $ref: "#/components/schemas/ID"
+        state:
+          type: string
+          enum: [confirmed, corrected, rejected, reliable, uncertain, ambiguous, none, unavailable, not_looked_up]
+          description: |
+            confirmed, corrected and rejected are the person's decisions;
+            reliable is an unreviewed identity at or above the threshold;
+            uncertain is identified below it (not shown); ambiguous has several
+            candidates (not shown); none means the source found nothing;
+            unavailable means the lookup failed and nothing earlier is known;
+            not_looked_up means no lookup was recorded.
+        name:
+          type: [string, "null"]
+        logo_ref:
+          type: [string, "null"]
+          description: An opaque logo reference of the source; null for a corrected name (the logo belongs to the source's own name).
+        identity_source:
+          type: [string, "null"]
+          description: user for a confirmed or corrected name, otherwise the lookup source.
+        fallback:
+          type: boolean
+          description: True when no identity may be shown and the client uses its neutral presentation.
+        needs_review:
+          type: boolean
+          description: True when a decision would settle something the data leaves open (uncertain, ambiguous or an outdated confirmation).
+        confirmation_outdated:
+          type: boolean
+          description: True when the person confirmed a name the source no longer reports; the confirmation is not applied.
+        review_inherited:
+          type: boolean
+          description: |
+            True when review is the decision made about the pending
+            transaction this one superseded (its booking arrived under a new
+            key). A new decision on this transaction replaces it; the
+            inherited one is never edited from here.
+        enrichment:
+          oneOf:
+            - $ref: "#/components/schemas/MerchantEnrichment"
+            - type: "null"
+        review:
+          oneOf:
+            - $ref: "#/components/schemas/MerchantReview"
+            - type: "null"
+    MerchantEnrichment:
+      type: object
+      description: What a lookup source said, as stored. A decision never edits it; a failed lookup never replaces an earlier answer (last_failed_at records it).
+      required: [status, name, logo_ref, source, confidence_permille, candidates, retrieved_at, last_failed_at]
+      properties:
+        status:
+          type: string
+          enum: [identified, ambiguous, none, unavailable]
+        name:
+          type: [string, "null"]
+        logo_ref:
+          type: [string, "null"]
+        source:
+          type: string
+        confidence_permille:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 1000
+          description: The source's certainty in permille (an exact integer); null unless identified.
+        candidates:
+          type: array
+          items:
+            type: string
+          description: The names an ambiguous answer chose between, sorted.
+        retrieved_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the source answered; null when it never did (status unavailable).
+        last_failed_at:
+          type: [string, "null"]
+          format: date-time
+    MerchantReview:
+      type: object
+      description: The person's decision about the merchant. For confirmed, name is the enrichment name that was confirmed.
+      required: [decision, name, by, decided_at, version]
+      properties:
+        decision:
+          type: string
+          enum: [confirmed, corrected, rejected]
+        name:
+          type: [string, "null"]
+        by:
+          $ref: "#/components/schemas/MatchActor"
+        decided_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Counts the decisions made about this transaction.
     PaymentMatch:
       type: object
       description: |
@@ -5611,6 +5824,7 @@ components:
             - match_undo_window_closed
             - manual_payment_other_occurrence
             - manual_payment_not_replaceable
+            - nothing_to_confirm
             - password_sign_in_disabled
             - rates_refresh_unavailable
             - nothing_outstanding

@@ -468,9 +468,6 @@ func TestReviseAndAdjustmentsKeepHistory(t *testing.T) {
 	}
 }
 
-// TestPlanKeepsItsOccurrenceAndHistory: the schema keeps plans, their
-// history and their occurrence; a terms edit that no longer schedules a
-// deferred occurrence cancels it instead of deleting it.
 // TestCurrencyChangeWithActivePlanIsRefused: a terms edit that would change
 // the currency of an occurrence with an active plan is refused whole (the
 // plan's fees are in the occurrence's currency), and nothing changes.
@@ -515,6 +512,9 @@ func TestCurrencyChangeWithActivePlanIsRefused(t *testing.T) {
 	}
 }
 
+// TestPlanKeepsItsOccurrenceAndHistory: the schema keeps plans, their
+// history and their occurrence; a terms edit that no longer schedules a
+// deferred occurrence cancels it instead of deleting it.
 func TestPlanKeepsItsOccurrenceAndHistory(t *testing.T) {
 	f := newFixture(t)
 	c := f.commitment("50.00", 15)

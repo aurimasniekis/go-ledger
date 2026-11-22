@@ -52,5 +52,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0048: Exchange rates: list and refresh API, client, CLI, MCP, UI, metrics and readiness](0048-rates-api-ui-metrics-readiness.md)
 - [ADR-0049: Confirm a bank match as replacing a manual payment](0049-confirm-match-replacing-manual-payment.md)
 - [ADR-0050: Deferral plans](0050-deferral-plans.md)
+- [ADR-0051: Merchant model and corrections](0051-merchant-model-and-corrections.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

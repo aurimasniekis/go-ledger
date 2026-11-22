@@ -453,6 +453,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Occurrences: parts.commitments.Occurrences(),
 		Payments:    parts.payments,
 		Matches:     parts.matches,
+		Merchants:   parts.merchants,
 		Deferrals:   deferralsDep(parts.deferrals),
 		Banking:     parts.banking,
 		Matching:    matching,
