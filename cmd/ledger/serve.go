@@ -458,22 +458,22 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		banks = bankfacts.New(parts.db, nil)
 	}
 	httpapi.RegisterAPI(srv, httpapi.Deps{
-		Users:       parts.users,
-		Commitments: parts.commitments,
-		Grace:       parts.commitments.Grace(),
-		Occurrences: parts.commitments.Occurrences(),
-		Payments:    parts.payments,
-		Matches:     parts.matches,
-		Merchants:   parts.merchants,
+		Users:           parts.users,
+		Commitments:     parts.commitments,
+		Grace:           parts.commitments.Grace(),
+		Occurrences:     parts.commitments.Occurrences(),
+		Payments:        parts.payments,
+		Matches:         parts.matches,
+		Merchants:       parts.merchants,
 		MerchantSources: parts.merchantSources,
-		Deferrals:   deferralsDep(parts.deferrals),
-		Banking:     parts.banking,
-		Matching:    matching,
-		Audit:       al,
-		Auth:        parts.auth,
-		Tokens:      parts.tokens,
-		OIDC:        parts.oidc,
-		MCP:         parts.mcp,
+		Deferrals:       deferralsDep(parts.deferrals),
+		Banking:         parts.banking,
+		Matching:        matching,
+		Audit:           al,
+		Auth:            parts.auth,
+		Tokens:          parts.tokens,
+		OIDC:            parts.oidc,
+		MCP:             parts.mcp,
 		// The outlook (ADR-0044) reads stored bank facts. Rates is the cached
 		// rate service (FX2, ADR-0046); without one only amounts already in
 		// the reporting currency convert and the rest are excluded and
