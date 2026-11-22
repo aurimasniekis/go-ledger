@@ -609,6 +609,21 @@ func TestOIDCSecondFactorPageWithPasswordsOff(t *testing.T) {
 	}
 }
 
+// The page the user was heading for survives the second factor.
+func TestOIDCSecondFactorKeepsReturnTo(t *testing.T) {
+	e := newOIDCEnv(t, func(c *config.Auth) { c.Require2FA = true; c.OIDC.Require2FA = true })
+	if err := authstore.New(e.db, e.al).CreateOIDCLink(context.Background(), auth.OIDCLink{ID: "01JD3Y4C8V9M2Q7W5R6T0XZBN6", UserID: e.ids["alice"],
+		Issuer: e.op.Issuer, Subject: "subject-0001", CreatedAt: e.clock.now()}); err != nil {
+		t.Fatal(err)
+	}
+	e.enrol(e.sessionFrom(e.signInOIDC()))
+	w, _ := e.callback(e.authorize("?return_to=%2Faccount%2Ftokens%3Fx%3D1"))
+	want := "/sign-in?step=second_factor&redirect=%2Faccount%2Ftokens%3Fx%3D1#second_factor="
+	if loc := location(w); w.Code != 303 || !strings.HasPrefix(loc, want) {
+		t.Fatalf("callback: %d %q, want prefix %q", w.Code, loc, want)
+	}
+}
+
 func TestOIDCSessionsAndRequiredTwoFactor(t *testing.T) {
 	// By default Ledger trusts the provider: auth.require_2fa does not
 	// confine an OIDC session (decision D16).
