@@ -18,7 +18,7 @@ import { OrganisationPage } from '@/features/organisation/organisation-page'
 import { MerchantsPage } from '@/features/merchants/merchants-page'
 import { MerchantDetailPage } from '@/features/merchants/merchant-detail'
 import { RatesPage } from '@/features/rates/rates-page'
-import { RequireSession } from '@/features/auth/require-session'
+import { RequireSession, useBankReturn } from '@/features/auth/require-session'
 import { SignInPage } from '@/features/auth/sign-in'
 import { SecurityPage } from '@/features/account/security'
 import { SessionsPage } from '@/features/account/sessions'
@@ -103,7 +103,7 @@ const connectionsCallbackRoute = createRoute({
     error: typeof s.error === 'string' ? s.error : undefined,
   }),
   component: function ConsentCallback() {
-    return <ConsentCallbackPage redirect={connectionsCallbackRoute.useSearch()} />
+    return <ConsentCallbackPage redirect={useBankReturn(connectionsCallbackRoute.useSearch())} />
   },
 })
 
