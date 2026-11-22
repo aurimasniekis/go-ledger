@@ -85,9 +85,11 @@ func ConsentExpiring(connectionID string, expires, today calendar.Date, horizonD
 // bank payment (paid) differs from the expected amount of the occurrence it
 // paid (for example a price rise). In the same currency any non-zero
 // difference counts; in another currency it is reported as a currency
-// difference and nothing is converted. False when they are identical.
+// difference and nothing is converted. Amounts compare numerically, so "15" EUR
+// equals "15.00" EUR, and the key is built from the normalised amounts: the same
+// situation keeps its key whatever the scale. False when they are equal.
 func AmountChanged(commitmentID, occurrenceID string, expected, paid money.Money) (Condition, bool) {
-	if !expected.IsValid() || !paid.IsValid() || expected.Identical(paid) {
+	if !expected.IsValid() || !paid.IsValid() || expected.Equal(paid) {
 		return Condition{}, false
 	}
 	facts := map[string]string{"occurrence_id": occurrenceID,
@@ -99,9 +101,19 @@ func AmountChanged(commitmentID, occurrenceID string, expected, paid money.Money
 		msg = fmt.Sprintf("The latest matched payment was in %s but %s was expected (not converted).", paid.Currency(), expected)
 	}
 	return Condition{Kind: KindAmountChanged, ObjectType: ObjectCommitment, ObjectID: commitmentID,
-		Key:     "commitment_amount_changed:" + commitmentID + ":" + expected.String() + ":" + paid.String(),
+		Key:     "commitment_amount_changed:" + commitmentID + ":" + normalised(expected) + ":" + normalised(paid),
 		Facts:   facts,
 		Message: msg}, true
+}
+
+// normalised is m with its trailing fractional zeros removed ("15.00 EUR" and
+// "15 EUR" both give "15 EUR"), for keys that must not depend on scale.
+func normalised(m money.Money) string {
+	s := m.Amount().String()
+	if strings.Contains(s, ".") {
+		s = strings.TrimSuffix(strings.TrimRight(s, "0"), ".")
+	}
+	return s + " " + m.Currency().String()
 }
 
 // UnmatchedOverdue is the condition for an occurrence past its due date with

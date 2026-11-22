@@ -138,9 +138,12 @@ func (d *Detector) consent(ctx context.Context, today calendar.Date) (map[string
 // expected amount (a price rise, say) and the commitment's current amount does
 // not already equal what was paid. It stops holding when the commitment is
 // updated to match or a later matched payment equals the expected amount.
-// Manual payments are not bank payments and a partly paid occurrence is not a
-// price change, so neither is a baseline. Nothing is converted: a different
-// currency is reported as a currency difference.
+// Manual payments are not bank payments, a partly paid occurrence is not a
+// price change, and an occurrence whose bank match was confirmed short within
+// the commitment's tolerance is a gap the person accepted (decision
+// C-L6e-amount-change addendum). None of them is a baseline. Amounts compare
+// numerically. Nothing is converted: a different currency is reported as a
+// currency difference.
 func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (overdue, changed map[string]Condition, err error) {
 	overdue, changed = map[string]Condition{}, map[string]Condition{}
 	latest := map[string]paidRow{}
@@ -160,7 +163,7 @@ func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (ov
 					overdue[cond.Key] = cond
 				}
 			}
-			if o.DueDate.Before(today) && r.State.Status != payments.StatusCancelled && r.State.Status != payments.StatusPartiallyPaid {
+			if o.DueDate.Before(today) && isBaseline(r) {
 				if p, ok := latestBankPayment(r); ok {
 					if prev, ok := latest[o.CommitmentID]; !ok || p.date.After(prev.date) || (p.date == prev.date && prev.row.Occurrence.DueDate.Before(o.DueDate)) {
 						latest[o.CommitmentID] = p
@@ -177,7 +180,7 @@ func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (ov
 		}
 		for _, c := range page {
 			if r, ok := latest[c.ID]; ok {
-				if r.paid.Identical(c.Amount) {
+				if r.paid.Equal(c.Amount) {
 					continue // the commitment was updated to match
 				}
 				if cond, ok := AmountChanged(c.ID, r.row.Occurrence.ID, r.row.Occurrence.Amount, r.paid); ok {
@@ -190,6 +193,15 @@ func (d *Detector) occurrenceBased(ctx context.Context, today calendar.Date) (ov
 		}
 		after = page[199].ID
 	}
+}
+
+// isBaseline reports whether an occurrence's bank payment may be the baseline
+// of the amount-change alert: not cancelled, not partly paid, no manual
+// payment among its evidence, and no confirmed shortfall within tolerance.
+func isBaseline(r monthview.Row) bool {
+	s := r.State
+	return s.Status != payments.StatusCancelled && s.Status != payments.StatusPartiallyPaid &&
+		s.ManualEvidenceCount == 0 && s.Shortfall.Sign() <= 0
 }
 
 // paidRow is the most recent matched bank payment of an occurrence: what was

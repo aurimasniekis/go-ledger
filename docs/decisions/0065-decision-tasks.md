@@ -82,11 +82,14 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
      expiry date, so the old alert resolves.
    - **Commitment amount change** (decision C-L6e-amount-change): the most recent *matched bank payment* of a commitment's
      past, non-cancelled occurrence differs from that occurrence's expected amount (for example a subscription price
-     rise). Manual payments and partly paid occurrences are never the baseline. In the same currency any non-zero
-     difference counts and the alert shows the expected and the paid amount exactly (decimal strings with currency, no
-     float); in another currency it is reported as a currency difference (`currency_differs`) and nothing is converted. It
-     resolves once the commitment's amount is updated to equal what was paid, or a later matched payment equals the
-     expected amount. The person's own edit of the commitment is not an alert. A split bank payment is summed per
+     rise). An occurrence is never the baseline when it is cancelled, partly paid, has any **manual** payment among its
+     evidence (even one settled together with a bank payment), or its bank match was confirmed **short within the
+     commitment's tolerance** (`State.Shortfall > 0`, decision C-L6e-amount-change addendum: the gap was accepted). In
+     the same currency any non-zero difference counts, compared numerically (`"15"` equals `"15.00"`): the alert
+     shows the expected and the paid amount exactly (decimal strings with currency, no float), and its key uses the
+     normalised amounts, so a change of scale alone neither re-raises nor resolves it. In another currency it is reported
+     as a currency difference (`currency_differs`) and nothing is converted. It resolves once the commitment's amount
+     numerically equals what was paid, or a later matched payment equals the expected amount. The person's own edit of the commitment is not an alert. A split bank payment is summed per
      occurrence in the currency of its newest piece.
    - **Overdue unmatched:** occurrences whose derived status is overdue with an outstanding amount, as the monthly view
      derives it (a partially paid or deferred-but-paid one is not). Resolves when paid, matched, cancelled or removed.

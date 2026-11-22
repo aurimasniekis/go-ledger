@@ -49,6 +49,29 @@ func TestConditions(t *testing.T) {
 	}
 }
 
+// Amounts compare numerically and the key ignores scale: "15" equals "15.00",
+// but a different numeric amount or a different currency is still a change.
+func TestAmountChangedIsNumericAndScaleFree(t *testing.T) {
+	m := money.MustParse
+	if _, ok := alerts.AmountChanged("c", "o", m("15", "EUR"), m("15.00", "EUR")); ok {
+		t.Error("15 EUR and 15.00 EUR are the same amount")
+	}
+	a, okA := alerts.AmountChanged("c", "o", m("15", "EUR"), m("12.5", "EUR"))
+	b, okB := alerts.AmountChanged("c", "o", m("15.00", "EUR"), m("12.50", "EUR"))
+	if !okA || !okB || a.Key != b.Key {
+		t.Errorf("the same situation at another scale has another key: %q %q", a.Key, b.Key)
+	}
+	if c, ok := alerts.AmountChanged("c", "o", m("100", "EUR"), m("99.99", "EUR")); !ok || c.Key == a.Key {
+		t.Errorf("a different amount has the same key: %+v", c)
+	}
+	if c, ok := alerts.AmountChanged("c", "o", m("15.000", "EUR"), m("12.500", "EUR")); !ok || c.Key != a.Key {
+		t.Errorf("trailing zeros changed the key: %q", c.Key)
+	}
+	if c, ok := alerts.AmountChanged("c", "o", m("15", "EUR"), m("12.50", "USD")); !ok || c.Facts["currency_differs"] != "true" {
+		t.Errorf("a currency difference was lost: %+v", c)
+	}
+}
+
 // The audit package keeps its own copy of the alert kinds.
 func TestAuditKindsMatch(t *testing.T) {
 	want := []string{string(alerts.KindConsentExpiring), string(alerts.KindAmountChanged), string(alerts.KindUnmatchedOverdue)}

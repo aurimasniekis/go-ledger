@@ -232,6 +232,64 @@ func TestDetectorAmountChangeIgnoresCancelledManualAndPartialBaselines(t *testin
 	}
 }
 
+func TestDetectorAmountChangeComparesNumericallyAcrossScales(t *testing.T) {
+	e := newDetectEnv(t)
+	e.cmts.list = []commitments.Commitment{{ID: "k-scale", Fields: commitments.Fields{Amount: eur("15")}}}
+	oct, nov := calendar.MustDate(2026, 10, 1), calendar.MustDate(2026, 11, 1)
+	// The commitment is entered as "15" and the bank reports "15.00": the same amount.
+	e.mon.rows[oct.YearMonth()] = []monthview.Row{bankPaid(row("o1", "k-scale", oct, "15.00", payments.StatusPaid), "b1", oct, eur("15.00"))}
+	if rep := e.run(t); rep.Raised != 0 {
+		t.Fatalf("15 and 15.00 raised an alert: %+v", rep)
+	}
+	e.mon.rows[oct.YearMonth()] = nil
+	// A real change: 12.50 paid for an occurrence expected at "15".
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{bankPaid(row("o2", "k-scale", nov, "15", payments.StatusPaid), "b2", nov, eur("12.50"))}
+	if rep := e.run(t); rep.Raised != 1 || e.sent[0].Facts["expected_amount"] != "15" || e.sent[0].Facts["paid_amount"] != "12.50" {
+		t.Fatalf("%+v", rep)
+	}
+	// The same situation with other scales (occurrence "15.00", bank "12.5") keeps its key: nothing is raised or resolved.
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{bankPaid(row("o2", "k-scale", nov, "15.00", payments.StatusPaid), "b2", nov, eur("12.5"))}
+	if rep := e.run(t); rep.Raised != 0 || rep.Resolved != 0 || len(e.sent) != 1 {
+		t.Fatalf("a scale change alone re-raised or resolved the alert: %+v sent %d", rep, len(e.sent))
+	}
+	// The commitment is updated to "12.5", which equals the paid 12.50 numerically: resolved.
+	e.cmts.list[0].Amount = eur("12.5")
+	if rep := e.run(t); rep.Resolved != 1 || e.state(t, alerts.KindAmountChanged)[alerts.StateOpen] != 0 {
+		t.Fatalf("an update at another scale did not resolve: %+v", rep)
+	}
+}
+
+func TestDetectorAmountChangeIgnoresMixedManualAndShortfallBaselines(t *testing.T) {
+	e := newDetectEnv(t)
+	e.cmts.list = []commitments.Commitment{{ID: "k-mix", Fields: commitments.Fields{Amount: eur("10.00")}}}
+	nov := calendar.MustDate(2026, 11, 1)
+	// Settled by a bank payment of 6.00 and a manual payment of 4.00: the bank piece alone is not the price.
+	mixed := bankPaid(row("o1", "k-mix", nov, "10.00", payments.StatusPaid), "b1", nov, eur("6.00"))
+	mixed.Evidence = append(mixed.Evidence, payments.Evidence{Kind: payments.EvidenceManual, ID: "m1", OccurrenceID: "o1", Amount: eur("4.00"), Date: nov})
+	mixed.State.EvidenceCount, mixed.State.BankEvidenceCount, mixed.State.ManualEvidenceCount = 2, 1, 1
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{mixed}
+	if rep := e.run(t); rep.Raised != 0 {
+		t.Fatalf("a bank piece of a manually settled occurrence was a baseline: %+v", rep)
+	}
+
+	// Confirmed short within tolerance (9.50 of 10.00): accepted by the person, not a baseline.
+	e.mon.rows[nov.YearMonth()] = nil
+	oct := calendar.MustDate(2026, 10, 1)
+	e.mon.rows[oct.YearMonth()] = []monthview.Row{bankPaid(row("o0", "k-mix", oct, "10.00", payments.StatusPaid), "b0", oct, eur("10.00"))}
+	short := bankPaid(row("o2", "k-mix", nov, "10.00", payments.StatusPaid), "b2", nov, eur("9.50"))
+	short.State.EvidenceCount, short.State.BankEvidenceCount, short.State.Shortfall = 1, 1, eur("0.50")
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{short}
+	if rep := e.run(t); rep.Raised != 0 {
+		t.Fatalf("a payment confirmed short within tolerance was a baseline: %+v", rep)
+	}
+	// The same payment without a confirmed shortfall is a change.
+	short.State.Shortfall = money.Money{}
+	e.mon.rows[nov.YearMonth()] = []monthview.Row{short}
+	if rep := e.run(t); rep.Raised != 1 {
+		t.Fatalf("a payment short without a tolerance confirmation was not a change: %+v", rep)
+	}
+}
+
 func TestDetectorAmountChangeInAnotherCurrencyIsNotConverted(t *testing.T) {
 	e := newDetectEnv(t)
 	e.cmts.list = []commitments.Commitment{{ID: "k-fx", Fields: commitments.Fields{Amount: eur("10.00")}}}
