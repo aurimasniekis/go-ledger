@@ -10,6 +10,19 @@ operator decision covers; they are listed for the operator under Consequences.
 > also refuses an automatic confirmation dated more than 3 days from the due date (`ErrAutoDate`). A refused
 > confirmation's reason carries a stable code (`store_refused: overpaid`), never the store's error text.
 
+> **Amendment (X6, operator decision D-DF item 7, 2026-11-22): the planned-date window.** For an occurrence with an
+> **active** deferral plan (ADR-0050), the date safeguard of point 4 also passes when the booked transaction is dated
+> within **3 days of the plan's planned date**, in addition to the 3 days around the due date. The candidate window of
+> point 3 widens the same way (7 days around the planned date as well), so such a pair is a candidate and ambiguity is
+> counted over it. Every other D9 safeguard is unchanged: same currency, exact amount or the commitment's tolerance
+> (short only), booked, exactly one candidate transaction and one candidate occurrence, nothing already assigned.
+> An **undone** plan no longer widens either window, and a plan revision moves the window with its planned date.
+> The store reads the active plan's planned date inside the write transaction, like the tolerance, so
+> `matches.CheckAutoPlanned` (and `ErrAutoDate`, now naming both dates) holds whatever the plan decided. The reason of a
+> confirmation made through the planned window says so ("N days from the planned date of its deferral plan"); a failed
+> date check lists both distances. Two transactions, one near the due date and one near the planned date, make the
+> occurrence ambiguous and are only suggested.
+
 ## Context
 
 Task X2 needs an automatic matching engine on top of payment matches (ADR-0035, task X1). The engine pairs outgoing bank

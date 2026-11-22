@@ -314,8 +314,9 @@ var (
 	// whose transaction has another open allocation.
 	ErrAutoNotOneToOne = errors.New("an automatic confirmation must allocate the whole transaction and be its only open match")
 	// ErrAutoDate refuses a rule confirmation whose transaction is dated
-	// more than AutoConfirmDays from the occurrence's due date (decision D9).
-	ErrAutoDate = errors.New("an automatic confirmation needs a transaction dated within 3 days of the due date")
+	// more than AutoConfirmDays from the occurrence's due date and, with an
+	// active deferral plan, from its planned date (decisions D9, D-DF 7).
+	ErrAutoDate = errors.New("an automatic confirmation needs a transaction dated within 3 days of the due date or an active plan's planned date")
 	// ErrAutoAmount refuses a rule confirmation whose allocation differs
 	// from the occurrence's amount by more than the tolerance given.
 	ErrAutoAmount = errors.New("an automatic confirmation must match the occurrence's amount within the tolerance given")
@@ -407,6 +408,15 @@ func CheckTarget(t Transaction, o occurrences.Occurrence, amount money.Money) er
 // the other safeguards of decision D9 (one candidate on each side) stay with
 // the engine.
 func CheckAuto(t Transaction, otherOpen int, amount money.Money, o occurrences.Occurrence, tolerance money.Money) error {
+	return CheckAutoPlanned(t, otherOpen, amount, o, tolerance, nil)
+}
+
+// CheckAutoPlanned is [CheckAuto] for an occurrence that may have an active
+// deferral plan: planned is the plan's planned date (nil when there is no
+// active plan; an undone plan never counts), and the transaction may be dated
+// within [AutoConfirmDays] of either the due date or the planned date
+// (decision D-DF 7). Every other safeguard is unchanged.
+func CheckAutoPlanned(t Transaction, otherOpen int, amount money.Money, o occurrences.Occurrence, tolerance money.Money, planned *calendar.Date) error {
 	if otherOpen > 0 {
 		return ErrAutoNotOneToOne
 	}
@@ -425,11 +435,15 @@ func CheckAuto(t Transaction, otherOpen int, amount money.Money, o occurrences.O
 	} else if c, err := diff.Cmp(tolerance); err != nil || c > 0 {
 		return ErrAutoAmount
 	}
-	n := t.Date.DaysUntil(o.DueDate)
-	if n < -AutoConfirmDays || n > AutoConfirmDays {
-		return ErrAutoDate
+	if n := t.Date.DaysUntil(o.DueDate); n >= -AutoConfirmDays && n <= AutoConfirmDays {
+		return nil
 	}
-	return nil
+	if planned != nil {
+		if n := t.Date.DaysUntil(*planned); n >= -AutoConfirmDays && n <= AutoConfirmDays {
+			return nil
+		}
+	}
+	return ErrAutoDate
 }
 
 // AutoConfirmDays is how many days before or after the due date a transaction
