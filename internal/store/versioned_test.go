@@ -154,6 +154,7 @@ var unversionedTables = map[string]string{
 	"merchant_reviews":               "one merchant decision per transaction (ADR-0051), keyed by transaction and set or cleared through the review routes; it carries its own version, and a decision replaces the earlier one",
 	"category_assignments":           "one category (or the person's explicit none) per object (ADR-0053), keyed by object and last-write-wins like merchant decisions; the audit log keeps the history, and definitions carry the versions",
 	"label_assignments":              "labels on objects and the person's removals (ADR-0053), keyed by object and label and set or cleared through the assignment routes; definitions carry the versions, the audit log the history",
+	"merchant_aliases":               "alias names of merchant records (ADR-0056): rows are added and deleted (or moved by a merge), never edited; the merchant carries the version, which every alias change increases",
 	"bucket_members":                 "membership of commitments and accounts in buckets (ADR-0053): rows are added and deleted, never edited; the bucket carries the version",
 	"deferral_plan_events":           "append-only deferral plan history (ADR-0050); triggers refuse updates and deletes, and concurrency is the plan's version",
 	"deferral_plan_adjustments":      "explicit fees and charges on a deferral plan (ADR-0050): rows only gain their removal once and are never deleted; concurrency is the plan's version, which every change increases",

@@ -12,6 +12,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/merchants"
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
 // TransactionsPath is the collection of bank transactions' sub-resources (E1,
@@ -51,6 +52,9 @@ type enrichmentJSON struct {
 	Candidates         []string   `json:"candidates"`
 	RetrievedAt        *time.Time `json:"retrieved_at"`
 	LastFailedAt       *time.Time `json:"last_failed_at"`
+	// MerchantID is the merchant record the identified name resolves to
+	// through an alias (ADR-0056), or null.
+	MerchantID *string `json:"merchant_id"`
 }
 
 type merchantReviewJSON struct {
@@ -59,9 +63,12 @@ type merchantReviewJSON struct {
 	TransactionID string             `json:"transaction_id"`
 	Decision      merchants.Decision `json:"decision"`
 	Name          *string            `json:"name"`
-	By            deciderJSON        `json:"by"`
-	DecidedAt     time.Time          `json:"decided_at"`
-	Version       int64              `json:"version"`
+	// MerchantID is the merchant record the decision attaches to; null for a
+	// rejection.
+	MerchantID *string     `json:"merchant_id"`
+	By         deciderJSON `json:"by"`
+	DecidedAt  time.Time   `json:"decided_at"`
+	Version    int64       `json:"version"`
 }
 
 // merchantJSON is the merchant of a bank transaction: what to show (name,
@@ -72,6 +79,7 @@ type merchantReviewJSON struct {
 type merchantJSON struct {
 	TransactionID        string              `json:"transaction_id"`
 	State                merchants.State     `json:"state"`
+	MerchantID           *string             `json:"merchant_id"`
 	Name                 *string             `json:"name"`
 	LogoRef              *string             `json:"logo_ref"`
 	IdentitySource       *string             `json:"identity_source"`
@@ -91,10 +99,11 @@ func strPtr(s string) *string {
 }
 
 func toMerchantJSON(m merchants.Merchant) merchantJSON {
-	out := merchantJSON{TransactionID: string(m.TransactionID), State: m.State, Name: strPtr(m.Name), LogoRef: strPtr(m.LogoRef), IdentitySource: strPtr(m.IdentitySource),
+	out := merchantJSON{TransactionID: string(m.TransactionID), State: m.State, MerchantID: strPtr(m.MerchantID), Name: strPtr(m.Name), LogoRef: strPtr(m.LogoRef), IdentitySource: strPtr(m.IdentitySource),
 		Fallback: m.Fallback(), NeedsReview: m.NeedsReview, ConfirmationOutdated: m.ConfirmationOutdated, ReviewInherited: m.ReviewInherited}
 	if e := m.Enrichment; e != nil {
-		ej := &enrichmentJSON{Status: e.Status, Name: strPtr(e.Name), LogoRef: strPtr(e.LogoRef), Source: e.Source, Candidates: slices.Clone(e.Candidates), LastFailedAt: e.LastFailedAt}
+		ej := &enrichmentJSON{Status: e.Status, Name: strPtr(e.Name), LogoRef: strPtr(e.LogoRef), Source: e.Source, Candidates: slices.Clone(e.Candidates), LastFailedAt: e.LastFailedAt,
+			MerchantID: strPtr(e.MerchantID)}
 		if ej.Candidates == nil {
 			ej.Candidates = []string{}
 		}
@@ -114,7 +123,7 @@ func toMerchantJSON(m merchants.Merchant) merchantJSON {
 			v := r.Via
 			by.Via = &v
 		}
-		out.Review = &merchantReviewJSON{TransactionID: string(r.TransactionID), Decision: r.Decision, Name: strPtr(r.Name), By: by, DecidedAt: r.DecidedAt, Version: r.Version}
+		out.Review = &merchantReviewJSON{TransactionID: string(r.TransactionID), Decision: r.Decision, Name: strPtr(r.Name), MerchantID: strPtr(r.MerchantID), By: by, DecidedAt: r.DecidedAt, Version: r.Version}
 	}
 	return out
 }
@@ -130,6 +139,8 @@ func merchantError(err error) error {
 		return &Error{Status: http.StatusConflict, Code: CodeReviewInherited, Message: merchants.ErrReviewInherited.Error(), Cause: err}
 	case errors.Is(err, merchants.ErrNoReview):
 		return NotFound(merchants.ErrNoReview.Error())
+	case errors.Is(err, merchants.ErrArchived):
+		return &Error{Status: http.StatusConflict, Code: CodeMerchantArchived, Message: err.Error(), Cause: err}
 	}
 	return err
 }
@@ -199,7 +210,7 @@ func registerMerchants(s *Server, st merchants.Store) {
 		var req merchants.Request
 		var errs []commitments.FieldError
 		for k := range doc {
-			if k != "decision" && k != "name" {
+			if k != "decision" && k != "name" && k != "merchant_id" {
 				errs = append(errs, commitments.FieldError{Field: k, Message: "unknown field " + k})
 			}
 		}
@@ -217,6 +228,11 @@ func registerMerchants(s *Server, st merchants.Store) {
 				req.Name = merchants.Request{Name: req.Name}.Normalized().Name
 			} else {
 				errs = append(errs, commitments.FieldError{Field: "name", Message: "name must be a string"})
+			}
+		}
+		if raw, ok := doc["merchant_id"]; ok && !isJSONNull(raw) {
+			if json.Unmarshal(raw, &req.MerchantID) != nil || !resource.ValidID(req.MerchantID) {
+				errs = append(errs, commitments.FieldError{Field: "merchant_id", Message: "merchant_id must be an identifier"})
 			}
 		}
 		if len(errs) > 0 {

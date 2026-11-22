@@ -17,9 +17,8 @@ import (
 
 // Limits on stored text.
 const (
-	MaxName        = 80
-	MaxSource      = 200
-	MaxMerchantKey = 200
+	MaxName   = 80
+	MaxSource = 200
 )
 
 // Kind is a kind of definition.
@@ -61,8 +60,8 @@ func (t ObjectType) Valid() bool { return slices.Contains(ObjectTypes(), t) }
 // group commitments and accounts only (decision D12).
 func (t ObjectType) BucketMember() bool { return t == ObjectCommitment || t == ObjectAccount }
 
-// ObjectRef names one object. For a merchant, ID is the merchant key (see
-// [MerchantKey]); for the others a ULID.
+// ObjectRef names one object by its ULID. A merchant is named by its merchant
+// record's id (task M1, ADR-0056, decision D-MER 1a), no longer by a name key.
 type ObjectRef struct {
 	Type ObjectType
 	ID   string
@@ -73,27 +72,10 @@ func (o ObjectRef) Validate() []commitments.FieldError {
 	switch {
 	case !o.Type.Valid():
 		return []commitments.FieldError{{Field: "object_type", Message: "object_type must be transaction, commitment, account or merchant"}}
-	case o.Type == ObjectMerchant:
-		if k, ok := MerchantKey(o.ID); !ok || k != o.ID {
-			return []commitments.FieldError{{Field: "object_id", Message: "a merchant is named by its key: the merchant name in lower case, white space collapsed, at most 200 characters"}}
-		}
 	case !resource.ValidID(o.ID):
 		return []commitments.FieldError{{Field: "object_id", Message: "object_id must be an identifier"}}
 	}
 	return nil
-}
-
-// MerchantKey returns the key that names a merchant: the name with white space
-// collapsed and lower-cased. Merchants have no record of their own yet
-// (ADR-0051 identifies a transaction's merchant, not a merchant), so the key is
-// what ties assignments to one. ok is false for an empty, over-long or
-// control-character name.
-func MerchantKey(name string) (string, bool) {
-	k := strings.ToLower(NormalizeName(name))
-	if k == "" || utf8.RuneCountInString(k) > MaxMerchantKey || checkText(k) != "" {
-		return "", false
-	}
-	return k, true
 }
 
 // Origin is where an assignment came from.
@@ -361,6 +343,9 @@ var (
 	ErrInheritedAssignment = errors.New("the assignment is inherited from the pending transaction it replaces; reset it there")
 	// ErrNotApplicable means the definition cannot apply to the object type.
 	ErrNotApplicable = errors.New("buckets hold commitments and accounts only")
+	// ErrObjectArchived means the object is an archived (or merged) merchant:
+	// nothing new is assigned to it (task M1, ADR-0056).
+	ErrObjectArchived = errors.New("the merchant is archived or merged: nothing new is assigned to it")
 )
 
 // InUseError means a definition is still assigned and no replacement was

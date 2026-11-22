@@ -60,7 +60,7 @@ func TestFieldsValidate(t *testing.T) {
 	}
 }
 
-func TestObjectRefAndMerchantKey(t *testing.T) {
+func TestObjectRef(t *testing.T) {
 	if errs := (ObjectRef{ObjectTransaction, resource.NewID()}).Validate(); len(errs) != 0 {
 		t.Errorf("valid transaction rejected: %v", errs)
 	}
@@ -70,18 +70,12 @@ func TestObjectRefAndMerchantKey(t *testing.T) {
 	if errs := (ObjectRef{"widget", resource.NewID()}).Validate(); len(errs) == 0 {
 		t.Error("an unknown object type was accepted")
 	}
-	k, ok := MerchantKey("  Acme   Shop ")
-	if !ok || k != "acme shop" {
-		t.Errorf("MerchantKey = %q, %v", k, ok)
+	// A merchant is named by its record's id (ADR-0056), never by a name.
+	if errs := (ObjectRef{ObjectMerchant, "acme shop"}).Validate(); len(errs) == 0 {
+		t.Error("a merchant name was accepted as its id")
 	}
-	if errs := (ObjectRef{ObjectMerchant, "Acme Shop"}).Validate(); len(errs) == 0 {
-		t.Error("a merchant that is not a key was accepted")
-	}
-	if errs := (ObjectRef{ObjectMerchant, k}).Validate(); len(errs) != 0 {
-		t.Errorf("a merchant key was rejected: %v", errs)
-	}
-	if _, ok := MerchantKey(" "); ok {
-		t.Error("an empty merchant key was accepted")
+	if errs := (ObjectRef{ObjectMerchant, resource.NewID()}).Validate(); len(errs) != 0 {
+		t.Errorf("a merchant id was rejected: %v", errs)
 	}
 	if ObjectMerchant.BucketMember() || ObjectTransaction.BucketMember() || !ObjectCommitment.BucketMember() || !ObjectAccount.BucketMember() {
 		t.Error("buckets hold commitments and accounts only")

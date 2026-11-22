@@ -2,6 +2,8 @@
 
 Status: accepted. Builds on [ADR-0051](0051-merchant-model-and-corrections.md) (task E2). Decision D15, taken by the
 operator on 2026-11-20, fixes the policy; research is in the knowledge base (merchant/logo enrichment, R8).
+Amended (2026-11-22) by [ADR-0056](0056-merchant-records-aliases-and-merging.md): re-resolution per merchant and rechecks
+that reach every row (see the amendment at the end).
 
 ## Decisions
 
@@ -73,3 +75,14 @@ operator on 2026-11-20, fixes the policy; research is in the knowledge base (mer
 - Enrichment runs after refreshes; there is no on-demand "look up now" route and no list/batch read (E3 and follow-ups).
   A transaction is only enriched once a refresh runs after the upgrade.
 - Whether any remote source is ever enabled is still the operator's decision (D15).
+
+## Amendment: re-resolution per merchant and rechecks that reach every row (task M1, ADR-0056)
+
+From the PR #124 reviews. (1) A decision, or clearing one, about a transaction flags the identified answers of the
+other undecided transactions of the same merchant record (or the same name when it has none); the next pass looks
+them up right after never-looked-up rows, so the person's mapping or rejection applies to them. (2) The recheck of
+`none` after the person's confirmations change (or after a start) no longer covers one batch: the service keeps the
+time of the change as a watermark, and every `none` or `ambiguous` answer older than it is listed, batch after batch,
+until all are rechecked; rows answered since are not asked again. The 24-hour recheck with a remote source is
+unchanged. (3) A reused mapping names the merchant record's current display name. (4) An identified answer resolves
+to a merchant record through its alias key, keeping its source and confidence as provenance.

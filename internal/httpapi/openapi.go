@@ -160,6 +160,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
 	registerMerchants(s, d.Merchants)
+	registerMerchantRecords(s, d.Merchants)
 	registerMerchantSources(s, d.MerchantSources)
 	registerOrganisation(s, d.Organisation)
 	registerDeferrals(s, d.Deferrals, d.Occurrences, d.Payments, todayFn, d.Grace)

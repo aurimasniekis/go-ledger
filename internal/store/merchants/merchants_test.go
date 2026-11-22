@@ -260,7 +260,10 @@ func TestConfirmCorrectRejectAndClear(t *testing.T) {
 	}
 
 	want := []string{
-		"merchant.corrected from=none via=session", "merchant.confirmed from=corrected via=session",
+		// A correction and a confirmation of names no merchant has yet each
+		// create the merchant record first (task M1).
+		"merchant.created from= via=session", "merchant.corrected from=none via=session",
+		"merchant.created from= via=session", "merchant.confirmed from=corrected via=session",
 		"merchant.rejected from=confirmed via=session", "merchant.review_cleared from=rejected via=session",
 	}
 	if got := f.events(); !reflect.DeepEqual(got, want) {
@@ -465,6 +468,7 @@ func TestOwnDecisionAuditsInheritedFrom(t *testing.T) {
 
 	want := []string{
 		"merchant.rejected from=none via=session",
+		"merchant.created from= via=session",
 		"merchant.corrected from=inherited via=session",
 		"merchant.rejected from=corrected via=session",
 		"merchant.review_cleared from=rejected via=session",
