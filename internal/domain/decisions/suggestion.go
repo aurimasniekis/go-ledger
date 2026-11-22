@@ -74,6 +74,41 @@ type Suggestion struct {
 	Version   int64
 }
 
+// Reversal records that a person took back an auto-applied suggestion's effect.
+type Reversal struct {
+	// ByKind is user, token or system; ByUserID is the person or the token's
+	// owner (empty for the system).
+	ByKind   string
+	ByUserID string
+	At       time.Time
+}
+
+// SuggestionView is a stored suggestion with its reversal, when it has one.
+type SuggestionView struct {
+	Suggestion
+	Reversal *Reversal
+}
+
+// StateReverted is the review state of an accepted suggestion whose
+// auto-applied effect was taken back. It is derived (the suggestion's own state
+// stays accepted) and is only used to filter and show suggestions.
+const StateReverted SuggestionState = "reverted"
+
+// SuggestionFilter selects suggestions for listing, oldest first (by
+// identifier). Empty fields match everything. States may name any of the
+// stored states or [StateReverted]: "accepted" then means accepted and not
+// reverted.
+type SuggestionFilter struct {
+	Tasks      []TaskName
+	States     []SuggestionState
+	ObjectType string
+	ObjectID   string
+	// After is the identifier of the last suggestion of the previous page.
+	After string
+	// Limit is the number of suggestions to return; zero means 100.
+	Limit int
+}
+
 // Suggestions stores suggestions apart from facts.
 type Suggestions interface {
 	// Record stores a new pending suggestion and marks any pending one for

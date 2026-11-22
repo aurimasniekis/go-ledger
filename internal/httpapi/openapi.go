@@ -81,6 +81,11 @@ type Deps struct {
 	// Organisation stores categories, labels, buckets and their assignments
 	// (ADR-0053).
 	Organisation organisation.Store
+	// Suggestions, SuggestionActions and Alerts serve the decision-task routes
+	// (L6c, ADR-0065): model suggestions to review and in-app alerts.
+	Suggestions       SuggestionReader
+	SuggestionActions SuggestionActions
+	Alerts            AlertStore
 	// Deferrals stores deferral plans (DF1, ADR-0050); nil leaves the
 	// monthly view without plans (the plan routes are registered regardless,
 	// like the other stores').
@@ -163,6 +168,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerMerchantRecords(s, d.Merchants)
 	registerMerchantSources(s, d.MerchantSources)
 	registerOrganisation(s, d.Organisation)
+	registerDecisions(s, d.Suggestions, d.SuggestionActions, d.Alerts)
 	registerDeferrals(s, d.Deferrals, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerBankConnections(s, d.Banking)
 	registerMatching(s, d.Matching)

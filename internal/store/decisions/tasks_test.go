@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,6 +83,7 @@ func (f *fixture) newTasks(t *testing.T, autoApply bool, replies ...decisionstes
 		t.Fatal(err)
 	}
 	f.ds.UseCategoryResetter(te.os)
+	f.ds.UseAssigner(te.os)
 	return te, decisiontasks.New(svc, f.ds, te.os)
 }
 
@@ -587,4 +589,89 @@ func TestLabelAcceptIsAllOrNothing(t *testing.T) {
 func execWrite(f *fixture, q string, args ...any) (int, error) {
 	err := f.db.WriteTx(f.ctx, func(ctx context.Context, tx *sql.Tx) error { _, err := tx.ExecContext(ctx, q, args...); return err })
 	return 0, err
+}
+
+// A decision made after another one has won is refused and leaves no
+// assignment behind: the assignment and the suggestion's state are decided in
+// one transaction.
+func TestLateDecisionRollsItsAssignmentBack(t *testing.T) {
+	f := newFixture(t, true)
+	te, svc := f.newTasks(t, false, decisionstest.Reply{Output: pickFirst})
+	out, _ := svc.SuggestCategory(f.ctx, te.facts())
+	id := out.Result.Suggestion.ID
+	// The late decision finds the suggestion already decided (the race, made
+	// deterministic): its assignment is rolled back.
+	if _, err := svc.Reject(f.ctx, alice, id); err != nil {
+		t.Fatal(err)
+	}
+	_, err := f.ds.DecideSettingCategory(f.ctx, alice, id, decisions.StateAccepted, audit.DecisionSuggestionAccepted, te.obj, &te.groceries.ID)
+	if !errors.Is(err, decisions.ErrNotPending) {
+		t.Fatalf("late decision: %v", err)
+	}
+	if c := te.category(); c != nil {
+		t.Fatalf("the refused decision left %+v", c)
+	}
+	if sg, _ := f.ds.Suggestion(f.ctx, id); sg.State != decisions.StateRejected {
+		t.Fatalf("state %s", sg.State)
+	}
+}
+
+// Two decisions on one suggestion at the same moment end consistent: one wins,
+// the other gets suggestion_not_pending, and the object holds the winner's
+// assignment (or none, for a reject).
+func TestConcurrentDecisionsEndConsistent(t *testing.T) {
+	f := newFixture(t, true)
+	te, svc := f.newTasks(t, false, decisionstest.Reply{Output: pickFirst})
+	out, _ := svc.SuggestCategory(f.ctx, te.facts())
+	id := out.Result.Suggestion.ID
+	rent := te.rent.ID
+	ops := []func() (decisions.Suggestion, error){
+		func() (decisions.Suggestion, error) { return svc.Accept(f.ctx, alice, id) },
+		func() (decisions.Suggestion, error) {
+			return svc.Correct(f.ctx, alice, id, decisiontasks.Correction{CategoryID: &rent})
+		},
+		func() (decisions.Suggestion, error) { return svc.Reject(f.ctx, alice, id) },
+	}
+	errs := make([]error, len(ops))
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range ops {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, errs[i] = ops[i]()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	won := -1
+	for i, err := range errs {
+		switch {
+		case err == nil && won == -1:
+			won = i
+		case errors.Is(err, decisions.ErrNotPending):
+		default:
+			t.Fatalf("decision %d: %v (winner %d)", i, err, won)
+		}
+	}
+	if won == -1 {
+		t.Fatal("no decision won")
+	}
+	sg, _ := f.ds.Suggestion(f.ctx, id)
+	c := te.category()
+	switch won {
+	case 0:
+		if sg.State != decisions.StateAccepted || c == nil || c.Category.ID != te.groceries.ID {
+			t.Fatalf("accept won: %s %+v", sg.State, c)
+		}
+	case 1:
+		if sg.State != decisions.StateRejected || c == nil || c.Category.ID != rent {
+			t.Fatalf("correct won: %s %+v", sg.State, c)
+		}
+	default:
+		if sg.State != decisions.StateRejected || c != nil {
+			t.Fatalf("reject won: %s %+v", sg.State, c)
+		}
+	}
 }

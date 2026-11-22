@@ -5359,6 +5359,382 @@ paths:
                 $ref: "#/components/schemas/ObjectAssignments"
         default:
           $ref: "#/components/responses/Error"
+  /suggestions:
+    get:
+      operationId: listSuggestions
+      x-ledger-access: decisions:read
+      summary: List model suggestions
+      description: |
+        Suggestions a model made for categorising an object or labelling it (task L6c, ADR-0065), oldest first (ID order).
+        A suggestion is model output kept apart from assignments: it assigns nothing until a person accepts or corrects it
+        (or, for categorisation with auto_apply on, until it was applied automatically as a model-origin assignment that
+        any person or rule outranks). state is pending, accepted, rejected (a correction is a rejection with the person's
+        own answer), superseded or reverted (an auto-applied suggestion whose effect was taken back). Every suggestion names
+        the provider and model that said it (suggested_by) and keeps them when it is accepted. Suggestions made for the
+        alerts task are not queued: their text is attached to the alert as model_text.
+      tags: [decisions]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: state
+          in: query
+          description: Only suggestions in these states (any of them). accepted excludes reverted ones.
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [pending, accepted, rejected, superseded, reverted]
+          style: form
+          explode: true
+        - name: task
+          in: query
+          description: Only suggestions of these tasks.
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [categorisation, label_suggestion]
+          style: form
+          explode: true
+        - name: object_type
+          in: query
+          description: Only suggestions about this kind of object.
+          schema:
+            type: string
+            enum: [transaction, commitment, account, merchant]
+        - name: object_id
+          in: query
+          description: Only suggestions about this object.
+          schema:
+            $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: One page of suggestions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Suggestion"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+  /suggestions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getSuggestion
+      x-ledger-access: decisions:read
+      summary: Get a suggestion
+      tags: [decisions]
+      responses:
+        "200":
+          description: The suggestion.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Suggestion"
+        default:
+          $ref: "#/components/responses/Error"
+  /suggestions/{id}/accept:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: acceptSuggestion
+      x-ledger-access: decisions:write
+      summary: Accept a suggestion
+      description: |
+        Applies a pending suggestion as the person's own decision (a user-origin assignment, which no rule, model or refresh replaces) and
+        marks it accepted. The suggestion keeps the provider and model that said it. The object and the category or labels are checked
+        again: an archived definition is 409 definition_archived and a vanished object is 404, and the suggestion stays pending.
+        A state moves once (409 suggestion_not_pending). A suggestion that holds no choice is 409 nothing_to_apply: reject it or correct it.
+        Needs organisation:write too (and merchants:write for a merchant). Audited (decision_suggestion.accepted, plus the organisation
+        store's own assignment event).
+      tags: [decisions]
+      responses:
+        "200":
+          description: The suggestion after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Suggestion"
+        "403":
+          description: "forbidden, including a caller without organisation:write (and merchants:write for a merchant), because this writes an assignment."
+        "409":
+          description: "suggestion_not_pending, nothing_to_apply or definition_archived."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /suggestions/{id}/correct:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: correctSuggestion
+      x-ledger-access: decisions:write
+      summary: Correct a suggestion
+      description: |
+        Applies the person's own answer instead of the model's and marks the suggestion rejected (the person disagreed); the model is not asked
+        about the object again. For a categorisation give category_id (an active category, or null to record that the object has no category);
+        for a label suggestion give label_ids (all are added in one transaction or none). Fields of the other task are refused.
+        Needs organisation:write too (and merchants:write for a merchant). Audited (decision_suggestion.corrected).
+      tags: [decisions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                category_id:
+                  description: "For a categorisation only: the category the person chooses, or null for no category. Required for a categorisation."
+                  oneOf:
+                    - $ref: "#/components/schemas/ID"
+                    - type: "null"
+                label_ids:
+                  description: "For a label suggestion only: the labels the person adds (1 to 50). Required for a label suggestion."
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: The suggestion after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Suggestion"
+        "403":
+          description: "forbidden, including a caller without organisation:write (and merchants:write for a merchant), because this writes an assignment."
+        "409":
+          description: "suggestion_not_pending or definition_archived."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /suggestions/{id}/reject:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: rejectSuggestion
+      x-ledger-access: decisions:write
+      summary: Reject a suggestion
+      description: |
+        Turns a pending suggestion down. Nothing is assigned and the model is not asked about the object again. A state moves once
+        (409 suggestion_not_pending). Audited (decision_suggestion.rejected).
+      tags: [decisions]
+      responses:
+        "200":
+          description: The suggestion after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Suggestion"
+        "403":
+          description: forbidden
+        "409":
+          description: "suggestion_not_pending."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /suggestions/{id}/revert:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: revertSuggestion
+      x-ledger-access: decisions:write
+      summary: Revert an auto-applied suggestion
+      description: |
+        Takes back a categorisation that was applied automatically: the model-origin category is removed (the person's reset, audited by the
+        organisation store) and the reversal is recorded, so the suggestion now reads reverted and the model is not asked again. It is allowed
+        only while the object's category is still exactly the model-origin one this suggestion wrote; a later decision by a person or a rule is
+        never undone (409 not_reversible). A suggestion that was not auto-applied, or was already reverted, is also 409 not_reversible.
+        Needs organisation:write too (and merchants:write for a merchant). Audited (decision_suggestion.reverted).
+      tags: [decisions]
+      responses:
+        "200":
+          description: The suggestion after the change.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Suggestion"
+        "403":
+          description: "forbidden, including a caller without organisation:write (and merchants:write for a merchant), because this writes an assignment."
+        "409":
+          description: "not_reversible (not auto-applied, already reverted, or the category has changed since) or assignment_changed."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /alerts:
+    get:
+      operationId: listAlerts
+      x-ledger-access: decisions:read
+      summary: List in-app alerts
+      description: |
+        Alerts Ledger raised itself (task L6c, ADR-0065): a bank consent about to expire, a commitment whose amount changed, an overdue
+        occurrence with no matching payment. Oldest first (ID order). state shows whether an alert is open, dismissed (a person closed it
+        and it stays closed) or resolved (the condition stopped holding). message is Ledger's own wording of the facts; model_text is
+        optional extra wording a model wrote, labelled with its provider and model, never a replacement.
+      tags: [decisions]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: state
+          in: query
+          description: Only alerts in these states (any of them).
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [open, dismissed, resolved]
+          style: form
+          explode: true
+        - name: kind
+          in: query
+          description: Only alerts of these kinds.
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [consent_expiring, commitment_amount_changed, unmatched_overdue]
+          style: form
+          explode: true
+        - name: object_type
+          in: query
+          schema:
+            type: string
+            enum: [bank_connection, commitment, occurrence]
+        - name: object_id
+          in: query
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        "200":
+          description: One page of alerts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Alert"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+  /alerts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getAlert
+      x-ledger-access: decisions:read
+      summary: Get an alert
+      tags: [decisions]
+      responses:
+        "200":
+          description: The alert.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        default:
+          $ref: "#/components/responses/Error"
+  /alerts/{id}/dismiss:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: dismissAlert
+      x-ledger-access: decisions:write
+      summary: Dismiss an alert
+      description: |
+        Closes an open alert as dismissed. A dismissal sticks: the same situation (the same key: expiry date, new amount or due date) is not raised
+        again. An alert that is already dismissed or resolved is 409 alert_not_open. Audited (alert.closed with how=dismissed).
+      tags: [decisions]
+      responses:
+        "200":
+          description: The alert, now dismissed.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "409":
+          description: "alert_not_open."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: mcp
     description: Model Context Protocol server.
@@ -5372,6 +5748,8 @@ tags:
     description: The append-only audit log (administrative, read-only).
   - name: commitments
     description: Recurring commitment definitions.
+  - name: decisions
+    description: Model suggestions to review (accept, correct, reject, revert) with the provider and model that said them, and in-app alerts (administrators).
   - name: deferral-plans
     description: Plans to pay an outstanding occurrence later (personal, creditor-agreed or documented grace), with revisions, undo, explicit fees and history. Never payment.
   - name: auth
@@ -8009,6 +8387,12 @@ components:
             - merchant_alias_taken
             - merchant_archived
             - merchant_in_use
+            - suggestion_not_pending
+            - not_reversible
+            - assignment_changed
+            - nothing_to_apply
+            - wrong_task
+            - alert_not_open
         message:
           type: string
         field:
@@ -8029,6 +8413,136 @@ components:
           type: string
         reconciliation:
           $ref: "#/components/schemas/Reconciliation"
+    ModelRef:
+      type: object
+      description: The provider and model that said something.
+      required: [provider, model, label]
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        label:
+          type: string
+          description: provider/model, the text to show after "suggested by".
+    Suggestion:
+      type: object
+      description: |
+        A model suggestion (task L6c, ADR-0065). It is never a bank fact, an assignment, a match or a payment. Only the model's validated
+        answer is stored (choice identifiers and the model's own confidence), never the request or bank text.
+      required: [id, task, object_type, object_id, state, suggested_by, provenance, response_id, decision, auto_apply, reversal, created_at, decided_at, version]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        task:
+          type: string
+          enum: [categorisation, label_suggestion]
+        object_type:
+          type: string
+          enum: [transaction, commitment, account, merchant]
+        object_id:
+          $ref: "#/components/schemas/ID"
+        state:
+          type: string
+          enum: [pending, accepted, rejected, superseded, reverted]
+        suggested_by:
+          $ref: "#/components/schemas/ModelRef"
+        provenance:
+          type: string
+          description: '"suggested by provider/model".'
+        response_id:
+          type: [string, "null"]
+          description: The provider's own response identifier, when it gave one.
+        decision:
+          type: object
+          required: [choice, choices, confidence]
+          properties:
+            choice:
+              description: The category the model chose (categorisation); null when it chose none.
+              oneOf:
+                - $ref: "#/components/schemas/ID"
+                - type: "null"
+            choices:
+              type: array
+              description: The labels the model chose (label suggestions).
+              items:
+                $ref: "#/components/schemas/ID"
+            confidence:
+              type: [string, "null"]
+              description: The model's own confidence as a decimal string from 0 to 1. It is not proof of anything.
+        auto_apply:
+          type: boolean
+          description: True when the suggestion was applied automatically as a model-origin assignment; only these can be reverted.
+        reversal:
+          description: Set when a person took back an auto-applied suggestion (state reverted).
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [by, at]
+              properties:
+                by:
+                  $ref: "#/components/schemas/OrganisationActor"
+                at:
+                  type: string
+                  format: date-time
+        created_at:
+          type: string
+          format: date-time
+        decided_at:
+          type: [string, "null"]
+          format: date-time
+        version:
+          $ref: "#/components/schemas/Version"
+    Alert:
+      type: object
+      description: An in-app alert. message is Ledger's own deterministic text; model_text is optional, labelled extra wording.
+      required: [id, kind, object_type, object_id, facts, message, model_text, state, created_at, closed_at, version]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        kind:
+          type: string
+          enum: [consent_expiring, commitment_amount_changed, unmatched_overdue]
+        object_type:
+          type: string
+          enum: [bank_connection, commitment, occurrence]
+        object_id:
+          type: string
+        facts:
+          type: object
+          description: Exact values as text, with their currencies (a currency change is shown as itself, never converted).
+          additionalProperties:
+            type: string
+        message:
+          type: string
+        model_text:
+          description: Optional wording a model wrote for the alert, with the provider and model that wrote it; null when none.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [text, provider, model, label, provenance]
+              properties:
+                text:
+                  type: string
+                provider:
+                  type: string
+                model:
+                  type: string
+                label:
+                  type: string
+                provenance:
+                  type: string
+        state:
+          type: string
+          enum: [open, dismissed, resolved]
+        created_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: [string, "null"]
+          format: date-time
+        version:
+          $ref: "#/components/schemas/Version"
     Reconciliation:
       type: object
       description: Sent with a version conflict (409).

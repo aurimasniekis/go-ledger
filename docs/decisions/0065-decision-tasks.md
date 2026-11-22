@@ -70,8 +70,8 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
 
 ## Limitations and what is not built (kept visible)
 
-- **No HTTP routes, CLI commands or UI** for suggestions or alerts, and so no OpenAPI change: they belong to L7 (review UI
-  and settings) and the MCP and Terraform tasks. Grants for them are decided there.
+- **No UI** for suggestions or alerts (task L7). The routes, OpenAPI, client, CLI and MCP tools are
+  [ADR-0067](0067-decision-tasks-api.md).
 - **Triggers (L6d).** `decisiontasks.Trigger` runs after a refresh that stored something, for the transactions that
   refresh inserted (`bankimport.AccountResult.Inserted`; updates and unchanged rows are never asked about). It builds
   `Facts` from the stored transaction (description, amount, booking date) and calls `SuggestCategory` and

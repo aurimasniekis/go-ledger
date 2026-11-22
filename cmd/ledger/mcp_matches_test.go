@@ -167,7 +167,7 @@ func TestMCPPaymentMatchJourney(t *testing.T) {
 	}
 	destructive := map[string]bool{"reject_payment_match": true, "unmatch_payment_match": true, "reverse_payment_match": true, "delete_manual_payment": true, "delete_commitment": true,
 		"undo_deferral_plan": true, "remove_deferral_adjustment": true,
-		"delete_category": true, "delete_label": true, "delete_bucket": true, "remove_bucket_member": true, "reset_object_category": true, "remove_object_label": true}
+		"delete_category": true, "delete_label": true, "delete_bucket": true, "remove_bucket_member": true, "reset_object_category": true, "remove_object_label": true, "revert_suggestion": true}
 	seen := 0
 	for _, tl := range lt.Tools {
 		d := tl.Annotations != nil && tl.Annotations.DestructiveHint != nil && *tl.Annotations.DestructiveHint

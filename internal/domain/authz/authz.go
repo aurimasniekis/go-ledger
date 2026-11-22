@@ -50,6 +50,13 @@ const (
 	ResourceConnections Resource = "connections"
 	// ResourceCommitments is recurring commitment definitions (task C1).
 	ResourceCommitments Resource = "commitments"
+	// ResourceDecisions is the model-assisted decision tasks (task L6c, ADR-0065):
+	// reading suggestions (with the provider and model that said them) and
+	// alerts, and accepting, correcting, rejecting or reverting a suggestion and
+	// dismissing an alert. Accepting or correcting also writes an assignment, so
+	// those routes need organisation:write as well (and merchants:write for a
+	// merchant). Administrators only, like the other model and bank facing grants.
+	ResourceDecisions Resource = "decisions"
 	// ResourceMerchants is the merchant identity of bank transactions (task E1,
 	// ADR-0051): reading a transaction's merchant, its enrichment and the
 	// decision about it, and confirming, correcting, rejecting or clearing that
@@ -91,6 +98,7 @@ var vocabulary = []ResourceInfo{
 	{Name: ResourceBanking, Description: "Bank-sourced transaction text: raw descriptions and counterparty names.", Actions: []Action{ActionRead}, AdminOnly: true},
 	{Name: ResourceCommitments, Description: "Recurring commitment definitions: kind, amount, schedule, dates, priority and notes.", Actions: []Action{ActionRead, ActionWrite}},
 	{Name: ResourceConnections, Description: "Bank connections: connect, reconnect, refresh, disconnect, and read accounts, balances and freshness.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
+	{Name: ResourceDecisions, Description: "Model suggestions and in-app alerts: read them with their provenance; accept, correct, reject or revert a suggestion; dismiss an alert. Accepting or correcting also needs organisation:write.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceMerchants, Description: "Merchant identity of bank transactions: the enrichment, and confirming, correcting or rejecting it.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceOrganisation, Description: "Categories, labels and buckets, and assigning them to transactions, commitments, accounts and merchants.", Actions: []Action{ActionRead, ActionWrite}},
 	{Name: ResourceRates, Description: "Cached exchange rates with provider, source, rate date and freshness; write asks the rate provider for fresh rates.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},

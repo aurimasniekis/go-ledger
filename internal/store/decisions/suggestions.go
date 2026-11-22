@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
@@ -55,6 +56,122 @@ func (s *Store) Suggestion(ctx context.Context, id string) (decisions.Suggestion
 	return sg, err
 }
 
+// reversalOf reads the reversal columns selected after the suggestion's own.
+func reversalOf(kind sql.Null[string], user sql.Null[string], at sql.Null[store.Timestamp]) *decisions.Reversal {
+	if !at.Valid {
+		return nil
+	}
+	return &decisions.Reversal{ByKind: kind.V, ByUserID: user.V, At: at.V.Time}
+}
+
+const viewColumns = "d.id, d.task, d.provider, d.model, d.response_id, d.object_type, d.object_id, d.decision, d.auto_apply, d.state, d.created_at, d.decided_at, d.version, r.reverted_by_kind, r.reverted_by_user, r.reverted_at"
+
+const viewFrom = " FROM decision_suggestions d LEFT JOIN decision_suggestion_reversals r ON r.suggestion_id = d.id"
+
+func scanView(row interface{ Scan(...any) error }) (decisions.SuggestionView, error) {
+	var sg decisions.Suggestion
+	var task, state, doc string
+	var response sql.Null[string]
+	var created store.Timestamp
+	var decided, revertedAt sql.Null[store.Timestamp]
+	var kind, user sql.Null[string]
+	if err := row.Scan(&sg.ID, &task, &sg.Provider, &sg.Model, &response, &sg.Object.Type, &sg.Object.ID, &doc, &sg.AutoApply, &state, &created, &decided, &sg.Version, &kind, &user, &revertedAt); err != nil {
+		return decisions.SuggestionView{}, err
+	}
+	if err := json.Unmarshal([]byte(doc), &sg.Decision); err != nil {
+		return decisions.SuggestionView{}, err
+	}
+	sg.Task, sg.State, sg.ResponseID, sg.CreatedAt = decisions.TaskName(task), decisions.SuggestionState(state), response.V, created.Time
+	if decided.Valid {
+		t := decided.V.Time
+		sg.DecidedAt = &t
+	}
+	return decisions.SuggestionView{Suggestion: sg, Reversal: reversalOf(kind, user, revertedAt)}, nil
+}
+
+// SuggestionView returns one suggestion with its reversal
+// (resource.ErrNotFound when there is none).
+func (s *Store) SuggestionView(ctx context.Context, id string) (decisions.SuggestionView, error) {
+	var v decisions.SuggestionView
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		v, err = scanView(tx.QueryRowContext(ctx, "SELECT "+viewColumns+viewFrom+" WHERE d.id = ?", id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return resource.ErrNotFound
+		}
+		return err
+	})
+	return v, err
+}
+
+// ListSuggestions returns suggestions matching f, oldest first.
+func (s *Store) ListSuggestions(ctx context.Context, f decisions.SuggestionFilter) ([]decisions.SuggestionView, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var where []string
+	var args []any
+	if len(f.Tasks) > 0 {
+		where = append(where, "d.task IN ("+placeholders(len(f.Tasks))+")")
+		for _, t := range f.Tasks {
+			args = append(args, string(t))
+		}
+	}
+	if len(f.States) > 0 {
+		var ors []string
+		for _, st := range f.States {
+			switch st {
+			case decisions.StateReverted:
+				ors = append(ors, "r.suggestion_id IS NOT NULL")
+			case decisions.StateAccepted:
+				ors = append(ors, "(d.state = 'accepted' AND r.suggestion_id IS NULL)")
+			default:
+				ors = append(ors, "d.state = ?")
+				args = append(args, string(st))
+			}
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if f.ObjectType != "" {
+		where = append(where, "d.object_type = ?")
+		args = append(args, f.ObjectType)
+	}
+	if f.ObjectID != "" {
+		where = append(where, "d.object_id = ?")
+		args = append(args, f.ObjectID)
+	}
+	if f.After != "" {
+		where = append(where, "d.id > ?")
+		args = append(args, f.After)
+	}
+	q := "SELECT " + viewColumns + viewFrom
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY d.id LIMIT ?"
+	args = append(args, limit)
+	var out []decisions.SuggestionView
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			v, err := scanView(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+
 // Decide moves a pending suggestion to a final state once, and records the
 // audit event named by action, in one transaction. A suggestion that is no
 // longer pending is [decisions.ErrNotPending]. An empty action records no
@@ -63,31 +180,89 @@ func (s *Store) Decide(ctx context.Context, actor audit.Actor, id string, to dec
 	if to == decisions.StatePending || !to.Valid() {
 		return decisions.Suggestion{}, errors.New("decisions: a suggestion moves to accepted, rejected or superseded")
 	}
-	now := s.now().UTC()
 	var out decisions.Suggestion
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, "UPDATE decision_suggestions SET state = ?, decided_at = ?, version = version + 1 WHERE id = ? AND state = 'pending'", string(to), store.Timestamp{Time: now}, id)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			var one int
-			if err := tx.QueryRowContext(ctx, "SELECT 1 FROM decision_suggestions WHERE id = ?", id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
-				return resource.ErrNotFound
-			} else if err != nil {
-				return err
-			}
-			return decisions.ErrNotPending
-		}
-		if out, err = scanSuggestion(tx.QueryRowContext(ctx, "SELECT "+suggestionColumns+" FROM decision_suggestions WHERE id = ?", id)); err != nil {
-			return err
-		}
-		if action == "" {
-			return nil
-		}
-		return s.audit.WriteAudit(ctx, tx, suggestionEvent(action, actor, out, now))
+		var err error
+		out, err = s.decideTx(ctx, tx, actor, id, to, action)
+		return err
 	})
 	return out, err
+}
+
+// Assigner makes the person's assignments inside a transaction the caller
+// supplies a step for (internal/store/organisation implements it).
+type Assigner interface {
+	SetCategoryWith(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, categoryID *string, inTx func(ctx context.Context, tx *sql.Tx) error) (organisation.Assignments, error)
+	AddLabelsWith(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, labelIDs []string, inTx func(ctx context.Context, tx *sql.Tx) error) (organisation.Assignments, error)
+}
+
+// UseAssigner sets the organisation store the Decide...ing methods assign
+// through. Both stores must use the same database.
+func (s *Store) UseAssigner(a Assigner) { s.assigner = a }
+
+// DecideSettingCategory sets the object's category as the person's and decides
+// the suggestion in one transaction. The suggestion must still be pending at
+// that point, so of two decisions made at the same moment one wins and the
+// other's assignment is rolled back ([decisions.ErrNotPending]): the object
+// never holds an assignment of a decision the suggestion does not show.
+func (s *Store) DecideSettingCategory(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action, obj organisation.ObjectRef, categoryID *string) (decisions.Suggestion, error) {
+	return s.decideAssigning(ctx, actor, id, to, action, func(decide func(context.Context, *sql.Tx) error) error {
+		_, err := s.assigner.SetCategoryWith(ctx, actor, obj, categoryID, decide)
+		return err
+	})
+}
+
+// DecideAddingLabels is [Store.DecideSettingCategory] for adding labels (all
+// or none).
+func (s *Store) DecideAddingLabels(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action, obj organisation.ObjectRef, labelIDs []string) (decisions.Suggestion, error) {
+	return s.decideAssigning(ctx, actor, id, to, action, func(decide func(context.Context, *sql.Tx) error) error {
+		_, err := s.assigner.AddLabelsWith(ctx, actor, obj, labelIDs, decide)
+		return err
+	})
+}
+
+func (s *Store) decideAssigning(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action, assign func(decide func(context.Context, *sql.Tx) error) error) (decisions.Suggestion, error) {
+	if to == decisions.StatePending || !to.Valid() {
+		return decisions.Suggestion{}, errors.New("decisions: a suggestion moves to accepted, rejected or superseded")
+	}
+	if s.assigner == nil {
+		return decisions.Suggestion{}, errors.New("decisions: no assigner is set")
+	}
+	var out decisions.Suggestion
+	err := assign(func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		out, err = s.decideTx(ctx, tx, actor, id, to, action)
+		return err
+	})
+	if err != nil {
+		return decisions.Suggestion{}, err
+	}
+	return out, nil
+}
+
+func (s *Store) decideTx(ctx context.Context, tx *sql.Tx, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action) (decisions.Suggestion, error) {
+	now := s.now().UTC()
+	res, err := tx.ExecContext(ctx, "UPDATE decision_suggestions SET state = ?, decided_at = ?, version = version + 1 WHERE id = ? AND state = 'pending'", string(to), store.Timestamp{Time: now}, id)
+	if err != nil {
+		return decisions.Suggestion{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var one int
+		if err := tx.QueryRowContext(ctx, "SELECT 1 FROM decision_suggestions WHERE id = ?", id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
+			return decisions.Suggestion{}, resource.ErrNotFound
+		} else if err != nil {
+			return decisions.Suggestion{}, err
+		}
+		return decisions.Suggestion{}, decisions.ErrNotPending
+	}
+	out, err := scanSuggestion(tx.QueryRowContext(ctx, "SELECT "+suggestionColumns+" FROM decision_suggestions WHERE id = ?", id))
+	if err != nil {
+		return out, err
+	}
+	if action == "" {
+		return out, nil
+	}
+	return out, s.audit.WriteAudit(ctx, tx, suggestionEvent(action, actor, out, now))
 }
 
 // RecordReversal records that a person took back an auto-applied suggestion's

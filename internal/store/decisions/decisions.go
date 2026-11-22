@@ -37,6 +37,8 @@ type Store struct {
 	audit store.AuditWriter
 	now   func() time.Time
 	newID func() string
+	// assigner is set by UseAssigner (the Decide...ing methods need it).
+	assigner Assigner
 	// resetter is set by UseCategoryResetter (RevertAutomatic needs it).
 	resetter CategoryResetter
 }

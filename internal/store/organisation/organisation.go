@@ -831,6 +831,14 @@ func originName(r *catRow) string {
 // chose none). The row is the object's own: it overrides an inherited or an
 // automatic assignment, and automatic origins never replace it.
 func (s *Store) SetCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, categoryID *string) (organisation.Assignments, error) {
+	return s.SetCategoryWith(ctx, actor, obj, categoryID, nil)
+}
+
+// SetCategoryWith is [Store.SetCategory] with a step run inside the same
+// transaction, after the assignment: when it fails, the assignment is rolled
+// back with it (the decision tasks decide a suggestion this way, so the
+// assignment and the suggestion's state never part).
+func (s *Store) SetCategoryWith(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, categoryID *string, inTx func(ctx context.Context, tx *sql.Tx) error) (organisation.Assignments, error) {
 	if err := checkObject(obj); err != nil {
 		return organisation.Assignments{}, err
 	}
@@ -870,7 +878,13 @@ func (s *Store) SetCategory(ctx context.Context, actor audit.Actor, obj organisa
 			return err
 		}
 		out, err = readAssignments(ctx, tx, obj)
-		return err
+		if err != nil {
+			return err
+		}
+		if inTx == nil {
+			return nil
+		}
+		return inTx(ctx, tx)
 	})
 	return out, err
 }
@@ -1002,6 +1016,12 @@ func (s *Store) AddLabel(ctx context.Context, actor audit.Actor, obj organisatio
 // transaction: when one is refused (an unknown or archived label) none is
 // added.
 func (s *Store) AddLabels(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, labelIDs []string) (organisation.Assignments, error) {
+	return s.AddLabelsWith(ctx, actor, obj, labelIDs, nil)
+}
+
+// AddLabelsWith is [Store.AddLabels] with a step run inside the same
+// transaction, after the labels are added; when it fails, they are rolled back.
+func (s *Store) AddLabelsWith(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, labelIDs []string, inTx func(ctx context.Context, tx *sql.Tx) error) (organisation.Assignments, error) {
 	if err := checkObject(obj); err != nil {
 		return organisation.Assignments{}, err
 	}
@@ -1038,7 +1058,13 @@ func (s *Store) AddLabels(ctx context.Context, actor audit.Actor, obj organisati
 		}
 		var err error
 		out, err = readAssignments(ctx, tx, obj)
-		return err
+		if err != nil {
+			return err
+		}
+		if inTx == nil {
+			return nil
+		}
+		return inTx(ctx, tx)
 	})
 	return out, err
 }

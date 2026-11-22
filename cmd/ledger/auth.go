@@ -19,6 +19,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/automatch"
 	"github.com/aurimasniekis/go-ledger/internal/domain/bankconnect"
+	"github.com/aurimasniekis/go-ledger/internal/domain/decisiontasks"
 	moneypkg "github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
@@ -27,9 +28,11 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/enrichment"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/store"
+	alertstore "github.com/aurimasniekis/go-ledger/internal/store/alerts"
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	decstore "github.com/aurimasniekis/go-ledger/internal/store/decisions"
 	deferralstore "github.com/aurimasniekis/go-ledger/internal/store/deferrals"
 	matchstore "github.com/aurimasniekis/go-ledger/internal/store/matches"
 	merchantstore "github.com/aurimasniekis/go-ledger/internal/store/merchants"
@@ -69,6 +72,12 @@ type apiParts struct {
 	matches      *matchstore.Store
 	merchants    *merchantstore.Store
 	organisation *organisationstore.Store
+	// suggestions, suggestionTasks and alerts serve the decision-task routes
+	// (L6c, ADR-0065). The tasks service is built without a decision runner:
+	// reviewing a suggestion never calls a model.
+	suggestions     *decstore.Store
+	suggestionTasks *decisiontasks.Service
+	alerts          *alertstore.Store
 	// enricher and merchantSources are the merchant enrichment service and its
 	// description (E2, ADR-0054); nil/empty in tests that do not build them.
 	enricher        *enrichment.Service
@@ -119,8 +128,12 @@ func buildAPI(db *store.DB, al auditLog, c config.Auth, kek string, hasher auth.
 	if err != nil {
 		return apiParts{}, err
 	}
-	return apiParts{users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil),
-		matches: matchstore.New(db, al, now, nil), merchants: merchantstore.New(db, al, now), organisation: organisationstore.New(db, al, now, nil), deferrals: deferralstore.New(db, al, now, nil), auth: svc, db: db,
+	org := organisationstore.New(db, al, now, nil)
+	sugg := decstore.New(db, al, now, nil)
+	sugg.UseCategoryResetter(org)
+	sugg.UseAssigner(org)
+	return apiParts{suggestions: sugg, suggestionTasks: decisiontasks.New(nil, sugg, org), alerts: alertstore.New(db, al, now, nil), users: us, commitments: commitmentstore.New(db, al, now, nil), payments: paymentstore.New(db, al, now, nil),
+		matches: matchstore.New(db, al, now, nil), merchants: merchantstore.New(db, al, now), organisation: org, deferrals: deferralstore.New(db, al, now, nil), auth: svc, db: db,
 		tokens: tokens.NewService(tokenstore.New(db, al), us, tokens.Options{Now: now})}, nil
 }
 
