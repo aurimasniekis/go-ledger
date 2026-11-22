@@ -2554,6 +2554,13 @@ paths:
         (409 manual_payment_not_replaceable); an unknown identifier is 400
         validation_failed. The match must be a suggestion (409
         invalid_match_state).
+
+        The bank can re-report a payment under a new transaction identifier
+        while an earlier match still replaces the record (that match is then
+        held, ADR-0049 amendment A). Unmatch the earlier match first, which
+        restores the record, then confirm the new transaction as replacing it.
+        allow_overpayment is not the way: it counts the held record and the
+        new match together and shows the excess as overpaid.
       tags: [payment-matches]
       parameters:
         - $ref: "#/components/parameters/IfMatch"
