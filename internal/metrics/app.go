@@ -134,6 +134,11 @@ func (a *App) SetRatesProvider(enabled bool) {
 	a.RatesProvider.Set(v)
 }
 
+// JobDoneFor returns a recorder of finished runs of the named job.
+func (a *App) JobDoneFor(job string) func(ok bool, took time.Duration) {
+	return func(ok bool, took time.Duration) { a.JobDone(job, ok, took) }
+}
+
 // JobDone records one finished run of the named job. The name is the job's
 // fixed name (the "job" log field), never its run ID.
 func (a *App) JobDone(job string, ok bool, took time.Duration) {
