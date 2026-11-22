@@ -40,9 +40,10 @@ a (simulated) bank, record commitments, read the month, match, correct, reload, 
   tests with injected clocks. A journey with real overdue items needs a clock hook or day-spanning data: not built.
 - **Commitments have no screen**, so the journey creates them, and starts a matching run, through the API as the
   signed-in session.
-- **Finding, not fixed: stale "Reconnect needed" after reconnecting.** After a successful reconnect the connection is
-  `active` with `needs_reconnect: false`, but the card keeps showing "Reconnect needed" and offers only "Reconnect
-  bank" until a refresh succeeds, and it has no "Refresh now" in that state. The journey refreshes through the API.
+- **Finding, fixed by U4: stale "Reconnect needed" after reconnecting.** After a successful reconnect the connection is
+  `active` with `needs_reconnect: false`; the card used to keep showing "Reconnect needed" with no "Refresh now". It now
+  says "Reconnected, not refreshed yet", and an account's reconnect error is superseded per account (its last attempt is
+  before the consent was granted), so accounts stay Stale and are never called fresh. The journey asserts this in the UI.
 - **Finding, not fixed: the month view says "No bank data connected yet"** even when a bank is connected and imported
   (the API reports `freshness.bank.available` false by design for now, see `internal/httpapi/occurrences.go`).
 - **No paging.** The double answers every transactions request with one page and no continuation key, so the adapter's

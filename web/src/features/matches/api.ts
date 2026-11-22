@@ -33,6 +33,14 @@ export function matchAction(id: string, a: ActionInput): Promise<PaymentMatch> {
   })
 }
 
+/** "This is the payment I recorded" (D45): confirms the suggestion and replaces the listed manual records, in one save. */
+export function confirmReplacing(id: string, a: { version: number; manualPaymentIds: string[]; reason?: string; allowOverpayment?: boolean }): Promise<PaymentMatch> {
+  const json: Record<string, unknown> = { version: a.version, manual_payment_ids: a.manualPaymentIds }
+  if (a.reason) json.reason = a.reason
+  if (a.allowOverpayment) json.allow_overpayment = true
+  return apiFetch<PaymentMatch>(`${base}/${encodeURIComponent(id)}/confirm-replacing`, { method: 'POST', headers: { 'If-Match': `"${a.version}"` }, json })
+}
+
 /** Asks the matching engine to run now (it also runs after every bank refresh). */
 export function runMatching(): Promise<MatchingRunResult> {
   return apiFetch<MatchingRunResult>('/api/v1/payment-matching/runs', { method: 'POST', json: {} })

@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import { Hand, Landmark, PenLine } from 'lucide-react'
+import { Hand, History, Landmark, PenLine } from 'lucide-react'
 import type { MonthItem } from './types'
 
 export type Provenance = 'bank' | 'manual' | 'both' | 'override'
@@ -26,6 +26,20 @@ export function ProvenanceMarker({ kind }: { kind: Provenance }) {
     >
       <Icon aria-hidden className="size-3.5" />
       {label}
+    </span>
+  )
+}
+
+/** A manual record that a bank match replaced (D45): dashed, so it never reads as a payment that counts. */
+export function ReplacedMarker() {
+  return (
+    <span
+      data-provenance="replaced"
+      title="A payment you recorded by hand, replaced by the matched bank payment: kept in history, not counted"
+      className="inline-flex items-center gap-1 rounded-sm border border-dashed border-border px-1.5 py-0.5 text-xs font-normal text-muted-foreground"
+    >
+      <History aria-hidden className="size-3.5" />
+      Manual record replaced
     </span>
   )
 }
