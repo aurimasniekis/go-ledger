@@ -196,11 +196,30 @@ func runMigrations(ctx context.Context, path string, opts Options, known []Migra
 // The copy holds the same financial data as the database, so it gets the same
 // owner-only permissions. A failed backup fails Open: the migrations do not run.
 func backupBeforeMigrate(ctx context.Context, conn *sql.Conn, path string, from int, at time.Time) error {
-	dest := fmt.Sprintf("%s.pre-v%04d-%s.bak", path, from, at.UTC().Format("20060102T150405.000000000Z"))
-	if err := vacuumInto(ctx, conn, dest); err != nil {
-		return fmt.Errorf("store: pre-migration backup to %s: %w", dest, err)
+	base := fmt.Sprintf("%s.pre-v%04d-%s", path, from, at.UTC().Format("20060102T150405.000000000Z"))
+	// Concurrent openers of a fresh file can both read the same schema version
+	// before either has migrated, and a coarse clock can give them the same
+	// stamp. The destination is created with O_EXCL, so a collision is detected
+	// and the next free "-N" suffix is used: each opener keeps its own copy and
+	// none is overwritten.
+	for n := 0; ; n++ {
+		dest := base + ".bak"
+		if n > 0 {
+			dest = fmt.Sprintf("%s-%d.bak", base, n)
+		}
+		err := vacuumInto(ctx, conn, dest)
+		if errors.Is(err, ErrBackupExists) && n < 1000 {
+			// Only another backup file is a collision; anything else in the
+			// way (a directory, say) is an error.
+			if fi, serr := os.Lstat(dest); serr == nil && fi.Mode().IsRegular() {
+				continue
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("store: pre-migration backup to %s: %w", dest, err)
+		}
+		return nil
 	}
-	return nil
 }
 
 // connWithBusyRetry opens a connection, retrying while SQLite reports the
