@@ -154,6 +154,12 @@ export function AccountMenu() {
               <li><Link to="/account/sessions" className={link}>Sessions</Link></li>
               <li><Link to="/account/tokens" className={link}>Your API tokens</Link></li>
             </Group>
+            {holds(grants, 'commitments:read') && (
+              <Group label="Commitments">
+                <li><Link to="/commitments" className={link}>Commitments</Link></li>
+                {holds(grants, 'commitments:write') && <li><Link to="/commitments/new" className={link}>New commitment</Link></li>}
+              </Group>
+            )}
             {holds(grants, 'organisation:read') && (
               <Group label="Organise">
                 <li><Link to="/organisation" className={link}>Categories, labels, buckets</Link></li>
