@@ -158,7 +158,36 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
         )}
         {data.freshness.bank.available ? '' : 'No bank data connected yet.'}
       </p>
+      {data.freshness.bank.available && <BankLine bank={data.freshness.bank} matched={data.items.reduce((n, i) => n + i.payment.bank_evidence_count, 0)} />}
     </section>
+  )
+}
+
+const BANK_STATE_COPY: Record<string, string> = {
+  fresh: 'Bank data is current',
+  stale: 'Bank data is stale',
+  never_refreshed: 'A bank is connected but no data has been fetched yet',
+  failed: 'The latest bank fetch failed; bank data may be out of date',
+  disconnected: 'A bank connection is disconnected; its data is not being updated',
+  reconnect_required: 'A bank connection needs a new consent; its data is not being updated',
+  unknown: 'Bank connection status could not be read, so its data age is unknown',
+}
+
+/** The bank half of the freshness: shown only when a connection exists, and never calls a non-fresh state fresh. */
+function BankLine({ bank, matched }: { bank: MonthSummary['freshness']['bank']; matched: number }) {
+  const ok = bank.state === 'fresh'
+  return (
+    <p data-testid="month-bank-line" className={ok ? 'text-muted-foreground' : undefined} role={ok ? undefined : 'status'}>
+      {BANK_STATE_COPY[bank.state] ?? 'Bank data state is unknown'}
+      {bank.last_success_at ? (
+        <>
+          {' '}(last successful fetch{' '}
+          <time dateTime={bank.last_success_at} className="whitespace-nowrap">{utcStamp(bank.last_success_at)}</time>)
+        </>
+      ) : null}
+      . {matched === 0 ? 'No bank transactions matched this month’s commitments.' : `${matched} bank ${matched === 1 ? 'payment is' : 'payments are'} matched to this month’s commitments.`}{' '}
+      <Link to="/connections" className="underline">Bank connections</Link>
+    </p>
   )
 }
 

@@ -26,7 +26,7 @@ export function summary(items: MonthItem[], over: Partial<MonthSummary> = {}): M
           overpaid: eur('0.00'), occurrence_count: items.length, overdue_count: 1, unconverted_evidence_count: 0 }]
       : [],
     freshness: { computed_at: '2026-11-21T12:00:00Z', occurrences_changed_at: '2026-11-01T08:00:00Z',
-      bank: { available: false, note: 'Bank data age is not available from this endpoint yet.' } },
+      bank: { available: false, connections: 0, state: 'none', last_success_at: null, note: 'No bank connection exists.' } },
     ...over,
   }
 }

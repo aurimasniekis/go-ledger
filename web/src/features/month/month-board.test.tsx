@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
 import { MonthBoard, OFFLINE_NOTE_ID, STALE_AFTER_MS, statusSummary, type MonthBoardProps } from './month-board'
 import { item, payment, summary } from './fixtures'
+import type { MonthSummary } from './types'
 
 const T0 = Date.parse('2026-11-21T12:00:00Z')
 
@@ -109,10 +110,47 @@ describe('MonthBoard states', () => {
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled()
   })
 
-  it('says bank data age is not available instead of implying it is fresh', () => {
+  it('says no bank data is connected only when there is no connection', () => {
     board({ data: summary([item('a')]) })
     expect(screen.getByText(/No bank data connected yet/)).toBeInTheDocument()
-    expect(screen.queryByText(/endpoint/)).toBeNull()
+    expect(screen.queryByTestId('month-bank-line')).toBeNull()
+  })
+
+  const bank = (over: Partial<MonthSummary['freshness']['bank']>): MonthSummary['freshness']['bank'] =>
+    ({ available: true, connections: 1, state: 'fresh', last_success_at: '2026-11-21T09:00:00Z', note: '', ...over })
+  const withBank = (b: MonthSummary['freshness']['bank'], items = [item('a')]) => {
+    const s = summary(items)
+    return { ...s, freshness: { ...s.freshness, bank: b } }
+  }
+
+  it('with a connected bank drops the not-connected message and shows freshness and no-match copy', () => {
+    board({ data: withBank(bank({})) })
+    expect(screen.queryByText(/No bank data connected yet/)).toBeNull()
+    const line = screen.getByTestId('month-bank-line')
+    expect(line).toHaveTextContent(/Bank data is current/)
+    expect(line).toHaveTextContent(/last successful fetch 2026-11-21/)
+    expect(line).toHaveTextContent(/No bank transactions matched this month’s commitments/)
+  })
+
+  it('counts matched bank payments when there are some', () => {
+    board({ data: withBank(bank({}), [item('a', { payment: payment({ status: 'paid', evidence_count: 1, bank_evidence_count: 1 }) })]) })
+    expect(screen.getByTestId('month-bank-line')).toHaveTextContent(/1 bank payment is matched/)
+  })
+
+  it.each([
+    ['stale', /Bank data is stale/],
+    ['failed', /latest bank fetch failed/],
+    ['disconnected', /disconnected; its data is not being updated/],
+    ['reconnect_required', /needs a new consent/],
+    ['never_refreshed', /no data has been fetched yet/],
+    ['unknown', /could not be read/],
+  ] as const)('keeps a %s bank connection visible and never calls it current', (state, re) => {
+    board({ data: withBank(bank({ state })) })
+    const line = screen.getByTestId('month-bank-line')
+    expect(line).toHaveAttribute('role', 'status')
+    expect(line).toHaveTextContent(re)
+    expect(line).not.toHaveTextContent(/is current/)
+    expect(screen.queryByText(/No bank data connected yet/)).toBeNull()
   })
 })
 

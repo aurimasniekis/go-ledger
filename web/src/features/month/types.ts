@@ -64,8 +64,17 @@ export interface MonthSummary {
   freshness: {
     computed_at: string
     occurrences_changed_at: string | null
-    bank: { available: boolean; note: string }
+    bank: MonthBankFreshness
   }
+}
+
+/** What the month view knows about bank data; `available` is true whenever a connection exists, whatever its state. */
+export interface MonthBankFreshness {
+  available: boolean
+  connections: number
+  state: 'none' | 'unknown' | 'fresh' | 'stale' | 'never_refreshed' | 'failed' | 'disconnected' | 'reconnect_required'
+  last_success_at: string | null
+  note: string
 }
 
 export interface ManualPayment {
