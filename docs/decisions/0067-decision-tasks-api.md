@@ -1,4 +1,4 @@
-# ADR-0066: Decision tasks API: suggestions and alerts
+# ADR-0067: Decision tasks API: suggestions and alerts
 
 Status: Accepted (task L6c, 2026-11-22). Builds on [ADR-0065](0065-decision-tasks.md), which left routes, OpenAPI, the
 client, the CLI and MCP open. The review UI is task L7.

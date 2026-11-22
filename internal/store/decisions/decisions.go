@@ -37,6 +37,8 @@ type Store struct {
 	audit store.AuditWriter
 	now   func() time.Time
 	newID func() string
+	// resetter is set by UseCategoryResetter (RevertAutomatic needs it).
+	resetter CategoryResetter
 }
 
 // New returns a Store. aw records consent changes and is required; now and
