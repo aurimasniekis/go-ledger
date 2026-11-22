@@ -60,6 +60,15 @@ type ConsentStore interface {
 	// can fix. It does nothing when the connection has since been
 	// disconnected or has a newer state.
 	ReleaseConsent(ctx context.Context, claim ConsentClaim) error
+	// FailClaimed records the failure of a claimed consent: the claimed
+	// status (pending becomes failed, reconnect-required or failed keeps its
+	// status) with cause's kind and code. The write applies only while the
+	// connection is as the claim saw it (same version, not disconnected), so
+	// a consent completed, a disconnect or a newer reconnect since the claim
+	// is never overwritten, and consent_state is never touched (a newer
+	// state stays claimable). applied reports whether it was written; when
+	// not, the current connection is returned.
+	FailClaimed(ctx context.Context, claim ConsentClaim, status ConnectionStatus, cause error, at time.Time) (conn Connection, applied bool, err error)
 	// ActivateClaimed activates a claimed connection (like ActivateConnection)
 	// unless it was disconnected after the claim (a connection that was already
 	// disconnected when claimed is being reconnected and is activated),

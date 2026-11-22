@@ -637,3 +637,66 @@ func TestValidationAndErrorsLeakNothing(t *testing.T) {
 		t.Error("invalid provider name accepted")
 	}
 }
+
+// B5c: FailClaimed writes only while the connection is as the claim saw it,
+// and never touches consent_state.
+func TestFailClaimedIsConditional(t *testing.T) {
+	cause := &banking.Error{Kind: banking.KindPermanent, Code: "BAD"}
+	claim := func(e *env, state string) (banking.Connection, banking.ConsentClaim) {
+		t.Helper()
+		conn, _ := e.connect(state)
+		if _, err := e.facts.BeginReconnectBy(e.ctx, conn.ID, state+"-r", "user", e.clock.now, nil); err != nil {
+			t.Fatal(err)
+		}
+		c, err := e.facts.ClaimConsent(e.ctx, state+"-r", "user", e.clock.now, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return conn, c
+	}
+	t.Run("applies when unchanged", func(t *testing.T) {
+		e := newEnv(t, banking.ModeApp)
+		conn, c := claim(e, "s1")
+		got, ok, err := e.facts.FailClaimed(e.ctx, c, banking.ConnectionFailed, cause, e.clock.now)
+		if err != nil || !ok || got.Status != banking.ConnectionFailed || got.LastErrorCode != "BAD" {
+			t.Fatalf("= %+v %v %v", got, ok, err)
+		}
+		_ = conn
+	})
+	t.Run("a later consent is kept", func(t *testing.T) {
+		e := newEnv(t, banking.ModeApp)
+		conn, c := claim(e, "s1")
+		if _, err := e.facts.ActivateClaimed(e.ctx, c, banking.Session{Reference: banking.NewSensitive("newer"), ValidUntil: e.clock.now.Add(time.Hour)}, e.clock.now, nil); err != nil {
+			t.Fatal(err)
+		}
+		got, ok, err := e.facts.FailClaimed(e.ctx, c, banking.ConnectionFailed, cause, e.clock.now)
+		if err != nil || ok || got.ID != conn.ID || got.Status != banking.ConnectionActive || got.LastErrorCode != "" {
+			t.Fatalf("= %+v %v %v", got, ok, err)
+		}
+	})
+	t.Run("a disconnect is kept", func(t *testing.T) {
+		e := newEnv(t, banking.ModeApp)
+		conn, c := claim(e, "s1")
+		cur, _ := e.facts.Connection(e.ctx, conn.ID)
+		if _, err := e.facts.DisconnectConnection(e.ctx, conn.ID, cur.Version, e.clock.now); err != nil {
+			t.Fatal(err)
+		}
+		got, ok, err := e.facts.FailClaimed(e.ctx, c, banking.ConnectionFailed, cause, e.clock.now)
+		if err != nil || ok || got.Status != banking.ConnectionDisconnected {
+			t.Fatalf("= %+v %v %v", got, ok, err)
+		}
+	})
+	t.Run("a newer consent state is kept", func(t *testing.T) {
+		e := newEnv(t, banking.ModeApp)
+		conn, c := claim(e, "s1")
+		if _, err := e.facts.BeginReconnectBy(e.ctx, conn.ID, "newer", "user", e.clock.now, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := e.facts.FailClaimed(e.ctx, c, banking.ConnectionFailed, cause, e.clock.now); err != nil || ok {
+			t.Fatalf("applied=%v err=%v", ok, err)
+		}
+		if _, err := e.facts.ClaimConsent(e.ctx, "newer", "user", e.clock.now, 0); err != nil {
+			t.Errorf("the newer state is no longer claimable: %v", err)
+		}
+	})
+}
