@@ -3078,7 +3078,8 @@ paths:
         and a date within 7 days of the due date. A pair is confirmed only
         when every safeguard of decision D9 passes: the exact amount (or short
         by at most the commitment's match_tolerance), a booked transaction,
-        dated within 3 days of the due date, the only candidate on both sides,
+        dated within 3 days of the due date (or, for an occurrence with an
+        active deferral plan, of its planned date), the only candidate on both sides,
         and neither already assigned. Every other candidate becomes a
         suggestion (state suggested, origin auto_rule) whose reason lists the
         safeguards that failed; the description similarity is shown as a hint

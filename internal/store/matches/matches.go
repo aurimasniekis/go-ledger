@@ -570,7 +570,11 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, n matches.New) (m
 			if err != nil {
 				return err
 			}
-			if err := matches.CheckAuto(t, others, n.Amount, o, tol); err != nil {
+			planned, err := activePlannedDate(ctx, tx, o.ID)
+			if err != nil {
+				return err
+			}
+			if err := matches.CheckAutoPlanned(t, others, n.Amount, o, tol, planned); err != nil {
 				return err
 			}
 		}
@@ -748,6 +752,21 @@ func commitmentTolerance(ctx context.Context, tx *sql.Tx, occurrenceID string) (
 	return sqlvalue.Money(amt.V, cur.V)
 }
 
+// activePlannedDate is the planned date of the occurrence's active deferral
+// plan, nil when it has none (an undone plan does not count). It is read
+// inside the write transaction, like the tolerance (decision D-DF 7).
+func activePlannedDate(ctx context.Context, tx *sql.Tx, occurrenceID string) (*calendar.Date, error) {
+	var d sqlvalue.Date
+	err := tx.QueryRowContext(ctx, "SELECT planned_date FROM deferral_plans WHERE occurrence_id = ? AND undone_at IS NULL", occurrenceID).Scan(&d)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d.Date, nil
+}
+
 // withinTolerance returns the commitment's match tolerance when a confirmed
 // match of amount to o is confirmed within it: the occurrence's counted
 // evidence, with this match, is confirmed bank matches alone (no manual
@@ -843,7 +862,11 @@ func (s *Store) confirmWith(ctx context.Context, actor audit.Actor, id string, e
 			if err != nil {
 				return err
 			}
-			if err := matches.CheckAuto(m.Transaction, others, m.Amount, o, tolerance); err != nil {
+			planned, err := activePlannedDate(ctx, tx, o.ID)
+			if err != nil {
+				return err
+			}
+			if err := matches.CheckAutoPlanned(m.Transaction, others, m.Amount, o, tolerance, planned); err != nil {
 				return err
 			}
 		}
