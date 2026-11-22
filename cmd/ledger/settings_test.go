@@ -55,6 +55,32 @@ func TestServeAppliesStoredSettings(t *testing.T) {
 		t.Errorf("the pinned mcp.enabled did not win:\n%s", logs)
 	}
 
+	// A stored log.level takes effect from the settings open onwards.
+	withDB(t, dbPath, func(db *store.DB) {
+		st := settingsstore.New(db, store.NewAuditLog(db), nil, nil)
+		_, err := st.Write(context.Background(), "logging", 1, func(domsettings.Stored) (domsettings.Change, error) {
+			return domsettings.Change{Values: map[string]json.RawMessage{"level": json.RawMessage(`"error"`)},
+				Event: &audit.Event{Action: audit.SettingsUpdated, Actor: audit.System, Details: map[string]string{"group": "logging", "fields": "level"}}}, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	s = startServe(t, dbPath, nil, hostIs("UTC"))
+	s.stop(t)
+	if logs := s.logs.String(); strings.Contains(logs, "listening") || strings.Contains(logs, "MCP endpoint") {
+		t.Errorf("the stored log.level=error was not applied:\n%s", logs)
+	}
+	withDB(t, dbPath, func(db *store.DB) {
+		err := db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `DELETE FROM setting_groups WHERE name = 'logging'`)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	// An invalid stored value stops startup, naming the key.
 	withDB(t, dbPath, func(db *store.DB) {
 		err := db.WriteTx(context.Background(), func(ctx context.Context, tx *sql.Tx) error {

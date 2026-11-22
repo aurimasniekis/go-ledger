@@ -447,4 +447,11 @@ func TestSnapshotsAreImmutable(t *testing.T) {
 	if snap.Config().MCP.Burst != 30 || s.Snapshot().Config().MCP.Burst != 4 {
 		t.Error("an old snapshot changed with the write")
 	}
+	// Group returns a copy of the stored values too.
+	g := s.Snapshot().Group("mcp")
+	g.Values["burst"] = json.RawMessage("99")
+	delete(g.Values, "burst")
+	if got := s.Snapshot().Group("mcp").Values["burst"]; string(got) != "4" {
+		t.Errorf("changing a returned group changed the snapshot: %s", got)
+	}
 }

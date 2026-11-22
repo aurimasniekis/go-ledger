@@ -98,7 +98,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	for _, p := range decisionProviderNames {
 		redact.Default().Add(cfg.Decisions.APIKey(p))
 	}
-	log, err := logging.New(stderr, cfg.Log.Level, cfg.Log.Format, redact.Default())
+	log, logLevel, err := logging.NewLeveled(stderr, cfg.Log.Level, cfg.Log.Format, redact.Default())
 	if err != nil {
 		say(stderr, "ledger: "+err.Error())
 		return 1
@@ -160,6 +160,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		return 1
 	}
 	cfg = settingsSvc.Snapshot().Config()
+	// log.level is the one runtime member read before the stored layer is
+	// known: apply the effective value now (the handler reads the variable).
+	if lv, err := logging.ParseLevel(cfg.Log.Level); err == nil {
+		logLevel.Set(lv)
+	}
 
 	// Banking-data providers (ADR-0023). The keys are parsed now so a bad key
 	// stops startup; nothing connects to Enable Banking until a connection is

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -106,6 +107,7 @@ func (s *Snapshot) Group(name string) GroupState {
 	if !ok {
 		return GroupState{Version: 1}
 	}
+	g.Values = maps.Clone(g.Values)
 	return g
 }
 
