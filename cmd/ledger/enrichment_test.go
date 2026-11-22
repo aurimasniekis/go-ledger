@@ -58,7 +58,7 @@ type failingStore struct{ enrichment.Store }
 func (failingStore) Confirmations(context.Context) ([]enrichment.Confirmation, error) {
 	return nil, errors.New("database is locked")
 }
-func (failingStore) Pending(context.Context, int, time.Time, bool) ([]enrichment.Candidate, error) {
+func (failingStore) Pending(context.Context, int, time.Time, bool, time.Time) ([]enrichment.Candidate, error) {
 	panic("boom")
 }
 
@@ -78,7 +78,7 @@ type slowStore struct {
 }
 
 func (s slowStore) Confirmations(context.Context) ([]enrichment.Confirmation, error) { return nil, nil }
-func (s slowStore) Pending(ctx context.Context, _ int, _ time.Time, _ bool) ([]enrichment.Candidate, error) {
+func (s slowStore) Pending(ctx context.Context, _ int, _ time.Time, _ bool, _ time.Time) ([]enrichment.Candidate, error) {
 	s.started <- struct{}{}
 	select {
 	case <-s.release:

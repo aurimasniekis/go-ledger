@@ -59,5 +59,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0055: Cooldown for bank refresh on request](0055-bank-refresh-request-cooldown.md)
 - [ADR-0056: Deferral planning UI and the outlook's planned outflows](0056-deferral-planning-ui.md)
 - [ADR-0057: Organisation UI and MCP tools](0057-organisation-ui-and-mcp.md)
+- [ADR-0058: Merchant records, aliases and merging](0058-merchant-records-aliases-and-merging.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

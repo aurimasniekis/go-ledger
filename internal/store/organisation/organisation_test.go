@@ -23,6 +23,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	"github.com/aurimasniekis/go-ledger/internal/store/bankfacts"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
+	merchantstore "github.com/aurimasniekis/go-ledger/internal/store/merchants"
 	orgstore "github.com/aurimasniekis/go-ledger/internal/store/organisation"
 )
 
@@ -925,7 +926,7 @@ func TestBucketsHoldCommitmentsAndAccountsOnly(t *testing.T) {
 	if err := f.os.AddToBucket(f.ctx, alice, bucket.ID, acc); err != nil {
 		t.Fatal(err)
 	}
-	for _, o := range []org.ObjectRef{txRef(f.tx("COFFEE KIOSK")), {Type: org.ObjectMerchant, ID: "acme"}} {
+	for _, o := range []org.ObjectRef{txRef(f.tx("COFFEE KIOSK")), {Type: org.ObjectMerchant, ID: resource.NewID()}} {
 		if err := f.os.AddToBucket(f.ctx, alice, bucket.ID, o); !errors.Is(err, org.ErrNotApplicable) {
 			t.Fatalf("a %s in a bucket: %v", o.Type, err)
 		}
@@ -975,9 +976,17 @@ func TestBucketsHoldCommitmentsAndAccountsOnly(t *testing.T) {
 	})
 }
 
-func TestMerchantsAreAssignableByKey(t *testing.T) {
+// Merchant assignments key on the merchant record's id (task M1, ADR-0058):
+// renaming the merchant or adding a spelling keeps them, a name is no object
+// id, an archived merchant gets nothing new, and the audit target is the id.
+func TestMerchantsAreAssignableByID(t *testing.T) {
 	f := newFixture(t)
-	obj := org.ObjectRef{Type: org.ObjectMerchant, ID: "acme shop"}
+	ms := merchantstore.New(f.db, f.rec, func() time.Time { return f.now })
+	m, err := ms.CreateEntity(f.ctx, alice, "Acme Shop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := org.ObjectRef{Type: org.ObjectMerchant, ID: m.ID}
 	cat, lbl := f.def(org.KindCategory, "Shopping", nil), f.def(org.KindLabel, "Online", nil)
 	if _, err := f.os.SetCategory(f.ctx, alice, obj, &cat.ID); err != nil {
 		t.Fatal(err)
@@ -985,19 +994,48 @@ func TestMerchantsAreAssignableByKey(t *testing.T) {
 	if _, err := f.os.AddLabel(f.ctx, alice, obj, lbl.ID); err != nil {
 		t.Fatal(err)
 	}
+	if m, err = ms.RenameEntity(f.ctx, alice, m.ID, m.Version, "ACME Online"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ms.AddAlias(f.ctx, alice, m.ID, "Acme Shop Vilnius"); err != nil {
+		t.Fatal(err)
+	}
 	got, err := f.os.Get(f.ctx, obj)
-	if err != nil || got.Category.Category.ID != cat.ID || len(got.Labels) != 1 {
-		t.Fatalf("merchant = %+v %v", got, err)
+	if err != nil || got.Category == nil || got.Category.Category == nil || got.Category.Category.ID != cat.ID || len(got.Labels) != 1 {
+		t.Fatalf("merchant after rename and a new alias = %+v %v", got, err)
 	}
 	var ve *commitments.ValidationError
-	if _, err := f.os.SetCategory(f.ctx, alice, org.ObjectRef{Type: org.ObjectMerchant, ID: "Acme Shop"}, &cat.ID); !errors.As(err, &ve) {
-		t.Fatalf("a merchant name that is not a key: %v", err)
+	if _, err := f.os.SetCategory(f.ctx, alice, org.ObjectRef{Type: org.ObjectMerchant, ID: "acme shop"}, &cat.ID); !errors.As(err, &ve) {
+		t.Fatalf("a merchant name as object id: %v", err)
 	}
-	// The audit log never carries the merchant's name or key.
+	if _, err := f.os.SetCategory(f.ctx, alice, org.ObjectRef{Type: org.ObjectMerchant, ID: resource.NewID()}, &cat.ID); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("an unknown merchant: %v", err)
+	}
+	m, _ = ms.GetEntity(f.ctx, m.ID)
+	if _, err := ms.SetEntityArchived(f.ctx, alice, m.ID, m.Version, true); err != nil {
+		t.Fatal(err)
+	}
+	other := f.def(org.KindLabel, "Weekly", nil)
+	if _, err := f.os.AddLabel(f.ctx, alice, obj, other.ID); !errors.Is(err, org.ErrObjectArchived) {
+		t.Fatalf("a label on an archived merchant: %v", err)
+	}
+	if got, err := f.os.Get(f.ctx, obj); err != nil || len(got.Labels) != 1 {
+		t.Fatalf("an archived merchant keeps its assignments: %+v %v", got, err)
+	}
+	if _, err := f.os.RemoveLabel(f.ctx, alice, obj, lbl.ID); err != nil {
+		t.Fatalf("removing a label from an archived merchant: %v", err)
+	}
+	found := false
 	for _, e := range f.rec.events {
-		if e.TargetType == "merchant" && strings.Contains(e.TargetID, "acme") {
-			t.Fatalf("audit target holds the merchant key: %+v", e)
+		if e.Action == audit.OrganisationAssignmentChanged && e.TargetType == "merchant" {
+			found = true
+			if e.TargetID != m.ID {
+				t.Fatalf("audit target = %q, want the merchant id", e.TargetID)
+			}
 		}
+	}
+	if !found {
+		t.Fatal("no assignment event for the merchant")
 	}
 }
 

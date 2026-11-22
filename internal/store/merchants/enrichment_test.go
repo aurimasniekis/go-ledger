@@ -147,7 +147,7 @@ func TestPendingOrdersNewRowsThenOldestRechecks(t *testing.T) {
 	f := newFixture(t)
 	ctx := f.ctx
 	far := f.now.Add(1000 * time.Hour)
-	all, err := f.ms.Pending(ctx, 100, far, true)
+	all, err := f.ms.Pending(ctx, 100, far, true, time.Time{})
 	if err != nil || len(all) < 4 {
 		t.Fatalf("%d %v", len(all), err)
 	}
@@ -165,7 +165,7 @@ func TestPendingOrdersNewRowsThenOldestRechecks(t *testing.T) {
 	f.now = t0.Add(1 * time.Hour)
 	f.record(all[1].ID, none)
 	f.now = t0.Add(72 * time.Hour)
-	got, err := f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), true)
+	got, err := f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), true, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +174,15 @@ func TestPendingOrdersNewRowsThenOldestRechecks(t *testing.T) {
 		t.Fatalf("order\n got %v\nwant never-looked-up first, then %v, %v", g, all[1].ID, all[0].ID)
 	}
 	// Without a reason to recheck none, only the new rows are listed.
-	if got, _ = f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), false); len(got) != len(all)-2 {
+	if got, _ = f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), false, time.Time{}); len(got) != len(all)-2 {
 		t.Fatalf("%d", len(got))
 	}
-	// Batch of one, no remote source and no changed confirmation: every new row
-	// is reached over several passes and the none answers are left alone.
+	// Batch of one, no remote source: every new row is reached over several
+	// passes, and so are the two older none answers, once, because the first
+	// pass after a start is a reason to recheck them (the curated list may
+	// have changed) and the watermark it sets holds over later passes instead
+	// of covering one batch only (PR #124 review). Rows answered since are
+	// not asked about again.
 	svc := newEnricher(f, nil)
 	svc.Batch = 1
 	looked := 0
@@ -189,8 +193,8 @@ func TestPendingOrdersNewRowsThenOldestRechecks(t *testing.T) {
 		}
 		looked += rep.Looked
 	}
-	if looked != len(all)-2 {
-		t.Fatalf("a batch of one reached %d of %d new rows", looked, len(all)-2)
+	if looked != len(all) {
+		t.Fatalf("a batch of one reached %d of %d rows (new rows and the older none answers)", looked, len(all))
 	}
 	// With a remote source the due rechecks are reached too, oldest first.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -202,7 +206,7 @@ func TestPendingOrdersNewRowsThenOldestRechecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(48 * time.Hour)
-	due, _ := f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), true)
+	due, _ := f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), true, time.Time{})
 	if len(due) < 2 {
 		t.Fatalf("%d rechecks due", len(due))
 	}

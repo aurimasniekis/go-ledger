@@ -68,8 +68,9 @@ func getEnrichment(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (*
 	var conf sql.Null[int]
 	var candidates string
 	var retrieved, failed sql.Null[store.Timestamp]
-	err := tx.QueryRowContext(ctx, "SELECT status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at FROM merchant_enrichments WHERE transaction_id = ?", string(id)).
-		Scan(&e.Status, &e.Name, &e.LogoRef, &e.Source, &conf, &candidates, &retrieved, &failed)
+	err := tx.QueryRowContext(ctx, "SELECT e.status, e.name, e.logo_ref, e.source, e.confidence, e.candidates, e.retrieved_at, e.last_failed_at, coalesce(e.merchant_id, ''), coalesce(m.display_name, ''), e.recheck"+
+		" FROM merchant_enrichments e LEFT JOIN merchants m ON m.id = e.merchant_id WHERE e.transaction_id = ?", string(id)).
+		Scan(&e.Status, &e.Name, &e.LogoRef, &e.Source, &conf, &candidates, &retrieved, &failed, &e.MerchantID, &e.MerchantName, &e.Recheck)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -97,8 +98,9 @@ func getReview(ctx context.Context, tx *sql.Tx, id banking.TransactionID) (*merc
 	var user sql.Null[string]
 	var kind, via string
 	var at store.Timestamp
-	err := tx.QueryRowContext(ctx, "SELECT decision, name, decided_kind, decided_user, decided_via, decided_at, version FROM merchant_reviews WHERE transaction_id = ?", string(id)).
-		Scan(&r.Decision, &r.Name, &kind, &user, &via, &at, &r.Version)
+	err := tx.QueryRowContext(ctx, "SELECT r.decision, r.name, r.decided_kind, r.decided_user, r.decided_via, r.decided_at, r.version, coalesce(r.merchant_id, ''), coalesce(m.display_name, '')"+
+		" FROM merchant_reviews r LEFT JOIN merchants m ON m.id = r.merchant_id WHERE r.transaction_id = ?", string(id)).
+		Scan(&r.Decision, &r.Name, &kind, &user, &via, &at, &r.Version, &r.MerchantID, &r.MerchantName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -257,7 +259,7 @@ func (s *Store) RecordAnswer(ctx context.Context, id banking.TransactionID, a me
 			return err
 		}
 		if a.Status == merchants.StatusUnavailable {
-			res, err := tx.ExecContext(ctx, "UPDATE merchant_enrichments SET last_failed_at = ? WHERE transaction_id = ?", store.Timestamp{Time: at}, string(id))
+			res, err := tx.ExecContext(ctx, "UPDATE merchant_enrichments SET last_failed_at = ?, recheck = 0 WHERE transaction_id = ?", store.Timestamp{Time: at}, string(id))
 			if err != nil {
 				return err
 			}
@@ -272,15 +274,25 @@ func (s *Store) RecordAnswer(ctx context.Context, id banking.TransactionID, a me
 			if err != nil {
 				return err
 			}
-			var conf any
+			var conf, merchant any
 			if a.Status == merchants.StatusIdentified {
 				conf = int(a.Confidence)
+				// The name resolves to a merchant record through its alias
+				// key; the answer keeps its own source and confidence.
+				m, err := merchantForName(ctx, tx, a.Name)
+				if err != nil {
+					return err
+				}
+				if m != "" {
+					merchant = m
+				}
 			}
-			if _, err := tx.ExecContext(ctx, "INSERT INTO merchant_enrichments (transaction_id, status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at)"+
-				" VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)"+
+			if _, err := tx.ExecContext(ctx, "INSERT INTO merchant_enrichments (transaction_id, status, name, logo_ref, source, confidence, candidates, retrieved_at, last_failed_at, merchant_id, recheck)"+
+				" VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0)"+
 				" ON CONFLICT (transaction_id) DO UPDATE SET status = excluded.status, name = excluded.name, logo_ref = excluded.logo_ref, source = excluded.source,"+
-				" confidence = excluded.confidence, candidates = excluded.candidates, retrieved_at = excluded.retrieved_at, last_failed_at = NULL",
-				string(id), string(a.Status), a.Name, a.LogoRef, a.Source, conf, string(candidates), store.Timestamp{Time: at}); err != nil {
+				" confidence = excluded.confidence, candidates = excluded.candidates, retrieved_at = excluded.retrieved_at, last_failed_at = NULL,"+
+				" merchant_id = excluded.merchant_id, recheck = 0",
+				string(id), string(a.Status), a.Name, a.LogoRef, a.Source, conf, string(candidates), store.Timestamp{Time: at}, merchant); err != nil {
 				return err
 			}
 		}
@@ -305,10 +317,65 @@ func storedActor(actor audit.Actor) (kind audit.ActorKind, via audit.Via) {
 	return audit.ActorSystem, audit.ViaSystem
 }
 
-func (s *Store) event(ctx context.Context, tx *sql.Tx, a audit.Action, actor audit.Actor, id banking.TransactionID, from string, at time.Time) error {
+func (s *Store) event(ctx context.Context, tx *sql.Tx, a audit.Action, actor audit.Actor, id banking.TransactionID, from, merchantID string, at time.Time) error {
 	_, via := storedActor(actor)
-	return s.audit.WriteAudit(ctx, tx, audit.Event{Action: a, Actor: actor, TargetType: merchants.TargetType, TargetID: string(id), At: at,
-		Details: map[string]string{"from": from, "via": string(via)}})
+	details := map[string]string{"from": from, "via": string(via)}
+	if merchantID != "" {
+		details["merchant_id"] = merchantID
+	}
+	return s.audit.WriteAudit(ctx, tx, audit.Event{Action: a, Actor: actor, TargetType: merchants.TargetType, TargetID: string(id), At: at, Details: details})
+}
+
+// markRecheck flags the answers of other transactions that identified the
+// same merchant as transaction id's answer (by record, or by name when the
+// name has no record), so the next enrichment pass looks them up again: the
+// person's decision about one transaction may change what a source or a
+// reused mapping says about the others (re-resolution per merchant, from the
+// PR #124 review). Answers with a decision of their own are left alone; the
+// decision stands for them.
+func markRecheck(ctx context.Context, tx *sql.Tx, id banking.TransactionID) error {
+	_, err := tx.ExecContext(ctx, "UPDATE merchant_enrichments SET recheck = 1"+
+		" WHERE transaction_id <> ?1 AND status = 'identified' AND recheck = 0"+
+		" AND NOT EXISTS (SELECT 1 FROM merchant_reviews r WHERE r.transaction_id = merchant_enrichments.transaction_id)"+
+		" AND EXISTS (SELECT 1 FROM merchant_enrichments o WHERE o.transaction_id = ?1 AND o.status = 'identified'"+
+		"   AND (o.merchant_id IS NOT NULL AND o.merchant_id = merchant_enrichments.merchant_id OR o.merchant_id IS NULL AND merchant_enrichments.merchant_id IS NULL AND o.name = merchant_enrichments.name))", string(id))
+	return err
+}
+
+// decisionMerchant returns the merchant record a decision attaches to,
+// creating one (with the name as its first alias) when no alias has the name.
+// A confirmation attaches to the merchant the answer resolved to, else to its
+// name's; a correction by name to the name's; a correction by merchant_id to
+// that merchant, which must be active, and its display name is what the
+// decision records.
+func (s *Store) decisionMerchant(ctx context.Context, tx *sql.Tx, actor audit.Actor, req merchants.Request, e *merchants.Enrichment, at time.Time) (id, name string, err error) {
+	switch {
+	case req.Decision == merchants.DecisionRejected:
+		return "", "", nil
+	case req.MerchantID != "":
+		ent, err := getEntity(ctx, tx, req.MerchantID)
+		if errors.Is(err, resource.ErrNotFound) {
+			return "", "", commitments.Validation([]commitments.FieldError{{Field: "merchant_id", Message: "merchant_id names no merchant"}})
+		}
+		if err != nil {
+			return "", "", err
+		}
+		if ent.Archived() {
+			return "", "", merchants.ErrArchived
+		}
+		return ent.ID, ent.DisplayName, nil
+	case req.Decision == merchants.DecisionConfirmed && e.MerchantID != "":
+		return e.MerchantID, e.Name, nil
+	}
+	name = req.Name
+	if req.Decision == merchants.DecisionConfirmed {
+		name = e.Name
+	}
+	if id, err = merchantForName(ctx, tx, name); err != nil || id != "" {
+		return id, name, err
+	}
+	id, err = s.createEntity(ctx, tx, actor, merchants.NormalizeDisplayName(name), merchants.AliasDecision, at)
+	return id, name, err
 }
 
 // Review records the person's decision about a transaction's merchant,
@@ -328,34 +395,42 @@ func (s *Store) Review(ctx context.Context, actor audit.Actor, id banking.Transa
 		if err := transactionExists(ctx, tx, id); err != nil {
 			return err
 		}
-		name := req.Name
-		if req.Decision == merchants.DecisionConfirmed {
-			e, err := getEnrichment(ctx, tx, id)
-			if err != nil {
-				return err
-			}
-			if e == nil || e.Status != merchants.StatusIdentified {
-				return merchants.ErrNothingToConfirm
-			}
-			name = e.Name
+		e, err := getEnrichment(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if req.Decision == merchants.DecisionConfirmed && (e == nil || e.Status != merchants.StatusIdentified) {
+			return merchants.ErrNothingToConfirm
 		}
 		from, err := decisionBefore(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		merchantID, name, err := s.decisionMerchant(ctx, tx, actor, req, e, at)
+		if err != nil {
+			return err
+		}
+		var merchant any
+		if merchantID != "" {
+			merchant = merchantID
 		}
 		kind, via := storedActor(actor)
 		var user any
 		if kind != audit.ActorSystem && actor.UserID != "" {
 			user = actor.UserID
 		}
-		if _, err := tx.ExecContext(ctx, "INSERT INTO merchant_reviews (transaction_id, decision, name, decided_kind, decided_user, decided_via, decided_at)"+
-			" VALUES (?, ?, ?, ?, ?, ?, ?)"+
+		if _, err := tx.ExecContext(ctx, "INSERT INTO merchant_reviews (transaction_id, decision, name, decided_kind, decided_user, decided_via, decided_at, merchant_id)"+
+			" VALUES (?, ?, ?, ?, ?, ?, ?, ?)"+
 			" ON CONFLICT (transaction_id) DO UPDATE SET decision = excluded.decision, name = excluded.name, decided_kind = excluded.decided_kind,"+
-			" decided_user = excluded.decided_user, decided_via = excluded.decided_via, decided_at = excluded.decided_at, version = merchant_reviews.version + 1",
-			string(id), string(req.Decision), name, string(kind), user, string(via), store.Timestamp{Time: at}); err != nil {
+			" decided_user = excluded.decided_user, decided_via = excluded.decided_via, decided_at = excluded.decided_at, merchant_id = excluded.merchant_id,"+
+			" version = merchant_reviews.version + 1",
+			string(id), string(req.Decision), name, string(kind), user, string(via), store.Timestamp{Time: at}, merchant); err != nil {
 			return err
 		}
-		if err := s.event(ctx, tx, reviewActions[req.Decision], actor, id, from, at); err != nil {
+		if err := markRecheck(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.event(ctx, tx, reviewActions[req.Decision], actor, id, from, merchantID, at); err != nil {
 			return err
 		}
 		m, err = s.resolveTx(ctx, tx, id)
@@ -392,7 +467,10 @@ func (s *Store) ClearReview(ctx context.Context, actor audit.Actor, id banking.T
 		if _, err := tx.ExecContext(ctx, "DELETE FROM merchant_reviews WHERE transaction_id = ?", string(id)); err != nil {
 			return err
 		}
-		if err := s.event(ctx, tx, audit.MerchantReviewCleared, actor, id, string(prev.Decision), at); err != nil {
+		if err := markRecheck(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.event(ctx, tx, audit.MerchantReviewCleared, actor, id, string(prev.Decision), prev.MerchantID, at); err != nil {
 			return err
 		}
 		m, err = s.resolveTx(ctx, tx, id)

@@ -32,7 +32,8 @@ func TestMerchantOrganisationWritesNeedMerchantsWrite(t *testing.T) {
 	cat := admin.create(t, "/api/v1/categories", `{"name":"Groceries"}`)
 	lbl := admin.create(t, "/api/v1/labels", `{"name":"Regular"}`)
 	catID, lblID := cat["id"].(string), lbl["id"].(string)
-	merchant := "/api/v1/organisation/merchant/acme%20shop"
+	mid := admin.create(t, "/api/v1/merchants", `{"display_name":"Acme Shop"}`)["id"].(string)
+	merchant := "/api/v1/organisation/merchant/" + mid
 	catPath, lblPath := merchant+"/category", merchant+"/labels/"+lblID
 	tok := func(grants string) bankCall {
 		return bankCall{t: t, f: f, hdr: map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": grants}}
