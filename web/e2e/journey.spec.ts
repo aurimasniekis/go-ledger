@@ -177,7 +177,7 @@ test('import, commitments, monthly view, match, correction, reload, outlook and 
     await expect(page.getByTestId('outlook-after-EUR')).toContainText('2 payments')
     await expect(page.getByTestId('outlook-after-EUR')).toContainText('already off "still due" but may not be in the bank balance yet')
     // Rent, hosting and insurance of the previous month were due before they were recorded: never counted as overdue.
-    await expect(page.getByTestId('outlook-not-recorded')).toContainText('2 occurrences due before tracking started are not counted')
+    await expect(page.getByTestId('outlook-not-recorded')).toContainText('2 occurrences were due before the commitments they belong to were created')
   })
 
   await test.step('a failed refresh: local data stays, marked as such, and the outlook says the balance is not fresh', async () => {

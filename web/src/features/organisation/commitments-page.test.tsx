@@ -44,18 +44,18 @@ describe('organise commitments page', () => {
     expect(within(panel).getByLabelText('Category for Old gym')).toBeInTheDocument()
   })
 
-  it('does not link the page from the menu without commitments:read', async () => {
+  it('does not link the page from the primary navigation without commitments:read', async () => {
     installApi({ ...signedIn(undefined, ['organisation:read']), 'GET /api/v1/occurrences/summary': { json: { month: '2026-11', as_of: '2026-11-21', items: [], totals: [], freshness: { computed_at: '2026-11-21T12:00:00Z', occurrences_changed_at: null, bank: { available: false, note: '' } } } } })
     renderApp('/account/security')
-    await userEvent.click(await screen.findByRole('button', { name: 'Account' }))
-    expect(screen.getByRole('link', { name: 'Categories, labels, buckets' })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Organise commitments' })).toBeNull()
+    const primary = within(await screen.findByRole('navigation', { name: 'Primary' }))
+    expect(await primary.findByRole('link', { name: 'Organisation' })).toBeInTheDocument()
+    expect(primary.queryByRole('link', { name: 'Commitments' })).toBeNull()
   })
 
-  it('is linked from the account menu for a role that can read organisation', async () => {
+  it('is linked from the primary navigation for a role that can read commitments', async () => {
     installApi({ ...signedIn(undefined, ALL_GRANTS), 'GET /api/v1/commitments': page([]) })
     renderApp('/commitments')
     expect(await screen.findByText('No commitments yet')).toBeInTheDocument()
-    expect(screen.getAllByRole('link', { name: 'Organise commitments', hidden: true }).length).toBeGreaterThan(0)
+    expect(within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('link', { name: 'Commitments' })).toHaveAttribute('href', '/commitments')
   })
 })

@@ -450,10 +450,10 @@ function MembersList({ bucket, canWrite }: { bucket: Definition; canWrite: boole
           ) : (
             <ul className="space-y-2" aria-label="Members">
               {members.map((m) => (
-                <li key={m.object_type + m.object_id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                  <MemberName m={m} />
+                <li key={m.object_type + m.object_id} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="min-w-0 break-words"><MemberName m={m} /></span>
                   {canWrite && (
-                    <Button variant="outline" size="sm" disabled={remove.isPending} aria-label={`Remove ${m.object_type} ${m.object_id} from ${bucket.name}`} onClick={() => remove.mutate(m)}>
+                    <Button variant="outline" size="sm" className="min-h-8 shrink-0 whitespace-nowrap" disabled={remove.isPending} aria-label={`Remove ${m.object_type} ${m.object_id} from ${bucket.name}`} onClick={() => remove.mutate(m)}>
                       {remove.isPending && remove.variables?.object_id === m.object_id ? 'Removing…' : 'Remove'}
                     </Button>
                   )}

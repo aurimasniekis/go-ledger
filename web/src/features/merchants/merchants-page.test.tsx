@@ -124,6 +124,18 @@ describe('merchant record', () => {
     expect(calls.find((c) => c.method === 'PATCH')!.body).toEqual({ display_name: 'Lidl Lietuva' })
   })
 
+  it('shows moments as ISO date and UTC time, never raw RFC 3339, and states the alias rule as it is (no accent folding)', async () => {
+    installApi(routes({ ['GET /api/v1/merchants/' + LIDL.id]: ok(rec({ created_at: '2026-11-22T15:10:28.078284856Z', updated_at: '2026-11-22T15:11:03.5Z', aliases: [alias('L01', 'Lidl', { created_at: '2026-11-22T15:10:28.078284856Z' })] })) }))
+    renderApp('/merchants/' + LIDL.id)
+    await screen.findByRole('heading', { name: 'Lidl', level: 1 })
+    const page = document.body.textContent ?? ''
+    expect(page).toContain('created 2026-11-22 15:10 UTC · changed 2026-11-22 15:11 UTC')
+    expect(page).toContain('added by you, 2026-11-22 15:10 UTC')
+    expect(page).not.toMatch(/\.\d{3,}Z/)
+    expect(page).toContain('ignoring capital letters and extra spaces; accents and other characters must match exactly')
+    expect(page).not.toMatch(/ignoring case, spacing and accents/)
+  })
+
   it('reloads and says nothing changed on a version conflict', async () => {
     const user = userEvent.setup()
     let reads = 0

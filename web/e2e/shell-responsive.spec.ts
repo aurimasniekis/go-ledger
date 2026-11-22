@@ -101,40 +101,57 @@ const headerLayout = (page: Page) =>
       return [(el.textContent ?? '').slice(0, 16), Math.round(b.left), Math.round(b.width), Math.round(b.top)]
     })) + ' font=' + getComputedStyle(h).fontFamily + ' ' + getComputedStyle(h).fontSize)
 
-// An administrator also holds connections:read, so the header has four links: it is still two rows at 390 px.
-test.describe('390 CSS px wide, an administrator with connections:read', () => {
+// Below 1024 px the finance pages sit behind a "Menu" disclosure (ADR-0063): the header stays short, the button and every
+// link in the opened list are at least 44 px tall, and the keyboard and Escape work.
+test.describe('390 CSS px wide, an administrator who can read everything', () => {
   test.use({ viewport: { width: 390, height: 844 } })
-  test('the header is two rows and keeps the full link names', async ({ page }) => {
-    await signedIn(page, ['commitments:read', 'users:read', 'tokens:read', 'connections:read'])
+  test('the Menu is a 44 px disclosure whose links are 44 px tall and keep their full names', async ({ page }) => {
+    await signedIn(page, [...allGrants])
     await page.goto('/month?month=2026-11')
+    const menu = page.getByRole('button', { name: 'Menu' })
     const nav = page.getByRole('navigation', { name: 'Primary' })
-    await expect(nav.getByRole('link', { name: 'Bank connections' })).toBeVisible()
-    await expect(nav.getByRole('link', { name: 'Payment matches' })).toBeVisible()
-    await shot(page, 'header-390-admin')
-    expect(await headerRows(page), 'rows in the header').toBe(2)
+    await expect(menu).toBeVisible()
+    await expect(nav).toBeHidden()
+    expect((await menu.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    expect((await page.getByRole('button', { name: 'Account' }).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    expect(await headerRows(page), 'rows in the header, menu closed').toBeLessThanOrEqual(2)
+    await menu.focus()
+    await page.keyboard.press('Enter')
+    await expect(menu).toHaveAttribute('aria-expanded', 'true')
+    for (const name of ['Monthly view', 'Outlook', 'Payment matches', 'Commitments', 'Organisation', 'Merchants', 'Bank connections']) {
+      const link = nav.getByRole('link', { name, exact: true })
+      await expect(link).toBeVisible()
+      expect((await link.boundingBox())!.height, name + ' is at least 44 px tall').toBeGreaterThanOrEqual(44)
+      await insideViewport(page, link)
+    }
+    await shot(page, 'header-390-menu-open')
     await noOverflow(page)
+    await page.keyboard.press('Tab')
+    await expect(nav.getByRole('link', { name: 'Monthly view' })).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(menu).toBeFocused()
+    await expect(nav).toBeHidden()
   })
 })
 
-// Between the phone and desktop layouts (640 to 830 CSS px) the header was three rows where the full link names wrapped;
-// the links take their short names below 768 px, so it is at most two rows across the range.
-test.describe('640 to 830 CSS px wide, an administrator with connections:read', () => {
-  test.use({ viewport: { width: 640, height: 800 } })
-  test('the header is at most two rows and nothing overflows', async ({ page }) => {
-    await signedIn(page, ['commitments:read', 'users:read', 'tokens:read', 'connections:read'])
+// From lg (1024 px) up the finance pages are links in the header row.
+test.describe('1280 CSS px wide', () => {
+  test.use({ viewport: { width: 1280, height: 800 } })
+  test('the links are in the header and there is no Menu button', async ({ page }) => {
+    await signedIn(page, [...allGrants])
     await page.goto('/month?month=2026-11')
-    for (const width of [640, 700, 767, 768, 800, 830]) {
-      await page.setViewportSize({ width, height: 800 })
-      expect(await headerRows(page), `rows in the header at ${width} px`).toBeLessThanOrEqual(2)
-      await noOverflow(page)
-    }
+    await expect(page.getByRole('button', { name: 'Menu' })).toBeHidden()
+    const nav = page.getByRole('navigation', { name: 'Primary' })
+    for (const name of ['Monthly view', 'Merchants', 'Commitments']) await expect(nav.getByRole('link', { name, exact: true })).toBeVisible()
+    expect(await headerRows(page), 'rows in the header').toBeLessThanOrEqual(2)
   })
 })
 
 // The header is at most two rows from 320 to 1280 CSS px, with and without connections:read. The administrator has the
 // longest link row (the 320, 340, 360 and 390 px cases are the phone widths it was checked at first).
 // "Monthly" keeps its full word on a phone (WCAG 2.5.3: the visible label is part of the accessible name "Monthly view").
-const adminGrants = ['commitments:read', 'users:read', 'tokens:read', 'connections:read']
+const allGrants = ['commitments:read', 'users:read', 'tokens:read', 'connections:read', 'merchants:read', 'organisation:read']
+const adminGrants = allGrants
 const memberGrants = ['commitments:read', 'users:read', 'tokens:read']
 // Not every width: a sweep of all 961 widths outran the test's timeout on a loaded machine. The widths are every 16 CSS px
 // from 320 to 1280, plus each layout breakpoint (Tailwind's sm 640, md 768, lg 1024 and xl 1280, and the 830 px edge of the
@@ -202,7 +219,7 @@ for (const s of sizes) {
       await page.goto('/month?month=2026-11')
       await zoomText(page)
       await expect(page.getByRole('heading', { level: 1, name: 'November 2026' })).toBeVisible()
-      await expect(page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Monthly view' })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Menu' })).toBeVisible()
       await noOverflow(page)
       const account = page.getByRole('button', { name: 'Account' })
       await insideViewport(page, account)

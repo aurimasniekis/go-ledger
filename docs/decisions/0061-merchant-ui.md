@@ -8,7 +8,7 @@ task's own, within those ADRs; none is an operator decision.
 1. **Screens.** `/merchants` lists merchant records (name, other aliases, an Archived or Merged mark; a name or alias
    filter over the loaded records, and a switch for archived ones). `/merchants/<id>` is one record: rename, archive and
    unarchive (with Undo), delete, add and remove an alias (removal offers Undo, which adds it back), and merge another
-   merchant into it. They are linked from the Account menu under "Merchants" and need `merchants:read`; every change
+   merchant into it. They are linked from the Account menu under "Merchants" (moved to the primary navigation by ADR-0064) and need `merchants:read`; every change
    needs `merchants:write`, and without it the controls are absent and the page says why.
 2. **Nothing is shown as saved before the server says so.** Every change disables its controls and says "Saving…" while
    pending; the result notice appears after the answer. A failed change shows a plain sentence and says "Nothing was

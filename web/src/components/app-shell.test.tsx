@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { setCsrfToken } from '@/lib/api'
-import { fail, installApi, renderApp, session, signedIn } from '@/test/fake-api'
+import { ALL_GRANTS, fail, installApi, renderApp, session, signedIn } from '@/test/fake-api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -53,26 +53,45 @@ describe('shell while signed in', () => {
     const groups = within(account).getAllByRole('list')
     expect(groups[0]).toHaveAccessibleName('Your account')
     expect(within(groups[0]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Security', 'Sessions', 'Your API tokens'])
-    expect(groups[1]).toHaveAccessibleName('Organise')
-    expect(within(groups[1]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Categories, labels, buckets', 'Organise commitments'])
-    expect(groups[2]).toHaveAccessibleName('Merchants')
-    expect(within(groups[2]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Merchant records'])
-    expect(groups[3]).toHaveAccessibleName('Reference')
-    expect(within(groups[3]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Exchange rates'])
-    expect(groups[4]).toHaveAccessibleName('Administration')
-    expect(within(groups[4]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Users', 'Roles', 'All API tokens'])
+    expect(groups[1]).toHaveAccessibleName('Reference')
+    expect(within(groups[1]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Exchange rates'])
+    expect(groups[2]).toHaveAccessibleName('Administration')
+    expect(within(groups[2]!).getAllByRole('link').map((l) => l.textContent)).toEqual(['Users', 'Roles', 'All API tokens'])
     expect(within(account).queryByRole('heading')).toBeNull() // group labels are not headings: the outline stays the page's
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 
-  it('makes each visible link label one of the words in its accessible name (WCAG 2.5.3)', async () => {
+  it('puts every primary page in the Primary navigation, gated by grants, with the visible text as the accessible name', async () => {
+    await open(ALL_GRANTS)
+    await screen.findByRole('link', { name: 'Merchants' }) // the grants load after the shell
+    const links = within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link')
+    expect(links.map((l) => l.textContent)).toEqual(['Monthly view', 'Outlook', 'Payment matches', 'Commitments', 'Organisation', 'Merchants', 'Bank connections'])
+    for (const l of links) expect(l).not.toHaveAttribute('aria-label') // WCAG 2.5.3: the visible text is the name
+  })
+
+  it('offers only the finance pages the grants allow', async () => {
+    await open(['commitments:read'])
+    await screen.findByRole('link', { name: 'Commitments' })
+    const links = within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link')
+    expect(links.map((l) => l.textContent)).toEqual(['Monthly view', 'Outlook', 'Payment matches', 'Commitments'])
+  })
+
+  it('has a Menu disclosure for small screens that opens, closes with Escape and returns focus', async () => {
     await open()
-    for (const link of within(screen.getByRole('navigation', { name: 'Primary' })).getAllByRole('link')) {
-      // A shortened link shows its short text in the first span; the others show their whole text.
-      const visible = (link.querySelector('span')?.textContent ?? link.textContent ?? '').toLowerCase()
-      const words = (link.getAttribute('aria-label') ?? link.textContent ?? '').toLowerCase().split(/\W+/)
-      expect(words, `"${visible}" is a word of "${link.getAttribute('aria-label')}"`).toContain(visible)
-    }
+    const menu = screen.getByRole('button', { name: 'Menu' })
+    const nav = screen.getByRole('navigation', { name: 'Primary' })
+    expect(menu).toHaveAttribute('aria-controls', nav.id)
+    expect(menu).toHaveAttribute('aria-expanded', 'false')
+    expect(nav).toHaveClass('hidden', 'lg:flex') // closed below lg, a row from lg up
+    expect(menu.className).toContain('min-h-11') // 44 px target
+    await userEvent.click(menu)
+    expect(menu).toHaveAttribute('aria-expanded', 'true')
+    expect(nav).not.toHaveClass('hidden')
+    for (const l of within(nav).getAllByRole('link')) expect(l.className).toContain('min-h-11')
+    within(nav).getAllByRole('link')[0]!.focus()
+    await userEvent.keyboard('{Escape}')
+    expect(menu).toHaveAttribute('aria-expanded', 'false')
+    expect(menu).toHaveFocus()
   })
 
   it('closes the Account menu when a link to the page already shown is followed, and keeps focus on its button', async () => {
