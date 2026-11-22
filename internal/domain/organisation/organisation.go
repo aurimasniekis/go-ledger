@@ -241,6 +241,36 @@ type Assignments struct {
 	Buckets []Definition
 }
 
+// MaxSelected bounds how many objects [Store.Select] may return: a filter that
+// matches more must be narrowed, so a list request never builds an unbounded
+// query.
+const MaxSelected = 5000
+
+// Filter selects objects by their effective organisation (decision D12,
+// task O3). Within one list a repeated value matches any of them; the two
+// lists combine (an object must satisfy both). A category also matches its
+// children, so a parent selects its whole branch. An archived definition
+// still matches: archiving keeps history.
+type Filter struct {
+	CategoryIDs []string
+	LabelIDs    []string
+}
+
+// Empty reports whether the filter selects nothing in particular.
+func (f Filter) Empty() bool { return len(f.CategoryIDs) == 0 && len(f.LabelIDs) == 0 }
+
+// ErrTooManyObjects means a filter matches more than [MaxSelected] objects.
+var ErrTooManyObjects = fmt.Errorf("the filter matches more than %d objects: narrow it", MaxSelected)
+
+// UnknownDefinitionError means a filter names a category or label that does
+// not exist.
+type UnknownDefinitionError struct {
+	Kind Kind
+	ID   string
+}
+
+func (e *UnknownDefinitionError) Error() string { return "unknown " + string(e.Kind) + " " + e.ID }
+
 // Member is an object in a bucket.
 type Member struct {
 	Object ObjectRef
@@ -389,6 +419,17 @@ type Store interface {
 	AddToBucket(ctx context.Context, actor audit.Actor, bucketID string, obj ObjectRef) error
 	RemoveFromBucket(ctx context.Context, actor audit.Actor, bucketID string, obj ObjectRef) error
 	ListMembers(ctx context.Context, bucketID string, f MemberFilter) ([]Member, error)
+	// MemberIDs returns the IDs of every member of a bucket of type t, sorted
+	// (resource.ErrNotFound for an unknown bucket). It backs the bucket slice
+	// of the outlook.
+	MemberIDs(ctx context.Context, bucketID string, t ObjectType) ([]string, error)
+	// Select returns the IDs of the objects of type t whose effective
+	// organisation satisfies f, sorted: what the list filters use. A
+	// transaction's effective organisation includes what it inherits from the
+	// pending transaction it superseded, like [Store.Get]. It returns
+	// *UnknownDefinitionError for a category or label that does not exist and
+	// ErrTooManyObjects beyond [MaxSelected].
+	Select(ctx context.Context, t ObjectType, f Filter) ([]string, error)
 	// ApplyAutomatic applies a rule's or a model's proposal for one object,
 	// never replacing what [CanReplace] forbids.
 	ApplyAutomatic(ctx context.Context, actor audit.Actor, obj ObjectRef, a Automatic) (AutomaticResult, error)

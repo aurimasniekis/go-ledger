@@ -88,9 +88,19 @@ export interface OutlookConverted {
   excluded: { currency: string; status: 'stale' | 'missing'; reason: string; rate: ExchangeRate | null }[]
 }
 
+/** Present when the outlook was restricted to one bucket (D12): a view, never an allocation of money. */
+export interface OutlookSlice {
+  bucket: { id: string; name: string; archived: boolean }
+  commitment_count: number
+  account_count: number
+  note: string
+}
+
 export interface Outlook {
   as_of: string
   notice: string
+  /** Null for the whole outlook. */
+  slice?: OutlookSlice | null
   window: { from: string | null; through: string; truncated: boolean; not_recorded_count: number }
   currencies: OutlookCurrency[]
   balances: { shown: boolean; note: string; stale_after_seconds: number | null }

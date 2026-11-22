@@ -102,11 +102,18 @@ type CommitmentFilter struct {
 	Kinds      []string
 	Priorities []string
 	Currencies []string
+	// CategoryIDs and LabelIDs keep the commitments in any of those categories
+	// (or their child categories) that also carry any of those labels. They
+	// need the organisation:read grant too.
+	CategoryIDs []string
+	LabelIDs    []string
 }
 
 func (f CommitmentFilter) query() url.Values {
 	q := url.Values{}
 	f.apply(q)
+	addAll(q, "category_id", f.CategoryIDs)
+	addAll(q, "label_id", f.LabelIDs)
 	addAll(q, "kind", f.Kinds)
 	addAll(q, "priority", f.Priorities)
 	addAll(q, "currency", f.Currencies)
@@ -170,6 +177,11 @@ type OccurrenceFilter struct {
 	ListOptions
 	Month         string
 	CommitmentIDs []string
+	// CategoryIDs and LabelIDs keep the occurrences of commitments in any of
+	// those categories (or their children) with any of those labels; they
+	// need the organisation:read grant too.
+	CategoryIDs []string
+	LabelIDs    []string
 	// IncludeCancelled also lists cancelled occurrences, which are left out by default.
 	IncludeCancelled bool
 }
@@ -177,6 +189,8 @@ type OccurrenceFilter struct {
 func (f OccurrenceFilter) query() url.Values {
 	q := url.Values{}
 	f.apply(q)
+	addAll(q, "category_id", f.CategoryIDs)
+	addAll(q, "label_id", f.LabelIDs)
 	setIf(q, "month", f.Month)
 	addAll(q, "commitment_id", f.CommitmentIDs)
 	if f.IncludeCancelled {
@@ -207,6 +221,34 @@ func (c *Client) GetOccurrence(ctx context.Context, id string) (*Occurrence, err
 		return nil, err
 	}
 	return &o, nil
+}
+
+// OutlookOptions are the optional parameters of GetOutlook.
+type OutlookOptions struct {
+	// Through is the last month (YYYY-MM) whose commitments count.
+	Through string
+	// Currency is the reporting currency of the converted aggregate.
+	Currency string
+	// Bucket slices the outlook by a bucket (needs organisation:read too):
+	// only the commitments and accounts in it are counted. The result's Slice
+	// says so. A bucket allocates no money.
+	Bucket string
+}
+
+// GetOutlook returns the outlook against recorded commitments: bank balances
+// compared with the commitments still due, per currency and never summed
+// across currencies, with an optional converted secondary total. It is not a
+// forecast and not money that is safe to spend.
+func (c *Client) GetOutlook(ctx context.Context, o OutlookOptions) (*Outlook, error) {
+	q := url.Values{}
+	setIf(q, "through", o.Through)
+	setIf(q, "currency", o.Currency)
+	setIf(q, "bucket", o.Bucket)
+	var out Outlook
+	if err := c.do(ctx, request{op: opGetOutlook, query: q}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // AuditFilter filters ListAudit. Since and Until are RFC 3339 times
@@ -329,11 +371,19 @@ type PaymentMatchFilter struct {
 	OccurrenceIDs  []string
 	States         []string
 	Origins        []string
+	// CategoryIDs and LabelIDs keep the matches whose bank transaction has any
+	// of those categories (or their children) and any of those labels,
+	// including what it inherits from the pending transaction it replaced.
+	// They need the organisation:read grant too.
+	CategoryIDs []string
+	LabelIDs    []string
 }
 
 func (f PaymentMatchFilter) query() url.Values {
 	q := url.Values{}
 	f.apply(q)
+	addAll(q, "category_id", f.CategoryIDs)
+	addAll(q, "label_id", f.LabelIDs)
 	addAll(q, "transaction_id", f.TransactionIDs)
 	addAll(q, "occurrence_id", f.OccurrenceIDs)
 	addAll(q, "state", f.States)

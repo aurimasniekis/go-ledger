@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 	"net/http"
 	"slices"
 	"time"
@@ -50,7 +51,7 @@ func toOccurrenceJSON(o occurrences.Occurrence, st payments.State) occurrenceJSO
 	return out
 }
 
-var occurrencesListSpec = ListSpec{Filters: map[string]FilterSpec{
+var occurrencesListSpec = withOrgFilters(ListSpec{Filters: map[string]FilterSpec{
 	"month": {Ops: []FilterOp{OpEq}, Check: func(v string) error {
 		if _, err := calendar.ParseYearMonth(v); err != nil {
 			return errors.New("month must be a month such as 2026-11")
@@ -69,7 +70,7 @@ var occurrencesListSpec = ListSpec{Filters: map[string]FilterSpec{
 		}
 		return nil
 	}},
-}}
+}})
 
 // OccurrencesSummaryPath is the monthly view (task C4, ADR-0034).
 const OccurrencesSummaryPath = OccurrencesPath + "/summary"
@@ -194,6 +195,9 @@ type monthSummaryJSON struct {
 	CarriedIn []monthItemJSON    `json:"carried_in"`
 	Totals    []monthTotalsJSON  `json:"totals"`
 	Freshness monthFreshnessJSON `json:"freshness"`
+	// Filter is set when the month was restricted by category or label: the
+	// rows and the totals then cover only the matching commitments (task O3).
+	Filter *orgFilterJSON `json:"filter"`
 }
 
 const (
@@ -240,7 +244,7 @@ func toMonthSummaryJSON(s monthview.Summary, now time.Time, bank monthBankJSON) 
 
 // Occurrences are derived from commitment definitions, so reading them needs
 // the commitments read grant; there is no separate occurrence grant.
-func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, cs commitments.Store, plans deferrals.Reader, todayFn today, grace payments.GraceFunc, now func() time.Time, banks outlook.Banks, bankStaleAfter time.Duration) {
+func registerOccurrences(s *Server, org organisation.Store, st occurrences.Reader, pay payments.Store, cs commitments.Store, plans deferrals.Reader, todayFn today, grace payments.GraceFunc, now func() time.Time, banks outlook.Banks, bankStaleAfter time.Duration) {
 	if now == nil {
 		now = time.Now
 	}
@@ -270,7 +274,22 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 			WriteError(w, r, Validation("include_cancelled", "include_cancelled cannot be both true and false"))
 			return
 		}
-		items, err := st.List(r.Context(), occurrences.ListFilter{Month: month, CommitmentIDs: q.Filter("commitment_id", OpEq), After: q.After, Limit: q.Limit,
+		commitmentIDs := q.Filter("commitment_id", OpEq)
+		// The category and label filters are those of the commitment.
+		if ids, active, err := selectOrganised(r, org, organisation.ObjectCommitment, q.Filter("category_id", OpEq), q.Filter("label_id", OpEq)); err != nil {
+			WriteError(w, r, err)
+			return
+		} else if active {
+			if len(commitmentIDs) > 0 {
+				ids = intersectIDs(commitmentIDs, ids)
+			}
+			if len(ids) == 0 {
+				WriteJSON(w, http.StatusOK, NewPage([]occurrenceJSON{}, q, func(o occurrenceJSON) string { return o.ID }))
+				return
+			}
+			commitmentIDs = ids
+		}
+		items, err := st.List(r.Context(), occurrences.ListFilter{Month: month, CommitmentIDs: commitmentIDs, After: q.After, Limit: q.Limit,
 			IncludeCancelled: slices.Contains(inc, "true")})
 		if err != nil {
 			if errors.Is(err, occurrences.ErrCursorGone) {
@@ -297,8 +316,21 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 	view := monthview.Service{Occurrences: st, Payments: pay, Grace: grace, Commitments: cs, Today: todayFn, Deferrals: plans}
 	s.HandleAPI("GET "+OccurrencesSummaryPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for k := range r.URL.Query() {
-			if k != "month" {
-				WriteError(w, r, Validation(k, "unknown parameter "+k+"; the summary takes only month"))
+			if k != "month" && k != "category_id" && k != "label_id" {
+				WriteError(w, r, Validation(k, "unknown parameter "+k+"; the summary takes month, category_id and label_id"))
+				return
+			}
+		}
+		categories, labels := r.URL.Query()["category_id"], r.URL.Query()["label_id"]
+		for _, c := range categories {
+			if !resource.ValidID(c) {
+				WriteError(w, r, Validation("category_id", "category_id must be a category identifier"))
+				return
+			}
+		}
+		for _, l := range labels {
+			if !resource.ValidID(l) {
+				WriteError(w, r, Validation("label_id", "label_id must be a label identifier"))
 				return
 			}
 		}
@@ -312,7 +344,24 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 			WriteError(w, r, Validation("month", "month must be a month such as 2026-11"))
 			return
 		}
-		sum, err := view.Current(r.Context(), month)
+		var only map[string]struct{}
+		ids, active, err := selectOrganised(r, org, organisation.ObjectCommitment, categories, labels)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		if active {
+			only = make(map[string]struct{}, len(ids))
+			for _, id := range ids {
+				only[id] = struct{}{}
+			}
+		}
+		today, err := todayFn()
+		if err != nil {
+			WriteError(w, r, Internal(err))
+			return
+		}
+		sum, err := view.MonthScoped(r.Context(), month, today, only)
 		if err != nil {
 			if errors.Is(err, occurrences.ErrBeyondHorizon) {
 				err = Validation("month", fmt.Sprintf("month must be within %d months after the current month", occurrences.MaxMonthsAhead))
@@ -321,7 +370,9 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		WriteJSON(w, http.StatusOK, toMonthSummaryJSON(sum, now(), monthBank(r.Context(), banks, now(), bankStaleAfter)))
+		res := toMonthSummaryJSON(sum, now(), monthBank(r.Context(), banks, now(), bankStaleAfter))
+		res.Filter = orgFilterEcho(categories, labels, "occurrences of commitments")
+		WriteJSON(w, http.StatusOK, res)
 	}))
 	s.HandleAPI("GET "+OccurrencesPath+"/{id}", Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		o, err := st.Get(r.Context(), r.PathValue("id"))

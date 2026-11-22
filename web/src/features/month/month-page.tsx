@@ -10,6 +10,7 @@ import { holds, useMe } from '@/lib/auth'
 import { useOnline } from '@/lib/connection'
 import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
 import { useBucketFilter } from '@/features/organisation/bucket-filter'
+import { useOrgFilters } from '@/features/organisation/org-filters'
 import { MonthBoard, OFFLINE_NOTE_ID } from './month-board'
 import { PaymentPanel, UndoNotice } from './payment-panel'
 import type { ManualPayment, MonthItem } from './types'
@@ -20,7 +21,8 @@ import { PlanNotice } from '@/features/deferrals/plan-notice'
 /** The /month screen. Its one primary action is "Record a payment". */
 export function MonthPage({ month }: { month: string }) {
   const navigate = useNavigate()
-  const q = useMonthSummary(month)
+  const orgFilters = useOrgFilters('occurrences of commitments')
+  const q = useMonthSummary(month, orgFilters.params)
   const online = useOnline()
   const me = useMe()
   const waiting = useWaitingSuggestions()
@@ -85,6 +87,12 @@ export function MonthPage({ month }: { month: string }) {
       )}
 
       {bucketFilter.control}
+      {orgFilters.control}
+      {orgFilters.active && (
+        <p role="status" data-testid="month-filter-note" className="text-sm text-muted-foreground">
+          {q.data?.filter ? q.data.filter.note : 'Filtering by ' + orgFilters.describe + '…'} The totals below cover only these commitments, not the whole month.
+        </p>
+      )}
       <MonthBoard
         renderOrganise={(id, name) => <OrganiseDisclosure objectType="commitment" objectId={id} subject={name} />}
         visible={bucketFilter.visible}

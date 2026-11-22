@@ -1187,3 +1187,91 @@ func TestSchemaEnforcesTheRules(t *testing.T) {
 		t.Error("the database deleted an assigned category")
 	}
 }
+
+func TestSelectAndMemberIDs(t *testing.T) {
+	f := newFixture(t)
+	pending := f.tx("CARD PURCHASE BOOKSHOP")
+	booked := f.tx("CARD PURCHASE LONDON")
+	other := f.tx("COFFEE KIOSK")
+	food := f.def(org.KindCategory, "Food", nil)
+	snacks := f.def(org.KindCategory, "Snacks", &food.ID)
+	fun := f.def(org.KindCategory, "Fun", nil)
+	keep := f.def(org.KindLabel, "Keep", nil)
+	sel := func(typ org.ObjectType, fl org.Filter) []string {
+		t.Helper()
+		ids, err := f.os.Select(f.ctx, typ, fl)
+		if err != nil {
+			t.Fatalf("select %+v: %v", fl, err)
+		}
+		return ids
+	}
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(pending), &snacks.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.AddLabel(f.ctx, alice, txRef(pending), keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(other), &fun.ID); err != nil {
+		t.Fatal(err)
+	}
+	// A parent matches its child; a transaction matches through the pending
+	// row it superseded once linked, and an own decision outranks it.
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{food.ID}}); !slices.Equal(got, []string{string(pending.ID)}) {
+		t.Fatalf("before the link: %v", got)
+	}
+	f.link(pending.ID, booked.ID)
+	want := []string{string(pending.ID), string(booked.ID)}
+	slices.Sort(want)
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{food.ID}}); !slices.Equal(got, want) {
+		t.Fatalf("inherited: %v, want %v", got, want)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{food.ID}, LabelIDs: []string{keep.ID}}); !slices.Equal(got, want) {
+		t.Fatalf("category and label: %v", got)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{fun.ID}, LabelIDs: []string{keep.ID}}); len(got) != 0 {
+		t.Fatalf("both must hold: %v", got)
+	}
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(booked), &fun.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{food.ID}}); !slices.Equal(got, []string{string(pending.ID)}) {
+		t.Fatalf("own decision outranks the inherited one: %v", got)
+	}
+	// A label removed on the booking no longer matches there.
+	if _, err := f.os.RemoveLabel(f.ctx, alice, txRef(booked), keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{LabelIDs: []string{keep.ID}}); !slices.Equal(got, []string{string(pending.ID)}) {
+		t.Fatalf("removed label: %v", got)
+	}
+	// Unknown definitions are refused; an explicit "no category" matches nothing.
+	var unknown *org.UnknownDefinitionError
+	if _, err := f.os.Select(f.ctx, org.ObjectTransaction, org.Filter{LabelIDs: []string{"01JZ0000000000000000000999"}}); !errors.As(err, &unknown) || unknown.Kind != org.KindLabel {
+		t.Fatalf("unknown label: %v", err)
+	}
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(other), nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := sel(org.ObjectTransaction, org.Filter{CategoryIDs: []string{fun.ID}}); !slices.Equal(got, []string{string(booked.ID)}) {
+		t.Fatalf("explicitly uncategorised: %v", got)
+	}
+
+	// Buckets: members by type, sorted; an unknown bucket is not found.
+	c, cref := f.commitment("Rent")
+	acct := f.account()
+	b := f.def(org.KindBucket, "Home", nil)
+	for _, o := range []org.ObjectRef{cref, acct} {
+		if err := f.os.AddToBucket(f.ctx, alice, b.ID, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ids, err := f.os.MemberIDs(f.ctx, b.ID, org.ObjectCommitment); err != nil || !slices.Equal(ids, []string{c.ID}) {
+		t.Fatalf("commitment members: %v %v", ids, err)
+	}
+	if ids, err := f.os.MemberIDs(f.ctx, b.ID, org.ObjectAccount); err != nil || !slices.Equal(ids, []string{acct.ID}) {
+		t.Fatalf("account members: %v %v", ids, err)
+	}
+	if _, err := f.os.MemberIDs(f.ctx, "01JZ0000000000000000000999", org.ObjectAccount); !errors.Is(err, resource.ErrNotFound) {
+		t.Fatalf("unknown bucket: %v", err)
+	}
+}
