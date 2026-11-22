@@ -141,10 +141,11 @@ func (j *RefreshJob) run(ctx context.Context, failures int, trigger string) (Out
 			st.ErrorCode = "timeout"
 		}
 	}
-	// A run ended by cancellation (shutdown, a caller that went away) says
-	// nothing about the provider: it is returned but neither remembered nor
-	// counted.
-	if errors.Is(ctx.Err(), context.Canceled) {
+	// A run cut short by cancellation (shutdown, a caller that went away)
+	// says nothing about the provider: it is returned but neither remembered
+	// nor counted. A run that had already succeeded is real whatever became
+	// of its caller, so it is recorded.
+	if st.Outcome != RunSucceeded && errors.Is(ctx.Err(), context.Canceled) {
 		return out, st
 	}
 	j.st.mu.Lock()
@@ -189,7 +190,7 @@ func (j *RefreshJob) Request(ctx context.Context) (RunStatus, error) {
 		return RunStatus{}, &TooSoonError{RetryAfter: gap - since}
 	}
 	_, st := j.run(ctx, 0, TriggerManual)
-	if st.Outcome == RunSucceeded && ctx.Err() == nil {
+	if st.Outcome == RunSucceeded {
 		// Every currency is fresh: the scheduled loop's failure backoff no
 		// longer applies.
 		select {
