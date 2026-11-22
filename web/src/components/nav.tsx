@@ -12,7 +12,8 @@ const link = 'block rounded-md px-2 py-1.5 hover:bg-muted [&.active]:font-semibo
  * A link label that is shorter below 768 px, so the header stays at most two rows from 320 px up. Below sm the links
  * have no gap and only 2 px of padding each side: the four links with an administrator's Connections need 283 of the 288 px
  * available at 320 px in 14 px text, so they stay on one row only with a font as narrow as the test machine's; below 400 px the
- * text is 12 px, which leaves room for a wider system font (the CI runner wrapped the row to three at 320 px).
+ * text is 12 px, and the header's gaps and the Account button's padding are tighter, which leaves room for a wider system font
+ * (the CI runner's brand, Account and Theme did not fit on one row at 320 px, so the header was three rows).
  * The accessible name is always the full one (aria-label), and the short text is one of its words (WCAG 2.5.3).
  */
 function Short({ short, full }: { short: string; full: string }) {
@@ -123,6 +124,7 @@ export function AccountMenu() {
         ref={button}
         variant="outline"
         size="sm"
+        className="max-[399px]:px-2"
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpenAt(open ? null : pathname)}
