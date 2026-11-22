@@ -113,7 +113,7 @@ for (const size of [{ name: '320', width: 320, height: 800 }, { name: '1280', wi
       // Undo (unconfirm) brings the record back.
       await page.goto('/matches')
       await page.getByRole('button', { name: 'Confirmed', exact: true }).click()
-      await expect(page.getByRole('article')).toContainText('Replaced 1 manual record(s), kept in history.')
+      await expect(page.getByRole('article')).toContainText('Replaced 1 manual record, kept in history.')
     })
   })
 }

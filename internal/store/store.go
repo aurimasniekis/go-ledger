@@ -65,6 +65,9 @@ func Open(ctx context.Context, path string, opts Options) (*DB, error) {
 	if err := checkPath(path); err != nil {
 		return nil, err
 	}
+	if _, err := seedNewFile(path, opts); err != nil {
+		return nil, err
+	}
 	if opts.BusyTimeout <= 0 {
 		opts.BusyTimeout = DefaultBusyTimeout
 	}

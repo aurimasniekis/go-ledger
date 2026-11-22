@@ -24,8 +24,14 @@ vet: ## go vet
 lint: ## golangci-lint with .golangci.yml
 	$(GOLANGCI) run ./...
 
+# cmd/ledger opens hundreds of databases; under -race on a loaded machine it ran
+# near go test's default 10m timeout before the migrated-database seed
+# (cmd/ledger/testmain_test.go). The explicit limit keeps a loaded run from
+# being killed at 10m, and stays under the 15-minute CI job limit.
+TEST_TIMEOUT ?= 14m
+
 test: ## offline unit tests with the race detector
-	$(GO) test -race ./...
+	$(GO) test -race -timeout $(TEST_TIMEOUT) ./...
 
 test-nocgo: ## run the store tests with CGO_ENABLED=0 (pure-Go SQLite driver, ADR-0003)
 	CGO_ENABLED=0 $(GO) test -count=1 ./internal/store/...

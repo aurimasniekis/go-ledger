@@ -6,6 +6,7 @@ import { useFocusRestore } from '@/lib/focus'
 import { useMonthSummary } from './api'
 import { useWaitingSuggestions } from '@/features/matches/api'
 import { monthLabel } from './month'
+import { holds, useMe } from '@/lib/auth'
 import { useOnline } from '@/lib/connection'
 import { MonthBoard, OFFLINE_NOTE_ID } from './month-board'
 import { PaymentPanel, UndoNotice } from './payment-panel'
@@ -16,6 +17,7 @@ export function MonthPage({ month }: { month: string }) {
   const navigate = useNavigate()
   const q = useMonthSummary(month)
   const online = useOnline()
+  const me = useMe()
   const waiting = useWaitingSuggestions()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -67,6 +69,7 @@ export function MonthPage({ month }: { month: string }) {
 
       <MonthBoard
         offline={!online}
+        canViewConnections={holds(me.data?.grants, 'connections:read')}
         waiting={waiting}
         notice={saved && <UndoNotice key={saved.payment.id} {...saved} shownMonth={month} onDone={() => {
           setSaved(null)

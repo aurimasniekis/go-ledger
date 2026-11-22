@@ -408,3 +408,196 @@ func TestConcurrentConfirmReplacing(t *testing.T) {
 		t.Errorf("a replacement won: %d active replacements, %+v", active, st)
 	}
 }
+
+// manual prefixes a manual payment's entry in evidenceKinds.
+const manual = string(payments.EvidenceManual) + ":"
+
+// evidenceKinds lists the occurrence's counted evidence as kind:id.
+func (f *fixture) evidenceKinds(o occurrences.Occurrence) []string {
+	f.t.Helper()
+	facts, err := f.ps.Facts(f.ctx, []string{o.ID})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	var out []string
+	for _, e := range facts[o.ID].Evidence {
+		out = append(out, string(e.Kind)+":"+e.ID)
+	}
+	return out
+}
+
+// TestReplacementOnHoldWhileTheMatchDoesNotCount (X5c, ADR-0049 amendment):
+// when the provider stops reporting the transaction of the match that
+// replaced a manual record, the match stops counting (ADR-0035) and the
+// record counts again, so the occurrence stays paid by what the person
+// recorded instead of showing unpaid. The replacement itself stays (the
+// record is still listed as replaced, the match needs review); when the
+// transaction is reported again the match counts and the record does not.
+// Exactly one of them counts at any time, also in the overpayment check.
+func TestReplacementOnHoldWhileTheMatchDoesNotCount(t *testing.T) {
+	f := newFixture(t)
+	s, o := f.suggestion()
+	p := f.record(o, "13.49")
+	before := f.state(o)
+	ch, err := f.replacing(alice, s, false, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := ch.Match
+	bank := string(payments.EvidenceBankTransaction) + ":" + c.ID
+	if got := strings.Join(f.evidenceKinds(o), ","); got != bank {
+		t.Fatalf("evidence after the replacement: %s", got)
+	}
+
+	streaming := f.tx("STREAMING SERVICE")
+	f.markGone(streaming)
+	if st := f.state(o); !sameState(before, st) {
+		t.Errorf("while the transaction is gone the record pays the occurrence: before %+v now %+v", before, st)
+	}
+	if got := strings.Join(f.evidenceKinds(o), ","); got != manual+p.ID {
+		t.Errorf("evidence while the transaction is gone: %s", got)
+	}
+	if got := f.manual(o); got[p.ID] != c.ID {
+		t.Errorf("the replacement stays recorded: %v", got)
+	}
+	if m, err := f.ms.Get(f.ctx, c.ID); err != nil || m.CountsAsEvidence() || !m.NeedsReview() {
+		t.Errorf("the match is flagged for review: %+v %v", m, err)
+	}
+
+	// The overpayment check counts the uncountable match (ADR-0035) and so
+	// leaves its replaced record out: 12.99 + 0.50 fits 13.49 without
+	// allowing an overpayment (counting the record too would refuse it).
+	extra, err := f.match(f.tx("RENT 2026-10"), o, "0.50", matches.OriginUser, matches.StateConfirmed)
+	if err != nil {
+		t.Fatalf("a second payment that fits beside the replacing match: %v", err)
+	}
+
+	f.markReported(streaming)
+	st := f.state(o)
+	if st.Status != payments.StatusPaid || st.Paid.String() != "13.49 EUR" || st.Overpaid.Sign() != 0 || st.EvidenceCount != 2 {
+		t.Errorf("reported again: the bank matches pay it, the record does not count: %+v", st)
+	}
+	if got := strings.Join(f.evidenceKinds(o), ","); strings.Contains(got, manual) || !strings.Contains(got, bank) || !strings.Contains(got, extra.Match.ID) {
+		t.Errorf("evidence once reported again: %s", got)
+	}
+}
+
+// TestUnmatchRestoreCanOverpayVisibly (X5c item 2, ADR-0049 amendment):
+// restoring on unmatch runs no overpayment check. A record added after the
+// replacement can take the occurrence past its amount once the replaced
+// record counts again; that is the person's own records (manual payments are
+// never checked for overpayment, ADR-0031), each counted once, and it shows
+// as overpaid. Refusing would keep a match the person says is wrong.
+func TestUnmatchRestoreCanOverpayVisibly(t *testing.T) {
+	f := newFixture(t)
+	s, o := f.suggestion()
+	p := f.record(o, "13.49")
+	ch, err := f.replacing(alice, s, false, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := f.record(o, "0.50")
+	if st := f.state(o); st.Paid.String() != "13.49 EUR" || st.Overpaid.Sign() != 0 {
+		t.Fatalf("bank match and the new record: %+v", st)
+	}
+	if _, err := f.ms.Unmatch(f.ctx, alice, ch.Match.ID, ch.Match.Version, reason("not the payment")); err != nil {
+		t.Fatal(err)
+	}
+	st := f.state(o)
+	if st.Status != payments.StatusPaid || st.Paid.String() != "13.99 EUR" || st.Overpaid.String() != "0.50 EUR" || st.EvidenceCount != 2 {
+		t.Errorf("both records count once and the overpayment shows: %+v", st)
+	}
+	if got := strings.Join(f.evidenceKinds(o), ","); got != manual+p.ID+","+manual+q.ID && got != manual+q.ID+","+manual+p.ID {
+		t.Errorf("evidence after the unmatch: %s", got)
+	}
+}
+
+// TestReplacementChangesTheRecordsVersion (X5c item 3): whether a match
+// replaces a manual payment is part of what a read returns, so replacing and
+// restoring it increase its version (its ETag); a delete based on the old
+// version is refused.
+func TestReplacementChangesTheRecordsVersion(t *testing.T) {
+	f := newFixture(t)
+	s, o := f.suggestion()
+	p := f.record(o, "13.49")
+	version := func() int64 {
+		t.Helper()
+		got, err := f.ps.GetManual(f.ctx, o.ID, p.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Version
+	}
+	if p.Version != 1 {
+		t.Fatalf("new record version %d", p.Version)
+	}
+	ch, err := f.replacing(aliceSession, s, false, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := version(); v != 2 {
+		t.Errorf("version after the replacement: %d", v)
+	}
+	if _, err := f.ps.DeleteManual(f.ctx, alice, o.ID, p.ID, 1); !errors.As(err, new(*resource.VersionConflictError)) {
+		t.Errorf("delete with the version from before the replacement: %v", err)
+	}
+	if _, err := f.ms.Unconfirm(f.ctx, aliceSession, ch.Match.ID, ch.Match.Version, nil); err != nil {
+		t.Fatal(err)
+	}
+	if v := version(); v != 3 {
+		t.Errorf("version after the restoration: %d", v)
+	}
+	// A failed replacement changes nothing.
+	s2, err := f.ms.Get(f.ctx, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.replacing(alice, s2, false, p.ID, "01JD3Y4C8V9M2Q7W5R6T0XZBNZ"); err == nil {
+		t.Fatal("replacement with an unknown record succeeded")
+	}
+	if v := version(); v != 3 {
+		t.Errorf("version after a refused replacement: %d", v)
+	}
+}
+
+// TestRestoreSkipsADeletedRecord (X5c item 4): a record deleted while
+// replaced stays deleted and out of the evidence on unmatch; its replacement
+// is closed, but no manual_payment.restored entry is written for it and its
+// version is left alone.
+func TestRestoreSkipsADeletedRecord(t *testing.T) {
+	f := newFixture(t)
+	s, o := f.suggestion()
+	p := f.record(o, "13.49")
+	ch, err := f.replacing(alice, s, false, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ps.DeleteManual(f.ctx, alice, o.ID, p.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	var deletedVersion int64
+	if err := f.scanRow("SELECT version FROM manual_payments WHERE id = ?", []any{p.ID}, &deletedVersion); err != nil {
+		t.Fatal(err)
+	}
+	m, err := f.ms.Get(f.ctx, ch.Match.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ms.Unmatch(f.ctx, alice, m.ID, m.Version, reason("not the payment")); err != nil {
+		t.Fatal(err)
+	}
+	if res := f.auditOf(audit.ManualPaymentRestored); len(res) != 0 {
+		t.Errorf("restored entry for a deleted record: %+v", res)
+	}
+	var version int64
+	var active int
+	if err := f.scanRow("SELECT version, (SELECT count(*) FROM manual_payment_replacements WHERE restored_at IS NULL) FROM manual_payments WHERE id = ?", []any{p.ID}, &version, &active); err != nil {
+		t.Fatal(err)
+	}
+	if version != deletedVersion || active != 0 {
+		t.Errorf("deleted record: version %d (was %d), %d active replacements", version, deletedVersion, active)
+	}
+	if st := f.state(o); st.Status == payments.StatusPaid || st.EvidenceCount != 0 {
+		t.Errorf("the deleted record does not count: %+v", st)
+	}
+}

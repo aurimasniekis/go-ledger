@@ -6,17 +6,21 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/status-badge'
 import { QueryState } from '@/components/query-state'
 import { Amount } from '@/components/formatted'
+import { ApiError } from '@/lib/api'
 import { useOnline } from '@/lib/connection'
-import { useOptimisticSave } from '@/lib/optimistic-save'
+import { isVersionConflict, useOptimisticSave } from '@/lib/optimistic-save'
 import { usePagedList } from '@/lib/paged'
 import { matchAction, matchesKey, runMatching } from './api'
 import { ReplacedNotice } from './replace-manual'
 import { describeAction, MatchCard, OFFLINE_NOTE_ID, subjectText, type Subject } from './match-card'
-import type { MatchAction, MatchState, MatchingRunResult, PaymentMatch } from './types'
+import { ClosedList } from './closed-list'
+import type { MatchAction, MatchingRunResult, PaymentMatch } from './types'
 
-const VIEWS: { state: MatchState; label: string; empty: string }[] = [
+type View = 'suggested' | 'confirmed' | 'closed'
+const VIEWS: { state: View; label: string; empty: string }[] = [
   { state: 'suggested', label: 'Needs review', empty: 'No suggestions are waiting. Run matching to look again, or record a payment from the monthly view.' },
   { state: 'confirmed', label: 'Confirmed', empty: 'No confirmed matches yet.' },
+  { state: 'closed', label: 'Closed', empty: '' },
 ]
 
 interface Done {
@@ -28,9 +32,10 @@ interface Done {
 
 /**
  * What was just saved. The server has answered by the time it shows. The notice names the commitment and the month
- * (D36) and stays until dismissed or replaced (D37). A correction is undone by correcting back. A confirmation can
- * only be unmatched, which is final for now (the pair is closed for good), and the button and the notice say so.
- * Rejected, unmatched and reversed matches are final too, so they offer nothing.
+ * (D36) and stays until dismissed or replaced (D37). A correction is undone by correcting back. A confirmation is undone
+ * by the server's unconfirm (ADR-0045): the match is a suggestion again. The server decides whether the undo window is
+ * still open and says so if not; the Confirmed list keeps the distinct, final Unmatch. Rejected, unmatched and
+ * reversed matches are final, so they offer nothing.
  */
 function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
   const qc = useQueryClient()
@@ -41,7 +46,7 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
   const undo = useMutation({
     mutationFn: () =>
       action === 'confirm'
-        ? matchAction(saved.id, { action: 'unmatch', version: saved.version, reason: 'Unmatched right after confirming' })
+        ? matchAction(saved.id, { action: 'unconfirm', version: saved.version })
         : matchAction(saved.id, { action: 'correct', version: saved.version, amount: before.amount.amount, currency: before.amount.currency }),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: matchesKey })
@@ -49,16 +54,18 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
     },
   })
   useEffect(() => box.current?.focus(), [undo.isSuccess])
+  // After these refusals the undo can never work on this match: the button goes, so it is not offered again.
+  const undoGone = undo.isError && UNDO_FINAL.includes(undo.error instanceof ApiError ? undo.error.code : '')
   return (
     <div ref={box} tabIndex={-1} role="status" className="space-y-1 rounded-md border border-border-control bg-surface p-3 text-sm">
       {undo.isSuccess ? (
         <p>
           <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-sm font-medium text-muted-foreground">
             <Undo2 aria-hidden className="size-4" />
-            {action === 'confirm' ? 'Unmatched' : 'Undone'}
+            Undone
           </span>{' '}
           {action === 'confirm'
-            ? `The match for ${where} was removed and is final: this pair is closed and will not be suggested again. The occurrence is no longer paid by this transaction.`
+            ? `The confirmation for ${where} was taken back. The match is a suggestion again under Needs review, and the occurrence is no longer paid by this transaction.`
             : `The amount for ${where} is back to what it was.`}{' '}
           <Button variant="ghost" size="sm" onClick={onDone}>Dismiss</Button>
         </p>
@@ -70,11 +77,11 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
             {action === 'confirm' && saved.counts_as_evidence && ' It now counts as payment for the occurrence.'}
             {(action === 'reject' || action === 'unmatch' || action === 'reverse') && ' This decision is final; the pair will not be suggested again.'}
           </p>
-          {action === 'confirm' && <p className="text-xs">Unmatching below is final for now: it closes this pair for good, so it cannot be matched again from this screen.</p>}
+          {action === 'confirm' && <p className="text-xs">Undo puts it back as a suggestion. It works only while nothing else has changed this match or occurrence; Unmatch in the Confirmed list is final.</p>}
           <div className="flex flex-wrap items-center gap-2">
-            {undoable && (
+            {undoable && !undoGone && (
               <Button variant="outline" size="sm" className="h-auto min-h-8 whitespace-normal py-1 text-left aria-disabled:opacity-50" aria-disabled={undo.isPending || undefined} onClick={() => { if (!undo.isPending) undo.mutate() }}>
-                {undo.isPending ? (action === 'confirm' ? 'Unmatching…' : 'Undoing…') : action === 'confirm' ? 'Unmatch (final)' : 'Undo this correction'}
+                {undo.isPending ? 'Undoing…' : action === 'confirm' ? 'Undo confirmation' : 'Undo this correction'}
               </Button>
             )}
             <Button variant="ghost" size="sm" aria-disabled={undo.isPending || undefined} onClick={() => { if (!undo.isPending) onDone() }}>Dismiss</Button>
@@ -84,11 +91,24 @@ function DoneNotice({ done, onDone }: { done: Done; onDone: () => void }) {
       )}
       {undo.isError && (
         <p role="alert">
-          <StatusBadge status="save_failed" label={action === 'confirm' ? 'Unmatch not saved' : 'Undo not saved'} /> The change stays as saved. {undo.error.message}
+          <StatusBadge status="save_failed" label="Undo not saved" /> The change stays as saved. {undoErrorText(undo.error, action)}
         </p>
       )}
     </div>
   )
+}
+
+/** Refusals after which Undo cannot work any more (the change stays as saved). */
+const UNDO_FINAL = ['match_undo_window_closed', 'match_undo_not_decider', 'invalid_match_state']
+
+/** Why an undo failed, in words; the server's own codes say whether the undo window closed or someone else decided. */
+function undoErrorText(e: Error, action: MatchAction): string {
+  const code = e instanceof ApiError ? e.code : ''
+  if (action === 'confirm' && code === 'match_undo_window_closed') return 'Undo is no longer possible: something else changed this match or occurrence since. The match stays confirmed. If it is wrong, use Unmatch in the Confirmed list (final).'
+  if (action === 'confirm' && code === 'match_undo_not_decider') return 'Only the person who confirmed this match can undo it. The match stays confirmed.'
+  if (action === 'confirm' && code === 'invalid_match_state') return 'This match was not a suggestion before, so it cannot go back to one. Use Unmatch in the Confirmed list (final).'
+  if (isVersionConflict(e)) return 'Something else changed this match since you saved it, so the undo was not applied. The match stays as it is now; reload the list to see its current state.'
+  return e.message
 }
 
 /** Asks the engine to run now. Its automatic confirmations follow the safeguards of ADR-0039; each can be corrected or unmatched from the Confirmed list. */
@@ -125,13 +145,13 @@ function RunMatching({ offline }: { offline?: boolean }) {
 /** The /matches screen: review suggestions, confirm or reject them, and correct what is confirmed. */
 export function MatchesPage() {
   const online = useOnline()
-  const [state, setState] = useState<MatchState>('suggested')
+  const [state, setState] = useState<View>('suggested')
   const view = VIEWS.find((v) => v.state === state)!
-  const q = usePagedList<PaymentMatch>(matchesKey, '/api/v1/payment-matches', { state })
+  const q = usePagedList<PaymentMatch>(matchesKey, '/api/v1/payment-matches', { state: state === 'closed' ? undefined : state }, { enabled: state !== 'closed' })
   const [done, setDone] = useState<Done | null>(null)
   // Cards whose last save failed stay listed even when a refetch no longer has them (changed elsewhere), in the view they failed in.
-  const [held, setHeld] = useState<Record<string, { match: PaymentMatch; view: MatchState }>>({})
-  const viewRef = useRef(state)
+  const [held, setHeld] = useState<Record<string, { match: PaymentMatch; view: View }>>({})
+  const viewRef = useRef<View>(state)
   useEffect(() => {
     viewRef.current = state
   }, [state])
@@ -163,7 +183,7 @@ export function MatchesPage() {
             </Button>
           ))}
         </div>
-        <RunMatching offline={offline} />
+        {state !== 'closed' && <RunMatching offline={offline} />}
       </div>
       {offline && (
         <p id={OFFLINE_NOTE_ID} className="text-sm text-muted-foreground">
@@ -171,7 +191,7 @@ export function MatchesPage() {
         </p>
       )}
       {done && done.subject.replaced?.length ? <ReplacedNotice key={done.saved.id + done.saved.version} saved={done.saved} replaced={done.subject.replaced} where={subjectText(done.subject)} onDone={() => setDone(null)} /> : done && <DoneNotice key={done.saved.id + done.saved.version} done={done} onDone={() => setDone(null)} />}
-      <QueryState query={q} label="payment matches">
+      {state === 'closed' ? <ClosedList offline={offline} /> : <QueryState query={q} label="payment matches">
         {(items) => {
           const ids = new Set(items.map((m) => m.id))
           const kept = Object.values(held).filter((h) => !ids.has(h.match.id) && h.view === state).map((h) => h.match)
@@ -205,7 +225,7 @@ export function MatchesPage() {
             </>
           )
         }}
-      </QueryState>
+      </QueryState>}
     </section>
   )
 }

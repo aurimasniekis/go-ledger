@@ -138,7 +138,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerTokens(s, d.Tokens)
 	todayFn := newToday(d.Zone, d.Now)
 	registerCommitments(s, d.Commitments, todayFn)
-	registerOccurrences(s, d.Occurrences, d.Payments, d.Commitments, todayFn, d.Grace, d.Now)
+	registerOccurrences(s, d.Occurrences, d.Payments, d.Commitments, todayFn, d.Grace, d.Now, d.Banks, d.BankStaleAfter)
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
 	registerBankConnections(s, d.Banking)

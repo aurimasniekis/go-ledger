@@ -27,6 +27,9 @@ function bankMatch(id: string, over: Record<string, unknown> = {}): Fake {
 async function stub(page: Page) {
   const json = (route: Route, body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
   let matches: Fake[] = [
+    bankMatch('r', { occurrence_id: 'occ-rent', state: 'rejected', version: 2, reason: 'wrong month',
+      decided_by: { kind: 'token', user_id: 'u1', via: 'mcp' },
+      history: [{ action: 'rejected', state: 'rejected', amount: eur('20.00'), by: { kind: 'token', user_id: 'u1', via: 'mcp' }, reason: 'wrong month', at: '2026-11-21T09:40:00Z' }] }),
     bankMatch('a', { occurrence_id: 'occ-host' }),
     bankMatch('b', { occurrence_id: 'occ-host' }),
     bankMatch('c', { state: 'confirmed', version: 2, counts_as_evidence: true, decided_by: system, reason: null, amount: eur('800.00'),
@@ -47,15 +50,15 @@ async function stub(page: Page) {
   })
   await page.route(/\/api\/v1\/commitments\/c-occ-[a-z]+$/, (r) => json(r, { id: 'c', name: r.request().url().endsWith('host') ? 'Server hosting with a rather long commitment name' : 'Flat rent' }))
   await page.route(/\/api\/v1\/payment-matches(\?.*)?$/, (r) => {
-    const state = new URL(r.request().url()).searchParams.get('state')
-    return json(r, { items: matches.filter((m) => m.state === state), next_cursor: null })
+    const states = new URL(r.request().url()).searchParams.getAll('state')
+    return json(r, { items: matches.filter((m) => states.includes(m.state)), next_cursor: null })
   })
-  await page.route(/\/api\/v1\/payment-matches\/[a-z]+\/(confirm|reject|unmatch|correct|reverse)$/, (r) => {
+  await page.route(/\/api\/v1\/payment-matches\/[a-z]+\/(confirm|reject|unmatch|correct|reverse|unconfirm)$/, (r) => {
     const [, id, action] = /payment-matches\/([a-z]+)\/([a-z]+)$/.exec(r.request().url())!
     posts.push(action + ':' + id)
-    const next = { confirm: 'confirmed', reject: 'rejected', unmatch: 'rejected', reverse: 'reversed', correct: 'confirmed' }[action!]!
+    const next = { confirm: 'confirmed', reject: 'rejected', unmatch: 'rejected', reverse: 'reversed', correct: 'confirmed', unconfirm: 'suggested' }[action!]!
     const m = matches.find((x) => x.id === id)!
-    const saved = { ...m, state: next, version: m.version + 1, counts_as_evidence: next === 'confirmed', decided_by: { kind: 'user', user_id: 'u1' } }
+    const saved = { ...m, state: next, version: m.version + 1, counts_as_evidence: next === 'confirmed', decided_by: next === 'suggested' ? null : { kind: 'user', user_id: 'u1', via: 'session' } }
     matches = matches.map((x) => (x.id === id ? saved : x))
     return json(r, saved)
   })
@@ -94,7 +97,7 @@ test('review queue by keyboard: ambiguity is explained, confirm names what chang
   const notice = page.getByRole('status').filter({ hasText: 'Match confirmed' })
   await expect(notice).toContainText('Match confirmed for')
   await expect(notice).toContainText('November 2026')
-  await expect(notice).toContainText('Unmatching below is final for now')
+  await expect(notice).toContainText('Unmatch in the Confirmed list is final')
   await expect(notice).toBeFocused()
   expect(posts).toEqual(['confirm:a'])
 
@@ -134,6 +137,39 @@ test('a conflict while the Reject form is open leaves no enabled submit and puts
   expect(posts).toEqual([])
 })
 
+test('confirm, undo and the suggestion is back; the Closed list shows a rejected match, read only, with how it came', async ({ page }, info) => {
+  const posts = await stub(page)
+  await page.goto('/matches')
+  const cards = page.getByRole('article')
+  await expect(cards).toHaveCount(2)
+  await cards.first().getByRole('button', { name: 'Confirm match' }).click()
+  const notice = page.getByRole('status').filter({ hasText: 'Match confirmed' })
+  await expect(notice).toBeFocused()
+  await notice.getByRole('button', { name: 'Undo confirmation' }).click()
+  const undone = page.getByRole('status').filter({ hasText: 'Undone' })
+  await expect(undone).toContainText('The match is a suggestion again')
+  await expect(undone).toBeFocused()
+  expect(posts).toEqual(['confirm:a', 'unconfirm:a'])
+  // Both suggestions are waiting again, with the competing note back.
+  await expect(cards).toHaveCount(2)
+  await expect(page.locator('article[data-match-id="a"]').getByTestId('competing')).toBeVisible()
+  await page.screenshot({ path: info.outputPath('undo-done.png'), fullPage: true })
+
+  await page.getByRole('button', { name: 'Closed', exact: true }).click()
+  const closed = page.getByTestId('closed-list')
+  const rejected = closed.locator('article[data-match-id="r"]')
+  await expect(rejected).toBeVisible()
+  await expect(rejected.getByTestId('decision')).toHaveText('Rejected by an MCP client (not this screen).')
+  await expect(rejected).toContainText('Via MCP')
+  await expect(rejected.getByRole('button')).toHaveCount(0)
+  await expect(closed.getByRole('article')).toHaveCount(1)
+  await closed.getByLabel('Outcome').selectOption('reversed')
+  await expect(closed.getByText('No closed matches fit these filters.')).toBeVisible()
+  await closed.getByLabel('Outcome').selectOption('both')
+  await expect(rejected).toBeVisible()
+  await page.screenshot({ path: info.outputPath('closed-list.png'), fullPage: true })
+})
+
 const sizes = [
   { name: '320 CSS px wide', viewport: { width: 320, height: 640 }, textScale: false },
   { name: '200% page zoom (1280 px at 200% is 640 CSS px)', viewport: { width: 640, height: 360 }, textScale: false },
@@ -152,6 +188,9 @@ for (const s of sizes) {
       await expect(page.getByLabel('Reason (optional)')).toBeVisible()
       await noOverflow(page)
       await page.getByRole('button', { name: 'Cancel' }).click()
+      await page.getByRole('button', { name: 'Closed', exact: true }).click()
+      await expect(page.locator('article[data-match-id="r"]')).toBeVisible()
+      await noOverflow(page)
       await page.getByRole('button', { name: 'Confirmed', exact: true }).click()
       await expect(page.locator('article[data-match-id="c"]')).toBeVisible()
       await page.getByRole('button', { name: 'Correct amount' }).click()

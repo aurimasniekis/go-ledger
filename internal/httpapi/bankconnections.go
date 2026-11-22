@@ -179,6 +179,22 @@ var freshnessRank = map[banking.FreshnessState]int{
 	banking.FreshnessStale: 3, banking.FreshnessNeverRefreshed: 4, banking.FreshnessFresh: 5,
 }
 
+// connectionOwnFreshness is the freshness a connection has before any account
+// says otherwise: what its status alone implies. The connections list and the
+// month view share it so they never disagree about a connection without accounts.
+func connectionOwnFreshness(st banking.ConnectionStatus) banking.FreshnessState {
+	switch st {
+	case banking.ConnectionReconnectRequired:
+		return banking.FreshnessReconnectRequired
+	case banking.ConnectionActive:
+		return banking.FreshnessNeverRefreshed
+	case banking.ConnectionFailed:
+		return banking.FreshnessFailed
+	default:
+		return banking.FreshnessDisconnected
+	}
+}
+
 func toBankConnectionJSON(v bankconnect.View) bankConnectionJSON {
 	c := v.Connection
 	out := bankConnectionJSON{ID: c.ID, Provider: c.Provider, Application: c.Application, Mode: c.Mode, Environment: c.Environment, AccountAccess: c.AccountAccess,
@@ -190,16 +206,7 @@ func toBankConnectionJSON(v bankconnect.View) bankConnectionJSON {
 	if c.Status == banking.ConnectionActive && !c.ConsentValidUntil.IsZero() && c.ConsentValidUntil.Sub(v.AsOf) <= bankconnect.ConsentWarnDays*24*time.Hour {
 		out.ConsentExpiresSoon = true
 	}
-	switch c.Status {
-	case banking.ConnectionReconnectRequired:
-		out.Freshness = banking.FreshnessReconnectRequired
-	case banking.ConnectionActive:
-		out.Freshness = banking.FreshnessNeverRefreshed
-	case banking.ConnectionFailed:
-		out.Freshness = banking.FreshnessFailed
-	default:
-		out.Freshness = banking.FreshnessDisconnected
-	}
+	out.Freshness = connectionOwnFreshness(c.Status)
 	if c.Status == banking.ConnectionActive && len(v.Accounts) > 0 {
 		out.Freshness = banking.FreshnessFresh
 	}

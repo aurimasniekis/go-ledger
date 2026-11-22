@@ -10,7 +10,7 @@ import { ProvenanceMarker } from '@/features/month/provenance'
 import { isZeroAmount, monthLabel, utcStamp } from '@/features/month/month'
 import { useSession } from '@/lib/auth'
 import { Bot, KeyRound } from 'lucide-react'
-import { AMBIGUITY_CODES, actorPhrase, decisionLine, deciderMarker, historyVerb, originLine, plainReason } from './explain'
+import { AMBIGUITY_CODES, actorPhrase, decisionLine, deciderMarker, historyVerb, originLine, plainReason, wasUnmatched } from './explain'
 import { matchAction, matchesKey, useCommitmentName, useOccurrence, type ActionInput } from './api'
 import type { ManualPayment } from '@/features/month/types'
 import { ReplaceManual, replacedIds, useReplaceableRecords } from './replace-manual'
@@ -170,6 +170,16 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
   const replaceable = useReplaceableRecords(m, m.state === 'suggested' && (pay?.manual_evidence_count ?? 0) > 0)
   const canReplace = m.state === 'suggested' && replaceable.length > 0 && m.transaction.booking_status === 'booked' && m.transaction.countable
   const replacedNow = m.state === 'confirmed' ? replacedIds(m).length : 0
+  // A final refusal of "This is the payment I recorded" lives here, not in ReplaceManual: the refetch it triggers can unmount that form.
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const refusalBox = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (refusal) refusalBox.current?.focus()
+  }, [refusal])
+  const replaceBtn = canReplace && (
+    <ReplaceManual match={m} records={replaceable} offline={offline} offlineNoteId={OFFLINE_NOTE_ID} primary={paidBy === 'manual'} onRefused={setRefusal}
+      onSaved={(saved, replaced) => { setRefusal(null); onSaved(saved, 'confirm', m, { name: name.data, month: occ.data?.month, replaced }) }} />
+  )
   const alertBox = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (conflict) alertBox.current?.focus()
@@ -210,7 +220,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
         if (a === 'confirm') run('confirm')
         else open(a)
       }}>
-      {pending && save.vars?.action === a ? VERB[a].busy : VERB[a].button}
+      {pending && save.vars?.action === a ? VERB[a].busy : a === 'confirm' && canReplace ? 'Confirm as a separate payment' : VERB[a].button}
     </Button>
   )
   const stateBadge = (
@@ -219,7 +229,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
       {m.state === 'confirmed' && (m.counts_as_evidence
         ? <><StatusBadge status="paid" label="Confirmed, counts as payment" /><ProvenanceMarker kind="bank" /></>
         : <StatusBadge status="stale" label="Confirmed, not counting" />)}
-      {m.state === 'rejected' && <span className="rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium">Rejected</span>}
+      {m.state === 'rejected' && <span className="rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium">{wasUnmatched(m) ? 'Unmatched' : 'Rejected'}</span>}
       {m.state === 'reversed' && <span className="rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium">Reversed</span>}
       {marker && (
         <span data-decider={marker.kind} className="inline-flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
@@ -260,7 +270,12 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           )}
         </dd>
         <dt className="text-muted-foreground">Allocated</dt>
-        <dd className="min-w-0"><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction pays this occurrence</dd>
+        <dd className="min-w-0">
+          {m.state === 'rejected' && !wasUnmatched(m) ? <>Amount proposed <Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction; it did not count as payment</>
+            : wasUnmatched(m) ? <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction no longer counts: unmatched</>
+            : m.state === 'reversed' ? <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction no longer counts: payment reversed</>
+            : <><Amount className="font-mono" amount={m.amount.amount} currency={m.amount.currency} /> of this transaction pays this occurrence</>}
+        </dd>
         {shortfall && (
           <>
             <dt className="text-muted-foreground">Short</dt>
@@ -316,7 +331,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
                 {utcStamp(e.at)}: {historyVerb(e)}{' '}
                 {(e.action === 'corrected' || e.action === 'confirmed' || e.action === 'suggested') && <><Amount className="font-mono" amount={e.amount.amount} currency={e.amount.currency} />{' '}</>}
                 by {actorPhrase(e.by, me)}{plainReason(e.reason).verbatim ? `: ${e.reason}` : ''}
-                {(e.replaced_manual_payment_ids?.length ?? 0) > 0 && ` Replaced ${e.replaced_manual_payment_ids!.length} manual record(s), kept in history.`}
+                {(e.replaced_manual_payment_ids?.length ?? 0) > 0 && ` Replaced ${e.replaced_manual_payment_ids!.length} manual ${e.replaced_manual_payment_ids!.length === 1 ? 'record' : 'records'}, kept in history.`}
                 {(e.restored_manual_payment_ids?.length ?? 0) > 0 && ` ${e.restored_manual_payment_ids!.length} manual record(s) count again.`}
               </li>
             ))}
@@ -326,12 +341,17 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
 
       {actions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
+          {replaceBtn}
           {(alreadyPaid ? [...actions].sort((a, b) => Number(b === 'reject') - Number(a === 'reject')) : actions).map((a) => btn(a, a === (alreadyPaid ? (paidBy === 'bank' || paidBy === 'unknown' ? 'reject' : '') : 'confirm') ? 'default' : 'outline'))}
-          {canReplace && (
-            <ReplaceManual match={m} records={replaceable} offline={offline} offlineNoteId={OFFLINE_NOTE_ID} primary={paidBy === 'manual'}
-              onSaved={(saved, replaced) => onSaved(saved, 'confirm', m, { name: name.data, month: occ.data?.month, replaced })} />
-          )}
           {pending && form === null && <span role="status"><StatusBadge status="pending" label="Not saved yet" /></span>}
+        </div>
+      )}
+
+      {refusal && (
+        <div ref={refusalBox} tabIndex={-1} role="alert" data-testid="replace-refused" className="space-y-2 rounded-md border border-border-control p-3">
+          <StatusBadge status="save_failed" label="Not saved" />
+          <p>{refusal} Nothing was saved: the match and your records are unchanged.</p>
+          <Button size="sm" variant="ghost" className="h-auto min-h-8 py-1" onClick={() => setRefusal(null)}>Dismiss</Button>
         </div>
       )}
 

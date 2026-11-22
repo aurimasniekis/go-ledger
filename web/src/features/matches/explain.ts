@@ -1,5 +1,6 @@
 // Plain words for what the matching engine and the API report about a match. Nothing here decides anything:
 // it only rewrites stable codes and actor kinds into sentences. Unknown text is shown as it came.
+import { utcStamp } from '@/features/month/month'
 import type { Decider, MatchEvent, PaymentMatch } from './types'
 
 const PART = /^([a-z_]+)(?: \((.*)\))?$/
@@ -91,12 +92,16 @@ export function plainReason(reason: string | null): PlainReason {
   return { lines, hint, verbatim: null }
 }
 
-/** Who acted, in words. "you" only when the acting user is the signed-in one; a token is never "you". */
+/** Who acted, in words. "you" only when the acting user is the signed-in one; a token as such is never "you", but a user acting through one is "you, via an API token". */
 export function actorPhrase(d: Decider | null | undefined, me?: string): string {
   if (!d) return 'nobody yet'
   if (d.kind === 'system') return 'the matching engine'
-  if (d.kind === 'user') return !d.user_id || !me || d.user_id === me ? 'you' : 'another person'
-  if (d.kind === 'token') return 'an API token or MCP client (not this screen)'
+  if (d.kind === 'user') {
+    const who = !d.user_id || !me || d.user_id === me ? 'you' : 'another person'
+    // A token or MCP client that acted as this user: still them, but not at this screen (ADR-0045).
+    return d.via === 'mcp' ? `${who}, via an MCP client` : d.via === 'token' ? `${who}, via an API token` : who
+  }
+  if (d.kind === 'token') return d.via === 'mcp' ? 'an MCP client (not this screen)' : d.via === 'token' ? 'an API token (not this screen)' : 'an API token or MCP client (not this screen)'
   return d.kind
 }
 
@@ -104,19 +109,28 @@ export function actorPhrase(d: Decider | null | undefined, me?: string): string 
 export function deciderMarker(m: PaymentMatch): { kind: 'system' | 'token'; label: string } | null {
   const d = m.decided_by ?? m.created_by
   if (d.kind === 'system') return { kind: 'system', label: m.state === 'suggested' ? 'Engine suggestion' : 'Decided by the engine' }
-  if (d.kind === 'token') return { kind: 'token', label: 'Via API token or MCP' }
+  if (d.kind === 'token') return { kind: 'token', label: d.via === 'mcp' ? 'Via MCP' : d.via === 'token' ? 'Via API token' : 'Via API token or MCP' }
   return null
 }
 
 const STATE_VERB: Record<string, string> = { confirmed: 'Confirmed', rejected: 'Rejected', reversed: 'Reversed' }
 
-/** The sentence about who decided a match, or null while it is only a suggestion. */
+/** True for a match closed by Unmatch: the server keeps it as rejected, and its latest history row says "unmatched". */
+export function wasUnmatched(m: PaymentMatch): boolean {
+  return m.state === 'rejected' && m.history[m.history.length - 1]?.action === 'unmatched'
+}
+
+/** The sentence about who decided a match, or null while it is only a suggestion. A closed match also says when it closed. */
 export function decisionLine(m: PaymentMatch, me?: string): string | null {
   const d = m.decided_by
   if (!d || m.state === 'suggested') return null
-  const verb = STATE_VERB[m.state] ?? m.state
-  if (d.kind === 'system') return m.state === 'confirmed' ? 'Confirmed automatically by the matching engine, after its safeguards passed.' : `${verb} by the matching engine.`
-  return `${verb} by ${actorPhrase(d, me)}.`
+  const unmatched = wasUnmatched(m)
+  const verb = unmatched ? 'Unmatched' : (STATE_VERB[m.state] ?? m.state)
+  const closed = m.state === 'rejected' || m.state === 'reversed'
+  const when = closed && m.decided_at ? ` Closed ${utcStamp(m.decided_at)}.` : ''
+  const note = unmatched ? ' (it had counted as payment)' : ''
+  if (d.kind === 'system') return m.state === 'confirmed' ? 'Confirmed automatically by the matching engine, after its safeguards passed.' : `${verb} by the matching engine${note}.${when}`
+  return `${verb} by ${actorPhrase(d, me)}${note}.${when}`
 }
 
 /** How the match came to exist, apart from who decided it. */
@@ -133,6 +147,7 @@ const HISTORY_VERB: Record<string, string> = {
   unmatched: 'Unmatched',
   corrected: 'Corrected to',
   reversed: 'Reversed',
+  unconfirmed: 'Confirmation undone, back to a suggestion',
 }
 
 /** The verb of a history row ("Corrected to", "Confirmed"); the raw action when it is not known. */

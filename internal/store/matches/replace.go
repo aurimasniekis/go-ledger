@@ -54,6 +54,9 @@ func (s *Store) ConfirmReplacing(ctx context.Context, actor audit.Actor, id stri
 				s.newID(), p.ID, m.ID, eventID, store.Timestamp{Time: now}); err != nil {
 				return fmt.Errorf("matches: replace manual payment: %w", err)
 			}
+			if err := bumpManual(ctx, tx, p.ID, now); err != nil {
+				return err
+			}
 			if err := s.audit.WriteAudit(ctx, tx, payments.ReplacedEvent(auditActor(actor), p, m.ID, now)); err != nil {
 				return err
 			}
@@ -86,24 +89,29 @@ func manualTx(ctx context.Context, tx *sql.Tx, id string) (p payments.ManualPaym
 
 // restore makes the manual payments the match replaces count again (an
 // unconfirm or an unmatch, by; ADR-0049): each active replacement is stamped
-// with the change's history entry eventID and audited. A record deleted while
-// replaced stays deleted.
+// with the change's history entry eventID, the record's version is increased
+// (its replaced_by_match_id changes) and the restoration audited. A record
+// deleted while replaced stays deleted and out of the evidence: its
+// replacement is closed too, so the match's history shows it, but no
+// manual_payment.restored entry is written and its version is left alone,
+// since nothing about it counts again (X5c).
 func (s *Store) restore(ctx context.Context, tx *sql.Tx, actor audit.Actor, m matches.Match, eventID string, by matches.Action, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, "SELECT r.id, p.id, p.occurrence_id, p.amount, p.currency FROM manual_payment_replacements r JOIN manual_payments p ON p.id = r.manual_payment_id"+
+	rows, err := tx.QueryContext(ctx, "SELECT r.id, p.id, p.occurrence_id, p.amount, p.currency, p.deleted_at IS NOT NULL FROM manual_payment_replacements r JOIN manual_payments p ON p.id = r.manual_payment_id"+
 		" WHERE r.match_id = ? AND r.restored_at IS NULL ORDER BY r.rowid", m.ID)
 	if err != nil {
 		return err
 	}
 	type restored struct {
-		id string
-		p  payments.ManualPayment
+		id      string
+		p       payments.ManualPayment
+		deleted bool
 	}
 	var list []restored
 	for rows.Next() {
 		var r restored
 		var amount sqlvalue.Amount
 		var currency sqlvalue.Currency
-		if err := rows.Scan(&r.id, &r.p.ID, &r.p.OccurrenceID, &amount, &currency); err != nil {
+		if err := rows.Scan(&r.id, &r.p.ID, &r.p.OccurrenceID, &amount, &currency, &r.deleted); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -124,9 +132,25 @@ func (s *Store) restore(ctx context.Context, tx *sql.Tx, actor audit.Actor, m ma
 			store.Timestamp{Time: now}, eventID, r.id); err != nil {
 			return fmt.Errorf("matches: restore manual payment: %w", err)
 		}
+		if r.deleted {
+			continue
+		}
+		if err := bumpManual(ctx, tx, r.p.ID, now); err != nil {
+			return err
+		}
 		if err := s.audit.WriteAudit(ctx, tx, payments.RestoredEvent(auditActor(actor), r.p, m.ID, string(by), now)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// bumpManual increases a manual payment's version and updated_at: whether a
+// match replaces it is part of what a read returns (replaced_by_match_id), so
+// the change gives it a new ETag (X5c). The record's own fields never change.
+func bumpManual(ctx context.Context, tx *sql.Tx, id string, now time.Time) error {
+	if _, err := tx.ExecContext(ctx, "UPDATE manual_payments SET version = version + 1, updated_at = ? WHERE id = ?", store.Timestamp{Time: now}, id); err != nil {
+		return fmt.Errorf("matches: manual payment version: %w", err)
 	}
 	return nil
 }

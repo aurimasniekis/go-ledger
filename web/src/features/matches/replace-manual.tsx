@@ -61,13 +61,15 @@ export interface ReplaceManualProps {
   primary?: boolean
   /** Called once the server has confirmed (never before). */
   onSaved: (saved: PaymentMatch, replaced: ManualPayment[]) => void
+  /** Called with our own sentence for a final refusal; the card keeps showing it even if the refetch unmounts this form. */
+  onRefused?: (sentence: string) => void
 }
 
 /**
  * "This is the payment I recorded" (D45): a button and its form, rendered inside the card's action row. The save is not
  * optimistic: until the server answers the card says "Not saved yet", and a failure says nothing changed.
  */
-export function ReplaceManual({ match: m, records, offline, offlineNoteId, primary, onSaved }: ReplaceManualProps) {
+export function ReplaceManual({ match: m, records, offline, offlineNoteId, primary, onSaved, onRefused }: ReplaceManualProps) {
   const [open, setOpen] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const first = useRef<HTMLInputElement>(null)
@@ -80,7 +82,11 @@ export function ReplaceManual({ match: m, records, offline, offlineNoteId, prima
         return await confirmReplacing(m.id, { version: m.version, manualPaymentIds: v.ids, allowOverpayment: v.allowOverpayment })
       } catch (e) {
         // A final refusal means the records changed under us: other cards offering the same record are stale too.
-        if (e instanceof ApiError && FINAL_REPLACE_CODES.includes(e.code ?? '')) void qc.invalidateQueries({ queryKey: ['occurrences'] })
+        if (e instanceof ApiError && FINAL_REPLACE_CODES.includes(e.code ?? '')) {
+          setOpen(false)
+          onRefused?.(replaceRefusal(e.code) ?? e.message)
+          void qc.invalidateQueries({ queryKey: ['occurrences'] })
+        }
         throw e
       }
     },

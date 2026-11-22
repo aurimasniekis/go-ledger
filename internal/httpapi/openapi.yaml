@@ -1591,8 +1591,10 @@ paths:
 
         freshness says how current the view is. Statuses are derived on every
         read (computed_at, as_of). occurrences_changed_at is when the month's
-        occurrences last changed. Bank data age is not exposed by this
-        endpoint yet (bank.available is false).
+        occurrences last changed. bank says whether a bank connection exists
+        (available), how many, the worst freshness state among them and the
+        newest successful fetch; it never reports a disconnected, failed or
+        stale connection as fresh.
 
         Months more than 60 months after the current month are refused.
       tags: [occurrences]
@@ -3607,11 +3609,22 @@ components:
         bank:
           type: object
           additionalProperties: false
-          required: [available, note]
+          required: [available, connections, state, last_success_at, note]
           properties:
             available:
               type: boolean
-              description: Always false until bank freshness is exposed over the API.
+              description: True when at least one bank connection exists, whatever its state. False when there is none (state none) and also when the connections could not be read (state unknown); read state to tell the two apart.
+            connections:
+              type: integer
+              description: How many bank connections exist.
+            state:
+              type: string
+              enum: [none, unknown, fresh, stale, never_refreshed, failed, disconnected, reconnect_required]
+              description: The worst freshness among the connections' accounts (a connection without accounts counts by its status). none without a connection; unknown when the connections could not be read.
+            last_success_at:
+              type: [string, "null"]
+              format: date-time
+              description: The newest successful bank fetch of any account; null when none succeeded.
             note:
               type: string
     SignedMoney:
@@ -4054,7 +4067,11 @@ components:
             The confirmed payment match that replaces this record now (the
             person confirmed the bank payment "as the payment I recorded",
             ADR-0049): the record is kept and listed but does not count as
-            payment evidence; the match does. Null when none.
+            payment evidence; the match does. While that match's transaction
+            does not count (the provider no longer reports it, or it was
+            superseded; the match needs review) the record counts again, so
+            exactly one of the two counts. Replacing and restoring the record
+            increase its version. Null when none.
           oneOf:
             - $ref: "#/components/schemas/ID"
             - type: "null"

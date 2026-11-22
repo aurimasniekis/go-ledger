@@ -83,6 +83,9 @@ test('import, commitments, monthly view, match, correction, reload, outlook and 
   await test.step('monthly view: bank-matched rent is paid, hosting waits for a person, older occurrences are not recorded', async () => {
     await monthView()
     await expect(page.getByTestId('status-summary')).toHaveText('1 paid · 2 not recorded')
+    // A bank is connected and was just fetched: the month view must not claim otherwise.
+    await expect(page.getByText('No bank data connected yet')).toHaveCount(0)
+    await expect(page.getByTestId('month-bank-line')).toContainText('Bank data is current')
     await expect(occurrence('Rent')).toContainText('Paid')
     await expect(occurrence('Rent')).toContainText('Bank match')
     await expect(occurrence('Server hosting')).toContainText('Not recorded')
@@ -169,6 +172,7 @@ test('import, commitments, monthly view, match, correction, reload, outlook and 
     await expect(page.getByTestId('outlook-EUR')).toContainText(balance) // the last balance is kept, with its date
     await monthView()
     await expectCorrectedMonth() // local data is untouched by the outage
+    await expect(page.getByTestId('month-bank-line')).toContainText('latest bank fetch failed')
     await bank('outage', false)
   })
 
