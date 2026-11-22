@@ -61,6 +61,8 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
   const noticeBox = useRef<HTMLDivElement>(null)
   const pendingBox = useRef<HTMLParagraphElement>(null)
   const undoing = useRef(false)
+  // Set by a dialog's onDone just before it closes: only a change that produced a notice moves focus to it.
+  const producedNotice = useRef(false)
   const merged = m.merged_into !== null
   const active = !m.archived
 
@@ -71,8 +73,11 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
   // Undo removes the focused button while the server answers: focus the "Saving…" status so the wait is announced and focus is not on BODY.
   // A refusal then lands on the error, an acceptance on the new notice.
   // A dialog that produced a notice hands focus to it rather than back to the button that opened the dialog.
+  // A cancel (or Escape) leaves producedNotice unset, so focus goes to the opener even while an older notice is showing.
   const toNotice = () => {
-    if (!noticeBox.current) return false
+    const produced = producedNotice.current
+    producedNotice.current = false
+    if (!produced || !noticeBox.current) return false
     noticeBox.current.focus()
     return true
   }
@@ -193,6 +198,7 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
               onDone={async (r) => {
                 await accepted(r)
                 setNotice({ text: `Renamed to ${r.display_name}.` })
+                producedNotice.current = true
                 setRenaming(false)
               }}
             />
@@ -212,6 +218,7 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
                 setNotice({
                   text: `${fromName} was merged into ${r.merchant.display_name} and archived. Moved: ${mv.aliases} alias${mv.aliases === 1 ? '' : 'es'}, ${mv.decisions} decision${mv.decisions === 1 ? '' : 's'}, ${mv.enrichments} source answer${mv.enrichments === 1 ? '' : 's'}, ${mv.categories} category and ${mv.labels} label assignment${mv.labels === 1 ? '' : 's'}. Left where they were because ${r.merchant.display_name} already had one: ${r.kept}. This cannot be undone in place.`,
                 })
+                producedNotice.current = true
                 setMerging(false)
               }}
             />

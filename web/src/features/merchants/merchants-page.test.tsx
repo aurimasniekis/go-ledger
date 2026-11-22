@@ -205,6 +205,53 @@ describe('merchant record', () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(open))
   })
 
+  it('returns focus to the opener when a dialog is cancelled while an older notice is showing', async () => {
+    const user = userEvent.setup()
+    installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL),
+        ['POST /api/v1/merchants/' + LIDL.id + '/archive']: ok(rec({ archived: true, archived_at: '2026-11-22T10:00:00Z', version: 2 })),
+        ['POST /api/v1/merchants/' + LIDL.id + '/unarchive']: ok(LIDL),
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Archive' }))
+    await screen.findByText(/Lidl is archived\. Everything that refers to it is kept/)
+    const open = screen.getByRole('button', { name: 'Rename' })
+    await user.click(open)
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await vi.waitFor(() => expect(document.activeElement).toBe(open))
+  })
+
+  it('after a rename notice, Escape on the next dialog still returns focus to its opener', async () => {
+    const user = userEvent.setup()
+    let current = LIDL
+    installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: () => ok(current),
+        ['PATCH /api/v1/merchants/' + LIDL.id]: () => {
+          current = rec({ display_name: 'Lidl Lietuva', version: 2 })
+          return ok(current)
+        },
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Rename' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Rename Lidl' })
+    await user.clear(within(dlg).getByLabelText('Display name'))
+    await user.type(within(dlg).getByLabelText('Display name'), 'Lidl Lietuva{Enter}')
+    await screen.findByText('Renamed to Lidl Lietuva.')
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const open = screen.getByRole('button', { name: 'Rename' })
+    await user.click(open)
+    const second = await screen.findByRole('dialog')
+    expect(within(second).getByLabelText('Display name')).toHaveValue('Lidl Lietuva')
+    await user.keyboard('{Escape}')
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await vi.waitFor(() => expect(document.activeElement).toBe(open))
+  })
+
   it('keeps focus on the Saving status while an Undo is pending, then on the new notice', async () => {
     const user = userEvent.setup()
     let release: () => void = () => {}
