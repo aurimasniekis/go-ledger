@@ -149,6 +149,8 @@ func organisationError(err error) error {
 		return orgConflict(CodeDefinitionInUse, err)
 	case errors.Is(err, organisation.ErrHasActiveChildren), errors.Is(err, organisation.ErrHasChildren), errors.Is(err, organisation.ErrParentArchived):
 		return orgConflict(CodeConflict, err)
+	case errors.Is(err, organisation.ErrInheritedAssignment):
+		return &Error{Status: http.StatusConflict, Code: CodeReviewInherited, Message: err.Error(), Cause: err}
 	case errors.Is(err, organisation.ErrNoAssignment):
 		return NotFound(err.Error())
 	case errors.Is(err, organisation.ErrNotApplicable):
@@ -430,6 +432,19 @@ func registerDefinitions(s *Server, st organisation.Store, k organisation.Kind, 
 
 // objectOf reads the object a route names. Only its form is checked here; the
 // store checks that it exists.
+// merchantGate refuses a merchant-keyed route to a principal without the
+// merchants grant: the key is bank-derived text, so what is filed under it is
+// as sensitive as the merchant enrichment itself (admin-only, ADR-0051).
+func merchantGate(r *http.Request, g authz.Grant) error {
+	if objectOf(r).Type != organisation.ObjectMerchant {
+		return nil
+	}
+	if p, ok := authz.FromContext(r.Context()); !ok || !p.Allows(g) {
+		return Forbidden("merchant assignments require the " + g.String() + " grant")
+	}
+	return nil
+}
+
 func objectOf(r *http.Request) organisation.ObjectRef {
 	return organisation.ObjectRef{Type: organisation.ObjectType(r.PathValue("object_type")), ID: r.PathValue("object_id")}
 }
@@ -489,10 +504,18 @@ func registerAssignments(s *Server, st organisation.Store) {
 		WriteJSON(w, http.StatusOK, toAssignmentsJSON(a))
 	}
 	s.HandleAPI("GET "+obj, Requires(grantOrganisationRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := merchantGate(r, grantMerchantsRead); err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		a, err := st.Get(r.Context(), objectOf(r))
 		respond(w, r, a, err)
 	}))
 	s.HandleAPI("PUT "+obj+"/category", Requires(grantOrganisationWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := merchantGate(r, grantMerchantsWrite); err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		doc, err := decodeObject(r)
 		if err != nil {
 			WriteError(w, r, err)
@@ -526,14 +549,26 @@ func registerAssignments(s *Server, st organisation.Store) {
 		respond(w, r, a, err)
 	}))
 	s.HandleAPI("DELETE "+obj+"/category", Requires(grantOrganisationWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := merchantGate(r, grantMerchantsWrite); err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		a, err := st.ResetCategory(r.Context(), matchActor(r), objectOf(r))
 		respond(w, r, a, err)
 	}))
 	s.HandleAPI("PUT "+obj+"/labels/{label_id}", Requires(grantOrganisationWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := merchantGate(r, grantMerchantsWrite); err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		a, err := st.AddLabel(r.Context(), matchActor(r), objectOf(r), r.PathValue("label_id"))
 		respond(w, r, a, err)
 	}))
 	s.HandleAPI("DELETE "+obj+"/labels/{label_id}", Requires(grantOrganisationWrite), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := merchantGate(r, grantMerchantsWrite); err != nil {
+			WriteError(w, r, err)
+			return
+		}
 		a, err := st.RemoveLabel(r.Context(), matchActor(r), objectOf(r), r.PathValue("label_id"))
 		respond(w, r, a, err)
 	}))

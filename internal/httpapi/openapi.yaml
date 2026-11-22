@@ -4153,7 +4153,7 @@ paths:
                     minimum: 0
                     description: How many assignments moved to the replacement.
         "409":
-          description: version_conflict, definition_in_use, definition_archived (the replacement) or conflict (a category with children).
+          description: version_conflict, definition_in_use or definition_archived (the replacement).
           content:
             application/json:
               schema:
@@ -4418,7 +4418,7 @@ paths:
                     minimum: 0
                     description: How many assignments moved to the replacement.
         "409":
-          description: version_conflict, definition_in_use, definition_archived (the replacement) or conflict (a category with children).
+          description: version_conflict, definition_in_use or definition_archived (the replacement).
           content:
             application/json:
               schema:
@@ -4549,7 +4549,8 @@ paths:
         description: |
           The object's identifier; for a merchant its key: the merchant's name in lower case with
           white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0053).
+          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
         schema:
           type: string
     put:
@@ -4597,7 +4598,8 @@ paths:
         description: |
           The object's identifier; for a merchant its key: the merchant's name in lower case with
           white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0053).
+          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
         schema:
           type: string
     get:
@@ -4609,7 +4611,8 @@ paths:
         for a commitment or account, the buckets. Every assignment says where it came from (origin
         user, rule or model, with the rule or provider/model as source), who and when. A booked
         transaction that superseded a pending one shows the pending transaction's assignments as
-        inherited. A bank refresh never changes any of this. 404 for an object that does not exist.
+        inherited, except where the booking's own assignment is automatic and the inherited one is the
+        person's: the person's wins. A bank refresh never changes any of this. 404 for an object that does not exist.
       tags: [organisation]
       responses:
         "200":
@@ -4634,7 +4637,8 @@ paths:
         description: |
           The object's identifier; for a merchant its key: the merchant's name in lower case with
           white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0053).
+          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
         schema:
           type: string
     put:
@@ -4684,7 +4688,8 @@ paths:
       description: |
         Removes the object's own category row (a category or "none"), so a rule or a model may assign
         again, and a pending transaction's assignment applies again to its booking. 404 when the
-        object has none of its own. Audited (organisation.assignment_changed, change reset).
+        object has no category. 409 review_inherited when the category is only inherited from the pending
+        transaction it replaces: reset it there. Audited (organisation.assignment_changed, change reset).
       tags: [organisation]
       responses:
         "200":
@@ -4693,6 +4698,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ObjectAssignments"
+        "409":
+          description: review_inherited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /organisation/{object_type}/{object_id}/labels/{label_id}:
@@ -4709,7 +4720,8 @@ paths:
         description: |
           The object's identifier; for a merchant its key: the merchant's name in lower case with
           white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0053).
+          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
         schema:
           type: string
       - name: label_id

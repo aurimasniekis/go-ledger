@@ -785,6 +785,132 @@ func TestAssignmentsSurviveSupersededPending(t *testing.T) {
 	}
 }
 
+// A booking can be linked to its pending row after it was imported and
+// classified automatically. The person's inherited decision (category, label
+// and a removal) still wins over the booking's own rule or model rows (F1).
+func TestInheritedUserDecisionBeatsOwnAutomaticRows(t *testing.T) {
+	f := newFixture(t)
+	pending := f.tx("CARD PURCHASE BOOKSHOP")
+	booked := f.tx("CARD PURCHASE LONDON")
+	food, fun := f.def(org.KindCategory, "Food", nil), f.def(org.KindCategory, "Fun", nil)
+	keep, drop, other := f.def(org.KindLabel, "Keep", nil), f.def(org.KindLabel, "Drop", nil), f.def(org.KindLabel, "Other", nil)
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(pending), &food.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.AddLabel(f.ctx, alice, txRef(pending), drop.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.AddLabel(f.ctx, alice, txRef(pending), keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.RemoveLabel(f.ctx, alice, txRef(pending), keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The booking was classified by a model before it was linked.
+	if res, err := f.os.ApplyAutomatic(f.ctx, system, txRef(booked), org.Automatic{Origin: org.OriginModel, Source: "m", CategoryID: &fun.ID, LabelIDs: []string{keep.ID, drop.ID, other.ID}}); err != nil || !res.Changed() {
+		t.Fatalf("model run: %+v %v", res, err)
+	}
+	f.link(pending.ID, booked.ID)
+	got, err := f.os.Get(f.ctx, txRef(booked))
+	if err != nil || got.Category == nil || got.Category.Category.ID != food.ID || got.Category.Origin != org.OriginUser || !got.Category.Inherited {
+		t.Fatalf("category: %+v %v", got.Category, err)
+	}
+	if names := labelNames(got); !slices.Equal(names, []string{"Drop", "Other"}) {
+		t.Fatalf("labels = %v, want Drop (inherited, the person's) and Other (the model's own)", names)
+	}
+	if len(got.Removed) != 1 || got.Removed[0].Label.ID != keep.ID || got.Removed[0].Origin != org.OriginUser || !got.Removed[0].Inherited {
+		t.Fatalf("the person's removal of Keep did not survive: %+v", got.Removed)
+	}
+	// The own row of a stronger origin still wins: a rule beats an inherited model row.
+	pending2, booked2 := f.tx("COFFEE KIOSK"), f.tx("STREAMING SERVICE")
+	if _, err := f.os.ApplyAutomatic(f.ctx, system, txRef(pending2), org.Automatic{Origin: org.OriginModel, Source: "m", CategoryID: &food.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.ApplyAutomatic(f.ctx, system, txRef(booked2), org.Automatic{Origin: org.OriginRule, Source: "r", CategoryID: &fun.ID}); err != nil {
+		t.Fatal(err)
+	}
+	f.link(pending2.ID, booked2.ID)
+	if got, _ = f.os.Get(f.ctx, txRef(booked2)); got.Category.Category.ID != fun.ID || got.Category.Inherited {
+		t.Fatalf("an own rule row lost to an inherited model row: %+v", got.Category)
+	}
+}
+
+// Resetting a category the booking only inherits is a 409-class error, not
+// "nothing there" (F4).
+func TestResetOfAnInheritedCategoryIsRefused(t *testing.T) {
+	f := newFixture(t)
+	pending, booked := f.tx("CARD PURCHASE BOOKSHOP"), f.tx("CARD PURCHASE LONDON")
+	food := f.def(org.KindCategory, "Food", nil)
+	if _, err := f.os.SetCategory(f.ctx, alice, txRef(pending), &food.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.link(pending.ID, booked.ID)
+	if _, err := f.os.ResetCategory(f.ctx, alice, txRef(booked)); !errors.Is(err, org.ErrInheritedAssignment) {
+		t.Fatalf("reset of an inherited category: %v", err)
+	}
+	if _, err := f.os.ResetCategory(f.ctx, alice, txRef(f.tx("COFFEE KIOSK"))); !errors.Is(err, org.ErrNoAssignment) {
+		t.Fatalf("reset with nothing assigned: %v", err)
+	}
+}
+
+// Reassigning on delete moves the person's rows as the person's; a rule's or
+// model's row keeps origin, source, who and when (F3, decision C-O1-reassign).
+func TestReassignKeepsAutomaticProvenance(t *testing.T) {
+	f := newFixture(t)
+	a, b, c := txRef(f.tx("COFFEE KIOSK")), txRef(f.tx("STREAMING SERVICE")), txRef(f.tx("CARD PURCHASE LONDON"))
+	oldC, newC := f.def(org.KindCategory, "Old", nil), f.def(org.KindCategory, "New", nil)
+	oldL, newL := f.def(org.KindLabel, "OldL", nil), f.def(org.KindLabel, "NewL", nil)
+	if _, err := f.os.SetCategory(f.ctx, alice, a, &oldC.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.AddLabel(f.ctx, alice, a, oldL.ID); err != nil {
+		t.Fatal(err)
+	}
+	for o, origin := range map[org.ObjectRef]org.Origin{b: org.OriginModel, c: org.OriginRule} {
+		if _, err := f.os.ApplyAutomatic(f.ctx, system, o, org.Automatic{Origin: origin, Source: "src-" + string(origin), CategoryID: &oldC.ID, LabelIDs: []string{oldL.ID}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := map[org.ObjectRef]org.Assignments{}
+	for _, o := range []org.ObjectRef{a, b, c} {
+		before[o], _ = f.os.Get(f.ctx, o)
+	}
+	f.now = f.now.Add(time.Hour)
+	bob := audit.Actor{Kind: audit.ActorUser, UserID: "01JD3Y4C8V9M2Q7W5R6T0XZBNB"}
+	if _, err := f.os.DeleteDefinition(f.ctx, bob, org.KindCategory, oldC.ID, oldC.Version, newC.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.os.DeleteDefinition(f.ctx, bob, org.KindLabel, oldL.ID, oldL.Version, newL.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range []org.ObjectRef{a, b, c} {
+		was, now := before[o], mustGet(t, f, o)
+		if now.Category.Category.ID != newC.ID || len(now.Labels) != 1 || now.Labels[0].Label.ID != newL.ID {
+			t.Fatalf("%v not moved: %+v", o, now)
+		}
+		if o == a {
+			if now.Category.Origin != org.OriginUser || now.Category.By.UserID != bob.UserID || !now.Category.At.After(was.Category.At) || now.Labels[0].By.UserID != bob.UserID {
+				t.Fatalf("the person's rows should move as the mover's: %+v", now)
+			}
+			continue
+		}
+		wc, wl := was.Category, was.Labels[0]
+		if now.Category.Origin != wc.Origin || now.Category.Source != wc.Source || now.Category.By != wc.By || !now.Category.At.Equal(wc.At) ||
+			now.Labels[0].Origin != wl.Origin || now.Labels[0].Source != wl.Source || now.Labels[0].By != wl.By || !now.Labels[0].At.Equal(wl.At) {
+			t.Fatalf("%v automatic provenance changed: before %+v %+v, after %+v %+v", o, wc, wl, now.Category, now.Labels[0])
+		}
+	}
+}
+
+func mustGet(t *testing.T, f *fixture, o org.ObjectRef) org.Assignments {
+	t.Helper()
+	got, err := f.os.Get(f.ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
 func TestBucketsHoldCommitmentsAndAccountsOnly(t *testing.T) {
 	f := newFixture(t)
 	bucket := f.def(org.KindBucket, "Essentials", nil)

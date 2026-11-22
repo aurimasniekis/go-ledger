@@ -163,6 +163,25 @@ func TestOrganisationAPI(t *testing.T) {
 	if code, m, _ := admin.do("GET", obj("transaction", txID), ""); code != 200 || m["category"] != nil || len(asList(t, m["labels"])) != 0 || len(asList(t, m["buckets"])) != 0 {
 		t.Fatalf("empty assignments: %d %v", code, m)
 	}
+	// Merchant keys are bank-derived text: merchant-keyed routes need the
+	// admin-only merchants grant, whatever the organisation grants say.
+	merchantObj := obj("merchant", "acme%20shop")
+	orgReadTok := bankCall{t: t, f: f, hdr: map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "organisation:read"}}
+	bothTok := bankCall{t: t, f: f, hdr: map[string]string{"X-Test-User": f.ids["alice"], "X-Test-Token-Grants": "organisation:read,merchants:read"}}
+	for _, who := range []struct {
+		name string
+		c    bankCall
+	}{{"read-only role", reader}, {"organisation:read token", orgReadTok}} {
+		if code, _, _ := who.c.do("GET", merchantObj, ""); code != 403 {
+			t.Errorf("%s reading a merchant's assignments: %d, want 403", who.name, code)
+		}
+	}
+	if code, _, _ := bothTok.do("GET", merchantObj, ""); code != 200 {
+		t.Errorf("token with organisation:read and merchants:read: %d, want 200", code)
+	}
+	if code, _, _ := orgReadTok.do("GET", obj("transaction", txID), ""); code != 200 {
+		t.Errorf("organisation:read token on a transaction: %d, want 200", code)
+	}
 	for p, want := range map[string]int{obj("transaction", "01JZ0000000000000000009999"): 404, obj("widget", txID): 400, obj("transaction", "nope"): 400, obj("merchant", "Not%20A%20Key"): 400} {
 		if code, _, _ := admin.do("GET", p, ""); code != want {
 			t.Errorf("GET %s: %d, want %d", p, code, want)

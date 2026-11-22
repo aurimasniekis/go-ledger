@@ -356,6 +356,9 @@ var (
 	ErrParentArchived = errors.New("the parent category is archived: unarchive it first")
 	// ErrNoAssignment means there is nothing to remove or reset.
 	ErrNoAssignment = errors.New("there is no such assignment")
+	// ErrInheritedAssignment means the assignment a reset would remove is
+	// inherited from the pending transaction this one replaced; reset it there.
+	ErrInheritedAssignment = errors.New("the assignment is inherited from the pending transaction it replaces; reset it there")
 	// ErrNotApplicable means the definition cannot apply to the object type.
 	ErrNotApplicable = errors.New("buckets hold commitments and accounts only")
 )

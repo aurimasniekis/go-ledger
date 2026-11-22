@@ -9,9 +9,7 @@ package organisation
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -485,6 +483,13 @@ func (s *Store) DeleteDefinition(ctx context.Context, actor audit.Actor, k organ
 	return res, err
 }
 
+// reassignedBy is the SET clause that records who moved a row. Only the person's
+// own rows become the mover's: the person's decision concerns the definition,
+// not each object's classification, so a rule's or model's row keeps its
+// origin, source, who set it and when, and only its definition changes.
+const reassignedBy = "set_by_kind = CASE WHEN origin = 'user' THEN ? ELSE set_by_kind END, set_by_user = CASE WHEN origin = 'user' THEN ? ELSE set_by_user END, " +
+	"set_by_via = CASE WHEN origin = 'user' THEN ? ELSE set_by_via END, set_at = CASE WHEN origin = 'user' THEN ? ELSE set_at END"
+
 func (s *Store) reassign(ctx context.Context, tx *sql.Tx, actor audit.Actor, k organisation.Kind, from, to string, at time.Time) (int, error) {
 	kind, user, via := whoOf(actor)
 	ts := store.Timestamp{Time: at}
@@ -492,7 +497,7 @@ func (s *Store) reassign(ctx context.Context, tx *sql.Tx, actor audit.Actor, k o
 	var err error
 	switch k {
 	case organisation.KindCategory:
-		moved, err = tx.ExecContext(ctx, "UPDATE category_assignments SET category_id = ?, origin = 'user', source = '', set_by_kind = ?, set_by_user = ?, set_by_via = ?, set_at = ? WHERE category_id = ?",
+		moved, err = tx.ExecContext(ctx, "UPDATE category_assignments SET category_id = ?, "+reassignedBy+" WHERE category_id = ?",
 			to, kind, user, via, ts, from)
 	case organisation.KindLabel:
 		// An object that already has the replacement (or whose person removed
@@ -501,7 +506,7 @@ func (s *Store) reassign(ctx context.Context, tx *sql.Tx, actor audit.Actor, k o
 			"SELECT 1 FROM label_assignments t WHERE t.object_type = label_assignments.object_type AND t.object_id = label_assignments.object_id AND t.label_id = ?)", from, to); err != nil {
 			return 0, err
 		}
-		moved, err = tx.ExecContext(ctx, "UPDATE label_assignments SET label_id = ?, origin = 'user', source = '', set_by_kind = ?, set_by_user = ?, set_by_via = ?, set_at = ? WHERE label_id = ? AND removed = 0",
+		moved, err = tx.ExecContext(ctx, "UPDATE label_assignments SET label_id = ?, "+reassignedBy+" WHERE label_id = ? AND removed = 0",
 			to, kind, user, via, ts, from)
 	default:
 		moved, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO bucket_members (bucket_id, object_type, object_id, commitment_id, account_id, added_by_kind, added_by_user, added_by_via, added_at) "+
@@ -654,7 +659,8 @@ func readLabelRows(ctx context.Context, tx *sql.Tx, typ organisation.ObjectType,
 }
 
 // effective is what holds for an object: the nearest category row along the
-// lineage, and each label's nearest row.
+// lineage, and each label's nearest row, except that a farther row the nearer
+// one may not replace (organisation.CanReplace) wins.
 type effective struct {
 	category *catRow
 	labels   map[string]labelRow
@@ -668,27 +674,30 @@ func loadEffective(ctx context.Context, tx *sql.Tx, obj organisation.ObjectRef) 
 		return e, err
 	}
 	for i, id := range ids {
-		if e.category == nil {
-			r, err := readCategoryRow(ctx, tx, obj.Type, id)
-			if err != nil {
-				return e, err
-			}
-			if r != nil {
-				r.inherited = i > 0
-				e.category = r
-			}
+		r, err := readCategoryRow(ctx, tx, obj.Type, id)
+		if err != nil {
+			return e, err
+		}
+		// The nearest row wins, unless it could not replace this farther one:
+		// an inherited user row outranks the object's own rule or model row.
+		if r != nil && (e.category == nil || !organisation.CanReplace(r.origin, e.category.origin)) {
+			r.inherited = i > 0
+			e.category = r
 		}
 		rows, err := readLabelRows(ctx, tx, obj.Type, id)
 		if err != nil {
 			return e, err
 		}
 		for _, r := range rows {
-			if _, seen := e.labels[r.labelID]; seen {
+			cur, seen := e.labels[r.labelID]
+			if seen && organisation.CanReplace(r.origin, cur.origin) {
 				continue
 			}
 			r.inherited = i > 0
 			e.labels[r.labelID] = r
-			e.order = append(e.order, r.labelID)
+			if !seen {
+				e.order = append(e.order, r.labelID)
+			}
 		}
 	}
 	return e, nil
@@ -777,12 +786,12 @@ func (s *Store) Get(ctx context.Context, obj organisation.ObjectRef) (organisati
 	return out, err
 }
 
-// auditTarget names an object in the audit log. A merchant is identified by a
-// hash of its key: the key is derived from a name, which is free text.
+// auditTarget names an object in the audit log. A merchant is not identified
+// at all: its key is derived from bank text, and a digest of a guessable name
+// can be reversed with a dictionary.
 func auditTarget(obj organisation.ObjectRef) (typ, id string) {
 	if obj.Type == organisation.ObjectMerchant {
-		h := sha256.Sum256([]byte(obj.ID))
-		return string(obj.Type), hex.EncodeToString(h[:8])
+		return string(obj.Type), ""
 	}
 	return string(obj.Type), obj.ID
 }
@@ -860,7 +869,9 @@ func upsertCategory(ctx context.Context, tx *sql.Tx, obj organisation.ObjectRef,
 
 // ResetCategory forgets the person's choice for an object (a category, or
 // none), so a rule or a model may assign again. It returns
-// [organisation.ErrNoAssignment] when the object has no row of its own.
+// [organisation.ErrNoAssignment] when the object has no category assignment,
+// and [organisation.ErrInheritedAssignment] when it only inherits one from the
+// pending transaction it replaces.
 func (s *Store) ResetCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef) (organisation.Assignments, error) {
 	if err := checkObject(obj); err != nil {
 		return organisation.Assignments{}, err
@@ -876,6 +887,13 @@ func (s *Store) ResetCategory(ctx context.Context, actor audit.Actor, obj organi
 			return err
 		}
 		if prev == nil {
+			e, err := loadEffective(ctx, tx, obj)
+			if err != nil {
+				return err
+			}
+			if e.category != nil && e.category.inherited {
+				return organisation.ErrInheritedAssignment
+			}
 			return organisation.ErrNoAssignment
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM category_assignments WHERE object_type = ? AND object_id = ?", string(obj.Type), obj.ID); err != nil {
