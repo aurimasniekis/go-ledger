@@ -12,7 +12,8 @@ import (
 // TestMain migrates one database for the whole test binary and has every new
 // database of a test start from a copy of it. Under -race each run of the 24
 // embedded migrations costs about two seconds, and the tests open hundreds of
-// databases; the copy is byte-identical to what Open would have produced.
+// databases; the copy is byte-identical to what Open would have produced, except that
+// schema_migrations.applied_at holds the seed's time, not the time of Open.
 // Tests that inject their own migrations or clock still migrate for real.
 func TestMain(m *testing.M) {
 	os.Exit(runTests(m))
