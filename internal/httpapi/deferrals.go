@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
@@ -34,6 +36,14 @@ const (
 	CodeDeferralPlanUndone Code = "deferral_plan_undone"
 	// CodeAdjustmentRemoved: the adjustment was already removed.
 	CodeAdjustmentRemoved Code = "deferral_adjustment_removed"
+	// CodeAdjustmentPaid: the adjustment is already marked paid.
+	CodeAdjustmentPaid Code = "deferral_adjustment_paid"
+	// CodeAdjustmentNotPaid: the adjustment is not marked paid, so there is
+	// no marker to clear.
+	CodeAdjustmentNotPaid Code = "deferral_adjustment_not_paid"
+	// CodeUnpaidAdjustments: the plan still has a fee that is planned; mark
+	// it paid or remove it before undoing the plan.
+	CodeUnpaidAdjustments Code = "deferral_adjustments_unpaid"
 )
 
 type deferralAdjustmentJSON struct {
@@ -45,6 +55,11 @@ type deferralAdjustmentJSON struct {
 	// RemovedAt is set once the adjustment was removed: it is kept as
 	// history and no longer counts.
 	RemovedAt *time.Time `json:"removed_at"`
+	// PaidAt and PaidBy are when and by whom the adjustment was marked paid
+	// (null while it is still planned). The marker is reversible and is not
+	// payment evidence for the occurrence.
+	PaidAt *time.Time   `json:"paid_at"`
+	PaidBy *deciderJSON `json:"paid_by"`
 }
 
 // deferralPlanJSON is the API representation of a deferral plan. It keeps
@@ -75,14 +90,28 @@ type deferralPlanJSON struct {
 	// GraceUntil is the planned date of an active documented_grace plan;
 	// WithinGrace is true while the occurrence is overdue and today is not
 	// after it. The occurrence is overdue either way.
-	GraceUntil      *calendar.Date           `json:"grace_until"`
-	WithinGrace     bool                     `json:"within_grace"`
-	AdjustmentTotal money.Money              `json:"adjustment_total"`
-	Adjustments     []deferralAdjustmentJSON `json:"adjustments"`
-	Version         int64                    `json:"version"`
-	CreatedAt       time.Time                `json:"created_at"`
-	UpdatedAt       time.Time                `json:"updated_at"`
-	UndoneAt        *time.Time               `json:"undone_at"`
+	GraceUntil  *calendar.Date `json:"grace_until"`
+	WithinGrace bool           `json:"within_grace"`
+	// Missed is true while the plan is active, its planned date has passed
+	// and the occurrence still owes something ("plan date passed, still
+	// owed"). It is derived on every read, never stored, and is not payment
+	// state: it clears when the occurrence is paid, the plan is revised to
+	// a later date or undone.
+	Missed bool `json:"missed"`
+	// MissedReason is why it is missed: "principal" (the occurrence is overdue
+	// and still owes something) or "fee" (a recorded fee is still planned after
+	// the plan date, even when the principal is paid); null when not missed.
+	MissedReason *string `json:"missed_reason"`
+	// AdjustmentTotal sums the adjustments not removed; UnpaidAdjustmentTotal
+	// the ones still planned (neither removed nor marked paid), the amount the
+	// monthly view counts in the planned month.
+	AdjustmentTotal       money.Money              `json:"adjustment_total"`
+	UnpaidAdjustmentTotal money.Money              `json:"unpaid_adjustment_total"`
+	Adjustments           []deferralAdjustmentJSON `json:"adjustments"`
+	Version               int64                    `json:"version"`
+	CreatedAt             time.Time                `json:"created_at"`
+	UpdatedAt             time.Time                `json:"updated_at"`
+	UndoneAt              *time.Time               `json:"undone_at"`
 }
 
 // toDeferralPlanJSON converts a plan with its occurrence's payment state as
@@ -91,6 +120,7 @@ func toDeferralPlanJSON(p deferrals.Plan, due calendar.Date, st payments.State, 
 	out := deferralPlanJSON{ID: p.ID, OccurrenceID: p.OccurrenceID, CommitmentID: p.CommitmentID, PlanType: p.Type, State: p.State(),
 		PlannedDate: p.PlannedDate, PlannedMonth: p.PlannedMonth(), Reason: p.Reason, OriginalDueDate: p.OriginalDueDate, OriginalAmount: p.OriginalAmount,
 		OutstandingWhenPlanned: p.OutstandingWhenPlanned, OccurrenceStatus: st.Status, OutstandingAmount: st.Outstanding, AdjustmentTotal: p.AdjustmentTotal(),
+		UnpaidAdjustmentTotal: p.UnpaidAdjustmentTotal(), Missed: p.Missed(st, today), MissedReason: missedReason(p.MissedReason(st, today)),
 		Adjustments: make([]deferralAdjustmentJSON, len(p.Adjustments)), Version: p.Version, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, UndoneAt: p.UndoneAt}
 	overdue := st.Status != payments.StatusPaid && st.Timing == payments.StatusOverdue
 	if overdue {
@@ -101,7 +131,19 @@ func toDeferralPlanJSON(p deferrals.Plan, due calendar.Date, st payments.State, 
 		out.WithinGrace = overdue && !today.After(until)
 	}
 	for i, a := range p.Adjustments {
-		out.Adjustments[i] = deferralAdjustmentJSON{ID: a.ID, Kind: a.Kind, Amount: a.Amount, Note: a.Note, CreatedAt: a.CreatedAt, RemovedAt: a.RemovedAt}
+		out.Adjustments[i] = deferralAdjustmentJSON{ID: a.ID, Kind: a.Kind, Amount: a.Amount, Note: a.Note, CreatedAt: a.CreatedAt, RemovedAt: a.RemovedAt, PaidAt: a.PaidAt}
+		if a.PaidBy != nil {
+			by := deciderJSON{Kind: a.PaidBy.Kind}
+			if a.PaidBy.UserID != "" {
+				id := a.PaidBy.UserID
+				by.UserID = &id
+			}
+			if a.PaidBy.Via != "" {
+				v := a.PaidBy.Via
+				by.Via = &v
+			}
+			out.Adjustments[i].PaidBy = &by
+		}
 	}
 	return out
 }
@@ -155,6 +197,12 @@ func deferralError(err error) error {
 		return conflict(CodeDeferralPlanUndone, "")
 	case errors.Is(err, deferrals.ErrAdjustmentRemoved):
 		return conflict(CodeAdjustmentRemoved, "")
+	case errors.Is(err, deferrals.ErrAdjustmentPaid):
+		return conflict(CodeAdjustmentPaid, "")
+	case errors.Is(err, deferrals.ErrAdjustmentNotPaid):
+		return conflict(CodeAdjustmentNotPaid, "")
+	case errors.Is(err, deferrals.ErrUnpaidAdjustments):
+		return conflict(CodeUnpaidAdjustments, "")
 	case errors.Is(err, deferrals.ErrNoChange):
 		return conflict(CodeConflict, "")
 	}
@@ -559,6 +607,36 @@ func registerDeferrals(s *Server, st deferrals.Store, occ occurrences.Reader, pa
 		}
 		writePlan(w, r, http.StatusOK, p)
 	}))
+
+	// POST …/paid marks an adjustment paid and POST …/unpaid clears the
+	// marker again (D-DF 2): the fee is planned until one of them, and
+	// neither touches the occurrence.
+	paid := func(change func(deferrals.Store) func(context.Context, audit.Actor, string, string, int64) (deferrals.Plan, error)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			expected, err := ExpectedVersion(r, nil)
+			if err != nil {
+				WriteError(w, r, err)
+				return
+			}
+			id, adjustmentID := r.PathValue("id"), r.PathValue("adjustment_id")
+			if err := checkID("adjustment_id must be an adjustment identifier")(adjustmentID); err != nil {
+				WriteError(w, r, Validation("adjustment_id", err.Error()))
+				return
+			}
+			p, err := change(st)(r.Context(), matchActor(r), id, adjustmentID, expected)
+			if err != nil {
+				failed(w, r, id, err)
+				return
+			}
+			writePlan(w, r, http.StatusOK, p)
+		}
+	}
+	s.HandleAPI("POST "+item+"/adjustments/{adjustment_id}/paid", Requires(grantCommitmentsWrite), paid(func(s deferrals.Store) func(context.Context, audit.Actor, string, string, int64) (deferrals.Plan, error) {
+		return s.MarkAdjustmentPaid
+	}))
+	s.HandleAPI("POST "+item+"/adjustments/{adjustment_id}/unpaid", Requires(grantCommitmentsWrite), paid(func(s deferrals.Store) func(context.Context, audit.Actor, string, string, int64) (deferrals.Plan, error) {
+		return s.UnmarkAdjustmentPaid
+	}))
 }
 
 // eventCursor is a history entry's page cursor: its plan version.
@@ -569,4 +647,12 @@ func sameText(a, b *string) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+// missedReason is the JSON form of a missed reason: null when not missed.
+func missedReason(r string) *string {
+	if r == "" {
+		return nil
+	}
+	return &r
 }

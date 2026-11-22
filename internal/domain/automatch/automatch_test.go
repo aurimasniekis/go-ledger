@@ -253,6 +253,111 @@ func TestDateWindow(t *testing.T) {
 	}
 }
 
+func planned(o Occurrence, day string) Occurrence {
+	d := date(day)
+	o.PlannedDate = &d
+	return o
+}
+
+func planOf(tx []Transaction, os ...Occurrence) []Action {
+	return Plan(Snapshot{Transactions: tx, Occurrences: os})
+}
+
+// D-DF 7: an active deferral plan also opens a +/-3 day confirmation window
+// around the planned date, in addition to the due-date window.
+func TestPlannedDateWindowConfirms(t *testing.T) {
+	o := planned(occ("o1", "Rent", "800.00", "2026-10-01"), "2026-10-20")
+	for day, want := range map[string]ActionKind{
+		"2026-10-17": ActionConfirm, "2026-10-20": ActionConfirm, "2026-10-23": ActionConfirm, // planned window
+		"2026-10-02": ActionConfirm,                              // due-date window still works
+		"2026-10-16": ActionSuggest, "2026-10-24": ActionSuggest, // just outside the planned window, still a candidate (7 days)
+		"2026-10-10": "", // outside every window: not a candidate
+	} {
+		plan := planOf([]Transaction{booked("t1", "-800.00", day, "")}, o)
+		var got ActionKind
+		if len(plan) == 1 {
+			got = plan[0].Kind
+		}
+		if got != want {
+			t.Errorf("%s: %q, want %q", day, got, want)
+		}
+	}
+	a := only(t, planOf([]Transaction{booked("t1", "-800.00", "2026-10-22", "")}, o))
+	if !strings.Contains(a.Reason, "planned date") || a.Checks.PlannedDays == nil || *a.Checks.PlannedDays != 2 {
+		t.Errorf("reason %q checks %+v", a.Reason, a.Checks)
+	}
+}
+
+// Without a plan, or with an undone one (the snapshot leaves PlannedDate nil),
+// the planned date does not widen the window.
+func TestNoPlanOrUndonePlanKeepsDueDateWindow(t *testing.T) {
+	o := occ("o1", "Rent", "800.00", "2026-10-01")
+	a := only(t, planOf([]Transaction{booked("t1", "-800.00", "2026-10-06", "")}, o))
+	if a.Kind != ActionSuggest || len(a.Checks.Failed()) != 1 || a.Checks.Failed()[0] != "date_outside_window" || a.Checks.PlannedDays != nil {
+		t.Errorf("%s %+v", a.Kind, a.Checks)
+	}
+}
+
+// Every other D9 safeguard still applies inside the planned window.
+func TestPlannedWindowKeepsOtherSafeguards(t *testing.T) {
+	o := planned(occ("o1", "Rent", "800.00", "2026-10-01"), "2026-10-20")
+	cases := map[string]struct {
+		tx   Transaction
+		want string
+	}{
+		"pending":      {pending("t1", "-800.00", "2026-10-20", ""), "suggest:t1>o1"},
+		"short":        {booked("t1", "-790.00", "2026-10-20", ""), "suggest:t1>o1"},
+		"above":        {booked("t1", "-810.00", "2026-10-20", ""), "suggest:t1>o1"},
+		"other ccy":    {Transaction{ID: "t1", Amount: money.MustParse("-800.00", "USD"), Status: banking.StatusBooked, Date: date("2026-10-20")}, ""},
+		"incoming":     {booked("t1", "800.00", "2026-10-20", ""), ""},
+		"exact booked": {booked("t1", "-800.00", "2026-10-20", ""), "confirm:t1>o1"},
+	}
+	for name, c := range cases {
+		if got := kinds(planOf([]Transaction{c.tx}, o)); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+	// The user tolerance applies (short only).
+	tol := withTolerance(o, "5.00")
+	if got := kinds(planOf([]Transaction{booked("t1", "-796.00", "2026-10-20", "")}, tol)); got != "confirm:t1>o1" {
+		t.Errorf("within tolerance: %q", got)
+	}
+	if got := kinds(planOf([]Transaction{booked("t1", "-790.00", "2026-10-20", "")}, tol)); got != "suggest:t1>o1" {
+		t.Errorf("beyond tolerance: %q", got)
+	}
+}
+
+// Ambiguity: two transactions inside the planned window, or one transaction
+// that is a candidate of two occurrences, are never confirmed.
+func TestPlannedWindowAmbiguity(t *testing.T) {
+	o := planned(occ("o1", "Rent", "800.00", "2026-10-01"), "2026-10-20")
+	p := planOf([]Transaction{booked("t1", "-800.00", "2026-10-19", ""), booked("t2", "-800.00", "2026-10-21", "")}, o)
+	if strings.Contains(kinds(p), "confirm") || len(p) != 2 {
+		t.Errorf("two transactions: %q", kinds(p))
+	}
+	// A due-date-window transaction and a planned-window one for the same occurrence.
+	p = planOf([]Transaction{booked("t1", "-800.00", "2026-10-02", ""), booked("t2", "-800.00", "2026-10-20", "")}, o)
+	if strings.Contains(kinds(p), "confirm") || len(p) != 2 {
+		t.Errorf("due and planned window: %q", kinds(p))
+	}
+	// Another occurrence of the same amount whose due date is near the planned date.
+	o2 := occ("o2", "Gym", "800.00", "2026-10-21")
+	p = planOf([]Transaction{booked("t1", "-800.00", "2026-10-20", "")}, o, o2)
+	if strings.Contains(kinds(p), "confirm") || len(p) != 2 {
+		t.Errorf("two occurrences: %q", kinds(p))
+	}
+}
+
+// A transaction already confirmed elsewhere is not a candidate, planned or not.
+func TestPlannedWindowAssignedTransaction(t *testing.T) {
+	o := planned(occ("o1", "Rent", "800.00", "2026-10-01"), "2026-10-20")
+	p := Plan(Snapshot{Transactions: []Transaction{booked("t1", "-800.00", "2026-10-20", "")}, Occurrences: []Occurrence{o},
+		Matches: []Existing{{ID: "m1", TransactionID: "t1", OccurrenceID: "o9", State: matches.StateConfirmed, Origin: matches.OriginUser, ByPerson: true}}})
+	if len(p) != 0 {
+		t.Errorf("assigned: %q", kinds(p))
+	}
+}
+
 func TestCurrencyAndDirection(t *testing.T) {
 	o := occ("o1", "Rent", "800.00", "2026-10-01")
 	gbp := Transaction{ID: "t1", Amount: money.MustParse("-800.00", "GBP"), Status: banking.StatusBooked, Date: date("2026-10-01")}

@@ -177,6 +177,32 @@ func TestCheckAuto(t *testing.T) {
 	}
 }
 
+// D-DF 7: an active plan's planned date opens a second 3-day window.
+func TestCheckAutoPlanned(t *testing.T) {
+	none := money.Money{}
+	tx := booked("-12.00")
+	tx.Date = calendar.MustDate(2026, time.October, 20)
+	planned := calendar.MustDate(2026, time.October, 17)
+	if err := matches.CheckAutoPlanned(tx, 0, eur("12.00"), occ("12.00"), none, nil); !errors.Is(err, matches.ErrAutoDate) {
+		t.Errorf("no plan: %v", err)
+	}
+	if err := matches.CheckAutoPlanned(tx, 0, eur("12.00"), occ("12.00"), none, &planned); err != nil {
+		t.Errorf("3 days after the planned date: %v", err)
+	}
+	tx.Date = calendar.MustDate(2026, time.October, 21)
+	if err := matches.CheckAutoPlanned(tx, 0, eur("12.00"), occ("12.00"), none, &planned); !errors.Is(err, matches.ErrAutoDate) {
+		t.Errorf("4 days after the planned date: %v", err)
+	}
+	// The other safeguards are unchanged inside the planned window.
+	tx.Date = planned
+	if err := matches.CheckAutoPlanned(tx, 1, eur("12.00"), occ("12.00"), none, &planned); !errors.Is(err, matches.ErrAutoNotOneToOne) {
+		t.Errorf("other open match: %v", err)
+	}
+	if err := matches.CheckAutoPlanned(tx, 0, eur("12.00"), occ("12.50"), none, &planned); !errors.Is(err, matches.ErrAutoAmount) {
+		t.Errorf("amount: %v", err)
+	}
+}
+
 func TestNeedsReview(t *testing.T) {
 	mk := func(state matches.State, mut func(*matches.Transaction)) matches.Match {
 		tx := booked("-5.00")

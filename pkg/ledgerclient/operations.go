@@ -58,6 +58,8 @@ var (
 	opDeferralHistory      = operation{ID: "listDeferralPlanHistory", Method: http.MethodGet, Path: "/deferral-plans/{id}/history", Query: []string{"limit", "cursor"}}
 	opAddDeferralAdjust    = operation{ID: "addDeferralAdjustment", Method: http.MethodPost, Path: "/deferral-plans/{id}/adjustments"}
 	opRemoveDeferralAdjust = operation{ID: "removeDeferralAdjustment", Method: http.MethodDelete, Path: "/deferral-plans/{id}/adjustments/{adjustment_id}"}
+	opMarkAdjustmentPaid   = operation{ID: "markDeferralAdjustmentPaid", Method: http.MethodPost, Path: "/deferral-plans/{id}/adjustments/{adjustment_id}/paid"}
+	opUnmarkAdjustmentPaid = operation{ID: "unmarkDeferralAdjustmentPaid", Method: http.MethodPost, Path: "/deferral-plans/{id}/adjustments/{adjustment_id}/unpaid"}
 
 	opListTokens           = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
 	opGetToken             = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
@@ -122,7 +124,7 @@ var operations = []operation{
 	opSetOverride, opUndoOverride,
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch, opUnconfirmMatch, opReplaceMatch,
 	opRunMatching,
-	opListDeferrals, opCreateDeferral, opGetDeferral, opReviseDeferral, opUndoDeferral, opDeferralHistory, opAddDeferralAdjust, opRemoveDeferralAdjust,
+	opListDeferrals, opCreateDeferral, opGetDeferral, opReviseDeferral, opUndoDeferral, opDeferralHistory, opAddDeferralAdjust, opRemoveDeferralAdjust, opMarkAdjustmentPaid, opUnmarkAdjustmentPaid,
 	opListBankApps, opListBankInstitutions, opListBankConns, opStartBankConn, opGetBankConn, opReconnectBankConn, opRefreshBankConn, opDisconnectBankConn,
 	opListRates, opRatesStatus, opRefreshRates,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,

@@ -76,6 +76,8 @@ type Deps struct {
 	Matches matches.Store
 	// Merchants stores merchant enrichments and decisions (ADR-0051).
 	Merchants merchants.Store
+	// MerchantSources describes the merchant-identification sources (ADR-0054).
+	MerchantSources []MerchantSourceInfo
 	// Organisation stores categories, labels, buckets and their assignments
 	// (ADR-0053).
 	Organisation organisation.Store
@@ -158,6 +160,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
 	registerMerchants(s, d.Merchants)
+	registerMerchantSources(s, d.MerchantSources)
 	registerOrganisation(s, d.Organisation)
 	registerDeferrals(s, d.Deferrals, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerBankConnections(s, d.Banking)

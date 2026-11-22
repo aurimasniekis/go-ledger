@@ -73,8 +73,9 @@ func snapshotTransactions(ctx context.Context, tx *sql.Tx) ([]automatch.Transact
 }
 
 func (s *Store) snapshotOccurrences(ctx context.Context, tx *sql.Tx) ([]automatch.Occurrence, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT o.id, o.commitment_id, c.name, o.due_date, o.amount, o.currency, c.match_tolerance_amount, c.match_tolerance_currency"+
+	rows, err := tx.QueryContext(ctx, "SELECT o.id, o.commitment_id, c.name, o.due_date, o.amount, o.currency, c.match_tolerance_amount, c.match_tolerance_currency, dp.planned_date"+
 		" FROM commitment_occurrences o JOIN commitments c ON c.id = o.commitment_id"+
+		" LEFT JOIN deferral_plans dp ON dp.occurrence_id = o.id AND dp.undone_at IS NULL"+
 		" WHERE o.cancelled_at IS NULL AND c.deleted_at IS NULL"+
 		" AND NOT EXISTS (SELECT 1 FROM payment_matches m WHERE m.occurrence_id = o.id AND m.state = 'confirmed')"+
 		" ORDER BY o.due_date, o.id")
@@ -89,7 +90,8 @@ func (s *Store) snapshotOccurrences(ctx context.Context, tx *sql.Tx) ([]automatc
 		var due sqlvalue.Date
 		var tolAmt sql.Null[sqlvalue.Amount]
 		var tolCur sql.Null[sqlvalue.Currency]
-		if err := rows.Scan(&o.ID, &o.CommitmentID, &o.Name, &due, &amt, &cur, &tolAmt, &tolCur); err != nil {
+		var planned sql.Null[sqlvalue.Date]
+		if err := rows.Scan(&o.ID, &o.CommitmentID, &o.Name, &due, &amt, &cur, &tolAmt, &tolCur, &planned); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -106,6 +108,10 @@ func (s *Store) snapshotOccurrences(ctx context.Context, tx *sql.Tx) ([]automatc
 			o.Tolerance = &t
 		}
 		o.DueDate = due.Date
+		if planned.Valid {
+			d := planned.V.Date
+			o.PlannedDate = &d
+		}
 		all = append(all, o)
 	}
 	if err := rows.Close(); err != nil {

@@ -142,6 +142,7 @@ func keys(m map[string]bool) []string {
 var notImplemented = map[string]string{
 	"getTransactionMerchant":         "merchant identity (E1, ADR-0051): the client method, CLI command and MCP tool arrive with the merchant UI and its slice of P-MCP2; the routes are usable through Client.Raw",
 	"reviewTransactionMerchant":      "merchant identity (E1, ADR-0051): see getTransactionMerchant",
+	"listMerchantSources":            "merchant sources (E2, ADR-0054): see getTransactionMerchant",
 	"clearTransactionMerchantReview": "merchant identity (E1, ADR-0051): see getTransactionMerchant",
 	"getOpenAPIJSON":                 "the API description itself; the client is built against the document",
 	"getOpenAPIYAML":                 "the API description itself",

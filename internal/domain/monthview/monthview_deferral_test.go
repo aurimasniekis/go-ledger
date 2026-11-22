@@ -144,14 +144,16 @@ func TestPlannedTotalsAddOnlyExplicitAdjustments(t *testing.T) {
 	}
 }
 
-func TestPaidDeferredOccurrencePlansNothingAndKeepsItsPlan(t *testing.T) {
+// A fee stays planned after the principal is paid (D-DF 2): the paid
+// occurrence plans nothing, its own fee still counts in the plan's month.
+func TestPaidDeferredOccurrenceKeepsItsPlannedFee(t *testing.T) {
 	f := newDeferralFixture(t)
 	p := f.plan(f.oct, "2026-11-20", "2.50")
 	paid := map[string]payments.Facts{"A": {Evidence: []payments.Evidence{{Kind: payments.EvidenceBankTransaction, ID: "m", OccurrenceID: "A", Amount: mustMoney(t, "50.00", "EUR"), Date: date(t, "2026-11-20")}}}}
 	nov := f.month("2026-11", "2026-11-21", paid, p)
 	tot := totalsEUR(t, nov)
-	if tot.Planned.String() != "50.00 EUR" || tot.CarriedIn.String() != "0.00 EUR" || tot.Adjustments.String() != "0.00 EUR" {
-		t.Errorf("planned %s carried in %s adjustments %s, want only November's own 50.00", tot.Planned, tot.CarriedIn, tot.Adjustments)
+	if tot.Planned.String() != "52.50 EUR" || tot.CarriedIn.String() != "0.00 EUR" || tot.Adjustments.String() != "2.50 EUR" {
+		t.Errorf("planned %s carried in %s adjustments %s, want November's own 50.00 plus the still planned 2.50 fee", tot.Planned, tot.CarriedIn, tot.Adjustments)
 	}
 	if len(nov.CarriedIn) != 1 || nov.CarriedIn[0].State.Status != payments.StatusPaid || nov.CarriedIn[0].Deferral == nil {
 		t.Errorf("carried in %+v, want the paid occurrence listed with its plan", nov.CarriedIn)
@@ -222,5 +224,40 @@ func TestCarriedInCurrencyGetsItsOwnTotals(t *testing.T) {
 	}
 	if nov.Totals[0].Planned.String() != "50.00 EUR" {
 		t.Errorf("EUR planned %s, want 50.00: currencies are never combined", nov.Totals[0].Planned)
+	}
+}
+
+// A fee marked paid no longer counts as planned; an unpaid one still does
+// after the principal is paid (D-DF 2). Each fee counts under its own
+// currency, never merged into the occurrence's.
+func TestPaidMarkerRemovesOnlyThatFeeFromPlannedTotals(t *testing.T) {
+	f := newDeferralFixture(t)
+	p := f.plan(f.oct, "2026-11-20", "2.50", "0.75", "1.00")
+	paidAt := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	p.Adjustments[1].PaidAt = &paidAt
+	removedAt := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	p.Adjustments[2].RemovedAt = &removedAt
+	tot := totalsEUR(t, f.month("2026-11", "2026-11-01", nil, p))
+	if tot.Adjustments.String() != "2.50 EUR" || tot.Planned.String() != "102.50 EUR" {
+		t.Errorf("adjustments %s planned %s, want only the unpaid, unremoved 2.50 (paid and removed ones do not count)", tot.Adjustments, tot.Planned)
+	}
+	p.Adjustments[1].PaidAt = nil // marking paid is reversible
+	tot = totalsEUR(t, f.month("2026-11", "2026-11-01", nil, p))
+	if tot.Adjustments.String() != "3.25 EUR" {
+		t.Errorf("adjustments %s after clearing the marker, want 3.25", tot.Adjustments)
+	}
+}
+
+func TestPlannedFeeCountsUnderItsOwnCurrency(t *testing.T) {
+	f := newDeferralFixture(t)
+	p := f.plan(f.oct, "2026-11-20", "2.50")
+	p.Adjustments = append(p.Adjustments, deferrals.Adjustment{ID: "U", PlanID: p.ID, Kind: deferrals.AdjustmentInterest, Amount: mustMoney(t, "4.00", "USD")})
+	s := f.month("2026-11", "2026-11-01", nil, p)
+	if len(s.Totals) != 2 || s.Totals[0].Currency.Code() != "EUR" || s.Totals[1].Currency.Code() != "USD" {
+		t.Fatalf("totals %+v, want EUR and USD entries", s.Totals)
+	}
+	eur, usd := s.Totals[0], s.Totals[1]
+	if eur.Adjustments.String() != "2.50 EUR" || usd.Adjustments.String() != "4.00 USD" || usd.Planned.String() != "4.00 USD" || usd.Due.String() != "0.00 USD" {
+		t.Errorf("EUR adjustments %s; USD adjustments %s planned %s due %s", eur.Adjustments, usd.Adjustments, usd.Planned, usd.Due)
 	}
 }

@@ -3078,7 +3078,8 @@ paths:
         and a date within 7 days of the due date. A pair is confirmed only
         when every safeguard of decision D9 passes: the exact amount (or short
         by at most the commitment's match_tolerance), a booked transaction,
-        dated within 3 days of the due date, the only candidate on both sides,
+        dated within 3 days of the due date (or, for an occurrence with an
+        active deferral plan, of its planned date), the only candidate on both sides,
         and neither already assigned. Every other candidate becomes a
         suggestion (state suggested, origin auto_rule) whose reason lists the
         safeguards that failed; the description similarity is shown as a hint
@@ -3107,6 +3108,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaymentMatchingRun"
+        default:
+          $ref: "#/components/responses/Error"
+  /merchants/sources:
+    get:
+      operationId: listMerchantSources
+      x-ledger-access: merchants:read
+      summary: The merchant-identification sources
+      description: |
+        Which sources identify merchants (task E2, ADR-0054; decision D15):
+        the built-in curated mapping and the reuse of the person's confirmed
+        mappings as suggestions, both local and always on, and a remote
+        source that is off unless the operator enabled it. For each: whether
+        it is on, what leaves the machine for a lookup (nothing for a local
+        source), the attribution its licence requires next to identities it
+        provided, whether its logo references are kept and how long its
+        answers are kept. Show the attribution wherever an identity from that
+        source (enrichment.source) is shown. Administrators only.
+      tags: [merchants]
+      responses:
+        "200":
+          description: The sources.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MerchantSource"
         default:
           $ref: "#/components/responses/Error"
   /transactions/{id}/merchant:
@@ -3549,7 +3582,10 @@ paths:
         in its own month again. Nothing about the occurrence or its payments
         changes. The plan and its history are kept (state undone) and never
         change again; the occurrence can be deferred anew. An optional
-        reason is kept in the history. Requires the version in If-Match or
+        reason is kept in the history. Refused with 409
+        deferral_adjustments_unpaid while a fee or interest adjustment is
+        still planned: mark it paid or remove it first, so a recorded fee never
+        drops out of the planned totals. Requires the version in If-Match or
         the body. Audited as deferral_plan.undone.
       tags: [deferral-plans]
       parameters:
@@ -3687,7 +3723,7 @@ paths:
       summary: Remove an adjustment from a deferral plan
       description: |
         Removes an adjustment of an active plan: it is kept as history
-        (removed_at) and no longer counts. Removing it again is a 409
+        (removed_at) and no longer counts, whether or not it was marked paid. Removing it again is a 409
         deferral_adjustment_removed. A malformed adjustment_id is a 400. Requires the plan's version in
         If-Match. Audited as deferral_plan.adjustment_removed.
       tags: [deferral-plans]
@@ -3696,6 +3732,82 @@ paths:
       responses:
         "200":
           description: The plan after the removal.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}/adjustments/{adjustment_id}/paid:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+      - name: adjustment_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: markDeferralAdjustmentPaid
+      x-ledger-access: commitments:write
+      summary: Mark a deferral plan adjustment paid
+      description: |
+        Records that the person paid a fee or interest adjustment of an active
+        plan (paid_at, paid_by). A recorded adjustment stays planned until it is
+        marked paid or removed: paying the occurrence's principal does not
+        settle it, and the marker is not payment evidence for the occurrence.
+        Marking it again is a 409 deferral_adjustment_paid; a removed
+        adjustment is a 409 deferral_adjustment_removed. Requires the plan's
+        version in If-Match. Audited as deferral_plan.adjustment_paid, without
+        amount or note.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The plan after marking the adjustment paid.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}/adjustments/{adjustment_id}/unpaid:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+      - name: adjustment_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: unmarkDeferralAdjustmentPaid
+      x-ledger-access: commitments:write
+      summary: Clear the paid marker of a deferral plan adjustment
+      description: |
+        Reverses marking an adjustment paid: it is planned again. An adjustment
+        that is not marked paid is a 409 deferral_adjustment_not_paid. Requires
+        the plan's version in If-Match. Audited as
+        deferral_plan.adjustment_unpaid.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The plan after clearing the marker.
           headers:
             ETag:
               $ref: "#/components/headers/ETag"
@@ -5338,7 +5450,7 @@ components:
       type: object
       description: An explicit fee, interest or other charge recorded on a plan, in the plan's currency.
       additionalProperties: false
-      required: [id, kind, amount, note, created_at, removed_at]
+      required: [id, kind, amount, note, created_at, removed_at, paid_at, paid_by]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -5355,6 +5467,15 @@ components:
           type: [string, "null"]
           format: date-time
           description: Set once removed; a removed adjustment is history and does not count.
+        paid_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the person marked the adjustment paid; null while it is still planned. Reversible, and never payment evidence for the occurrence.
+        paid_by:
+          description: Who marked it paid and how; null while it is still planned.
+          oneOf:
+            - $ref: "#/components/schemas/MatchActor"
+            - type: "null"
     DeferralPlan:
       type: object
       description: |
@@ -5367,7 +5488,7 @@ components:
         evidence changes.
       additionalProperties: false
       required: [id, occurrence_id, commitment_id, plan_type, state, planned_date, planned_month, reason, original_due_date, original_amount, outstanding_when_planned,
-        occurrence_status, outstanding_amount, overdue_since, grace_until, within_grace, adjustment_total, adjustments, version, created_at, updated_at, undone_at]
+        occurrence_status, outstanding_amount, overdue_since, grace_until, within_grace, missed, missed_reason, adjustment_total, unpaid_adjustment_total, adjustments, version, created_at, updated_at, undone_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -5408,8 +5529,23 @@ components:
         within_grace:
           type: boolean
           description: True while the occurrence is overdue and today is not after grace_until ("overdue, within documented grace until grace_until").
+        missed:
+          type: boolean
+          description: |
+            True while the plan is active, its planned date has passed (today is after it) and either the occurrence is overdue and still owes something ("principal") or a recorded fee is still planned, even when the principal is paid ("fee").
+            Derived on every read and never stored; it is not payment state. It clears when the occurrence is paid and every fee is paid or removed, the plan is revised to a later date or the plan is undone.
+        missed_reason:
+          description: Why the plan is missed; null when it is not. "principal" takes precedence over "fee".
+          oneOf:
+            - type: string
+              enum: [principal, fee]
+            - type: "null"
         adjustment_total:
           $ref: "#/components/schemas/Money"
+          description: The adjustments not removed, paid ones included.
+        unpaid_adjustment_total:
+          $ref: "#/components/schemas/Money"
+          description: The adjustments still planned (neither removed nor marked paid), which the monthly view counts in the planned month.
         adjustments:
           type: array
           description: Every adjustment, oldest first, removed ones included.
@@ -5434,7 +5570,7 @@ components:
       properties:
         action:
           type: string
-          enum: [created, revised, undone, adjustment_added, adjustment_removed]
+          enum: [created, revised, undone, adjustment_added, adjustment_removed, adjustment_paid, adjustment_unpaid]
         plan_version:
           $ref: "#/components/schemas/Version"
         plan_type:
@@ -5444,7 +5580,7 @@ components:
         reason:
           $ref: "#/components/schemas/DeferralReason"
         adjustment_id:
-          description: The adjustment added or removed; null for other changes.
+          description: The adjustment added, removed or marked paid or unpaid; null for other changes.
           oneOf:
             - $ref: "#/components/schemas/ID"
             - type: "null"
@@ -5998,6 +6134,36 @@ components:
             is still that person's.
           type: [string, "null"]
           enum: [session, token, mcp, system, null]
+    MerchantSource:
+      type: object
+      additionalProperties: false
+      required: [name, kind, enabled, description, sends_off_machine, attribution, stores_logo_ref, retention_hours]
+      description: One merchant-identification source (task E2, ADR-0054).
+      properties:
+        name:
+          type: string
+          description: The token stored as enrichment.source for this source's answers (curated, local_mapping, remote).
+        kind:
+          type: string
+          enum: [local, remote]
+        enabled:
+          type: boolean
+        description:
+          type: string
+        sends_off_machine:
+          type: array
+          description: What leaves the machine for one lookup; empty for a local source.
+          items:
+            type: string
+        attribution:
+          type: [string, "null"]
+          description: Text the source's licence requires next to identities it provided, or null.
+        stores_logo_ref:
+          type: boolean
+          description: Whether the logo references the source returns are kept. Ledger never downloads or copies a logo.
+        retention_hours:
+          type: [integer, "null"]
+          description: How long the source's answers are kept; null means until replaced. A person's decisions are never deleted.
     Merchant:
       type: object
       description: |
@@ -7222,6 +7388,9 @@ components:
             - deferral_plan_exists
             - deferral_plan_undone
             - deferral_adjustment_removed
+            - deferral_adjustment_paid
+            - deferral_adjustment_not_paid
+            - deferral_adjustments_unpaid
             - deferral_plan_currency
             - definition_archived
             - definition_in_use
