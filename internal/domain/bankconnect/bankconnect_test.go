@@ -397,16 +397,49 @@ func TestRefreshPastTheDeadlineKeepsRunning(t *testing.T) {
 	}
 }
 
+// B6e: while the run is not stored yet (a slow store) the deadline answer
+// does not claim a running refresh; once it is stored, it does.
+func TestRefreshDeadlineWaitsForTheRunToBeStored(t *testing.T) {
+	s := newSetup(t, banking.ConnectionActive, banking.NewSensitive("sess"))
+	s.svc.Facts = &viewStore{memStore: s.mem}
+	s.svc.RefreshTimeout = 20 * time.Millisecond
+	eng := &slowEngine{release: make(chan struct{}), store: make(chan struct{})}
+	s.svc.Engine = eng
+	go func() { time.Sleep(150 * time.Millisecond); close(eng.store) }() // the store commits after the deadline
+	start := time.Now()
+	v, err := s.svc.Refresh(context.Background(), alice, "conn-1")
+	if err != nil || !v.RefreshRunning {
+		t.Fatalf("Refresh = %+v, %v; want RefreshRunning", v, err)
+	}
+	select {
+	case <-eng.store:
+	default:
+		t.Fatal("the answer said running before the run was stored")
+	}
+	if time.Since(start) < 100*time.Millisecond {
+		t.Errorf("answered after %v, before the run was stored", time.Since(start))
+	}
+	close(eng.release)
+	if err := s.svc.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // slowEngine holds the refresh until released and records whether its context
 // was cancelled meanwhile.
 type slowEngine struct {
 	release chan struct{}
 	seen    chan struct{}
+	store   chan struct{} // when set, the run is stored once this is closed
 	mu      sync.Mutex
 	err     error
 }
 
 func (e *slowEngine) Refresh(ctx context.Context, _ banking.ConnectionID, _ banking.Provider) (bankimport.Result, error) {
+	if e.store != nil {
+		<-e.store // a slow store: the run is not stored until released
+	}
+	e.markStored(ctx)
 	select {
 	case <-e.release:
 	case <-ctx.Done():
@@ -415,6 +448,11 @@ func (e *slowEngine) Refresh(ctx context.Context, _ banking.ConnectionID, _ bank
 	e.err = ctx.Err()
 	e.mu.Unlock()
 	return bankimport.Result{Run: banking.RefreshRun{ID: "run-1", Outcome: banking.RefreshSucceeded}}, nil
+}
+
+// markStored plays the engine's "run stored" signal.
+func (e *slowEngine) markStored(ctx context.Context) {
+	bankimport.NotifyRunStarted(ctx, banking.RefreshRun{ID: "run-1", Outcome: banking.RefreshRunning})
 }
 
 // ctxErr is the context error seen when the engine stopped waiting; nil while
@@ -488,6 +526,7 @@ func TestRefreshAfterWaitIsRejected(t *testing.T) {
 type cancelAwareEngine struct{}
 
 func (cancelAwareEngine) Refresh(ctx context.Context, _ banking.ConnectionID, _ banking.Provider) (bankimport.Result, error) {
+	(&slowEngine{}).markStored(ctx)
 	<-ctx.Done()
 	return bankimport.Result{Run: banking.RefreshRun{ID: "run-1", Outcome: banking.RefreshInterrupted}}, ctx.Err()
 }
