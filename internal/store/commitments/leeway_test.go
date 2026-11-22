@@ -1,8 +1,10 @@
 package commitments
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
+	"github.com/aurimasniekis/go-ledger/internal/logging"
 )
 
 func TestLeewayRoundTripKeepsUnknownDistinct(t *testing.T) {
@@ -116,9 +119,16 @@ func TestGraceHookReadsOnlyWhatWasRecorded(t *testing.T) {
 	if !g.Recorded || g.Until == nil || g.Until.String() != "2026-01-10" {
 		t.Errorf("period: %+v", g)
 	}
-	// An unreadable commitment reports nothing recorded, never a date.
-	if g := grace(ctx, occurrences.Occurrence{CommitmentID: "01JD3Y4C8V9M2Q7W5R6T0XZBNZ"}); g != (payments.Grace{}) {
+	// An unreadable commitment reports nothing recorded, never a date, and the
+	// context's logger gets one error line with the identifiers only.
+	var logs bytes.Buffer
+	lctx := logging.WithLogger(ctx, slog.New(slog.NewTextHandler(&logs, nil)))
+	missing := occurrences.Occurrence{ID: "01JD3Y4C8V9M2Q7W5R6T0XZBNZ", CommitmentID: "01JD3Y4C8V9M2Q7W5R6T0XZBNZ", DueDate: calendar.MustDate(2026, time.January, 5)}
+	if g := grace(lctx, missing); g != (payments.Grace{}) {
 		t.Errorf("missing commitment: %+v", g)
+	}
+	if line := logs.String(); !strings.Contains(line, "level=ERROR") || !strings.Contains(line, "occurrence_id="+missing.ID) || !strings.Contains(line, "commitment_id="+missing.CommitmentID) {
+		t.Errorf("context logger got %q, want an error line with the occurrence and commitment IDs", line)
 	}
 }
 
@@ -140,7 +150,12 @@ func TestGraceHookUsesTheCallersContext(t *testing.T) {
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
+	var logs bytes.Buffer
+	cancelled = logging.WithLogger(cancelled, slog.New(slog.NewTextHandler(&logs, nil)))
 	if g := st.Grace()(cancelled, o); g.Recorded || g.Kind != "" || g.Until != nil {
 		t.Errorf("cancelled context: %+v, want nothing recorded", g)
+	}
+	if logs.Len() != 0 {
+		t.Errorf("cancelled context logged %q, want no error line", logs.String())
 	}
 }

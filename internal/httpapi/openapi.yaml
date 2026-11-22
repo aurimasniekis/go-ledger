@@ -4009,7 +4009,8 @@ components:
         The leeway a client writes (task DF2, ADR-0052); the request form of
         Leeway. A create must give kind; the other members it leaves out are
         null. A merge patch merges member by member into the recorded leeway,
-        so it may send only the members that change. A patch that changes kind
+        so it may send only the members that change. When no leeway is
+        recorded, a patch must give kind too. A patch that changes kind
         must also send null for each member the new kind does not use (days
         unless kind is period, until unless kind is deadline). Unknown members
         are refused.
