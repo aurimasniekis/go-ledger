@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setCsrfToken } from '@/lib/api'
-import { installApi, renderApp, signedIn, type Reply, type Req } from '@/test/fake-api'
+import { ALL_GRANTS, installApi, renderApp, signedIn, type Reply, type Req } from '@/test/fake-api'
 import { item, payment, summary } from './fixtures'
 
 type Call = Req
@@ -290,6 +290,27 @@ describe('Month page', () => {
     await userEvent.selectOptions(within(form).getByLabelText('Occurrence'), 'b')
     expect(screen.getByRole('form', { name: 'Record a payment' })).toBe(form)
     expect(within(form).getByTestId('panel-occurrence')).toHaveTextContent('Rent b')
+  })
+})
+
+describe('Month page: bank connections link', () => {
+  const withBank = () => {
+    const s = summary([item('a')])
+    return { ...s, freshness: { ...s.freshness, bank: { available: true, connections: 1, state: 'fresh', last_success_at: '2026-11-21T09:00:00Z', note: '' } } }
+  }
+  const openWith = (grants: string[]) => {
+    installApi({ ...signedIn(undefined, grants), ['GET ' + MONTH]: () => json(200, withBank()) })
+    open()
+  }
+  it('shows the link with connections:read', async () => {
+    openWith(ALL_GRANTS)
+    const line = await screen.findByTestId('month-bank-line')
+    expect(within(line).getByRole('link', { name: 'Bank connections' })).toHaveAttribute('href', '/connections')
+  })
+  it('hides the link without connections:read (a write grant implies it)', async () => {
+    openWith(ALL_GRANTS.filter((g) => !g.startsWith('connections:')))
+    const line = await screen.findByTestId('month-bank-line')
+    expect(within(line).queryByRole('link', { name: 'Bank connections' })).toBeNull()
   })
 })
 
