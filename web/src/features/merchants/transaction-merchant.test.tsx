@@ -191,3 +191,22 @@ describe('transaction merchant', () => {
     expect(await screen.findByTestId('merchant-name')).toBeInTheDocument()
   })
 })
+
+describe('organising the merchant of a transaction', () => {
+  it('offers Organise for the merchant record only when a name is shown, keyed by the record id', async () => {
+    panel({ ['GET ' + url]: ok(txMerchant({ state: 'corrected', fallback: false, name: 'Lidl', merchant_id: 'L00-id' })) })
+    expect(await screen.findByRole('button', { name: 'Organise the merchant Lidl' })).toBeInTheDocument()
+  })
+
+  it('offers nothing when no name is shown, even if a record is known', async () => {
+    panel({ ['GET ' + url]: ok(txMerchant({ state: 'uncertain', fallback: true, name: null, merchant_id: 'L00-id' })) })
+    expect(await screen.findByTestId('merchant-name')).toHaveTextContent('No merchant name shown')
+    expect(screen.queryByRole('button', { name: /^Organise/ })).toBeNull()
+  })
+
+  it('is hidden without organisation:read', async () => {
+    panel({ ['GET ' + url]: ok(txMerchant({ state: 'corrected', fallback: false, name: 'Lidl', merchant_id: 'L00-id' })) }, ['merchants:read', 'merchants:write'])
+    expect(await screen.findByTestId('merchant-name')).toHaveTextContent('Lidl')
+    expect(screen.queryByRole('button', { name: /^Organise/ })).toBeNull()
+  })
+})

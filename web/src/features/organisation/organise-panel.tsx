@@ -40,31 +40,36 @@ function Origin({ a }: { a: Pick<CategoryAssignment | LabelAssignment, 'origin' 
 const ARCHIVED = <span className="ml-1 rounded border border-border px-1 py-0.5 text-xs font-normal text-muted-foreground">Archived</span>
 
 /**
- * The Organise control of one transaction, commitment or bank account: a disclosure that reads what is assigned only when it is
+ * The Organise control of one transaction, commitment, bank account or merchant record: a disclosure that reads what is assigned only when it is
  * opened. It is hidden without organisation:read. Every change is the person's choice (origin user) and is shown as saved only
  * after the server has answered.
  */
-export function OrganiseDisclosure({ objectType, objectId, subject }: { objectType: ObjectType; objectId: string; subject: string }) {
+export function OrganiseDisclosure({ objectType, objectId, subject, locked }: { objectType: ObjectType; objectId: string; subject: string; locked?: string }) {
   const me = useMe()
   const [open, setOpen] = useState(false)
   const panel = useId()
-  if (!holds(me.data?.grants, 'organisation:read')) return null
+  const grants = me.data?.grants
+  // A merchant's assignments are as sensitive as the merchant (bank-derived names): they also need the merchants grants.
+  const merchant = objectType === 'merchant'
+  if (!holds(grants, 'organisation:read') || (merchant && !holds(grants, 'merchants:read'))) return null
+  const canWrite = holds(grants, 'organisation:write') && (!merchant || holds(grants, 'merchants:write')) && !locked
   return (
     <div className="space-y-2">
       <Button variant="ghost" size="sm" className="h-auto min-h-8 py-1 text-foreground underline underline-offset-4" aria-expanded={open} aria-controls={panel} aria-label={`Organise ${subject}`} onClick={() => setOpen(!open)}>
         Organise
       </Button>
       <div id={panel} hidden={!open}>
-        {open && <OrganisePanel objectType={objectType} objectId={objectId} subject={subject} canWrite={holds(me.data?.grants, 'organisation:write')} />}
+        {open && <OrganisePanel objectType={objectType} objectId={objectId} subject={subject} canWrite={canWrite} locked={locked} />}
       </div>
     </div>
   )
 }
 
-export function OrganisePanel({ objectType, objectId, subject, canWrite }: { objectType: ObjectType; objectId: string; subject: string; canWrite: boolean }) {
+export function OrganisePanel({ objectType, objectId, subject, canWrite, locked }: { objectType: ObjectType; objectId: string; subject: string; canWrite: boolean; locked?: string }) {
   const q = useObjectOrganisation(objectType, objectId, true)
   return (
     <div className="space-y-3 rounded-md border border-border bg-muted/40 p-3 text-sm" aria-label={`Organisation of ${subject}`} role="group">
+      {locked && <p className="text-xs text-muted-foreground">{locked}</p>}
       <QueryState query={q} label={`categories, labels and buckets of ${subject}`}>
         {(a) => <Assignments a={a} objectType={objectType} objectId={objectId} subject={subject} canWrite={canWrite} />}
       </QueryState>
@@ -93,7 +98,7 @@ function Assignments({ a, objectType, objectId, subject, canWrite }: { a: Object
   const run = (done: string, fn: () => Promise<ObjectAssignments | void>, control: string) => change.mutate({ run: fn, done, control })
   const busy = change.isPending
   const pending = busy ? change.variables?.control : undefined
-  const bucketable = objectType !== 'transaction'
+  const bucketable = objectType === 'commitment' || objectType === 'account'
 
   return (
     <>

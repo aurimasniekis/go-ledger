@@ -10,6 +10,7 @@ import { FormError } from '@/components/form-error'
 import { Mono } from '@/components/mono'
 import { QueryState } from '@/components/query-state'
 import { useLoadAll } from '@/features/organisation/api'
+import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
 import { clearTransactionMerchantReview, merchantsKey, reviewTransactionMerchant, txMerchantKey, useMerchants, useMerchantSources, useTransactionMerchant } from './api'
 import { merchantProblem } from './problems'
 import type { MerchantSource, TransactionMerchant } from './types'
@@ -123,6 +124,7 @@ function Panel({ m, sources, canWrite }: { m: TransactionMerchant; sources: Merc
       <FormError message={error ? merchantProblem(error) : undefined} />
       {saved && <p role="status" className="text-xs font-medium">{saved}</p>}
       {busy && <p role="status" className="text-xs text-muted-foreground">Saving… not saved until the server confirms.</p>}
+      {shown && m.merchant_id && <OrganiseDisclosure objectType="merchant" objectId={m.merchant_id} subject={`the merchant ${m.name}`} />}
       {canWrite ? (
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">

@@ -44,5 +44,5 @@ task's own, within those ADRs; none is an operator decision.
 - The merchant list filters by name and alias in the browser, over the records loaded so far (the API filters only by
   archived). It loads every page, so a very large merchant list is slow to filter.
 - The Merchant disclosure is on the payment match card only; other places that show a bank transaction do not have it yet.
-- Merchant assignment to categories and labels (task O5) is a separate task and not part of these screens.
+- Merchant assignment to categories and labels is ADR-0062 (task O5), not part of these screens' first increment.
 - Tests are offline: the browser tests stub the API, and nothing here contacts a bank, a model or a logo host.

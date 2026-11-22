@@ -111,3 +111,35 @@ func TestOrganisationUnknownKindIsAnError(t *testing.T) {
 		t.Error("an unknown kind must not reach the server")
 	}
 }
+
+// A merchant is an object type like the others, named by its record id; the
+// client adds no rule of its own (the server needs the merchants grants too).
+func TestOrganisationMerchantObject(t *testing.T) {
+	var got []string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path)
+		writeJSON(w, 200, ObjectAssignments{ObjectType: "merchant", ObjectID: "m-1"})
+	})
+	ctx := context.Background()
+	a, err := c.GetObjectOrganisation(ctx, "merchant", "m-1")
+	if err != nil || a.ObjectType != "merchant" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	cat := "c1"
+	for _, err := range []error{
+		second(c.SetObjectCategory(ctx, "merchant", "m-1", &cat)),
+		second(c.ResetObjectCategory(ctx, "merchant", "m-1")),
+		second(c.AddObjectLabel(ctx, "merchant", "m-1", "l-1")),
+		second(c.RemoveObjectLabel(ctx, "merchant", "m-1", "l-1")),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "GET /api/v1/organisation/merchant/m-1,PUT /api/v1/organisation/merchant/m-1/category,DELETE /api/v1/organisation/merchant/m-1/category,PUT /api/v1/organisation/merchant/m-1/labels/l-1,DELETE /api/v1/organisation/merchant/m-1/labels/l-1"
+	if strings.Join(got, ",") != want {
+		t.Errorf("requests:\n%s\nwant\n%s", strings.Join(got, "\n"), want)
+	}
+}
+
+func second(_ *ObjectAssignments, err error) error { return err }
