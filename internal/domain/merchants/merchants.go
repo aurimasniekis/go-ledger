@@ -205,10 +205,14 @@ func checkText(s string, max int, optional bool) string {
 		return "must be valid UTF-8"
 	case utf8.RuneCountInString(s) > max:
 		return fmt.Sprintf("must be at most %d characters", max)
-	case strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) >= 0:
+	case strings.IndexFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)
+	}) >= 0:
 		// Cf covers the bidirectional overrides (U+202E) and zero-width
 		// characters that make a name read differently from what it is.
-		return "must not contain control or invisible formatting characters"
+		// Zl and Zp are the line and paragraph separators (U+2028, U+2029): a
+		// name must stay on one line.
+		return "must not contain control, line or paragraph separators or invisible formatting characters"
 	case strings.TrimSpace(s) != s:
 		return "must not start or end with white space"
 	}
@@ -314,8 +318,12 @@ var (
 	// ErrNothingToConfirm means the transaction has no identified merchant to
 	// confirm: correct it instead.
 	ErrNothingToConfirm = errors.New("there is no identified merchant to confirm")
-	// ErrNoReview means the transaction has no decision to clear.
+	// ErrNoReview means the transaction has no decision of its own or
+	// inherited to clear.
 	ErrNoReview = errors.New("the merchant has no decision to clear")
+	// ErrReviewInherited means the decision a clear would remove is inherited
+	// from the pending transaction this one superseded: it is cleared there.
+	ErrReviewInherited = errors.New("the merchant decision is inherited from the pending transaction it replaces; clear it there")
 )
 
 // Candidates returns a sorted copy of names without duplicates.

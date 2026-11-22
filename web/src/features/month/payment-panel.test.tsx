@@ -1,8 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { PaymentPanel, type PaymentPanelProps } from './payment-panel'
+import { PaymentPanel, UndoNotice, type PaymentPanelProps } from './payment-panel'
 import { item, payment } from './fixtures'
+import { manualPaymentsKey } from './api'
+import type { ManualPayment } from './types'
 
 function panel(over: Partial<PaymentPanelProps> & { status: 'paid' | 'overdue'; shortfall: string }) {
   const it = item('a', {
@@ -45,5 +48,22 @@ describe('PaymentPanel shortfall note', () => {
     const note = screen.getByText(/Paid within the commitment's tolerance/)
     expect(note.textContent).toContain('1\u202F234.50')
     expect(note.textContent).not.toContain('1 234.50') // no ordinary space
+  })
+})
+
+describe('UndoNotice', () => {
+  it('Undo marks the occurrence\'s manual-payments list stale, so a match card does not keep showing the deleted record', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
+    const client = new QueryClient()
+    client.setQueryData(manualPaymentsKey('occ-a'), [])
+    const record = { id: 'mp1', occurrence_id: 'occ-a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, created_at: '2026-11-20T08:00:00Z', updated_at: '2026-11-20T08:00:00Z', replaced_by_match_id: null } as ManualPayment
+    render(
+      <QueryClientProvider client={client}>
+        <UndoNotice payment={record} item={item('a')} month="2026-11" onDone={vi.fn()} />
+      </QueryClientProvider>,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Undo this payment' }))
+    expect(await screen.findByText('Removed')).toBeInTheDocument()
+    expect(client.getQueryState(manualPaymentsKey('occ-a'))?.isInvalidated).toBe(true)
   })
 })

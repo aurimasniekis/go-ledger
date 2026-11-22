@@ -551,6 +551,18 @@ paths:
                   oneOf:
                     - $ref: "#/components/schemas/Money"
                     - type: "null"
+                leeway:
+                  description: |
+                    Optional; null when nothing is recorded, which is not the same as the
+                    explicit kinds unknown (the user does not know) and none (the user states
+                    there is no grace). What the user knows about the grace the creditor
+                    allows after a due date (decision D14, ADR-0052): entered by the user only,
+                    never inferred from payment history, bank data or model output, with no
+                    default length. It only annotates an overdue occurrence; it never moves a
+                    due date or hides an obligation.
+                  oneOf:
+                    - $ref: "#/components/schemas/Leeway"
+                    - type: "null"
       responses:
         "201":
           description: Created.
@@ -699,6 +711,18 @@ paths:
                     overpay). In a patch, send the whole object or null.
                   oneOf:
                     - $ref: "#/components/schemas/Money"
+                    - type: "null"
+                leeway:
+                  description: |
+                    Optional; null when nothing is recorded, which is not the same as the
+                    explicit kinds unknown (the user does not know) and none (the user states
+                    there is no grace). What the user knows about the grace the creditor
+                    allows after a due date (decision D14, ADR-0052): entered by the user only,
+                    never inferred from payment history, bank data or model output, with no
+                    default length. It only annotates an overdue occurrence; it never moves a
+                    due date or hides an obligation. In a patch the object merges member by member; send null to clear it.
+                  oneOf:
+                    - $ref: "#/components/schemas/Leeway"
                     - type: "null"
       responses:
         "200":
@@ -3159,8 +3183,14 @@ paths:
       summary: Take a merchant decision back
       description: |
         Removes the person's decision, so the merchant resolves from the
-        enrichment alone again. 404 when the transaction has no decision.
-        Audited as merchant.review_cleared.
+        enrichment alone again. Audited as merchant.review_cleared.
+
+        404 when the transaction has no decision of its own and inherits none.
+        409 review_inherited when the only decision is inherited from the
+        pending transaction this one superseded (review_inherited is true on
+        the merchant): nothing is removed here. review.transaction_id names
+        that pending transaction; clearing the decision there removes the
+        inherited one from this transaction too.
       tags: [merchants]
       responses:
         "200":
@@ -3656,7 +3686,7 @@ paths:
       x-ledger-access: organisation:read
       summary: List categories
       description: |
-        Categories (decision D12, ADR-0052): single-valued per object, with two levels (a category and its children). Archived ones are included unless archived=false.
+        Categories (decision D12, ADR-0053): single-valued per object, with two levels (a category and its children). Archived ones are included unless archived=false.
         Items come in ID order (creation order).
       tags: [organisation]
       parameters:
@@ -3941,7 +3971,7 @@ paths:
       x-ledger-access: organisation:read
       summary: List labels
       description: |
-        Labels (decision D12, ADR-0052): many-valued and flat. Archived ones are included unless archived=false.
+        Labels (decision D12, ADR-0053): many-valued and flat. Archived ones are included unless archived=false.
         Items come in ID order (creation order).
       tags: [organisation]
       parameters:
@@ -4208,7 +4238,7 @@ paths:
       x-ledger-access: organisation:read
       summary: List buckets
       description: |
-        Buckets (decision D12, ADR-0052): user-defined groupings of commitments and accounts used to slice the outlook. A bucket never holds, allocates or reserves money and is not a budget envelope. Archived ones are included unless archived=false.
+        Buckets (decision D12, ADR-0053): user-defined groupings of commitments and accounts used to slice the outlook. A bucket never holds, allocates or reserves money and is not a budget envelope. Archived ones are included unless archived=false.
         Items come in ID order (creation order).
       tags: [organisation]
       parameters:
@@ -4519,7 +4549,7 @@ paths:
         description: |
           The object's identifier; for a merchant its key: the merchant's name in lower case with
           white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0052).
+          ADR-0053).
         schema:
           type: string
     put:
@@ -4567,7 +4597,7 @@ paths:
         description: |
           The object's identifier; for a merchant its key: the merchant's name in lower case with
           white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0052).
+          ADR-0053).
         schema:
           type: string
     get:
@@ -4604,7 +4634,7 @@ paths:
         description: |
           The object's identifier; for a merchant its key: the merchant's name in lower case with
           white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0052).
+          ADR-0053).
         schema:
           type: string
     put:
@@ -4679,7 +4709,7 @@ paths:
         description: |
           The object's identifier; for a merchant its key: the merchant's name in lower case with
           white space collapsed, at most 200 characters (merchants have no record of their own yet,
-          ADR-0052).
+          ADR-0053).
         schema:
           type: string
       - name: label_id
@@ -4958,7 +4988,7 @@ components:
     Commitment:
       type: object
       description: A recurring commitment definition. Dated occurrences and payment state are not part of it.
-      required: [id, name, kind, amount, schedule, start_date, end_date, priority, notes, match_tolerance, version, created_at, updated_at]
+      required: [id, name, kind, amount, schedule, start_date, end_date, priority, notes, match_tolerance, leeway, version, created_at, updated_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -4993,6 +5023,18 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Money"
             - type: "null"
+        leeway:
+          description: |
+            Optional; null when nothing is recorded, which is not the same as the
+            explicit kinds unknown (the user does not know) and none (the user states
+            there is no grace). What the user knows about the grace the creditor
+            allows after a due date (decision D14, ADR-0052): entered by the user only,
+            never inferred from payment history, bank data or model output, with no
+            default length. It only annotates an overdue occurrence; it never moves a
+            due date or hides an obligation.
+          oneOf:
+            - $ref: "#/components/schemas/Leeway"
+            - type: "null"
         version:
           $ref: "#/components/schemas/Version"
         created_at:
@@ -5001,6 +5043,45 @@ components:
         updated_at:
           type: string
           format: date-time
+    Leeway:
+      type: object
+      description: |
+        What the user recorded about a commitment's grace period (task DF2,
+        ADR-0052). Every member is present, null when not given. kind unknown
+        and kind none carry neither days nor until and are never read as zero
+        days. A period counts days from each occurrence's due date; a deadline
+        covers the occurrences due on or before until.
+      required: [kind, days, until, conditions, consequences, source]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [unknown, none, period, deadline]
+        days:
+          description: Required for kind period (1 to 365), null otherwise.
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 365
+        until:
+          description: Required for kind deadline, null otherwise.
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        conditions:
+          description: What the grace depends on, as the user knows it.
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 500
+        consequences:
+          description: Fees or other consequences of paying late that the user knows of. Free text; record a fee as a deferral plan adjustment to count it.
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 500
+        source:
+          description: Where the information comes from (a contract clause, a letter, a call).
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 200
     PaymentMatchingRun:
       type: object
       description: The counts of one automatic payment-matching run (ADR-0039).
@@ -5661,7 +5742,7 @@ components:
         override (ADR-0031). Only evidence in the occurrence's currency is
         counted; other currencies are listed in unconverted_currencies and
         never converted or summed.
-      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, shortfall_amount, unconverted_currencies, evidence_count, manual_evidence_count, bank_evidence_count, grace_until, within_grace, override]
+      required: [status, derived_status, timing, paid_amount, outstanding_amount, overpaid_amount, shortfall_amount, unconverted_currencies, evidence_count, manual_evidence_count, bank_evidence_count, grace_until, within_grace, leeway, override]
       properties:
         status:
           $ref: "#/components/schemas/PaymentStatus"
@@ -5709,15 +5790,27 @@ components:
           minimum: 0
         grace_until:
           description: |
-            End of a documented grace period of an overdue occurrence, when
-            one is known (task DF2; none is recorded yet). The occurrence is
-            overdue either way.
+            End of the grace period the user recorded for the commitment of an
+            overdue occurrence (task DF2, ADR-0052), when it is a period or a
+            deadline that covers the occurrence. Null for unknown, none or
+            nothing recorded. The occurrence is overdue either way.
           oneOf:
             - $ref: "#/components/schemas/Date"
             - type: "null"
         within_grace:
           type: boolean
-          description: True while an overdue occurrence is within its documented grace period.
+          description: True while an overdue occurrence is within its recorded grace period.
+        leeway:
+          description: |
+            What is known about the grace of an overdue occurrence: not_recorded
+            (the user entered nothing), unknown (the user states they do not
+            know), none (the user states there is none), period or deadline.
+            Null when the occurrence is not overdue. unknown and not_recorded
+            are not "no grace".
+          oneOf:
+            - type: string
+              enum: [not_recorded, unknown, none, period, deadline]
+            - type: "null"
         override:
           oneOf:
             - type: "null"
@@ -5872,7 +5965,8 @@ components:
             True when review is the decision made about the pending
             transaction this one superseded (its booking arrived under a new
             key). A new decision on this transaction replaces it; the
-            inherited one is never edited from here.
+            inherited one is not removed from here (409 review_inherited):
+            clear it on the transaction named by review.transaction_id.
         enrichment:
           oneOf:
             - $ref: "#/components/schemas/MerchantEnrichment"
@@ -5915,8 +6009,11 @@ components:
     MerchantReview:
       type: object
       description: The person's decision about the merchant. For confirmed, name is the enrichment name that was confirmed.
-      required: [decision, name, by, decided_at, version]
+      required: [transaction_id, decision, name, by, decided_at, version]
       properties:
+        transaction_id:
+          $ref: "#/components/schemas/ID"
+          description: The transaction the decision was made about; the superseded pending transaction when the merchant's review_inherited is true.
         decision:
           type: string
           enum: [confirmed, corrected, rejected]
@@ -6687,7 +6784,7 @@ components:
     OrganisationDefinition:
       type: object
       description: |
-        A category, label or bucket (decision D12, ADR-0052). Names are free text: never an identifier.
+        A category, label or bucket (decision D12, ADR-0053). Names are free text: never an identifier.
         A bucket groups commitments and accounts to slice the outlook and never holds or allocates money.
       required: [id, kind, name, parent_id, archived, archived_at, version, created_at, updated_at]
       properties:
@@ -7033,6 +7130,7 @@ components:
             - manual_payment_other_occurrence
             - manual_payment_not_replaceable
             - nothing_to_confirm
+            - review_inherited
             - password_sign_in_disabled
             - rates_refresh_unavailable
             - nothing_outstanding

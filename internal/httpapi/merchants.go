@@ -28,6 +28,11 @@ var (
 // confirm (ADR-0051); correct it instead.
 const CodeNothingToConfirm Code = "nothing_to_confirm"
 
+// CodeReviewInherited (409): the decision a DELETE would clear is inherited
+// from the pending transaction the booking superseded (ADR-0051). The response
+// names that transaction in review.transaction_id; clear the decision there.
+const CodeReviewInherited Code = "review_inherited"
+
 // enrichmentJSON is what a lookup source said, as stored: the source's own
 // answer, never edited by a decision (ADR-0051).
 type enrichmentJSON struct {
@@ -45,11 +50,14 @@ type enrichmentJSON struct {
 }
 
 type merchantReviewJSON struct {
-	Decision  merchants.Decision `json:"decision"`
-	Name      *string            `json:"name"`
-	By        deciderJSON        `json:"by"`
-	DecidedAt time.Time          `json:"decided_at"`
-	Version   int64              `json:"version"`
+	// TransactionID is the transaction the decision was made about: this one,
+	// or the pending transaction it superseded when review_inherited is true.
+	TransactionID string             `json:"transaction_id"`
+	Decision      merchants.Decision `json:"decision"`
+	Name          *string            `json:"name"`
+	By            deciderJSON        `json:"by"`
+	DecidedAt     time.Time          `json:"decided_at"`
+	Version       int64              `json:"version"`
 }
 
 // merchantJSON is the merchant of a bank transaction: what to show (name,
@@ -102,7 +110,7 @@ func toMerchantJSON(m merchants.Merchant) merchantJSON {
 			v := r.Via
 			by.Via = &v
 		}
-		out.Review = &merchantReviewJSON{Decision: r.Decision, Name: strPtr(r.Name), By: by, DecidedAt: r.DecidedAt, Version: r.Version}
+		out.Review = &merchantReviewJSON{TransactionID: string(r.TransactionID), Decision: r.Decision, Name: strPtr(r.Name), By: by, DecidedAt: r.DecidedAt, Version: r.Version}
 	}
 	return out
 }
@@ -114,6 +122,8 @@ func merchantError(err error) error {
 		return fieldErrors(ve.Errors)
 	case errors.Is(err, merchants.ErrNothingToConfirm):
 		return &Error{Status: http.StatusConflict, Code: CodeNothingToConfirm, Message: merchants.ErrNothingToConfirm.Error(), Cause: err}
+	case errors.Is(err, merchants.ErrReviewInherited):
+		return &Error{Status: http.StatusConflict, Code: CodeReviewInherited, Message: merchants.ErrReviewInherited.Error(), Cause: err}
 	case errors.Is(err, merchants.ErrNoReview):
 		return NotFound(merchants.ErrNoReview.Error())
 	}

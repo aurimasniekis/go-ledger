@@ -9,7 +9,7 @@ import (
 
 const mergePatch = "Content-Type"
 
-// TestOrganisationAPI drives the organisation routes (O1, ADR-0052) as ledger
+// TestOrganisationAPI drives the organisation routes (O1, ADR-0053) as ledger
 // serve wires them: grants, definitions with versions and the archive-first
 // lifecycle, the two-level hierarchy, single-valued categories, many-valued
 // labels, buckets of commitments and accounts, assignments that survive a bank

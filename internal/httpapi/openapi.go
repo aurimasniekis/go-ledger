@@ -77,7 +77,7 @@ type Deps struct {
 	// Merchants stores merchant enrichments and decisions (ADR-0051).
 	Merchants merchants.Store
 	// Organisation stores categories, labels, buckets and their assignments
-	// (ADR-0052).
+	// (ADR-0053).
 	Organisation organisation.Store
 	// Deferrals stores deferral plans (DF1, ADR-0050); nil leaves the
 	// monthly view without plans (the plan routes are registered regardless,

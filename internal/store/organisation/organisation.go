@@ -1,5 +1,5 @@
 // Package organisation persists categories, labels and buckets and their
-// assignments (task O1, ADR-0052) in the tables of migration 0027_organisation.
+// assignments (task O1, ADR-0053) in the tables of migration 0028_organisation.
 //
 // It implements [organisation.Store]. Every write runs in one transaction with
 // its audit event. Nothing here reads or writes a bank transaction's, an

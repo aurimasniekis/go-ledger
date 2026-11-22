@@ -1,5 +1,5 @@
 // Package organisation models how a person organises their finances (task O1,
-// ADR-0052, decision D12): categories, labels and buckets, and the assignment
+// ADR-0053, decision D12): categories, labels and buckets, and the assignment
 // of them to objects.
 //
 //   - A category is single-valued per object and lives in a two-level

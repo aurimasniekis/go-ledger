@@ -1,8 +1,8 @@
 -- Fixture: a database at schema version 26 (the version 25 contents plus the
 -- merchant tables of migration 0026), holding every row of the version 25
--- fixture. Upgrading it must apply migration 0027 (categories, labels,
--- buckets and their assignments) and leave all of those tables empty. All
--- identifiers and hashes are synthetic.
+-- fixture. Upgrading it must apply migration 0027 (commitment leeway), which
+-- leaves every existing commitment with no leeway recorded. All identifiers and
+-- hashes are synthetic.
 CREATE TABLE schema_migrations (
     version    INTEGER PRIMARY KEY CHECK (version > 0),
     name       TEXT NOT NULL CHECK (name <> ''),

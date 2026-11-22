@@ -56,14 +56,15 @@ const (
 
 	// Merchant decisions (E1, ADR-0051). The target is the bank transaction
 	// (target type "transaction"). Details: from (the decision before: none,
-	// confirmed, corrected or rejected) and via. Never the merchant name: it is
+	// inherited from a superseded pending transaction, confirmed, corrected or
+	// rejected) and via. Never the merchant name: it is
 	// free text the person typed or a source returned.
 	MerchantConfirmed     Action = "merchant.confirmed"
 	MerchantCorrected     Action = "merchant.corrected"
 	MerchantRejected      Action = "merchant.rejected"
 	MerchantReviewCleared Action = "merchant.review_cleared"
 
-	// Organisation (O1, ADR-0052). A definition event targets the category,
+	// Organisation (O1, ADR-0053). A definition event targets the category,
 	// label or bucket (target type "category", "label" or "bucket"); details:
 	// kind, via and, as the action says, fields (the members changed, never
 	// their values: names are free text) or reassigned (how many assignments
@@ -149,7 +150,7 @@ func definitionFields(extra ...Field) []Field {
 }
 
 func merchantFields() []Field {
-	return []Field{f("from", "none", "confirmed", "corrected", "rejected"), f("via", matchVias...)}
+	return []Field{f("from", "none", "inherited", "confirmed", "corrected", "rejected"), f("via", matchVias...)}
 }
 
 // Field declares one allowed detail field. Enum, when set, lists the only

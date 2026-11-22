@@ -1,4 +1,4 @@
-# ADR-0052: Organisation model: categories, labels, buckets and their assignments
+# ADR-0053: Organisation model: categories, labels, buckets and their assignments
 
 Status: Accepted (task O1, 2026-11-22). Decision D12 was taken on 2026-11-20. This increment is the model, the store
 and the Management API; the UI and the MCP tools are task O2, the Terraform data sources task T3, and the rule and

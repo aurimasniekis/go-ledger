@@ -806,7 +806,7 @@ func (s *Store) PurgeConnection(ctx context.Context, id banking.ConnectionID, ex
 			// Categories and labels a rule or a model assigned are derived and can
 			// be assigned again; what the person decided (origin user, including
 			// a cleared category or a removed label) and bucket membership is user
-			// data and blocks the purge like a match (ADR-0052).
+			// data and blocks the purge like a match (ADR-0053).
 			{"DELETE FROM category_assignments WHERE origin <> 'user' AND (transaction_id IN (SELECT t.id FROM bank_transactions t WHERE t.account_id IN (SELECT a.id FROM bank_accounts a WHERE a.connection_id = ?1)) OR account_id IN (SELECT a.id FROM bank_accounts a WHERE a.connection_id = ?1))", nil},
 			{"DELETE FROM label_assignments WHERE origin <> 'user' AND (transaction_id IN (SELECT t.id FROM bank_transactions t WHERE t.account_id IN (SELECT a.id FROM bank_accounts a WHERE a.connection_id = ?1)) OR account_id IN (SELECT a.id FROM bank_accounts a WHERE a.connection_id = ?1))", nil},
 			{"DELETE FROM bank_transactions WHERE account_id IN (" + accounts + ")", &res.Transactions},

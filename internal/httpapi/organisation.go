@@ -15,7 +15,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
-// Paths of the organisation routes (task O1, ADR-0052).
+// Paths of the organisation routes (task O1, ADR-0053).
 const (
 	CategoriesPath   = APIPrefix + "/categories"
 	LabelsPath       = APIPrefix + "/labels"

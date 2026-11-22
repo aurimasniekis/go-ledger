@@ -153,10 +153,25 @@ type Facts struct {
 	CommitmentCreatedOn calendar.Date
 }
 
-// GraceFunc returns the end of a documented grace period for an occurrence,
-// if one is known. It is the hook for task DF2 (leeway); nil means no grace
-// is known for any occurrence. There is deliberately no default length.
-type GraceFunc func(o occurrences.Occurrence) (until calendar.Date, ok bool)
+// Grace is what the user recorded about the grace period of an occurrence's
+// commitment (task DF2, ADR-0052). Recorded is false when the user recorded
+// nothing; Kind is then empty. "unknown" and "none" are the user's explicit
+// statements and carry no Until: they are never read as zero days. Until is set
+// only for a period or deadline that covers the occurrence.
+type Grace struct {
+	Recorded bool
+	Kind     commitments.LeewayKind
+	Until    *calendar.Date
+}
+
+// GraceFunc returns the leeway recorded for an occurrence's commitment. It is
+// the hook of task DF2; nil means no grace information is available at all.
+// There is deliberately no default length, and nothing is inferred from
+// history or model output: only the user's own entry yields a date.
+type GraceFunc func(o occurrences.Occurrence) Grace
+
+// Leeway states of a [State] besides the user-entered kinds.
+const LeewayNotRecorded = "not_recorded"
 
 // State is the derived payment state of an occurrence.
 type State struct {
@@ -192,7 +207,13 @@ type State struct {
 	// occurrence is overdue either way.
 	GraceUntil  *calendar.Date
 	WithinGrace bool
-	Override    *Override
+	// Leeway says what is known about the grace of an overdue occurrence:
+	// "not_recorded" (the user entered nothing), or the recorded kind
+	// ("unknown", "none", "period", "deadline"). It is empty when the
+	// occurrence is not overdue or no grace source was given. "unknown" and
+	// "not_recorded" are not "no grace".
+	Leeway   string
+	Override *Override
 	// OverrideApplied is false for a "paid" override whose evidence has
 	// since gone (it then has no effect).
 	OverrideApplied bool
@@ -300,9 +321,14 @@ func Derive(o occurrences.Occurrence, f Facts, today calendar.Date, grace GraceF
 		}
 	}
 	if timing == StatusOverdue && grace != nil { // not for not_recorded
-		if until, ok := grace(o); ok {
-			st.GraceUntil = &until
-			st.WithinGrace = !today.After(until)
+		g := grace(o)
+		st.Leeway = LeewayNotRecorded
+		if g.Recorded {
+			st.Leeway = string(g.Kind)
+		}
+		if g.Recorded && g.Until != nil {
+			st.GraceUntil = g.Until
+			st.WithinGrace = !today.After(*g.Until)
 		}
 	}
 	return st

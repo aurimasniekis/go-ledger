@@ -58,7 +58,7 @@ const (
 	ResourceMerchants Resource = "merchants"
 	// ResourceOrganisation is categories, labels and buckets and their
 	// assignment to transactions, commitments, accounts and merchants (task
-	// O1, ADR-0052). It holds the person's own labelling, not bank text, so the
+	// O1, ADR-0053). It holds the person's own labelling, not bank text, so the
 	// read-only role may read it.
 	ResourceOrganisation Resource = "organisation"
 	// ResourceRates is the cached exchange rates and their refresh (task FX2c,

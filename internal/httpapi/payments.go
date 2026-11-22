@@ -32,7 +32,12 @@ type paymentStateJSON struct {
 	BankEvidenceCount     int              `json:"bank_evidence_count"`
 	GraceUntil            *calendar.Date   `json:"grace_until"`
 	WithinGrace           bool             `json:"within_grace"`
-	Override              *overrideJSON    `json:"override"`
+	// Leeway is what the user recorded about the grace of an overdue
+	// occurrence: not_recorded, unknown, none, period or deadline. It is null
+	// when the occurrence is not overdue. unknown and not_recorded are not "no
+	// grace" (ADR-0052).
+	Leeway   *string       `json:"leeway"`
+	Override *overrideJSON `json:"override"`
 }
 
 type overrideJSON struct {
@@ -48,6 +53,10 @@ func toPaymentStateJSON(st payments.State) paymentStateJSON {
 		UnconvertedCurrencies: st.Unconverted, EvidenceCount: st.EvidenceCount, ManualEvidenceCount: st.ManualEvidenceCount, BankEvidenceCount: st.BankEvidenceCount, GraceUntil: st.GraceUntil, WithinGrace: st.WithinGrace}
 	if out.UnconvertedCurrencies == nil {
 		out.UnconvertedCurrencies = []money.Currency{}
+	}
+	if st.Leeway != "" {
+		l := st.Leeway
+		out.Leeway = &l
 	}
 	if st.Timing != "" {
 		t := st.Timing

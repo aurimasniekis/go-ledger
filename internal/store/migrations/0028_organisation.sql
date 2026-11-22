@@ -1,5 +1,5 @@
 -- Organisation: categories, labels, buckets and their assignments (O1,
--- ADR-0052, decision D12).
+-- ADR-0053, decision D12).
 --
 -- Definitions are what the person (or Terraform) manages; assignments attach a
 -- definition to an object. Both are user-side data kept apart from bank facts:
