@@ -294,7 +294,13 @@ func registerOIDC(s *Server, svc *auth.Service, d *OIDCDeps) {
 				// The challenge goes in the fragment, which browsers never send
 				// to a server nor put in a Referer header. The marker in the query
 				// lets GET /sign-in tell this page from a bare visit.
-				redirect(w, r, SignInPagePath+"?step="+signInStepSecondFactor+"#second_factor="+url.QueryEscape(iss.SecondFactor.Token))
+				// The page the user was heading for travels in the query; the SPA
+				// re-validates it before following it.
+				next := ""
+				if t.ReturnTo != "/" {
+					next = "&redirect=" + url.QueryEscape(t.ReturnTo)
+				}
+				redirect(w, r, SignInPagePath+"?step="+signInStepSecondFactor+next+"#second_factor="+url.QueryEscape(iss.SecondFactor.Token))
 			default:
 				setSessionCookie(w, iss.Token, iss.Session.ExpiresAt, iss.Session.ExpiresAt.Sub(iss.Session.CreatedAt))
 				redirect(w, r, t.ReturnTo)

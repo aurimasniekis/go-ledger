@@ -141,6 +141,26 @@ describe('account security: single sign-on link', () => {
     await waitFor(() => expect(window.location.search).toBe(''))
   })
 
+  it('shows the server message and stays linked when unlinking fails', async () => {
+    const user = userEvent.setup()
+    installApi({ ...base(link({ linked: true, created_at: '2026-11-21T10:00:00Z' })), 'DELETE /api/v1/auth/oidc/link': fail(409, 'conflict', 'You need another sign-in method first.') })
+    renderApp('/account/security')
+    await user.click(await screen.findByRole('button', { name: 'Unlink' }))
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Unlink' }))
+    expect(await within(screen.getByRole('alertdialog')).findByText(/another sign-in method first/)).toBeInTheDocument()
+    expect(screen.getByText('Linked')).toBeInTheDocument()
+  })
+
+  it('shows the server message when starting a link fails, and can try again', async () => {
+    const user = userEvent.setup()
+    installApi({ ...base(link()), 'POST /api/v1/auth/oidc/link': fail(503, 'unavailable', 'The identity provider is not reachable.') })
+    renderApp('/account/security')
+    await user.click(await screen.findByRole('button', { name: 'Link single sign-on' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('not reachable')
+    expect(goTo).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Link single sign-on' })).toBeEnabled()
+  })
+
   it('drops the stale linked confirmation after unlinking', async () => {
     const user = userEvent.setup()
     installApi({ ...base(link({ linked: true, created_at: '2026-11-21T10:00:00Z' })), 'DELETE /api/v1/auth/oidc/link': none() })
@@ -149,6 +169,28 @@ describe('account security: single sign-on link', () => {
     await user.click(await screen.findByRole('button', { name: 'Unlink' }))
     await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Unlink' }))
     await waitFor(() => expect(screen.queryByText('Your single-sign-on account is linked.')).not.toBeInTheDocument())
+  })
+})
+
+describe('provider outcomes on any page', () => {
+  const ok2 = () => installApi({ ...signedIn(), 'GET /api/v1/occurrences/summary': fail(500, 'x', 'x') })
+
+  it('confirms oidc=reauthenticated on the page the user returned to, without claiming the action ran', async () => {
+    const user = userEvent.setup()
+    ok2()
+    renderApp('/account/tokens?oidc=reauthenticated')
+    const note = await screen.findByText(/identity was confirmed/)
+    expect(note).toHaveTextContent('has not been repeated yet')
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByText(/identity was confirmed/)).not.toBeInTheDocument())
+  })
+
+  it('shows an oidc_error outcome as an alert without the raw code', async () => {
+    ok2()
+    renderApp('/account/tokens?oidc_error=identity_mismatch')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('different identity')
+    expect(alert).not.toHaveTextContent('identity_mismatch')
   })
 })
 
@@ -187,6 +229,24 @@ describe('re-authentication prompt', () => {
     await user.click(await screen.findByRole('button', { name: 'Cancel' }))
     const out = await pending
     expect(out).toBeInstanceOf(ApiError)
+  })
+
+  it('shows a checking state, with no password field, while the sign-in methods load', async () => {
+    installApi({
+      'GET /api/v1/auth/methods': () => new Promise<never>(() => {}),
+      'POST /api/v1/thing': fail(403, 'reauthentication_required', 'confirm'),
+    })
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReauthProvider>
+          <p>page</p>
+        </ReauthProvider>
+      </QueryClientProvider>,
+    )
+    void apiFetch('/api/v1/thing', { method: 'POST' }).catch(() => undefined)
+    expect(await screen.findByRole('status')).toHaveTextContent('Checking how you can confirm')
+    expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Continue to your provider' })).not.toBeInTheDocument()
   })
 
   it('keeps the password prompt when passwords are on', async () => {
