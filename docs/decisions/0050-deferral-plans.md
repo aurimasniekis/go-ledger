@@ -132,7 +132,7 @@ when the plan was made.
   date becomes a suggestion for a person, never an automatic confirmation, until D-DF 7 is built.
 - A fee marked paid is the person's statement, not bank evidence: this feature matches no bank transaction to it.
 
-## What the UI needs (task DF3)
+## What the UI needs (task DF3, built: see [ADR-0056](0056-deferral-planning-ui.md))
 
 Defer, revise and undo flows on a month row (plan type with neutral wording, planned date, optional reason; If-Match
 from the row's `deferral.version`); show the original due date, overdue status, planned date and "within documented grace
