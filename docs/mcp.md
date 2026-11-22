@@ -247,7 +247,7 @@ List the dated occurrences of recurring commitments in one reporting month, each
 
 ### `get_month_summary`
 
-The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed (plan date passed, still owed). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.
+The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed and missed_reason (plan date passed: principal still owed, or a fee still planned). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.
 
 - Kind: read
 - Operation: `GET /api/v1/occurrences/summary`
@@ -1206,7 +1206,7 @@ Remove a manual payment record (the undo of record_manual_payment): the occurren
 
 ### `list_deferral_plans`
 
-List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees (each with its paid marker), the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). missed is true when the plan's date has passed while the occurrence still owes something (plan date passed, still owed); it is derived when read, is not payment state and clears when the occurrence is paid or the plan is revised or undone. Filters combine; a repeated filter accepts any of its values.
+List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees (each with its paid marker), the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). missed is true when the plan's date has passed while the occurrence is overdue and still owes something (missed_reason principal) or while a recorded fee is still planned, even when the principal is paid (missed_reason fee); it is derived when read, is not payment state and clears when the occurrence is paid and every fee is paid or removed, or the plan is revised or undone. Filters combine; a repeated filter accepts any of its values.
 
 - Kind: read
 - Operation: `GET /api/v1/deferral-plans`
@@ -1272,7 +1272,7 @@ List plans to pay outstanding occurrences later, oldest first, one page at a tim
 
 ### `get_deferral_plan`
 
-Get one deferral plan, including its version (needed to revise or undo it), its adjustments with their paid markers, and missed (plan date passed, occurrence still owes something).
+Get one deferral plan, including its version (needed to revise or undo it), its adjustments with their paid markers, and missed and missed_reason (plan date passed: principal still owed, or a fee still planned).
 
 - Kind: read
 - Operation: `GET /api/v1/deferral-plans/{id}`

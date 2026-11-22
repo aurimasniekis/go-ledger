@@ -57,15 +57,16 @@ adjustment entries, and a creditor-approved change is a distinct plan type.
    can still be removed. `adjustment_total` on a plan stays the sum of the adjustments not removed and
    `unpaid_adjustment_total` is the part still planned. **Undoing a plan is refused while a fee is still planned** (409
    `deferral_adjustments_unpaid`): the person marks it paid or removes it first, so a recorded fee can never silently drop
-   out of the planned totals. (D-DF 6 says undo is always allowed; this is the one narrowing, flagged for the operator: the
+   out of the planned totals. (Operator decision D-DF-b 1a, which refines D-DF 6: undo stays refused while a fee is planned, because the
    alternative, undoing and keeping orphaned fees on a plan that can no longer change, has no place to mark them paid.)
    **A missed plan is visible** (D-DF 1). `missed` is true on the plan (and so on a month row's `deferral`, in
    `carried_in` rows, in the list and in the MCP tools) while the plan is active, its planned date is before today in the
-   reporting zone, the occurrence is overdue (its own due date has passed, so a due day moved later keeps it from being missed early) and it still owes something ("plan date passed, still owed"; `deferrals.Plan.Missed`). It is
+   reporting zone, the occurrence is overdue (its own due date has passed, so a due day moved later keeps it from being missed early) and it still owes something ("plan date passed, still owed"), **or** a recorded fee is still planned (not paid, not removed)
+   even when the principal is paid (operator decision D-DF-b 2a; `deferrals.Plan.Missed`). `missed_reason` says which:
+   `principal` (takes precedence) or `fee`, null when not missed; it is on the plan, month rows, `carried_in` rows and the MCP tools. It is
    derived on every read from the plan and the occurrence's evidence, never stored and not payment state: it clears when
-   the occurrence is paid, when the plan is revised to a later date and when the plan is undone, and a plan dated today is
-   not missed yet. A plan never marks the occurrence paid or changes its overdue status, and a fee that is still planned
-   does not make a plan missed (only the principal does).
+   the occurrence is paid and every fee is paid or removed, when the plan is revised to a later date and when the plan is
+   undone, and a plan dated today is not missed yet. A plan never marks the occurrence paid or changes its overdue status.
 7. **Checks.** A plan needs an occurrence that owes something now (409 `nothing_outstanding` when paid, or "not
    recorded" under D38 1a; 409 `occurrence_cancelled`), no active plan (409 `deferral_plan_exists`), and a planned
    date after the occurrence's due date and within the materialisation horizon (400 on `planned_date`). Revision
@@ -105,8 +106,8 @@ All nine recommendations were accepted. Items 7 and 8 are decided and built by l
    existing evidence (manual payment or allocation, D14 a / D8 a); the remainder stays planned on the plan's date.
    Instalments are not built in the initial build.
 5. Undo ends the plan; it does not step back one revision, and the history keeps every revision.
-6. A revision is refused once the occurrence owes nothing; an undo is allowed on an active plan, with a narrowing:
-   undo is refused while a fee is still planned (Decision point 6 above), so the person settles it first.
+6. A revision is refused once the occurrence owes nothing; an undo is allowed on an active plan, except that it is refused while a fee is
+   still planned (operator decision D-DF-b 1a; Decision point 6 above), so the person settles it first.
 7. Automatic matching also accepts the planned date, plus or minus 3 days, for auto-confirm, in addition to the D9
    due-date window. Not built by this task.
 8. The outlook follows plans, showing deferred amounts separately as "deferred in". Not built by this task.
@@ -140,6 +141,5 @@ mark-paid and undo-paid actions; the e2e journey: defer within a month, carry to
 
 ## Open questions
 
-None from the operator's decisions. Details this ADR chose within them that a later decision could amend: undo being
-refused while a fee is still planned (point 6), and a fee on a plan whose occurrence was cancelled still counting as
+None from the operator's decisions. Details this ADR chose within them that a later decision could amend: a fee on a plan whose occurrence was cancelled still counting as
 planned (the fee is its own charge).

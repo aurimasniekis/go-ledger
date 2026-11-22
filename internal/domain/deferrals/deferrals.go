@@ -202,18 +202,35 @@ func (p Plan) HasUnpaidAdjustments() bool {
 // clears when the occurrence is paid, when the plan is revised to a later date
 // and when the plan is undone. A plan whose date is today is not missed yet.
 func (p Plan) Missed(st payments.State, today calendar.Date) bool {
+	return p.MissedReason(st, today) != ""
+}
+
+// Missed reasons: why a plan is missed.
+const (
+	// MissedPrincipal: the occurrence is overdue and still owes something.
+	MissedPrincipal = "principal"
+	// MissedFee: a recorded fee is still planned (not paid, not removed) after
+	// the plan date, whether or not the principal is paid (D-DF-b 2a).
+	MissedFee = "fee"
+)
+
+// MissedReason is why the plan is missed, or "" when it is not. The principal
+// reason takes precedence over the fee one. An active plan whose date has
+// passed is missed for the principal while the occurrence is overdue (its own
+// due date has passed, so a due day moved later keeps it from being missed
+// early) and still owes something, and for a fee while any adjustment is still
+// planned; marking the fee paid or removing it clears the fee reason.
+func (p Plan) MissedReason(st payments.State, today calendar.Date) string {
 	if !p.Active() || !today.After(p.PlannedDate) {
-		return false
+		return ""
 	}
-	switch {
-	case st.Timing != payments.StatusOverdue:
-		// Not overdue (for example the due day was moved later after the
-		// plan was made): a plan date cannot be missed before the occurrence is.
-		return false
-	case st.Status == payments.StatusCancelled, st.Status == payments.StatusPaid, st.Timing == payments.StatusNotRecorded:
-		return false
+	if st.Timing == payments.StatusOverdue && st.Status != payments.StatusCancelled && st.Status != payments.StatusPaid && st.Outstanding.Sign() > 0 {
+		return MissedPrincipal
 	}
-	return st.Outstanding.Sign() > 0
+	if p.HasUnpaidAdjustments() {
+		return MissedFee
+	}
+	return ""
 }
 
 // GraceUntil is the last day of a documented grace period: the planned date

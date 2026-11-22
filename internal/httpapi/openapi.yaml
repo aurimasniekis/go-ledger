@@ -5450,7 +5450,7 @@ components:
         evidence changes.
       additionalProperties: false
       required: [id, occurrence_id, commitment_id, plan_type, state, planned_date, planned_month, reason, original_due_date, original_amount, outstanding_when_planned,
-        occurrence_status, outstanding_amount, overdue_since, grace_until, within_grace, missed, adjustment_total, unpaid_adjustment_total, adjustments, version, created_at, updated_at, undone_at]
+        occurrence_status, outstanding_amount, overdue_since, grace_until, within_grace, missed, missed_reason, adjustment_total, unpaid_adjustment_total, adjustments, version, created_at, updated_at, undone_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -5494,8 +5494,14 @@ components:
         missed:
           type: boolean
           description: |
-            True while the plan is active, its planned date has passed (today is after it) and the occurrence still owes something: "plan date passed, still owed".
-            Derived on every read and never stored; it is not payment state. It clears when the occurrence is paid, the plan is revised to a later date or the plan is undone.
+            True while the plan is active, its planned date has passed (today is after it) and either the occurrence is overdue and still owes something ("principal") or a recorded fee is still planned, even when the principal is paid ("fee").
+            Derived on every read and never stored; it is not payment state. It clears when the occurrence is paid and every fee is paid or removed, the plan is revised to a later date or the plan is undone.
+        missed_reason:
+          description: Why the plan is missed; null when it is not. "principal" takes precedence over "fee".
+          oneOf:
+            - type: string
+              enum: [principal, fee]
+            - type: "null"
         adjustment_total:
           $ref: "#/components/schemas/Money"
           description: The adjustments not removed, paid ones included.

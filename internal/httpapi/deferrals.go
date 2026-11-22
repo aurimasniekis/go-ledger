@@ -98,6 +98,10 @@ type deferralPlanJSON struct {
 	// state: it clears when the occurrence is paid, the plan is revised to
 	// a later date or undone.
 	Missed bool `json:"missed"`
+	// MissedReason is why it is missed: "principal" (the occurrence is overdue
+	// and still owes something) or "fee" (a recorded fee is still planned after
+	// the plan date, even when the principal is paid); null when not missed.
+	MissedReason *string `json:"missed_reason"`
 	// AdjustmentTotal sums the adjustments not removed; UnpaidAdjustmentTotal
 	// the ones still planned (neither removed nor marked paid), the amount the
 	// monthly view counts in the planned month.
@@ -116,7 +120,7 @@ func toDeferralPlanJSON(p deferrals.Plan, due calendar.Date, st payments.State, 
 	out := deferralPlanJSON{ID: p.ID, OccurrenceID: p.OccurrenceID, CommitmentID: p.CommitmentID, PlanType: p.Type, State: p.State(),
 		PlannedDate: p.PlannedDate, PlannedMonth: p.PlannedMonth(), Reason: p.Reason, OriginalDueDate: p.OriginalDueDate, OriginalAmount: p.OriginalAmount,
 		OutstandingWhenPlanned: p.OutstandingWhenPlanned, OccurrenceStatus: st.Status, OutstandingAmount: st.Outstanding, AdjustmentTotal: p.AdjustmentTotal(),
-		UnpaidAdjustmentTotal: p.UnpaidAdjustmentTotal(), Missed: p.Missed(st, today),
+		UnpaidAdjustmentTotal: p.UnpaidAdjustmentTotal(), Missed: p.Missed(st, today), MissedReason: missedReason(p.MissedReason(st, today)),
 		Adjustments: make([]deferralAdjustmentJSON, len(p.Adjustments)), Version: p.Version, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, UndoneAt: p.UndoneAt}
 	overdue := st.Status != payments.StatusPaid && st.Timing == payments.StatusOverdue
 	if overdue {
@@ -643,4 +647,12 @@ func sameText(a, b *string) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+// missedReason is the JSON form of a missed reason: null when not missed.
+func missedReason(r string) *string {
+	if r == "" {
+		return nil
+	}
+	return &r
 }

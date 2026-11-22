@@ -706,6 +706,8 @@ type DeferralPlan struct {
 	// and the occurrence still owes something. Derived on every read, never
 	// stored and not payment state.
 	Missed bool `json:"missed"`
+	// MissedReason is "principal" or "fee" while Missed, otherwise nil.
+	MissedReason *string `json:"missed_reason"`
 	// AdjustmentTotal sums the adjustments not removed, UnpaidAdjustmentTotal
 	// the ones still planned (not removed, not marked paid).
 	AdjustmentTotal       Money                `json:"adjustment_total"`

@@ -158,7 +158,7 @@ func coreTools() []Tool {
 		{
 			Name: "get_month_summary", Title: "Get the monthly view", Method: "GET", Path: "/occurrences/summary",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed (plan date passed, still owed). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.",
+			Description: "The monthly view: every occurrence of the month with its payment state, and exact totals per currency (due, paid, outstanding, overdue, overpaid, and the planned figures with unpaid deferral fees under their own currency). Each row's deferral carries missed and missed_reason (plan date passed: principal still owed, or a fee still planned). Currencies are never added together. It describes recorded commitments and recorded payments only; it is not a statement of money that is safe to spend. The freshness member says how current it is.",
 			Schema:      object(map[string]any{"month": monthArg("The reporting month, such as 2026-11.")}, "month"),
 		},
 		{
@@ -316,7 +316,7 @@ func deferralTools() []Tool {
 		{
 			Name: "list_deferral_plans", Title: "List deferral plans", Method: "GET", Path: "/deferral-plans",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees (each with its paid marker), the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). missed is true when the plan's date has passed while the occurrence still owes something (plan date passed, still owed); it is derived when read, is not payment state and clears when the occurrence is paid or the plan is revised or undone. Filters combine; a repeated filter accepts any of its values.",
+			Description: "List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees (each with its paid marker), the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). missed is true when the plan's date has passed while the occurrence is overdue and still owes something (missed_reason principal) or while a recorded fee is still planned, even when the principal is paid (missed_reason fee); it is derived when read, is not payment state and clears when the occurrence is paid and every fee is paid or removed, or the plan is revised or undone. Filters combine; a repeated filter accepts any of its values.",
 			Schema: object(pagingArgs(map[string]any{
 				"occurrence_id": map[string]any{"type": "array", "items": idArg("occurrence"), "description": "Only plans of these occurrences."},
 				"commitment_id": map[string]any{"type": "array", "items": idArg("commitment"), "description": "Only plans of these commitments' occurrences."},
@@ -327,7 +327,7 @@ func deferralTools() []Tool {
 		{
 			Name: "get_deferral_plan", Title: "Get a deferral plan", Method: "GET", Path: "/deferral-plans/{id}",
 			Grant: grantCommitmentsRead, Kind: KindRead,
-			Description: "Get one deferral plan, including its version (needed to revise or undo it), its adjustments with their paid markers, and missed (plan date passed, occurrence still owes something).",
+			Description: "Get one deferral plan, including its version (needed to revise or undo it), its adjustments with their paid markers, and missed and missed_reason (plan date passed: principal still owed, or a fee still planned).",
 			Schema:      object(map[string]any{"id": idArg("deferral plan")}, "id"),
 		},
 		{

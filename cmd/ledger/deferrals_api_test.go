@@ -25,6 +25,7 @@ type deferralResp struct {
 	AdjustmentTotal        struct{ Amount string } `json:"adjustment_total"`
 	UnpaidAdjustmentTotal  struct{ Amount string } `json:"unpaid_adjustment_total"`
 	Missed                 bool                    `json:"missed"`
+	MissedReason           *string                 `json:"missed_reason"`
 	Adjustments            []struct {
 		ID        string  `json:"id"`
 		RemovedAt *string `json:"removed_at"`
@@ -437,11 +438,12 @@ func TestDeferralMissedPlanAndFeePaidMarkerAPI(t *testing.T) {
 		t.Fatalf("pay: %d %s", rec.Code, rec.Body.String())
 	}
 	g := get()
-	if g.Missed || g.OccurrenceStatus != "paid" || g.UnpaidAdjustmentTotal.Amount != "3.00" || g.Version != 3 {
+	// D-DF-b 2a: the principal is paid but a fee is still planned after the plan date: missed, reason fee.
+	if !g.Missed || g.MissedReason == nil || *g.MissedReason != "fee" || g.OccurrenceStatus != "paid" || g.UnpaidAdjustmentTotal.Amount != "3.00" || g.Version != 3 {
 		t.Fatalf("after the principal is paid: %+v", g)
 	}
 	nov := f.monthPlanned(t, "2026-11")
-	if nov.Totals[0].Adjustments.Amount != "3.00" || len(nov.CarriedIn) != 1 || nov.CarriedIn[0].Deferral == nil || nov.CarriedIn[0].Deferral.Missed {
+	if nov.Totals[0].Adjustments.Amount != "3.00" || len(nov.CarriedIn) != 1 || nov.CarriedIn[0].Deferral == nil || !nov.CarriedIn[0].Deferral.Missed || nov.CarriedIn[0].Deferral.MissedReason == nil || *nov.CarriedIn[0].Deferral.MissedReason != "fee" {
 		t.Errorf("November after the principal is paid: totals %+v carried in %+v", nov.Totals, nov.CarriedIn)
 	}
 	if rec := f.do("POST", item+"/undo", `{"version":3}`, admin); rec.Code != 409 || !strings.Contains(rec.Body.String(), "deferral_adjustments_unpaid") {
@@ -465,6 +467,9 @@ func TestDeferralMissedPlanAndFeePaidMarkerAPI(t *testing.T) {
 	}
 	g = decodeDeferral(t, rec.Body.Bytes())
 	a := g.Adjustments[0]
+	if g.Missed || g.MissedReason != nil {
+		t.Errorf("marking the fee paid does not clear missed: %+v", g)
+	}
 	if g.Version != 4 || a.PaidAt == nil || a.PaidBy == nil || a.PaidBy.Kind != "user" || a.PaidBy.Via == nil || *a.PaidBy.Via != "session" || g.UnpaidAdjustmentTotal.Amount != "0.00" || g.AdjustmentTotal.Amount != "3.00" {
 		t.Fatalf("after marking paid: %+v", g)
 	}
