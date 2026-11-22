@@ -39,6 +39,8 @@ export interface MonthBoardProps {
   form?: ReactNode
   /** Whether the session may open the bank connections page (connections:read); the link is hidden otherwise. */
   canViewConnections?: boolean
+  /** Whether the session may create commitments (commitments:write): the empty state then offers "New commitment". */
+  canWriteCommitments?: boolean
   /** True while the browser reports no network: recording a payment cannot be saved then. */
   offline?: boolean
   /** The Undo notice, placed right under the month navigation so it reads as part of the page, not of the title. */
@@ -104,6 +106,13 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           {p.data.items.length === 0 && carried.length === 0 && !(p.form && p.formFor) ? (
             <EmptyState id="month-empty" level={2} title={`No commitments fall due in ${label}`}>
               Nothing is scheduled for this month. A commitment shows here once its schedule has a due date in it; use the month buttons to look at another month.
+              {p.canWriteCommitments && (
+                <p className="mt-2">
+                  <Link to="/commitments/new" className="font-medium text-foreground underline">
+                    New commitment
+                  </Link>
+                </p>
+              )}
             </EmptyState>
           ) : (
             <>

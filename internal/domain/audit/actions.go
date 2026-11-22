@@ -132,6 +132,23 @@ const (
 	// value.
 	DecisionConsentGranted Action = "decision_consent.granted"
 	DecisionConsentRevoked Action = "decision_consent.revoked"
+
+	// What became of a model's suggestion (L6, ADR-0065). The target is the
+	// suggestion (target type "decision_suggestion"). Details: task, provider
+	// and via; never the model, the answer or any object text.
+	// auto_applied is the system applying a categorisation the operator opted
+	// in to auto-apply; reverted is a person taking that back.
+	DecisionSuggestionAccepted    Action = "decision_suggestion.accepted"
+	DecisionSuggestionRejected    Action = "decision_suggestion.rejected"
+	DecisionSuggestionCorrected   Action = "decision_suggestion.corrected"
+	DecisionSuggestionAutoApplied Action = "decision_suggestion.auto_applied"
+	DecisionSuggestionReverted    Action = "decision_suggestion.reverted"
+	DecisionSuggestionDismissed   Action = "decision_suggestion.dismissed"
+
+	// In-app alerts (L6, ADR-0065). The target is the alert (target type
+	// "alert"). Details: kind (and for a close, how) and via; never facts.
+	AlertRaised Action = "alert.raised"
+	AlertClosed Action = "alert.closed"
 )
 
 // Fixed value sets for detail fields that are not identifiers.
@@ -162,7 +179,12 @@ var (
 	// cannot be imported here, its test checks the lists agree.
 	decisionProviders = []string{"openrouter", "openai", "anthropic", "typesafe"}
 	decisionPurposes  = []string{"categorisation", "label_suggestion", "alerts", "payment_matching"}
+	alertKinds        = []string{"consent_expiring", "commitment_amount_changed", "unmatched_overdue"}
 )
+
+func suggestionFields() []Field {
+	return []Field{f("task", decisionPurposes...), f("provider", decisionProviders...), f("via", matchVias...)}
+}
 
 func deferralFields(extra ...Field) []Field {
 	return append([]Field{f("occurrence_id"), f("plan_type", "personal", "creditor_agreed", "documented_grace"), f("planned_date"), f("currency"), f("via", matchVias...)}, extra...)
@@ -293,6 +315,14 @@ var Definitions = map[Action][]Field{
 	PaymentMatchingRun:             {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
 	DecisionConsentGranted:         {f("provider", decisionProviders...), f("purpose", decisionPurposes...), f("fields"), f("via", matchVias...)},
 	DecisionConsentRevoked:         {f("provider", decisionProviders...), f("purpose", decisionPurposes...), f("fields"), f("via", matchVias...)},
+	DecisionSuggestionAccepted:     suggestionFields(),
+	DecisionSuggestionRejected:     suggestionFields(),
+	DecisionSuggestionCorrected:    suggestionFields(),
+	DecisionSuggestionAutoApplied:  suggestionFields(),
+	DecisionSuggestionReverted:     suggestionFields(),
+	DecisionSuggestionDismissed:    suggestionFields(),
+	AlertRaised:                    {f("kind", alertKinds...), f("via", matchVias...)},
+	AlertClosed:                    {f("kind", alertKinds...), f("how", "dismissed", "resolved"), f("via", matchVias...)},
 	RatesRefreshRequested:          {f("outcome", "succeeded", "partial", "failed", "cancelled"), f("refreshed"), f("error_kind", "unavailable", "rate_limited", "permanent", "internal"), f("error_code")},
 }
 

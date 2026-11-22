@@ -1,4 +1,6 @@
-import { screen, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import { createMemoryHistory } from '@tanstack/react-router'
+import { App } from '@/App'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fail, installApi, ok, renderApp, session, signedIn } from '@/test/fake-api'
@@ -26,6 +28,18 @@ describe('required-2FA gate', () => {
     expect(screen.queryByRole('link', { name: 'Sessions' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Change password' })).not.toBeInTheDocument()
+  })
+
+  it('tells a confined session that the bank connection was not completed, without keeping the code', async () => {
+    installApi({
+      ...signedIn(confined),
+      'GET /api/v1/auth/two-factor': ok({ enabled: false, method: null, enabled_at: null, recovery_codes_remaining: 0, required: true, pending_enrollment_until: null }),
+    })
+    const history = createMemoryHistory({ initialEntries: ['/connections/callback?state=S3CRET&code=C0DE'] })
+    render(<App history={history} />)
+    expect(await screen.findByRole('heading', { name: 'Account security' })).toBeInTheDocument()
+    expect(screen.getAllByRole('note').map((n) => n.textContent).join(' ')).toMatch(/bank connection was not completed/)
+    expect(decodeURIComponent(history.location.href)).not.toMatch(/S3CRET|C0DE/)
   })
 
   it('moves to enrolment when a request answers two_factor_enrollment_required', async () => {

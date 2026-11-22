@@ -14,11 +14,12 @@ import { MatchesPage } from '@/features/matches/matches-page'
 import { isMonth, monthOf } from '@/features/month/month'
 import { OutlookPage } from '@/features/outlook/outlook-page'
 import { CommitmentsPage } from '@/features/organisation/commitments-page'
+import { EditCommitmentPage, NewCommitmentPage } from '@/features/commitments/commitment-pages'
 import { OrganisationPage } from '@/features/organisation/organisation-page'
 import { MerchantsPage } from '@/features/merchants/merchants-page'
 import { MerchantDetailPage } from '@/features/merchants/merchant-detail'
 import { RatesPage } from '@/features/rates/rates-page'
-import { RequireSession } from '@/features/auth/require-session'
+import { RequireSession, useBankReturn } from '@/features/auth/require-session'
 import { SignInPage } from '@/features/auth/sign-in'
 import { SecurityPage } from '@/features/account/security'
 import { SessionsPage } from '@/features/account/sessions'
@@ -103,7 +104,7 @@ const connectionsCallbackRoute = createRoute({
     error: typeof s.error === 'string' ? s.error : undefined,
   }),
   component: function ConsentCallback() {
-    return <ConsentCallbackPage redirect={connectionsCallbackRoute.useSearch()} />
+    return <ConsentCallbackPage redirect={useBankReturn(connectionsCallbackRoute.useSearch())} />
   },
 })
 
@@ -131,6 +132,18 @@ const merchantRoute = createRoute({
   },
 })
 
+// Commitments (CM-UI): /commitments/new creates one, /commitments/$id edits, ends or deletes it. "new" is a static segment, so it wins over $id.
+const commitmentNewRoute = createRoute({ getParentRoute: () => appRoute, path: '/commitments/new', component: NewCommitmentPage })
+const commitmentEditRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/commitments/$id',
+  validateSearch: (s: Record<string, unknown>): { created?: boolean } => (s.created === true || s.created === 'true' ? { created: true } : {}),
+  component: function EditRoute() {
+    const { id } = commitmentEditRoute.useParams()
+    return <EditCommitmentPage id={id} created={commitmentEditRoute.useSearch().created} />
+  },
+})
+
 const routeTree = rootRoute.addChildren([
   signInRoute,
   designRoute,
@@ -146,6 +159,8 @@ const routeTree = rootRoute.addChildren([
     child('/rates', RatesPage),
     child('/organisation', OrganisationPage),
     child('/commitments', CommitmentsPage),
+    commitmentNewRoute,
+    commitmentEditRoute,
     child('/account/security', SecurityPage),
     child('/account/sessions', SessionsPage),
     child('/account/tokens', MyTokensPage),

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useNavigate, useRouterState, useSearch } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, apiFetch, splitErrors } from '@/lib/api'
 import { api, useSession } from '@/lib/auth'
@@ -26,6 +26,8 @@ import { Notice } from '@/components/notice'
 export function SecurityPage() {
   const session = useSession()
   const confined = session.data?.two_factor.enrollment_required === true
+  // Set by the session gate when a bank's return reached a session that is confined to enrolment (the code itself is never kept).
+  const bankIncomplete = useRouterState({ select: (r) => (r.location.state as { bankIncomplete?: boolean }).bankIncomplete === true })
   // Recovery codes live only in this state while their dialog is open.
   const [codes, setCodes] = useState<string[] | null>(null)
   return (
@@ -35,6 +37,11 @@ export function SecurityPage() {
         <Notice>
           This Ledger requires two-factor authentication. Set up an authenticator below to continue; nothing else is
           available until you do.
+        </Notice>
+      )}
+      {bankIncomplete && (
+        <Notice>
+          The bank connection was not completed because two-factor setup is required first. Set up an authenticator, then start connecting the bank again from Connections.
         </Notice>
       )}
       <TwoFactor onCodes={setCodes} />
