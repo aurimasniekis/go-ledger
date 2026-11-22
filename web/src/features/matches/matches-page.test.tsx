@@ -863,10 +863,35 @@ describe('"This is the payment I recorded" (D45)', () => {
     const card = await screen.findByRole('article', { name: 'Rent' })
     expect(card).toHaveTextContent('Replaced 1 manual record, kept in history.')
     await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
-    expect(within(card).getByRole('form')).toHaveTextContent('Your manual record of this payment comes back')
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('Your manual record of this payment comes back'))
   })
 
-  it('Unmatch says "records come back and count again" in the plural for several replaced records', async () => {
+  it('Unmatch says a record deleted while replaced stays deleted and does not come back', async () => {
+    records = [] // the deleted record is no longer listed for the occurrence
+    store = [confirmedRepl()]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('A manual record of this payment was deleted while it was replaced, so it does not come back.'))
+    expect(within(card).getByRole('form')).not.toHaveTextContent('comes back')
+  })
+
+  it('held and deleted: Unmatch does not say the deleted record already counts', async () => {
+    records = []
+    const h = confirmedRepl()
+    h.counts_as_evidence = false
+    store = [h]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('so it does not come back.'))
+    expect(within(card).getByRole('form')).not.toHaveTextContent('already counts')
+  })
+
+  it('Unmatch splits two replaced records when one was deleted and one still counts', async () => {
+    records = [rec('mp1', { replaced_by_match_id: 'a' })] // mp2 was deleted while replaced
     const c = confirmedRepl()
     c.history[0]!.replaced_manual_payment_ids = ['mp1', 'mp2']
     store = [c]
@@ -874,7 +899,19 @@ describe('"This is the payment I recorded" (D45)', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
     const card = await screen.findByRole('article', { name: 'Rent' })
     await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
-    expect(within(card).getByRole('form')).toHaveTextContent('Your manual records of this payment come back and count again.')
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('Your manual record of this payment comes back and counts again. A manual record of this payment was deleted while it was replaced, so it does not come back.'))
+  })
+
+  it('Unmatch says "records come back and count again" in the plural for several replaced records', async () => {
+    const c = confirmedRepl()
+    c.history[0]!.replaced_manual_payment_ids = ['mp1', 'mp2']
+    records = [rec('mp1', { replaced_by_match_id: 'a' }), rec('mp2', { replaced_by_match_id: 'a' })]
+    store = [c]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    await waitFor(() => expect(within(card).getByRole('form')).toHaveTextContent('Your manual records of this payment come back and count again.'))
   })
 
   const openForm = async () => {
@@ -1063,7 +1100,7 @@ describe('"This is the payment I recorded" (D45)', () => {
     const card = await screen.findByRole('article', { name: 'Rent' })
     await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
     const unmatchForm = within(card).getByRole('form')
-    expect(unmatchForm).toHaveTextContent('Your manual record of this payment already counts again, because the bank no longer reports the payment. Unmatching keeps it counting.')
+    await waitFor(() => expect(unmatchForm).toHaveTextContent('Your manual record of this payment already counts again, because the bank no longer reports the payment. Unmatching keeps it counting.'))
     expect(unmatchForm).not.toHaveTextContent('comes back')
     await userEvent.click(within(card).getByRole('button', { name: 'Cancel' }))
     await userEvent.click(within(card).getByRole('button', { name: 'Reverse (payment bounced)' }))
