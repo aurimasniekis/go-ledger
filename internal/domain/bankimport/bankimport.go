@@ -42,6 +42,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/audit"
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 )
@@ -433,8 +434,19 @@ func (r *refresh) connectionFailed(book context.Context, cause error, at time.Ti
 
 func (r *refresh) updateStatus(book context.Context, cause error) {
 	if status, ok := banking.StatusAfter(cause); ok {
-		if _, err := r.e.facts.SetConnectionStatus(book, r.conn.ID, status, cause, r.e.now()); err != nil {
+		// Conditional on the session the run started with: the user may have
+		// reconnected meanwhile, and that consent must stand. The failure is
+		// still on the run and the accounts.
+		at := r.e.now()
+		skipped := func(c banking.Connection) audit.Event {
+			return audit.Event{Action: audit.BankStatusUpdateSkipped, Actor: audit.System, TargetType: "bank_connection", TargetID: string(c.ID), At: at,
+				Details: map[string]string{"provider": c.Provider, "application": c.Application, "kind": string(banking.Classify(cause)), "status": string(status)}}
+		}
+		_, applied, err := r.e.facts.SetConnectionStatusForSession(book, r.conn.ID, r.conn.Session, r.conn.ConsentGrantedAt, status, cause, at, skipped)
+		if err != nil {
 			r.log.Error("recording the connection status failed", "error", err)
+		} else if !applied {
+			r.log.Warn("connection status left as is: the connection was re-authorised or disconnected during the refresh", "status", string(status))
 		}
 	}
 }

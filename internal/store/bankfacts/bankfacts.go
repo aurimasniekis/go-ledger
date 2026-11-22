@@ -355,6 +355,50 @@ func (s *Store) SetConnectionStatus(ctx context.Context, id banking.ConnectionID
 		status, kind, code, ts(at))
 }
 
+// SetConnectionStatusForSession implements [banking.FactStore]. The
+// comparison and the update share one transaction, so a reconnect that
+// commits first is never overwritten by a run that started before it. The
+// run's authorisation is the session reference together with the grant time
+// (set on every activation), so a provider that reuses a reference is still
+// told apart. A disconnected connection and a consent still in flight
+// (consent_state) are left alone. When nothing is applied, ev (if any) is
+// written in the same transaction, so the skip is on record.
+func (s *Store) SetConnectionStatusForSession(ctx context.Context, id banking.ConnectionID, session banking.Sensitive, grantedAt time.Time, status banking.ConnectionStatus, cause error, at time.Time, ev banking.AuditFunc) (banking.Connection, bool, error) {
+	if !status.Valid() || status == banking.ConnectionActive || status == banking.ConnectionPending {
+		return banking.Connection{}, false, fmt.Errorf("bankfacts: SetConnectionStatusForSession cannot set %q", status)
+	}
+	if err := requireTime("status change", at); err != nil {
+		return banking.Connection{}, false, err
+	}
+	kind, code := banking.Classify(cause), ""
+	if e, ok := errors.AsType[*banking.Error](cause); ok {
+		code = e.Code
+	}
+	var out banking.Connection
+	applied := false
+	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		cur, err := connectionTx(ctx, tx, "id = ?", id)
+		if err != nil {
+			return err
+		}
+		if cur.Status == banking.ConnectionDisconnected || !cur.Session.Equal(session) || !cur.ConsentGrantedAt.Equal(grantedAt) {
+			out = cur
+			return s.auditTx(ctx, tx, ev, cur)
+		}
+		// consent_state is deliberately untouched: a reconnect in flight
+		// keeps its state, and its callback can still be claimed.
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE bank_connections SET status = ?, last_error_kind = ?, last_error_code = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+			status, kind, code, ts(at), id); err != nil {
+			return fmt.Errorf("bankfacts: update connection %s: %w", id, err)
+		}
+		applied = true
+		out, err = connectionTx(ctx, tx, "id = ?", id)
+		return err
+	})
+	return out, applied, err
+}
+
 // ---- accounts ----
 
 const accountColumns = "id, connection_id, provider, external_id, provider_handle, iban, bban, masked_pan, other_identifier, name, product, currency, first_seen_at, last_seen_at, no_longer_reported_at"
