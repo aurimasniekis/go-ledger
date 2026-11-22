@@ -260,8 +260,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	var decisionWG sync.WaitGroup
 	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(refreshCtx context.Context, res bankimport.Result) {
 		// Questions to a model take seconds each and are never part of the
-		// import: they run in the background, one pass at a time and in
-		// refresh order, and a failure only reaches the log.
+		// import: they run in the background, one pass at a time. The passes
+		// are not run in refresh order (a mutex does not queue FIFO); each pass
+		// is independent and idempotent, so the order does not matter. A
+		// failure is counted and logged, never returned to the import.
 		if tr := decisionTrigger.Load(); tr != nil {
 			inserted := map[banking.AccountID][]banking.TransactionID{}
 			for _, a := range res.Accounts {
@@ -331,7 +333,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		_ = ln.Close()
 		return 1
 	}
-	decisionTrigger.Store(buildDecisionTrigger(decisionSvc, cfg.Decisions, db, auditLog, time.Now, facts, parts.organisation, log))
+	decisionTrigger.Store(buildDecisionTrigger(decisionSvc, cfg.Decisions, db, auditLog, time.Now, facts, parts.organisation, log, app))
 	// The rates routes (FX2c, ADR-0048) list the cache and trigger a refresh. The
 	// provider is optional, so its state is reported (status route, metrics)
 	// and never gates readiness.
