@@ -109,6 +109,22 @@ var (
 	opAddObjectLabel      = operation{ID: "addObjectLabel", Method: http.MethodPut, Path: "/organisation/{object_type}/{object_id}/labels/{label_id}"}
 	opRemoveObjectLabel   = operation{ID: "removeObjectLabel", Method: http.MethodDelete, Path: "/organisation/{object_type}/{object_id}/labels/{label_id}"}
 
+	// Merchants (tasks E1, E2, M1, E3; ADR-0051, ADR-0054, ADR-0058).
+	opListMerchants                  = operation{ID: "listMerchants", Method: http.MethodGet, Path: "/merchants", Query: []string{"limit", "cursor", "archived"}}
+	opCreateMerchant                 = operation{ID: "createMerchant", Method: http.MethodPost, Path: "/merchants"}
+	opGetMerchant                    = operation{ID: "getMerchant", Method: http.MethodGet, Path: "/merchants/{id}"}
+	opUpdateMerchant                 = operation{ID: "updateMerchant", Method: http.MethodPatch, Path: "/merchants/{id}"}
+	opDeleteMerchant                 = operation{ID: "deleteMerchant", Method: http.MethodDelete, Path: "/merchants/{id}"}
+	opArchiveMerchant                = operation{ID: "archiveMerchant", Method: http.MethodPost, Path: "/merchants/{id}/archive"}
+	opUnarchiveMerchant              = operation{ID: "unarchiveMerchant", Method: http.MethodPost, Path: "/merchants/{id}/unarchive"}
+	opAddMerchantAlias               = operation{ID: "addMerchantAlias", Method: http.MethodPost, Path: "/merchants/{id}/aliases"}
+	opRemoveMerchantAlias            = operation{ID: "removeMerchantAlias", Method: http.MethodDelete, Path: "/merchants/{id}/aliases/{alias_id}"}
+	opMergeMerchants                 = operation{ID: "mergeMerchants", Method: http.MethodPost, Path: "/merchants/{id}/merge"}
+	opListMerchantSources            = operation{ID: "listMerchantSources", Method: http.MethodGet, Path: "/merchants/sources"}
+	opGetTransactionMerchant         = operation{ID: "getTransactionMerchant", Method: http.MethodGet, Path: "/transactions/{id}/merchant"}
+	opReviewTransactionMerchant      = operation{ID: "reviewTransactionMerchant", Method: http.MethodPut, Path: "/transactions/{id}/merchant/review"}
+	opClearTransactionMerchantReview = operation{ID: "clearTransactionMerchantReview", Method: http.MethodDelete, Path: "/transactions/{id}/merchant/review"}
+
 	// opCreateMyToken needs a root token of the root account (decision D25).
 	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
@@ -130,4 +146,6 @@ var operations = []operation{
 	opListRates, opRatesStatus, opRefreshRates,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
 	opListCategories, opCreateCategory, opGetCategory, opUpdateCategory, opArchiveCategory, opUnarchiveCategory, opDeleteCategory, opListLabels, opCreateLabel, opGetLabel, opUpdateLabel, opArchiveLabel, opUnarchiveLabel, opDeleteLabel, opListBuckets, opCreateBucket, opGetBucket, opUpdateBucket, opArchiveBucket, opUnarchiveBucket, opDeleteBucket, opListBucketMembers, opAddBucketMember, opRemoveBucketMember, opGetObjectOrg, opSetObjectCategory, opResetObjectCategory, opAddObjectLabel, opRemoveObjectLabel,
+	opListMerchants, opCreateMerchant, opGetMerchant, opUpdateMerchant, opDeleteMerchant, opArchiveMerchant, opUnarchiveMerchant, opAddMerchantAlias, opRemoveMerchantAlias, opMergeMerchants, opListMerchantSources,
+	opGetTransactionMerchant, opReviewTransactionMerchant, opClearTransactionMerchantReview,
 }

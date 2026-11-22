@@ -93,5 +93,6 @@ checks the result; a second test checks the refusal.
 - A merge cannot be undone in place (the audit log keeps what moved; a person re-creates and re-assigns).
 - The Go client methods, CLI commands, MCP tools and Terraform resources for merchant records are not built here (the
   routes are usable through `Client.Raw`); they belong with the merchant screens (E3) and their slice of P-MCP2 and
-  the provider, and are listed in the client's `notImplemented` table.
+  the provider, and are listed in the client's `notImplemented` table. (Update, task E3: the client methods now exist,
+  see [ADR-0061](0061-merchant-ui.md); CLI, MCP and the provider remain.)
 - `ledger_merchant_key` and `ledger_refuse` must stay registered while migration 0030 ships.

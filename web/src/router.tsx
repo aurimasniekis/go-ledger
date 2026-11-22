@@ -15,6 +15,8 @@ import { isMonth, monthOf } from '@/features/month/month'
 import { OutlookPage } from '@/features/outlook/outlook-page'
 import { CommitmentsPage } from '@/features/organisation/commitments-page'
 import { OrganisationPage } from '@/features/organisation/organisation-page'
+import { MerchantsPage } from '@/features/merchants/merchants-page'
+import { MerchantDetailPage } from '@/features/merchants/merchant-detail'
 import { RatesPage } from '@/features/rates/rates-page'
 import { RequireSession } from '@/features/auth/require-session'
 import { SignInPage } from '@/features/auth/sign-in'
@@ -119,6 +121,15 @@ const outlookRoute = createRoute({
   },
 })
 
+// Merchant records (E3): /merchants lists them, /merchants/<id> is one record.
+const merchantRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/merchants/$id',
+  component: function MerchantRoute() {
+    return <MerchantDetailPage id={merchantRoute.useParams().id} />
+  },
+})
+
 const routeTree = rootRoute.addChildren([
   signInRoute,
   designRoute,
@@ -129,6 +140,8 @@ const routeTree = rootRoute.addChildren([
     connectionsRoute,
     connectionsCallbackRoute,
     outlookRoute,
+    child('/merchants', MerchantsPage),
+    merchantRoute,
     child('/rates', RatesPage),
     child('/organisation', OrganisationPage),
     child('/commitments', CommitmentsPage),

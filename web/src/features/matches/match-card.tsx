@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { MerchantDisclosure } from '@/features/merchants/transaction-merchant'
 import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
@@ -484,6 +485,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           </div>
         </div>
       )}
+      <MerchantDisclosure transactionId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}`} />
       <OrganiseDisclosure objectType="transaction" objectId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}${name.data ? ` matched to ${name.data}` : ''}`} />
     </article>
   )

@@ -61,5 +61,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0057: Organisation UI and MCP tools](0057-organisation-ui-and-mcp.md)
 - [ADR-0058: Merchant records, aliases and merging](0058-merchant-records-aliases-and-merging.md)
 - [ADR-0059: Outlook slice by bucket and category/label list filters](0059-outlook-bucket-slice-and-organisation-filters.md)
+- [ADR-0061: Merchant screens and the merchant client](0061-merchant-ui.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

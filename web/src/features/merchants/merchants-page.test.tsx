@@ -1,0 +1,271 @@
+import { QueryClient } from '@tanstack/react-query'
+import { screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { setCsrfToken } from '@/lib/api'
+import { ALL_GRANTS, fail, installApi, none, ok, renderApp, signedIn } from '@/test/fake-api'
+import { alias, merchant } from './fixtures'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  setCsrfToken(null)
+})
+
+const LIDL = merchant('L00', 'Lidl', { aliases: [alias('L01', 'Lidl'), alias('L02', 'Lidl Vilnius', { origin: 'decision' })] })
+const MAXIMA = merchant('M00', 'Maxima')
+const OLD = merchant('O00', 'Old shop', { archived: true, archived_at: '2026-11-20T10:00:00Z' })
+const page = (items: unknown[]) => ok({ items, next_cursor: null })
+const etag = (m: { version: number }) => ({ 'If-Match': `"${m.version}"` })
+
+function routes(extra: Parameters<typeof installApi>[0] = {}, grants = ALL_GRANTS) {
+  return { ...signedIn(undefined, grants), 'GET /api/v1/merchants': page([LIDL, MAXIMA]), ...extra }
+}
+
+describe('merchants list', () => {
+  it('lists active merchants with their other aliases, linking to the record, and asks for archived ones only on request', async () => {
+    const user = userEvent.setup()
+    const calls = installApi(routes())
+    renderApp('/merchants')
+    const list = await screen.findByRole('list', { name: 'merchants' })
+    expect(within(list).getByRole('link', { name: 'Lidl' })).toHaveAttribute('href', '/merchants/' + LIDL.id)
+    expect(within(list).getByText('Also matched as: Lidl Vilnius')).toBeInTheDocument()
+    expect(calls.find((c) => c.path === '/api/v1/merchants')!.query.get('archived')).toBeNull()
+    await user.click(screen.getByLabelText('Show archived and merged merchants'))
+    await vi.waitFor(() => expect(calls.some((c) => c.path === '/api/v1/merchants' && c.query.get('archived') === 'true')).toBe(true))
+  })
+
+  it('filters by an alias', async () => {
+    const user = userEvent.setup()
+    installApi(routes())
+    renderApp('/merchants')
+    await screen.findByRole('list', { name: 'merchants' })
+    await user.type(screen.getByLabelText('Find a merchant by name or alias'), 'vilnius')
+    const list = screen.getByRole('list', { name: 'merchants' })
+    expect(within(list).getAllByRole('listitem')).toHaveLength(1)
+    expect(within(list).queryByText('Maxima')).toBeNull()
+  })
+
+  it('offers no change without merchants:write, and no list without merchants:read', async () => {
+    installApi(routes({}, ['merchants:read']))
+    const { unmount } = renderApp('/merchants')
+    await screen.findByRole('list', { name: 'merchants' })
+    expect(screen.queryByRole('button', { name: 'Add merchant' })).toBeNull()
+    expect(screen.getByText(/does not hold merchants:write/)).toBeInTheDocument()
+    unmount()
+    installApi(routes({}, ['commitments:read']))
+    renderApp('/merchants')
+    expect(await screen.findByText(/does not hold merchants:read/)).toBeInTheDocument()
+  })
+
+  it('says so when Ledger cannot be reached', async () => {
+    installApi({
+      ...signedIn(),
+      'GET /api/v1/merchants': () => {
+        throw new TypeError('offline')
+      },
+    })
+    renderApp('/merchants', new QueryClient({ defaultOptions: { queries: { retry: false } } }))
+    expect(await screen.findByText(/no connection to the server/)).toBeInTheDocument()
+  })
+
+  it('shows a name another merchant already has against the field, and keeps the dialog open', async () => {
+    const user = userEvent.setup()
+    installApi(routes({ 'POST /api/v1/merchants': fail(409, 'merchant_alias_taken', 'the alias belongs to another merchant') }))
+    renderApp('/merchants')
+    await user.click(await screen.findByRole('button', { name: 'Add merchant' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Add a merchant' })
+    await user.type(within(dlg).getByLabelText('Display name'), 'Lidl{Enter}')
+    expect(await within(dlg).findByText(/Another merchant already has this name/)).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Add a merchant' })).toBeInTheDocument()
+  })
+})
+
+describe('merchant record', () => {
+  const rec = (over = {}) => ({ ...LIDL, ...over })
+
+  it('renames with If-Match and shows the result only after the server accepted it', async () => {
+    const user = userEvent.setup()
+    let current = LIDL
+    const calls = installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: () => ok(current),
+        ['PATCH /api/v1/merchants/' + LIDL.id]: (req) => {
+          expect(req.headers['If-Match']).toBe('"1"')
+          current = rec({ display_name: 'Lidl Lietuva', version: 2 })
+          return ok(current)
+        },
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await screen.findByRole('heading', { name: 'Lidl', level: 1 })
+    await user.click(screen.getByRole('button', { name: 'Rename' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Rename Lidl' })
+    const input = within(dlg).getByLabelText('Display name')
+    await user.clear(input)
+    await user.type(input, 'Lidl Lietuva{Enter}')
+    expect(await screen.findByText('Renamed to Lidl Lietuva.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Lidl Lietuva/, level: 1 })).toBeInTheDocument()
+    expect(calls.find((c) => c.method === 'PATCH')!.body).toEqual({ display_name: 'Lidl Lietuva' })
+  })
+
+  it('reloads and says nothing changed on a version conflict', async () => {
+    const user = userEvent.setup()
+    let reads = 0
+    installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: () => (++reads, ok(reads > 1 ? rec({ version: 5, display_name: 'Lidl (renamed elsewhere)' }) : LIDL)),
+        ['PATCH /api/v1/merchants/' + LIDL.id]: fail(409, 'version_conflict', 'stale', { reconciliation: { current_version: 5 } }),
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Rename' }))
+    const dlg = await screen.findByRole('dialog')
+    await user.type(within(dlg).getByLabelText('Display name'), ' x{Enter}')
+    expect(await within(dlg).findByText(/changed elsewhere.*Nothing was changed/)).toBeInTheDocument()
+    // The page behind the open dialog is reloaded (it is inert, hence hidden: true).
+    expect(await screen.findByRole('heading', { name: /renamed elsewhere/, level: 1, hidden: true })).toBeInTheDocument()
+  })
+
+  it('adds an alias, and shows merchant_alias_taken without adding it', async () => {
+    const user = userEvent.setup()
+    let n = 0
+    let current = LIDL
+    installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: () => ok(current),
+        ['POST /api/v1/merchants/' + LIDL.id + '/aliases']: (req) => {
+          if (++n === 1) return fail(409, 'merchant_alias_taken', 'taken')
+          current = rec({ aliases: [...LIDL.aliases, alias('L03', (req.body as { name: string }).name)] })
+          return ok(current)
+        },
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    const input = await screen.findByLabelText('Add an alias')
+    await user.type(input, 'Maxima{Enter}')
+    expect(await screen.findByText(/Another merchant already has this name or alias/)).toBeInTheDocument()
+    await user.clear(input)
+    await user.type(input, 'Lidl Kaunas{Enter}')
+    expect(await screen.findByText('The alias Lidl Kaunas was added.')).toBeInTheDocument()
+    expect(within(screen.getByRole('list', { name: 'aliases' })).getByText('Lidl Kaunas')).toBeInTheDocument()
+  })
+
+  it('removes an alias and offers to undo it', async () => {
+    const user = userEvent.setup()
+    const calls = installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL),
+        ['DELETE /api/v1/merchants/' + LIDL.id + '/aliases/' + LIDL.aliases[1]!.id]: ok(rec({ aliases: [LIDL.aliases[0]] })),
+        ['POST /api/v1/merchants/' + LIDL.id + '/aliases']: ok(LIDL),
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Remove the alias Lidl Vilnius' }))
+    expect(await screen.findByText(/The alias Lidl Vilnius was removed/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Undo' }))
+    await vi.waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/aliases'))?.body).toEqual({ name: 'Lidl Vilnius' }))
+  })
+
+  it('archives with Undo, and only says so after the server answered', async () => {
+    const user = userEvent.setup()
+    let current = LIDL
+    installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: () => ok(current),
+        ['POST /api/v1/merchants/' + LIDL.id + '/archive']: (req) => {
+          expect(req.headers['If-Match']).toBe('"1"')
+          current = rec({ archived: true, archived_at: '2026-11-22T10:00:00Z', version: 2 })
+          return ok(current)
+        },
+        ['POST /api/v1/merchants/' + LIDL.id + '/unarchive']: ok(LIDL),
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Archive' }))
+    expect(await screen.findByText(/Lidl is archived\. Everything that refers to it is kept/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Unarchive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Merge another merchant into this one' })).toBeDisabled()
+  })
+
+  it('keeps the merchant and says why when it is in use', async () => {
+    const user = userEvent.setup()
+    installApi(routes({ ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL), ['DELETE /api/v1/merchants/' + LIDL.id]: fail(409, 'merchant_in_use', 'in use') }))
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    const dlg = await screen.findByRole('alertdialog')
+    await user.click(within(dlg).getByRole('button', { name: 'Delete Lidl' }))
+    expect(await within(dlg).findByText(/still refer to this merchant, so it cannot be deleted/)).toBeInTheDocument()
+  })
+
+  it('deletes an unused merchant and returns to the list', async () => {
+    const user = userEvent.setup()
+    const calls = installApi(routes({ ['GET /api/v1/merchants/' + MAXIMA.id]: ok(MAXIMA), ['DELETE /api/v1/merchants/' + MAXIMA.id]: none() }))
+    renderApp('/merchants/' + MAXIMA.id)
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete Maxima' }))
+    expect(await screen.findByRole('heading', { name: 'Merchants', level: 1 })).toBeInTheDocument()
+    expect(calls.find((c) => c.method === 'DELETE')!.headers).toMatchObject(etag(MAXIMA))
+  })
+
+  it('previews what a merge moves, needs an acknowledgement that it cannot be undone, then merges with If-Match of the remaining merchant', async () => {
+    const user = userEvent.setup()
+    const calls = installApi(
+      routes({
+        ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL),
+        ['POST /api/v1/merchants/' + LIDL.id + '/merge']: ok({
+          merchant: rec({ aliases: [...LIDL.aliases, ...MAXIMA.aliases], version: 2 }),
+          moved: { aliases: 1, decisions: 2, enrichments: 3, categories: 1, labels: 2 },
+          kept: 1,
+        }),
+      }),
+    )
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Merge another merchant into this one' }))
+    const dlg = await screen.findByRole('dialog', { name: /Merge another merchant into Lidl/ })
+    const merge = within(dlg).getByRole('button', { name: 'Merge' })
+    expect(merge).toBeDisabled()
+    // The merchant being merged is not offered as its own source.
+    const select = within(dlg).getByLabelText('Merchant to merge into this one')
+    expect(within(select).queryByRole('option', { name: 'Lidl' })).toBeNull()
+    await user.selectOptions(select, MAXIMA.id)
+    const preview = within(dlg).getByLabelText('What the merge does')
+    expect(preview).toHaveTextContent('Maxima will be merged into Lidl, which remains.')
+    expect(preview).toHaveTextContent('Its 1 alias move to Lidl: Maxima.')
+    expect(preview).toHaveTextContent('A merge cannot be undone in place.')
+    expect(merge).toBeDisabled()
+    await user.click(within(dlg).getByLabelText('I understand this merge cannot be undone in place.'))
+    await user.click(merge)
+    expect(await screen.findByText(/Maxima was merged into Lidl and archived\. Moved: 1 alias, 2 decisions, 3 source answers, 1 category and 2 label assignments\..*: 1\. This cannot be undone in place/)).toBeInTheDocument()
+    const req = calls.find((c) => c.method === 'POST' && c.path.endsWith('/merge'))!
+    expect(req.headers['If-Match']).toBe('"1"')
+    expect(req.body).toEqual({ merchant_id: MAXIMA.id })
+  })
+
+  it('shows a merge refusal and moves nothing', async () => {
+    const user = userEvent.setup()
+    installApi(routes({ ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL), ['POST /api/v1/merchants/' + LIDL.id + '/merge']: fail(409, 'merchant_archived', 'archived') }))
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Merge another merchant into this one' }))
+    const dlg = await screen.findByRole('dialog')
+    await user.selectOptions(within(dlg).getByLabelText('Merchant to merge into this one'), MAXIMA.id)
+    await user.click(within(dlg).getByLabelText('I understand this merge cannot be undone in place.'))
+    await user.click(within(dlg).getByRole('button', { name: 'Merge' }))
+    expect(await within(dlg).findByText(/archived or merged.*Nothing was changed/)).toBeInTheDocument()
+  })
+
+  it('shows a merged merchant read-only, pointing at the remaining one', async () => {
+    const merged = rec({ archived: true, merged_into: MAXIMA.id })
+    installApi(routes({ ['GET /api/v1/merchants/' + LIDL.id]: ok(merged) }))
+    renderApp('/merchants/' + LIDL.id)
+    expect(await screen.findByText(/was merged into/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'another merchant' })).toHaveAttribute('href', '/merchants/' + MAXIMA.id)
+    expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Remove the alias/ })).toBeNull()
+  })
+
+  it('says when there is no such merchant', async () => {
+    installApi(routes({ ['GET /api/v1/merchants/' + OLD.id]: fail(404, 'not_found', 'no merchant') }))
+    renderApp('/merchants/' + OLD.id)
+    expect(await screen.findByRole('heading', { name: 'Merchant not found' })).toBeInTheDocument()
+  })
+})
