@@ -66,13 +66,17 @@ export function reconnectSuperseded(a: BankAccount, c: BankConnection): boolean 
   const f = a.freshness
   if (c.status !== 'active' || !c.consent_granted_at || !f.last_attempt_at) return false
   if (f.state !== 'reconnect_required' && f.last_error?.kind !== 'reconnect_required') return false
+  // The account is being fetched right now on an active connection: the consent is good, and the old error stays only
+  // until the refresh ends (the attempt is stamped before the old error is cleared).
+  if (c.refresh_running) return true
   return Date.parse(f.last_attempt_at) < Date.parse(c.consent_granted_at)
 }
 
 export function accountState(a: BankAccount, superseded = false): AccountState {
   const f = a.freshness
-  // After a reconnect the old "reconnect needed" no longer applies, but nothing has been refreshed yet: stale, never fresh.
-  if (superseded) return 'stale'
+  // After a reconnect the old "reconnect needed" no longer applies, but nothing has been refreshed yet: stale, never fresh
+  // (or "never refreshed" when no refresh ever succeeded).
+  if (superseded) return f.last_success_at ? 'stale' : 'never'
   switch (f.state) {
     case 'fresh':
       return 'fresh'

@@ -61,6 +61,19 @@ describe('reconnectSuperseded', () => {
     expect(reconnectSuperseded(a, running)).toBe(true)
     expect(accountState(a, true)).toBe('stale')
   })
+  it('an account being fetched right after a reconnect is superseded even when its attempt is newer than the consent', () => {
+    const { c, a } = withAttempt('2026-11-21T10:01:00Z')
+    expect(reconnectSuperseded(a, c)).toBe(false)
+    expect(reconnectSuperseded(a, { ...c, refresh_running: true })).toBe(true)
+    // Only for an active connection, and only for a reconnect error.
+    expect(reconnectSuperseded(a, { ...c, refresh_running: true, status: 'reconnect_required' })).toBe(false)
+    expect(reconnectSuperseded(withAttempt('2026-11-21T10:01:00Z', { state: 'failed', last_error: { kind: 'retryable', code: 'T' } }).a, { ...c, refresh_running: true })).toBe(false)
+  })
+  it('a superseded account that never succeeded reads Never refreshed, not Stale', () => {
+    const { a } = withAttempt('2026-11-21T09:30:00Z', { last_success_at: null })
+    expect(accountState(a, true)).toBe('never')
+    expect(accountState(withAttempt('2026-11-21T09:30:00Z').a, true)).toBe('stale')
+  })
   it('covers an account no longer reported that keeps its reconnect error', () => {
     const { c, a } = withAttempt('2026-11-21T09:30:00Z')
     const gone = { ...a, no_longer_reported: true }
