@@ -157,6 +157,11 @@ export function AccountMenu() {
                 <li><Link to="/commitments" className={link}>Organise commitments</Link></li>
               </Group>
             )}
+            {holds(grants, 'merchants:read') && (
+              <Group label="Merchants">
+                <li><Link to="/merchants" className={link}>Merchant records</Link></li>
+              </Group>
+            )}
             {holds(grants, 'rates:read') && (
               <Group label="Reference">
                 <li><Link to="/rates" className={link}>Exchange rates</Link></li>
