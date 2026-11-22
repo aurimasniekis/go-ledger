@@ -95,7 +95,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
         </span>
         <StatusBadge status={item.payment.status} />
       </p>
-      <ReplacedRecords occurrenceId={item.id} bankEvidenceCount={item.payment.bank_evidence_count} />
+      <ReplacedRecords occurrenceId={item.id} />
       {item.payment.timing === 'not_recorded' && (
         <p className="text-sm text-muted-foreground">
           Due before this commitment was created: not counted in the overdue or outstanding totals.

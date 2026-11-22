@@ -63,13 +63,15 @@ export interface ReplaceManualProps {
   onSaved: (saved: PaymentMatch, replaced: ManualPayment[]) => void
   /** Called with our own sentence for a final refusal; the card keeps showing it even if the refetch unmounts this form. */
   onRefused?: (sentence: string) => void
+  /** Called when the person starts this action (opens the form): the card clears an earlier refusal. */
+  onStart?: () => void
 }
 
 /**
  * "This is the payment I recorded" (D45): a button and its form, rendered inside the card's action row. The save is not
  * optimistic: until the server answers the card says "Not saved yet", and a failure says nothing changed.
  */
-export function ReplaceManual({ match: m, records, offline, offlineNoteId, primary, onSaved, onRefused }: ReplaceManualProps) {
+export function ReplaceManual({ match: m, records, offline, offlineNoteId, primary, onSaved, onRefused, onStart }: ReplaceManualProps) {
   const [open, setOpen] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const first = useRef<HTMLInputElement>(null)
@@ -111,6 +113,7 @@ export function ReplaceManual({ match: m, records, offline, offlineNoteId, prima
     focus.restore()
   }
   const show = () => {
+    onStart?.()
     focus.remember()
     save.discard()
     setPicked(records.length === 1 ? [records[0]!.id] : [])

@@ -1,9 +1,9 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 import { makeQueryClient } from '@/lib/query'
-import { installApi, ok } from '@/test/fake-api'
+import { fail, installApi, ok } from '@/test/fake-api'
 import { ApiError } from '@/lib/api'
 import { MonthBoard, OFFLINE_NOTE_ID, STALE_AFTER_MS, statusSummary, type MonthBoardProps } from './month-board'
 import { item, payment, summary } from './fixtures'
@@ -364,6 +364,7 @@ describe('MonthBoard content', () => {
 describe('a manual record replaced by a bank match (D45)', () => {
   it('shows it apart from the payments that count, with ISO date, a narrow no-break space in the amount and the reason it is not counted', async () => {
     installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'confirmed', counts_as_evidence: true }),
       'GET /api/v1/occurrences/a/manual-payments': ok({
         items: [
           { id: 'mp1', occurrence_id: 'a', amount: { amount: '1234.50', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' },
@@ -384,6 +385,7 @@ describe('a manual record replaced by a bank match (D45)', () => {
 
   it('still lists a replaced record when no bank payment counts any more (after a Reverse)', async () => {
     installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'reversed' }),
       'GET /api/v1/occurrences/a/manual-payments': ok({
         items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
         next_cursor: null,
@@ -397,8 +399,24 @@ describe('a manual record replaced by a bank match (D45)', () => {
     expect(within(box).queryByRole('link')).not.toBeInTheDocument()
   })
 
+  it('keys the reason on the replacing match, not on later bank evidence: a different bank match after a Reverse does not bring back the Unmatch copy', async () => {
+    installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'reversed' }),
+      'GET /api/v1/occurrences/a/manual-payments': ok({
+        items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
+        next_cursor: null,
+      }),
+    })
+    board({ data: summary([item('a', { payment: payment({ status: 'paid', bank_evidence_count: 1, evidence_count: 1 }) })]) })
+    const box = await screen.findByTestId('replaced-records')
+    await waitFor(() => expect(box).toHaveTextContent('was reversed'))
+    expect(box).not.toHaveTextContent('replaced by a matched bank payment')
+    expect(within(box).queryByRole('link')).not.toBeInTheDocument()
+  })
+
   it('names the way back (Unmatch on Payment matches) while a bank payment stands in for the record', async () => {
     installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'confirmed', counts_as_evidence: true }),
       'GET /api/v1/occurrences/a/manual-payments': ok({
         items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
         next_cursor: null,
@@ -415,5 +433,73 @@ describe('a manual record replaced by a bank match (D45)', () => {
     board({ data: summary([item('a', { payment: payment({ status: 'paid', bank_evidence_count: 1, evidence_count: 1 }) })]) })
     await new Promise((r) => setTimeout(r, 50))
     expect(screen.queryByTestId('replaced-records')).not.toBeInTheDocument()
+  })
+})
+
+describe('replaced records grouped by the replacing match (D45, ADR-0049 A)', () => {
+  const open = () => board({ data: summary([item('a', { payment: payment({ status: 'paid', bank_evidence_count: 1, evidence_count: 1 }) })]) })
+  it('gives each match its own reason and offers Unmatch only for the confirmed, counting group', async () => {
+    installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'reversed', counts_as_evidence: false }),
+      'GET /api/v1/payment-matches/m2': ok({ id: 'm2', state: 'confirmed', counts_as_evidence: true }),
+      'GET /api/v1/occurrences/a/manual-payments': ok({ items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }, { id: 'mp2', occurrence_id: 'a', amount: { amount: '20.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm2' }], next_cursor: null }),
+    })
+    open()
+    const box = await screen.findByTestId('replaced-records')
+    await waitFor(() => expect(within(box).getAllByTestId('replaced-group')).toHaveLength(2))
+    await waitFor(() => expect(box).toHaveTextContent('was reversed'))
+    await waitFor(() => expect(box).toHaveTextContent('replaced by a matched bank payment'))
+    const groups = within(box).getAllByTestId('replaced-group')
+    const g1 = groups[0]!
+    const g2 = groups[1]!
+    expect(g1).toHaveTextContent('was reversed')
+    expect(g1).not.toHaveTextContent('replaced by a matched bank payment')
+    expect(within(g1).queryByRole('link')).not.toBeInTheDocument()
+    expect(g2).toHaveTextContent('replaced by a matched bank payment')
+    expect(g2).not.toHaveTextContent('was reversed')
+    expect(within(g2).getByRole('link', { name: 'Unmatch it on Payment matches' })).toBeInTheDocument()
+  })
+
+  it('held (confirmed, not counting): the record counts again, no dashed not-counted marker, no Unmatch link', async () => {
+    installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'confirmed', counts_as_evidence: false }),
+      'GET /api/v1/occurrences/a/manual-payments': ok({ items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }], next_cursor: null }),
+    })
+    open()
+    const box = await screen.findByTestId('replaced-records')
+    await waitFor(() => expect(box).toHaveTextContent('This record counts again because the bank no longer reports the payment that replaced it. Review the match on Payment matches.'))
+    expect(box).not.toHaveTextContent('Manual record replaced')
+    expect(box).not.toHaveTextContent('not counted')
+    expect(box.querySelector('[data-provenance="replaced"]')).toBeNull()
+    expect(box.querySelector('[data-provenance="held"]')).not.toBeNull()
+    expect(within(box).queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('while the match is still loading: the records show, with no reason and no link', async () => {
+    installApi({
+      'GET /api/v1/payment-matches/m1': () => new Promise<never>(() => {}),
+      'GET /api/v1/occurrences/a/manual-payments': ok({ items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }], next_cursor: null }),
+    })
+    open()
+    const box = await screen.findByTestId('replaced-records')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(box).toHaveTextContent('Manual record replaced')
+    expect(box).not.toHaveTextContent('reversed')
+    expect(box).not.toHaveTextContent('kept in history')
+    expect(within(box).queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('when the match is not found (404): the records show, with no reason and no link', async () => {
+    installApi({
+      'GET /api/v1/payment-matches/m1': () => fail(404, 'not_found', 'no such match'),
+      'GET /api/v1/occurrences/a/manual-payments': ok({ items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }], next_cursor: null }),
+    })
+    open()
+    const box = await screen.findByTestId('replaced-records')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(box).toHaveTextContent('Manual record replaced')
+    expect(box).not.toHaveTextContent('reversed')
+    expect(box).not.toHaveTextContent('kept in history')
+    expect(within(box).queryByRole('link')).not.toBeInTheDocument()
   })
 })
