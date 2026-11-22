@@ -363,9 +363,18 @@ func registerRates(s *Server, d *RatesDeps, now func() time.Time) {
 				Message: "no exchange-rate refresh can run: set rates.enabled and a reporting currency (reporting.currency)", Cause: err})
 			return
 		case errors.Is(err, context.Canceled):
-			// The caller went away mid-run. The run asked the provider, so it
-			// is audited all the same (ADR-0048 point 3).
-			WriteError(w, r, Internal(errors.Join(err, recordRefresh(r, run, "cancelled"))))
+			// The caller went away. A run that had already succeeded keeps
+			// its real outcome; one cut short is audited as cancelled
+			// (ADR-0048 point 10). A request with no run status never
+			// started a run, so it leaves no row.
+			switch run.Outcome {
+			case "":
+				WriteError(w, r, Internal(err))
+			case fx.RunSucceeded:
+				WriteError(w, r, Internal(errors.Join(err, recordRefresh(r, run, ""))))
+			default:
+				WriteError(w, r, Internal(errors.Join(err, recordRefresh(r, run, "cancelled"))))
+			}
 			return
 		case err != nil:
 			WriteError(w, r, Internal(err))

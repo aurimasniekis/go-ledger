@@ -86,6 +86,13 @@ func (j *RefreshJob) Run(ctx context.Context) error {
 	for {
 		j.runMu.Lock()
 		out, _ := j.run(ctx, failures, TriggerScheduled)
+		// A wake token left by a manual success before this run finished
+		// says nothing about the run's own failure: drop it, or it would
+		// cut the backoff short.
+		select {
+		case <-j.wakeCh():
+		default:
+		}
 		j.runMu.Unlock()
 		if ctx.Err() != nil {
 			return ctx.Err()

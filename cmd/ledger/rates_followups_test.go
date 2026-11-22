@@ -34,7 +34,7 @@ func TestRatesRefreshAuditSurvivesACancelledRequest(t *testing.T) {
 		code    int
 		outcome string
 	}{
-		"finished, then the caller left": {fx.RunStatus{Outcome: fx.RunSucceeded, Refreshed: 2}, nil, 200, "succeeded"},
+		"finished, then the caller left": {fx.RunStatus{Outcome: fx.RunSucceeded, Refreshed: 2}, context.Canceled, 500, "succeeded"},
 		"cut short by the caller":        {fx.RunStatus{Outcome: fx.RunPartial, Refreshed: 1}, context.Canceled, 500, "cancelled"},
 	} {
 		t.Run(name, func(t *testing.T) {

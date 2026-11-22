@@ -298,6 +298,53 @@ func TestStaleReasonFollowsD11(t *testing.T) {
 	}
 }
 
+// A second manual success while the loop waits after a wake leaves a stale
+// wake token: the next scheduled failure must still back off briefly.
+func TestLeftoverWakeTokenDoesNotDefeatBackoff(t *testing.T) {
+	e := newJobEnv(t, "USD")
+	e.job.ManualGap = time.Nanosecond
+	e.prov.SetDown(&fx.ProviderError{Kind: fx.KindUnavailable, Provider: "p", Op: "latest"})
+	ticks := make(chan time.Time)
+	waits := make(chan time.Duration, 8)
+	e.job.After = func(d time.Duration) <-chan time.Time { waits <- d; return ticks }
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- e.job.Run(ctx) }()
+	if d := <-waits; d != fx.FirstBackoff {
+		t.Fatalf("wait after a failure = %v", d)
+	}
+	*e.clock = e.clock.Add(time.Hour)
+	e.prov.SetDown(nil)
+	manual := func() {
+		*e.clock = e.clock.Add(time.Hour)
+		if st, err := e.job.Request(t.Context()); err != nil || st.Outcome != fx.RunSucceeded {
+			t.Fatalf("manual refresh = %+v, %v", st, err)
+		}
+	}
+	manual()
+	if d := <-waits; d != 24*time.Hour { // the wait after the wake
+		t.Fatalf("wait after a manual success = %v", d)
+	}
+	manual() // leaves a token: the loop is not listening for it
+	*e.clock = e.clock.Add(48 * time.Hour)
+	e.prov.SetDown(&fx.ProviderError{Kind: fx.KindUnavailable, Provider: "p", Op: "latest"})
+	ticks <- time.Now() // the interval ends; a scheduled run fails
+	if d := <-waits; d != fx.FirstBackoff {
+		t.Errorf("wait after a scheduled failure = %v, want %v", d, fx.FirstBackoff)
+	}
+	// With the stale token the loop would wake at once and wait a full
+	// interval instead.
+	select {
+	case d := <-waits:
+		t.Errorf("a leftover wake token restarted the wait with %v", d)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("Run = %v", err)
+	}
+}
+
 // A manual refresh that succeeds ends the scheduled loop's failure backoff:
 // the loop waits a normal interval instead of its shortened retry.
 func TestSuccessfulManualRefreshResetsTheScheduledBackoff(t *testing.T) {
