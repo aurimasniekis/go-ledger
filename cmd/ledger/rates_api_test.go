@@ -51,13 +51,23 @@ func TestRatesAPIListStatusAndRefresh(t *testing.T) {
 		}
 	}
 
-	// Nothing cached yet; the read-only role may read, and the status says the
-	// provider is on without a run yet.
-	code, body, _ := reader.do("GET", "/api/v1/rates", "")
+	// Rates are administrator-only (decision D-FX-R): the read-only role and a
+	// token without the grant are refused on both reads.
+	for _, p := range []string{"/api/v1/rates", "/api/v1/rates/status"} {
+		if code, _, _ := reader.do("GET", p, ""); code != 403 {
+			t.Errorf("read-only GET %s: %d, want 403", p, code)
+		}
+		if code, _, _ := (bankCall{t: t, f: f, hdr: map[string]string{"X-Test-User": f.ids["bob"], "X-Test-Token-Grants": "commitments:read"}}).do("GET", p, ""); code != 403 {
+			t.Errorf("token without rates:read GET %s: %d, want 403", p, code)
+		}
+	}
+
+	// Nothing cached yet, and the status says the provider is on without a run yet.
+	code, body, _ := admin.do("GET", "/api/v1/rates", "")
 	if code != 200 || len(asList(t, body["items"])) != 0 || body["next_cursor"] != nil {
 		t.Fatalf("empty list: %d %v", code, body)
 	}
-	code, st, _ := reader.do("GET", "/api/v1/rates/status", "")
+	code, st, _ := admin.do("GET", "/api/v1/rates/status", "")
 	if code != 200 || st["enabled"] != true || st["provider"] != "frankfurter" || st["source"] != "ECB" || st["reporting_currency"] != "EUR" ||
 		st["refresh_available"] != true || st["stale_after_days"] != float64(5) || st["last_run"] != nil || st["last_success_at"] != nil {
 		t.Fatalf("status before a run: %d %v", code, st)
@@ -91,7 +101,7 @@ func TestRatesAPIListStatusAndRefresh(t *testing.T) {
 	}
 
 	// Exact values and provenance, in the documented order.
-	code, body, _ = reader.do("GET", "/api/v1/rates", "")
+	code, body, _ = admin.do("GET", "/api/v1/rates", "")
 	items := asList(t, body["items"])
 	if code != 200 || len(items) != 2 {
 		t.Fatalf("list: %d %v", code, body)
@@ -110,30 +120,30 @@ func TestRatesAPIListStatusAndRefresh(t *testing.T) {
 	// Filters and paging.
 	for q, n := range map[string]int{"base=USD": 1, "quote=EUR": 2, "quote=USD": 0, "provider=frankfurter&source=ECB": 2, "source=blended": 0, "source=ecb": 2,
 		"date[gte]=2026-11-21": 0, "date[lte]=2026-11-20&date[gte]=2026-11-20": 2} {
-		code, body, _ = reader.do("GET", "/api/v1/rates?"+q, "")
+		code, body, _ = admin.do("GET", "/api/v1/rates?"+q, "")
 		if code != 200 || len(asList(t, body["items"])) != n {
 			t.Errorf("?%s: %d %v, want %d items", q, code, body, n)
 		}
 	}
 	for _, q := range []string{"base=usd", "base=USD&base=GBP", "date[gte]=2026-13-01", "date[gte]=x", "stale=true", "limit=0", "date[gt]=2026-11-01", "provider=Frank", "cursor=abc"} {
-		if code, _, _ = reader.do("GET", "/api/v1/rates?"+q, ""); code != 400 {
+		if code, _, _ = admin.do("GET", "/api/v1/rates?"+q, ""); code != 400 {
 			t.Errorf("?%s: %d, want 400", q, code)
 		}
 	}
-	code, p1, _ := reader.do("GET", "/api/v1/rates?limit=1", "")
+	code, p1, _ := admin.do("GET", "/api/v1/rates?limit=1", "")
 	cur, _ := p1["next_cursor"].(string)
 	if code != 200 || len(asList(t, p1["items"])) != 1 || cur == "" {
 		t.Fatalf("page 1: %d %v", code, p1)
 	}
-	code, p2, _ := reader.do("GET", "/api/v1/rates?limit=1&cursor="+cur, "")
+	code, p2, _ := admin.do("GET", "/api/v1/rates?limit=1&cursor="+cur, "")
 	if code != 200 || len(asList(t, p2["items"])) != 1 || p2["next_cursor"] != nil || asMap(t, asList(t, p2["items"])[0])["base"] != "USD" {
 		t.Fatalf("page 2: %d %v", code, p2)
 	}
-	if code, _, _ = reader.do("GET", "/api/v1/rates?limit=1&base=USD&cursor="+cur, ""); code != 400 {
+	if code, _, _ = admin.do("GET", "/api/v1/rates?limit=1&base=USD&cursor="+cur, ""); code != 400 {
 		t.Errorf("a cursor with other filters: %d", code)
 	}
 
-	code, st, _ = reader.do("GET", "/api/v1/rates/status", "")
+	code, st, _ = admin.do("GET", "/api/v1/rates/status", "")
 	lr := asMap(t, st["last_run"])
 	if code != 200 || lr["outcome"] != "succeeded" || lr["trigger"] != "manual" || st["last_success_at"] == nil {
 		t.Fatalf("status after a run: %d %v", code, st)
@@ -142,7 +152,7 @@ func TestRatesAPIListStatusAndRefresh(t *testing.T) {
 	// Five days on, with no new retrieval, the rates are stale (D11) but still
 	// listed with their age.
 	f.now = f.now.Add(5 * 24 * time.Hour)
-	_, body, _ = reader.do("GET", "/api/v1/rates?base=USD", "")
+	_, body, _ = admin.do("GET", "/api/v1/rates?base=USD", "")
 	if r := asMap(t, asList(t, body["items"])[0]); r["stale"] != true || r["stale_reason"] != "not_retrieved_recently" || r["value"] != "0.90992" {
 		t.Errorf("stale rate: %v", r)
 	}
@@ -158,7 +168,7 @@ func TestRatesAPIListStatusAndRefresh(t *testing.T) {
 	if strings.Contains(fmtAny(run), f.ratesDouble.URL) {
 		t.Errorf("the provider URL leaked: %v", run)
 	}
-	_, body, _ = reader.do("GET", "/api/v1/rates?base=USD", "")
+	_, body, _ = admin.do("GET", "/api/v1/rates?base=USD", "")
 	if r := asMap(t, asList(t, body["items"])[0]); r["value"] != "0.90992" {
 		t.Errorf("a failed run changed the cache: %v", r)
 	}
@@ -214,7 +224,9 @@ func TestCLIRates(t *testing.T) {
 	if code, _, _ := admin.do("POST", "/api/v1/commitments", usdBody); code != 201 {
 		t.Fatal("create commitment")
 	}
-	if rc, out, _ := c.run(roToken, "rates", "list"); rc != 0 || !strings.Contains(out, "(none)") {
+	c.fail(roToken, 1, "forbidden", "rates", "list")
+	c.fail(roToken, 1, "forbidden", "rates", "status")
+	if rc, out, _ := c.run(adminToken, "rates", "list"); rc != 0 || !strings.Contains(out, "(none)") {
 		t.Fatalf("empty list: %d %s", rc, out)
 	}
 	c.fail(roToken, 1, "forbidden", "rates", "refresh")
@@ -223,24 +235,24 @@ func TestCLIRates(t *testing.T) {
 		t.Fatalf("refresh: %d %s %s", rc, out, errb)
 	}
 	var page ledgerclient.Page[ledgerclient.CachedRate]
-	c.json(roToken, &page, "rates", "list", "--base", "USD", "--all")
+	c.json(adminToken, &page, "rates", "list", "--base", "USD", "--all")
 	if len(page.Items) != 1 || page.Items[0].Value != "0.90992" || page.Items[0].Date != "2026-11-20" || page.Items[0].Stale {
 		t.Fatalf("list json: %+v", page)
 	}
-	rc, out, _ = c.run(roToken, "rates", "list")
+	rc, out, _ = c.run(adminToken, "rates", "list")
 	for _, want := range []string{"frankfurter", "ECB", "USD/EUR", "0.90992", "2026-11-20", "ok"} {
 		if rc != 0 || !strings.Contains(out, want) {
 			t.Fatalf("list text lacks %q: %d %s", want, rc, out)
 		}
 	}
 	var st ledgerclient.RatesStatus
-	c.json(roToken, &st, "rates", "status")
+	c.json(adminToken, &st, "rates", "status")
 	if !st.Enabled || st.LastRun == nil || st.LastRun.Outcome != "succeeded" || st.StaleAfterDays != 5 {
 		t.Fatalf("status: %+v", st)
 	}
-	if rc, out, _ = c.run(roToken, "rates", "status"); rc != 0 || !strings.Contains(out, "frankfurter") || !strings.Contains(out, "stale after:") {
+	if rc, out, _ = c.run(adminToken, "rates", "status"); rc != 0 || !strings.Contains(out, "frankfurter") || !strings.Contains(out, "stale after:") {
 		t.Fatalf("status text: %d %s", rc, out)
 	}
 	c.fail(adminToken, 1, "rate_limited", "rates", "refresh")
-	c.fail(roToken, 1, "validation", "rates", "list", "--base", "usd")
+	c.fail(adminToken, 1, "validation", "rates", "list", "--base", "usd")
 }
