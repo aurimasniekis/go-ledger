@@ -335,7 +335,8 @@ describe('bank connections page', () => {
     installApi({ ...signedIn(undefined, ALL_GRANTS.filter((g) => g !== 'connections:write')), ...list() })
     renderApp('/connections')
     const c = await card('Fake Bank')
-    expect(c.queryByRole('button')).toBeNull()
+    // Organise is the organisation control of an account (organisation:read), not a change to the connection.
+    expect(c.queryAllByRole('button').filter((b) => !(b.getAttribute('aria-label') ?? '').startsWith('Organise'))).toHaveLength(0)
     expect(screen.queryByRole('button', { name: 'Connect a bank' })).toBeNull()
     expect(screen.getByText(/can see connections but not change them/)).toBeInTheDocument()
   })

@@ -44,6 +44,12 @@ export interface MonthBoardProps {
   notice?: ReactNode
   /** Occurrences with a bank suggestion waiting for review: their rows point to /matches (unknown when it could not load). */
   waiting?: ReadonlySet<string>
+  /** Renders the Organise control of a commitment (categories, labels, buckets) under its row. */
+  renderOrganise?: (commitmentId: string, name: string) => ReactNode
+  /** Narrows the listed occurrences (a bucket filter). The totals above always cover the whole month. */
+  visible?: (item: MonthItem) => boolean
+  /** Says what the filter is hiding, shown above the list. */
+  filterNote?: (shown: number, total: number) => ReactNode
   /** Receives the page title (h1) so focus can fall back to it. */
   titleRef?: Ref<HTMLHeadingElement>
 }
@@ -95,7 +101,8 @@ export function MonthBoard({ titleRef, ...p }: MonthBoardProps) {
           ) : (
             <>
               {p.data.items.length > 0 && <Totals totals={p.data.totals} />}
-              <Occurrences items={p.data.items} onRecord={p.onRecord} offline={p.offline} formFor={p.formFor} form={p.form} waiting={p.waiting} />
+              {p.filterNote?.(p.visible ? p.data.items.filter(p.visible).length : p.data.items.length, p.data.items.length)}
+              <Occurrences items={p.visible ? p.data.items.filter(p.visible) : p.data.items} renderOrganise={p.renderOrganise} onRecord={p.onRecord} offline={p.offline} formFor={p.formFor} form={p.form} waiting={p.waiting} />
             </>
           )}
         </>
@@ -253,6 +260,7 @@ function Totals({ totals }: { totals: MonthTotals[] }) {
 }
 
 function Occurrences({
+  renderOrganise,
   items,
   onRecord,
   offline,
@@ -260,6 +268,7 @@ function Occurrences({
   form,
   waiting,
 }: {
+  renderOrganise?: (commitmentId: string, name: string) => ReactNode
   waiting?: ReadonlySet<string>
   items: MonthItem[]
   onRecord: (i: MonthItem) => void
@@ -268,7 +277,7 @@ function Occurrences({
   form?: ReactNode
 }) {
   const rows = items.map((i) => (
-    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} offline={offline} form={i.id === formFor ? form : null} suggestionWaiting={waiting?.has(i.id)} />
+    <OccurrenceRow key={i.id} item={i} onRecord={onRecord} offline={offline} form={i.id === formFor ? form : null} suggestionWaiting={waiting?.has(i.id)} organise={renderOrganise?.(i.commitment_id, i.commitment_name || i.commitment_id)} />
   ))
   // The row that opened the form left the list (paid elsewhere): its place stays, in the same list under the
   // same key, so the open form keeps what was typed and can say so.
@@ -317,7 +326,7 @@ function statusOf(i: MonthItem): Status {
   return i.payment.status
 }
 
-function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting }: { item: MonthItem | null; onRecord: (i: MonthItem) => void; offline?: boolean; form?: ReactNode; suggestionWaiting?: boolean }) {
+function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting, organise }: { organise?: ReactNode; item: MonthItem | null; onRecord: (i: MonthItem) => void; offline?: boolean; form?: ReactNode; suggestionWaiting?: boolean }) {
   // No item: the occurrence the open form came from has left the list. Same component, same key, so the form stays mounted.
   if (!i) {
     return (
@@ -409,6 +418,7 @@ function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting }: 
           Payments in {p.unconverted_currencies.join(', ')} are recorded but not counted: they are never converted.
         </p>
       )}
+      {organise}
       </div>
       {form}
     </li>

@@ -86,8 +86,8 @@ rename or retire it.
   resolutions, collides for different merchants with one name, has no Unicode normalisation, no foreign key and no
   lifecycle. The operator must choose between a minimal merchant entity (id, display name, alias keys; assignments keyed
   by its id) and keeping name keys with a documented migration, before O2, L6 or E2 build on it.
-- **UI, MCP tools, Go client and CLI methods** (O2) and **Terraform data sources** (T3): the routes are usable through
-  the client's raw call and the OpenAPI document until then.
+- **UI, MCP tools and the Go client methods** are built (O2, ADR-0056); **CLI commands** and **Terraform data sources**
+  (T3) are not.
 - **Bulk assignment**, category reporting (spend by category) and a category tree read are not built.
 - Reassigning on delete keeps a rule's or model's row automatic (origin, source, who and when unchanged); only the
   person's own rows are recorded as moved by the person.

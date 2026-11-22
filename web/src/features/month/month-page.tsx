@@ -8,6 +8,8 @@ import { useWaitingSuggestions } from '@/features/matches/api'
 import { monthLabel } from './month'
 import { holds, useMe } from '@/lib/auth'
 import { useOnline } from '@/lib/connection'
+import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
+import { useBucketFilter } from '@/features/organisation/bucket-filter'
 import { MonthBoard, OFFLINE_NOTE_ID } from './month-board'
 import { PaymentPanel, UndoNotice } from './payment-panel'
 import type { ManualPayment, MonthItem } from './types'
@@ -19,6 +21,7 @@ export function MonthPage({ month }: { month: string }) {
   const online = useOnline()
   const me = useMe()
   const waiting = useWaitingSuggestions()
+  const bucketFilter = useBucketFilter()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000)
@@ -67,7 +70,11 @@ export function MonthPage({ month }: { month: string }) {
         </p>
       )}
 
+      {bucketFilter.control}
       <MonthBoard
+        renderOrganise={(id, name) => <OrganiseDisclosure objectType="commitment" objectId={id} subject={name} />}
+        visible={bucketFilter.visible}
+        filterNote={bucketFilter.note}
         offline={!online}
         canViewConnections={holds(me.data?.grants, 'connections:read')}
         waiting={waiting}

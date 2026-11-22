@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '@/lib/api'
 import { isNetworkError } from '@/lib/connection'
@@ -90,7 +91,8 @@ function AccountRow({ a, superseded }: { a: BankAccount; superseded: boolean }) 
                 as obtained <time dateTime={b.obtained_at}>{formatInstant(b.obtained_at)}</time>
                 {b.reference_date && <> (bank date {formatDate(b.reference_date)})</>}
               </span>
-            </li>
+            <OrganiseDisclosure objectType="account" objectId={a.id} subject={a.name || 'this account'} />
+    </li>
           ))}
         </ul>
       )}

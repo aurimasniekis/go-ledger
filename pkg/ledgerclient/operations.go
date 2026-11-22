@@ -75,6 +75,37 @@ var (
 	opRatesStatus  = operation{ID: "getRatesStatus", Method: http.MethodGet, Path: "/rates/status"}
 	opRefreshRates = operation{ID: "refreshRates", Method: http.MethodPost, Path: "/rates/refreshes"}
 
+	// Organisation (tasks O1 and O2, ADR-0053).
+	opListCategories      = operation{ID: "listCategories", Method: http.MethodGet, Path: "/categories", Query: []string{"limit", "cursor", "archived", "parent_id", "name[prefix]"}}
+	opCreateCategory      = operation{ID: "createCategory", Method: http.MethodPost, Path: "/categories"}
+	opGetCategory         = operation{ID: "getCategory", Method: http.MethodGet, Path: "/categories/{id}"}
+	opUpdateCategory      = operation{ID: "updateCategory", Method: http.MethodPatch, Path: "/categories/{id}"}
+	opArchiveCategory     = operation{ID: "archiveCategory", Method: http.MethodPost, Path: "/categories/{id}/archive"}
+	opUnarchiveCategory   = operation{ID: "unarchiveCategory", Method: http.MethodPost, Path: "/categories/{id}/unarchive"}
+	opDeleteCategory      = operation{ID: "deleteCategory", Method: http.MethodDelete, Path: "/categories/{id}", Query: []string{"reassign_to"}}
+	opListLabels          = operation{ID: "listLabels", Method: http.MethodGet, Path: "/labels", Query: []string{"limit", "cursor", "archived", "name[prefix]"}}
+	opCreateLabel         = operation{ID: "createLabel", Method: http.MethodPost, Path: "/labels"}
+	opGetLabel            = operation{ID: "getLabel", Method: http.MethodGet, Path: "/labels/{id}"}
+	opUpdateLabel         = operation{ID: "updateLabel", Method: http.MethodPatch, Path: "/labels/{id}"}
+	opArchiveLabel        = operation{ID: "archiveLabel", Method: http.MethodPost, Path: "/labels/{id}/archive"}
+	opUnarchiveLabel      = operation{ID: "unarchiveLabel", Method: http.MethodPost, Path: "/labels/{id}/unarchive"}
+	opDeleteLabel         = operation{ID: "deleteLabel", Method: http.MethodDelete, Path: "/labels/{id}", Query: []string{"reassign_to"}}
+	opListBuckets         = operation{ID: "listBuckets", Method: http.MethodGet, Path: "/buckets", Query: []string{"limit", "cursor", "archived", "name[prefix]"}}
+	opCreateBucket        = operation{ID: "createBucket", Method: http.MethodPost, Path: "/buckets"}
+	opGetBucket           = operation{ID: "getBucket", Method: http.MethodGet, Path: "/buckets/{id}"}
+	opUpdateBucket        = operation{ID: "updateBucket", Method: http.MethodPatch, Path: "/buckets/{id}"}
+	opArchiveBucket       = operation{ID: "archiveBucket", Method: http.MethodPost, Path: "/buckets/{id}/archive"}
+	opUnarchiveBucket     = operation{ID: "unarchiveBucket", Method: http.MethodPost, Path: "/buckets/{id}/unarchive"}
+	opDeleteBucket        = operation{ID: "deleteBucket", Method: http.MethodDelete, Path: "/buckets/{id}", Query: []string{"reassign_to"}}
+	opListBucketMembers   = operation{ID: "listBucketMembers", Method: http.MethodGet, Path: "/buckets/{id}/members", Query: []string{"limit", "cursor"}}
+	opAddBucketMember     = operation{ID: "addBucketMember", Method: http.MethodPut, Path: "/buckets/{id}/members/{object_type}/{object_id}"}
+	opRemoveBucketMember  = operation{ID: "removeBucketMember", Method: http.MethodDelete, Path: "/buckets/{id}/members/{object_type}/{object_id}"}
+	opGetObjectOrg        = operation{ID: "getObjectOrganisation", Method: http.MethodGet, Path: "/organisation/{object_type}/{object_id}"}
+	opSetObjectCategory   = operation{ID: "setObjectCategory", Method: http.MethodPut, Path: "/organisation/{object_type}/{object_id}/category"}
+	opResetObjectCategory = operation{ID: "resetObjectCategory", Method: http.MethodDelete, Path: "/organisation/{object_type}/{object_id}/category"}
+	opAddObjectLabel      = operation{ID: "addObjectLabel", Method: http.MethodPut, Path: "/organisation/{object_type}/{object_id}/labels/{label_id}"}
+	opRemoveObjectLabel   = operation{ID: "removeObjectLabel", Method: http.MethodDelete, Path: "/organisation/{object_type}/{object_id}/labels/{label_id}"}
+
 	// opCreateMyToken needs a root token of the root account (decision D25).
 	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
@@ -95,4 +126,5 @@ var operations = []operation{
 	opListBankApps, opListBankInstitutions, opListBankConns, opStartBankConn, opGetBankConn, opReconnectBankConn, opRefreshBankConn, opDisconnectBankConn,
 	opListRates, opRatesStatus, opRefreshRates,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
+	opListCategories, opCreateCategory, opGetCategory, opUpdateCategory, opArchiveCategory, opUnarchiveCategory, opDeleteCategory, opListLabels, opCreateLabel, opGetLabel, opUpdateLabel, opArchiveLabel, opUnarchiveLabel, opDeleteLabel, opListBuckets, opCreateBucket, opGetBucket, opUpdateBucket, opArchiveBucket, opUnarchiveBucket, opDeleteBucket, opListBucketMembers, opAddBucketMember, opRemoveBucketMember, opGetObjectOrg, opSetObjectCategory, opResetObjectCategory, opAddObjectLabel, opRemoveObjectLabel,
 }
