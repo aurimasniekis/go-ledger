@@ -77,6 +77,15 @@ test('review queue by keyboard: ambiguity is explained, confirm names what chang
   const cards = page.getByRole('article')
   await expect(cards).toHaveCount(2)
   await expect(cards.first().getByTestId('competing')).toContainText('2 suggestions compete for this occurrence')
+  // The two competing suggestions are two bank transactions: their short refs must differ and each carries the full id.
+  const refA = page.locator('article[data-match-id="a"]').getByTestId('bank-ref')
+  const refB = page.locator('article[data-match-id="b"]').getByTestId('bank-ref')
+  await expect(refA).toHaveAttribute('title', 'tx-a')
+  await expect(refB).toHaveAttribute('title', 'tx-b')
+  const [shortA, shortB] = [await refA.textContent(), await refB.textContent()]
+  expect(shortA).toBeTruthy()
+  expect(shortB).toBeTruthy()
+  expect(shortA).not.toBe(shortB)
   await expect(cards.first()).toContainText('It is 9 days from the due date; automatic confirmation allows at most 3.')
   await expect(cards.first()).not.toContainText('several_transactions')
 
