@@ -215,7 +215,7 @@ func toMonthSummaryJSON(s monthview.Summary, now time.Time, bank monthBankJSON) 
 	item := func(r monthview.Row) monthItemJSON {
 		it := monthItemJSON{occurrenceJSON: toOccurrenceJSON(r.Occurrence, r.State), CommitmentName: r.CommitmentName}
 		if r.Deferral != nil {
-			d := toDeferralPlanJSON(*r.Deferral, r.State, s.AsOf)
+			d := toDeferralPlanJSON(*r.Deferral, r.Occurrence.DueDate, r.State, s.AsOf)
 			it.Deferral = &d
 		}
 		return it

@@ -187,6 +187,27 @@ func TestWithinMonthDeferralStaysInItsMonth(t *testing.T) {
 	}
 }
 
+// A fee is added under its own currency: even if it differs from the
+// occurrence's (which the store refuses), it never vanishes from the totals.
+func TestAdjustmentIsAddedUnderItsOwnCurrency(t *testing.T) {
+	f := newDeferralFixture(t)
+	p := f.plan(f.oct, "2026-11-20")
+	p.Adjustments = []deferrals.Adjustment{{ID: "J0", PlanID: p.ID, Kind: deferrals.AdjustmentFee, Amount: mustMoney(t, "5.00", "USD")}}
+	nov := f.month("2026-11", "2026-10-20", nil, p)
+	var usd, eur *monthview.CurrencyTotals
+	for i := range nov.Totals {
+		switch nov.Totals[i].Currency.Code() {
+		case "USD":
+			usd = &nov.Totals[i]
+		case "EUR":
+			eur = &nov.Totals[i]
+		}
+	}
+	if usd == nil || eur == nil || usd.Adjustments.String() != "5.00 USD" || usd.Planned.String() != "5.00 USD" || eur.Adjustments.String() != "0.00 EUR" || eur.Planned.String() != "100.00 EUR" {
+		t.Fatalf("totals %+v, want the 5.00 USD fee under USD and EUR planned 100.00", nov.Totals)
+	}
+}
+
 func TestCarriedInCurrencyGetsItsOwnTotals(t *testing.T) {
 	f := newDeferralFixture(t)
 	f.oct.Amount = mustMoney(t, "30", "USD")

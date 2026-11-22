@@ -75,7 +75,7 @@ func TestOpenAPIDocumentListsEveryErrorCode(t *testing.T) {
 		CodeTransactionNotCountable, CodeTransactionNotDebit, CodeOverAllocated, CodeOverpaid, CodeDuplicateMatch, CodeMatchState, CodeUndoNotDecider, CodeUndoWindowClosed,
 		CodeManualPaymentOtherOccurrence, CodeManualPaymentNotReplaceable,
 		CodeBankReconnectRequired, CodeBankUnavailable, CodeBankRateLimited, CodeBankRejected, CodeConnectionNotActive, CodeRefreshInProgress, CodeConsentUnknown, CodeConnectUnavailable, CodeRatesRefreshUnavailable,
-		CodeNothingOutstanding, CodeDeferralPlanExists, CodeDeferralPlanUndone, CodeAdjustmentRemoved}
+		CodeNothingOutstanding, CodeDeferralPlanExists, CodeDeferralPlanUndone, CodeAdjustmentRemoved, CodeDeferralCurrency}
 	var doc map[string]any
 	if err := yaml.Unmarshal(OpenAPIYAML(), &doc); err != nil {
 		t.Fatal(err)

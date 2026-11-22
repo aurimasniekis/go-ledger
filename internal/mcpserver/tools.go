@@ -364,7 +364,7 @@ func deferralTools() []Tool {
 				"version": versionArg("deferral plan"),
 				"kind":    enum("fee, interest or other.", deferrals.AdjustmentKinds()),
 				"amount":  withDescription(moneyArg(), "The charge, greater than zero, in the plan's currency."),
-				"note":    map[string]any{"type": []string{"string", "null"}, "description": "Free-form note."},
+				"note":    map[string]any{"type": []string{"string", "null"}, "maxLength": 500, "description": "Free-form note, up to 500 characters."},
 			}, "id", "version", "kind", "amount"),
 		},
 		{

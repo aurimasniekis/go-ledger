@@ -66,8 +66,9 @@ type deferralPlanJSON struct {
 	OriginalAmount         money.Money        `json:"original_amount"`
 	OutstandingWhenPlanned money.Money        `json:"outstanding_when_planned"`
 	// OccurrenceStatus and OutstandingAmount are the occurrence's derived
-	// payment state today; OverdueSince is its original due date while it is
-	// overdue (null otherwise): a plan never moves it (decision D7).
+	// payment state today; OverdueSince is the occurrence's current due date
+	// while it is overdue (null otherwise): a plan never moves it (decision D7).
+	// original_due_date stays what it was when the plan was made (history).
 	OccurrenceStatus  payments.Status `json:"occurrence_status"`
 	OutstandingAmount money.Money     `json:"outstanding_amount"`
 	OverdueSince      *calendar.Date  `json:"overdue_since"`
@@ -86,14 +87,13 @@ type deferralPlanJSON struct {
 
 // toDeferralPlanJSON converts a plan with its occurrence's payment state as
 // of today.
-func toDeferralPlanJSON(p deferrals.Plan, st payments.State, today calendar.Date) deferralPlanJSON {
+func toDeferralPlanJSON(p deferrals.Plan, due calendar.Date, st payments.State, today calendar.Date) deferralPlanJSON {
 	out := deferralPlanJSON{ID: p.ID, OccurrenceID: p.OccurrenceID, CommitmentID: p.CommitmentID, PlanType: p.Type, State: p.State(),
 		PlannedDate: p.PlannedDate, PlannedMonth: p.PlannedMonth(), Reason: p.Reason, OriginalDueDate: p.OriginalDueDate, OriginalAmount: p.OriginalAmount,
 		OutstandingWhenPlanned: p.OutstandingWhenPlanned, OccurrenceStatus: st.Status, OutstandingAmount: st.Outstanding, AdjustmentTotal: p.AdjustmentTotal(),
 		Adjustments: make([]deferralAdjustmentJSON, len(p.Adjustments)), Version: p.Version, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, UndoneAt: p.UndoneAt}
 	overdue := st.Status != payments.StatusPaid && st.Timing == payments.StatusOverdue
 	if overdue {
-		due := p.OriginalDueDate
 		out.OverdueSince = &due
 	}
 	if until, ok := p.GraceUntil(); ok {
@@ -265,7 +265,7 @@ func registerDeferrals(s *Server, st deferrals.Store, occ occurrences.Reader, pa
 			if err != nil {
 				return nil, err
 			}
-			out[i] = toDeferralPlanJSON(p, payments.Derive(o, facts[o.ID], t, grace), t)
+			out[i] = toDeferralPlanJSON(p, o.DueDate, payments.Derive(o, facts[o.ID], t, grace), t)
 		}
 		return out, nil
 	}
@@ -547,8 +547,12 @@ func registerDeferrals(s *Server, st deferrals.Store, occ occurrences.Reader, pa
 			WriteError(w, r, err)
 			return
 		}
-		id := r.PathValue("id")
-		p, err := st.RemoveAdjustment(r.Context(), matchActor(r), id, r.PathValue("adjustment_id"), expected)
+		id, adjustmentID := r.PathValue("id"), r.PathValue("adjustment_id")
+		if err := checkID("adjustment_id must be an adjustment identifier")(adjustmentID); err != nil {
+			WriteError(w, r, Validation("adjustment_id", err.Error()))
+			return
+		}
+		p, err := st.RemoveAdjustment(r.Context(), matchActor(r), id, adjustmentID, expected)
 		if err != nil {
 			failed(w, r, id, err)
 			return

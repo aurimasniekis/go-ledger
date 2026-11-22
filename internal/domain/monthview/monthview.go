@@ -285,12 +285,18 @@ func owed(st payments.State, zero money.Money) money.Money {
 }
 
 // planAdjustments is what a row's active plan adds to its planned month: its
-// adjustments while the occurrence still owes something.
-func planAdjustments(r Row, owes money.Money, zero money.Money) money.Money {
+// active (not removed) adjustments while the occurrence still owes something.
+func planAdjustments(r Row, owes money.Money) []money.Money {
 	if r.Deferral == nil || !r.Deferral.Active() || owes.Sign() <= 0 {
-		return zero
+		return nil
 	}
-	return r.Deferral.AdjustmentTotal()
+	var out []money.Money
+	for _, a := range r.Deferral.Adjustments {
+		if a.RemovedAt == nil {
+			out = append(out, a.Amount)
+		}
+	}
+	return out
 }
 
 func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, *time.Time) {
@@ -307,6 +313,16 @@ func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, 
 			_ = t.Add(zero)
 		}
 		return a
+	}
+	// addAdjustments adds a row's plan adjustments under the adjustments' own
+	// currency, never the occurrence's: a fee can then never silently vanish.
+	addAdjustments := func(r Row, owes money.Money) {
+		for _, adj := range planAdjustments(r, owes) {
+			zero, _ := money.Zero(adj.Currency(), adj.Amount().Scale())
+			a := get(adj.Currency(), zero)
+			_ = a.planned.Add(adj)
+			_ = a.adjustments.Add(adj)
+		}
 	}
 	var latest time.Time
 	for _, r := range rows {
@@ -330,10 +346,8 @@ func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, 
 		if deferrals.PlannedMonth(o, r.Deferral) != month {
 			_ = a.deferredOut.Add(outstanding)
 		} else {
-			adj := planAdjustments(r, outstanding, zero)
 			_ = a.planned.Add(outstanding)
-			_ = a.planned.Add(adj)
-			_ = a.adjustments.Add(adj)
+			addAdjustments(r, outstanding)
 		}
 		// Add only fails for a Money without a currency, which cannot occur
 		// here: every figure derives from the occurrence's amount.
@@ -356,11 +370,9 @@ func totalsOf(month calendar.YearMonth, rows, carried []Row) ([]CurrencyTotals, 
 		zero, _ := money.Zero(cur, o.Amount.Amount().Scale())
 		a := get(cur, zero)
 		outstanding := owed(st, zero)
-		adj := planAdjustments(r, outstanding, zero)
 		_ = a.carriedIn.Add(outstanding)
 		_ = a.planned.Add(outstanding)
-		_ = a.planned.Add(adj)
-		_ = a.adjustments.Add(adj)
+		addAdjustments(r, outstanding)
 	}
 	currencies := make([]money.Currency, 0, len(by))
 	for cur := range by {

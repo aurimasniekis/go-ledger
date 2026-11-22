@@ -714,7 +714,9 @@ paths:
           description: |
             version_conflict (stale version, with reconciliation) or
             pending_terms_change (an earlier edit takes effect after this
-            edit's effective_from).
+            edit's effective_from) or deferral_plan_currency (the edit would
+            change the currency of an occurrence with an active deferral
+            plan; undo the plan first).
           content:
             application/json:
               schema:
@@ -3525,7 +3527,7 @@ paths:
       description: |
         Removes an adjustment of an active plan: it is kept as history
         (removed_at) and no longer counts. Removing it again is a 409
-        deferral_adjustment_removed. Requires the plan's version in
+        deferral_adjustment_removed. A malformed adjustment_id is a 400. Requires the plan's version in
         If-Match. Audited as deferral_plan.adjustment_removed.
       tags: [deferral-plans]
       parameters:
@@ -4046,7 +4048,7 @@ components:
         outstanding_amount:
           $ref: "#/components/schemas/Money"
         overdue_since:
-          description: The original due date while the occurrence is overdue; null otherwise. A plan never moves it.
+          description: The occurrence's current due date while it is overdue; null otherwise. A plan never moves it (original_due_date is the due date when the plan was made).
           oneOf:
             - $ref: "#/components/schemas/Date"
             - type: "null"
@@ -5615,6 +5617,7 @@ components:
             - deferral_plan_exists
             - deferral_plan_undone
             - deferral_adjustment_removed
+            - deferral_plan_currency
         message:
           type: string
         field:

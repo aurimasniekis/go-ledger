@@ -304,6 +304,14 @@ func (s *Store) ApplyTx(ctx context.Context, tx *sql.Tx, commitmentID string, ol
 	}
 	plan.Remove, plan.CancelledReferenced = removed, cancelled
 	for _, u := range plan.Update {
+		var planID string
+		switch err := tx.QueryRowContext(ctx, "SELECT id FROM deferral_plans WHERE occurrence_id = ? AND undone_at IS NULL AND original_currency <> ?",
+			u.ID, sqlvalue.Currency{Currency: u.Amount.Currency()}).Scan(&planID); {
+		case err == nil:
+			return occurrences.Plan{}, &occurrences.CurrencyChangePlanError{OccurrenceID: u.ID, PlanID: planID}
+		case !errors.Is(err, sql.ErrNoRows):
+			return occurrences.Plan{}, fmt.Errorf("occurrences: check deferral plan: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, "UPDATE commitment_occurrences AS o SET due_date = ?, amount = ?, currency = ?, updated_at = ?, version = version + 1"+
 			" WHERE id = ? AND NOT "+s.paid,
 			sqlvalue.Date{Date: u.DueDate}, sqlvalue.Amount{Decimal: u.Amount.Amount()}, sqlvalue.Currency{Currency: u.Amount.Currency()},

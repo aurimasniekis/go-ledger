@@ -243,6 +243,71 @@ func TestDeferralPlanAPI(t *testing.T) {
 	}
 }
 
+// TestDeferralPlanCurrencyChangeAndOverdueSince: a terms edit that changes the
+// currency of an occurrence with an active plan is a 409 naming the plan and
+// changes nothing; an edit that moves the due date moves overdue_since while
+// original_due_date stays history; a malformed adjustment id is a 400.
+func TestDeferralPlanCurrencyChangeAndOverdueSince(t *testing.T) {
+	f := newAPIFixture(t)
+	f.now = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	admin := map[string]string{"X-Test-User": f.ids["alice"]}
+	id := f.createCommitmentAt(t, earlier, `{"name":"Gym","kind":"subscription","amount":{"amount":"50.00","currency":"EUR"},"schedule":{"version":1,"frequency":"monthly","interval":1,"day":15},"start_date":"2026-01-01"}`)
+	nov := f.occurrences(t, "month=2026-11&commitment_id="+id, "alice").Items[0]
+	dec := f.occurrences(t, "month=2026-12&commitment_id="+id, "alice").Items[0]
+
+	rec := f.do("POST", "/api/v1/deferral-plans", `{"occurrence_id":"`+dec.ID+`","plan_type":"personal","planned_date":"2027-01-15"}`, admin)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	p := decodeDeferral(t, rec.Body.Bytes())
+	item := "/api/v1/deferral-plans/" + p.ID
+	rec = f.do("POST", item+"/adjustments", `{"kind":"fee","amount":{"amount":"5.00","currency":"EUR"},"version":1}`, admin)
+	if rec.Code != 201 {
+		t.Fatalf("fee: %d %s", rec.Code, rec.Body.String())
+	}
+	p = decodeDeferral(t, rec.Body.Bytes())
+	jan := f.monthPlanned(t, "2027-01")
+	if jan.Totals[0].Planned.Amount != "105.00" {
+		t.Fatalf("January planned %s before the edit", jan.Totals[0].Planned.Amount)
+	}
+	before := f.monthPlanned(t, "2027-01").Totals
+
+	rec = f.do("PATCH", "/api/v1/commitments/"+id, `{"amount":{"amount":"60.00","currency":"USD"},"effective_from":"2026-12-01","version":1}`, admin)
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "deferral_plan_currency") || !strings.Contains(rec.Body.String(), p.ID) {
+		t.Fatalf("currency change with an active plan: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := f.monthPlanned(t, "2027-01").Totals; len(got) != len(before) || got[0] != before[0] {
+		t.Errorf("January totals changed after the refused edit: %+v, want %+v", got, before)
+	}
+	if o := f.getOccurrence(t, dec.ID); o.Version != dec.Version {
+		t.Errorf("the refused edit changed the occurrence: %+v", o)
+	}
+
+	// A malformed adjustment id is a 400, an unknown one a 404.
+	if rec := f.do("DELETE", item+"/adjustments/not-an-id", "", with(admin, "If-Match", `"2"`)); rec.Code != 400 || !strings.Contains(rec.Body.String(), "adjustment_id") {
+		t.Errorf("malformed adjustment id: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// overdue_since follows the occurrence's current due date.
+	rec = f.do("POST", "/api/v1/deferral-plans", `{"occurrence_id":"`+nov.ID+`","plan_type":"personal","planned_date":"2026-12-20"}`, admin)
+	if rec.Code != 201 {
+		t.Fatalf("november plan: %d %s", rec.Code, rec.Body.String())
+	}
+	np := decodeDeferral(t, rec.Body.Bytes())
+	if np.OverdueSince == nil || *np.OverdueSince != "2026-11-15" {
+		t.Fatalf("overdue_since %v, want 2026-11-15", np.OverdueSince)
+	}
+	rec = f.do("PATCH", "/api/v1/commitments/"+id, `{"schedule":{"day":10},"effective_from":"2026-11-01","version":1}`, admin)
+	if rec.Code != 200 {
+		t.Fatalf("schedule edit: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.do("GET", "/api/v1/deferral-plans/"+np.ID, "", admin)
+	got := decodeDeferral(t, rec.Body.Bytes())
+	if rec.Code != 200 || got.OverdueSince == nil || *got.OverdueSince != "2026-11-10" || got.OriginalDueDate != "2026-11-15" {
+		t.Errorf("after the due date moved: %d overdue_since %v original_due_date %s, want 2026-11-10 and 2026-11-15", rec.Code, got.OverdueSince, got.OriginalDueDate)
+	}
+}
+
 func with(h map[string]string, k, v string) map[string]string {
 	out := map[string]string{k: v}
 	for a, b := range h {

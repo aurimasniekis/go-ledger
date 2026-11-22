@@ -1481,7 +1481,8 @@ Record an explicit fee, interest or other charge the person states for an active
       "type": "string"
     },
     "note": {
-      "description": "Free-form note.",
+      "description": "Free-form note, up to 500 characters.",
+      "maxLength": 500,
       "type": [
         "string",
         "null"

@@ -78,6 +78,14 @@ adjustment entries, and a creditor-approved change is a distinct plan type.
 - Undo ends the plan; it does not step back one revision.
 - A revision is refused once the occurrence owes nothing; an undo is always allowed on an active plan.
 
+- **Currency change with an active plan (provisional default, pending an operator decision).** A commitment terms edit
+  that would change the currency of an occurrence with an active plan is refused whole with 409
+  `deferral_plan_currency` naming the occurrence and the plan; nothing changes. The plan's fees are in the
+  occurrence's currency, so converting them silently is not an option; the person undoes the plan, edits, and defers
+  again. The monthly view still adds each adjustment under its own currency, so a fee can never vanish from the totals.
+- `overdue_since` is the occurrence's current due date (a terms edit can move it); `original_due_date` stays the due
+  date when the plan was made.
+
 ## Consequences
 
 - The obligation views (status, outstanding, overdue, outlook "still due") are unchanged by plans; only the new planned
@@ -96,6 +104,8 @@ until X" distinctly without relying on colour; render `carried_in` apart from th
 plan's history; the e2e journey: defer within a month, carry to the next month, undo, re-import, match.
 
 ## Open questions
+
+Whether a currency change should instead convert or carry the plan's fees (the default above refuses it).
 
 The proposed defaults above; whether a plan should mark itself missed when its date passes; whether automatic matching
 should also consider the planned date; whether the outlook's planned outflows should follow plans (DF3).

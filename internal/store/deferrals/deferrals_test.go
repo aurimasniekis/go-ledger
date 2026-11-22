@@ -471,6 +471,50 @@ func TestReviseAndAdjustmentsKeepHistory(t *testing.T) {
 // TestPlanKeepsItsOccurrenceAndHistory: the schema keeps plans, their
 // history and their occurrence; a terms edit that no longer schedules a
 // deferred occurrence cancels it instead of deleting it.
+// TestCurrencyChangeWithActivePlanIsRefused: a terms edit that would change
+// the currency of an occurrence with an active plan is refused whole (the
+// plan's fees are in the occurrence's currency), and nothing changes.
+func TestCurrencyChangeWithActivePlanIsRefused(t *testing.T) {
+	f := newFixture(t)
+	c := f.commitment("50.00", 15)
+	dec := f.occurrence(c.ID, "2026-12")
+	p := f.plan(dec, "2027-01-15", deferrals.TypePersonal)
+	if _, _, err := f.ds.AddAdjustment(f.ctx, alice, p.ID, p.Version, deferrals.NewAdjustment{Kind: deferrals.AdjustmentFee, Amount: money.MustParse("5.00", "EUR")}); err != nil {
+		t.Fatal(err)
+	}
+	sig := func(m string) string {
+		x := f.totals(m)
+		return strings.Join([]string{x.Due.String(), x.Outstanding.String(), x.Planned.String(), x.DeferredOut.String(), x.CarriedIn.String(), x.Adjustments.String()}, "|")
+	}
+	beforeDec, beforeJan := sig("2026-12"), sig("2027-01")
+	fields := c.Fields
+	fields.Amount = money.MustParse("60.00", "USD")
+	_, err := f.cs.Update(f.ctx, alice, c.ID, c.Version, fields, d("2026-12-01"), today)
+	var cc *occurrences.CurrencyChangePlanError
+	if !errors.As(err, &cc) || cc.PlanID != p.ID || cc.OccurrenceID != dec.ID {
+		t.Fatalf("currency change with an active plan: %v, want a CurrencyChangePlanError naming the plan", err)
+	}
+	if got, err := f.cs.Get(f.ctx, c.ID); err != nil || got.Version != c.Version || got.Amount.String() != "50.00 EUR" {
+		t.Errorf("the refused edit changed the commitment: %+v %v", got, err)
+	}
+	if o := f.occurrence(c.ID, "2026-12"); o.Amount.String() != "50.00 EUR" || o.Version != dec.Version {
+		t.Errorf("the refused edit changed the occurrence: %+v", o)
+	}
+	if got := sig("2026-12"); got != beforeDec {
+		t.Errorf("December totals changed: %s, want %s", got, beforeDec)
+	}
+	if got := sig("2027-01"); got != beforeJan || !strings.Contains(got, "|105.00 EUR|") || !strings.HasSuffix(got, "|5.00 EUR") {
+		t.Errorf("January totals %s, want planned 105.00 EUR with the 5.00 fee", got)
+	}
+	// Undoing the plan lets the currency change.
+	if _, err := f.ds.Undo(f.ctx, alice, p.ID, p.Version+1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.cs.Update(f.ctx, alice, c.ID, c.Version, fields, d("2026-12-01"), today); err != nil {
+		t.Errorf("currency change after undo: %v", err)
+	}
+}
+
 func TestPlanKeepsItsOccurrenceAndHistory(t *testing.T) {
 	f := newFixture(t)
 	c := f.commitment("50.00", 15)
