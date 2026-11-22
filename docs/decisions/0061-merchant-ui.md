@@ -43,6 +43,9 @@ task's own, within those ADRs; none is an operator decision.
 
 - The merchant list filters by name and alias in the browser, over the records loaded so far (the API filters only by
   archived). It loads every page, so a very large merchant list is slow to filter.
+- The merchant list folds the search text like an alias key (NFC, white space collapsed, lower case; ADR-0058 defines no accent stripping, so "Skoda" does not find "Škoda"), for names and aliases alike. The browser's `foldName` is not byte-identical to the server's Go `strings.Fields`/`strings.ToLower`: at exotic edges (white space or case mappings the two runtimes treat differently) the list may show or hide a record the server's alias key would treat otherwise. The search is a convenience only; the server's key decides every alias match.
+- Undoing an alias removal adds the name back as a new alias, as one you added: its earlier origin ("from a decision of yours" or "from an earlier version"), date and identifier are not restored. The notice says so.
+- After a rename or merge, focus goes to the result notice; after cancelling a dialog, back to the button that opened it; after a delete, to the list heading; while an Undo is pending, to the "Saving…" status. This was checked in jsdom tests (`document.activeElement`), not with a screen reader.
 - The Merchant disclosure is on the payment match card only; other places that show a bank transaction do not have it yet.
 - Merchant assignment to categories and labels is ADR-0062 (task O5), not part of these screens' first increment.
 - Tests are offline: the browser tests stub the API, and nothing here contacts a bank, a model or a logo host.

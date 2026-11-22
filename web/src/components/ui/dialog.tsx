@@ -15,18 +15,20 @@ const content =
  * Remembers the element focused when the dialog content mounted (it is still the opener at that moment).
  * It must run inside the portal: the DialogContent wrapper itself is mounted while the dialog is closed.
  */
-function useReturnFocus(own?: (e: Event) => void) {
+function useReturnFocus(own?: (e: Event) => void, custom?: () => boolean) {
   const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null))
   return (e: Event) => {
     // A caller's own onCloseAutoFocus runs first and can opt out with preventDefault (its opener is gone).
     own?.(e)
     if (e.defaultPrevented) return
     e.preventDefault()
+    // A caller that has a better target (a notice the change produced) takes focus itself and says so by returning true.
+    if (custom?.()) return
     focusFirstUsable([opener])
   }
 }
-function ReturningContent({ onCloseAutoFocus, ...props }: ComponentProps<typeof DialogPrimitive.Content>) {
-  const returnFocus = useReturnFocus(onCloseAutoFocus)
+function ReturningContent({ onCloseAutoFocus, focusInstead, ...props }: ComponentProps<typeof DialogPrimitive.Content> & { focusInstead?: () => boolean }) {
+  const returnFocus = useReturnFocus(onCloseAutoFocus, focusInstead)
   return <DialogPrimitive.Content {...props} onCloseAutoFocus={returnFocus} />
 }
 function ReturningAlertContent({ onCloseAutoFocus, ...props }: ComponentProps<typeof AlertPrimitive.Content>) {
@@ -42,12 +44,13 @@ export function DialogContent({
   description,
   children,
   className,
+  focusInstead,
   ...props
-}: { title: ReactNode; description?: ReactNode } & Omit<ComponentProps<typeof DialogPrimitive.Content>, 'title'>) {
+}: { title: ReactNode; description?: ReactNode; focusInstead?: () => boolean } & Omit<ComponentProps<typeof DialogPrimitive.Content>, 'title'>) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className={overlay} />
-      <ReturningContent className={cn(content, className)} {...props}>
+      <ReturningContent className={cn(content, className)} focusInstead={focusInstead} {...props}>
         <DialogPrimitive.Title className="text-lg font-semibold">{title}</DialogPrimitive.Title>
         {description ? (
           <DialogPrimitive.Description className="text-sm text-muted-foreground">{description}</DialogPrimitive.Description>
@@ -66,15 +69,17 @@ export function AlertDialogContent({
   title,
   description,
   children,
+  onCloseAutoFocus,
 }: {
   title: ReactNode
   description: ReactNode
   children: ReactNode
+  onCloseAutoFocus?: (e: Event) => void
 }) {
   return (
     <AlertPrimitive.Portal>
       <AlertPrimitive.Overlay className={overlay} />
-      <ReturningAlertContent className={content}>
+      <ReturningAlertContent className={content} onCloseAutoFocus={onCloseAutoFocus}>
         <AlertPrimitive.Title className="text-lg font-semibold">{title}</AlertPrimitive.Title>
         <AlertPrimitive.Description className="text-sm text-muted-foreground">{description}</AlertPrimitive.Description>
         {children}
