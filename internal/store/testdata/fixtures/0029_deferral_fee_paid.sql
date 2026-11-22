@@ -1693,7 +1693,7 @@ END;
 INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (29, 'deferral_fee_paid', 'e7f77758369835051625761e928004b340bbf1f80893ff36ee690e3cde9d9e9e', '2026-02-01T03:04:05.000000000Z');
 
 -- Representative merchant data of version 29 for the merchant-record upgrade
--- (migration 0030, ADR-0056): decisions with names that share a key in
+-- (migration 0030, ADR-0057): decisions with names that share a key in
 -- different case or Unicode composition, an enrichment answer per status, a
 -- rejection, and organisation assignments keyed by merchant name keys (one
 -- matching a decision only after NFC, one with no decision at all).

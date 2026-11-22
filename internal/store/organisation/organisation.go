@@ -809,7 +809,7 @@ func (s *Store) Get(ctx context.Context, obj organisation.ObjectRef) (organisati
 }
 
 // auditTarget names an object in the audit log by its id. A merchant is
-// named by its record's id (ADR-0056), which is not derived from its name.
+// named by its record's id (ADR-0057), which is not derived from its name.
 func auditTarget(obj organisation.ObjectRef) (typ, id string) {
 	return string(obj.Type), obj.ID
 }

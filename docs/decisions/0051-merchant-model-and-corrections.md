@@ -5,7 +5,7 @@ local curated mapping plus the person's confirmations, offline; confirmed mappin
 adapter exists but is disabled; an identity is shown only for a confirmed or high-confidence association. This increment
 builds the model and the person's corrections; the curated mapping, the reuse of confirmations and the disabled remote
 adapter follow (task E2). See "What remains".
-Amended (2026-11-22) by [ADR-0056](0056-merchant-records-aliases-and-merging.md): decisions attach to a merchant record (see
+Amended (2026-11-22) by [ADR-0057](0057-merchant-records-aliases-and-merging.md): decisions attach to a merchant record (see
 the amendment at the end).
 
 ## Context
@@ -81,7 +81,7 @@ This task builds the model and the person's corrections so that any source, or n
   (P-MCP2 for this slice): the routes are usable through the client's raw call until then.
 - **Optional concurrency check** (If-Match on the review) if D17 chooses it for user decisions.
 
-## Amendment: decisions attach to merchant records (task M1, operator decision D-MER 1a, ADR-0056)
+## Amendment: decisions attach to merchant records (task M1, operator decision D-MER 1a, ADR-0057)
 
 A confirmation or correction now also records the merchant record it attaches to (`merchant_reviews.merchant_id`),
 found through the name's alias key or created with the name as its first alias; a rejection attaches to none. A

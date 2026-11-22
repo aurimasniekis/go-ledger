@@ -3265,7 +3265,7 @@ paths:
       x-ledger-access: merchants:read
       summary: List merchant records
       description: |
-        Merchant records (task M1, ADR-0056, decision D-MER 1a): a stable id, the name to show and the
+        Merchant records (task M1, ADR-0057, decision D-MER 1a): a stable id, the name to show and the
         alias names a transaction's merchant name is matched by. Decisions about transactions and
         organisation assignments to a merchant refer to its id, so they survive a rename or a new
         spelling. Active merchants only unless archived=true (which lists archived and merged ones too).
@@ -5111,7 +5111,7 @@ paths:
         in: path
         required: true
         description: |
-          The object's identifier; for a merchant its merchant record's id (ADR-0056, decision D-MER 1a;
+          The object's identifier; for a merchant its merchant record's id (ADR-0057, decision D-MER 1a;
           a name is no longer accepted). For a merchant every route here also needs the merchants grant
           (merchants:read to read, merchants:write to change; administrators only), 403 otherwise; an
           archived or merged merchant gets nothing new (409 merchant_archived).
@@ -5160,7 +5160,7 @@ paths:
         in: path
         required: true
         description: |
-          The object's identifier; for a merchant its merchant record's id (ADR-0056, decision D-MER 1a;
+          The object's identifier; for a merchant its merchant record's id (ADR-0057, decision D-MER 1a;
           a name is no longer accepted). For a merchant every route here also needs the merchants grant
           (merchants:read to read, merchants:write to change; administrators only), 403 otherwise; an
           archived or merged merchant gets nothing new (409 merchant_archived).
@@ -5199,7 +5199,7 @@ paths:
         in: path
         required: true
         description: |
-          The object's identifier; for a merchant its merchant record's id (ADR-0056, decision D-MER 1a;
+          The object's identifier; for a merchant its merchant record's id (ADR-0057, decision D-MER 1a;
           a name is no longer accepted). For a merchant every route here also needs the merchants grant
           (merchants:read to read, merchants:write to change; administrators only), 403 otherwise; an
           archived or merged merchant gets nothing new (409 merchant_archived).
@@ -5282,7 +5282,7 @@ paths:
         in: path
         required: true
         description: |
-          The object's identifier; for a merchant its merchant record's id (ADR-0056, decision D-MER 1a;
+          The object's identifier; for a merchant its merchant record's id (ADR-0057, decision D-MER 1a;
           a name is no longer accepted). For a merchant every route here also needs the merchants grant
           (merchants:read to read, merchants:write to change; administrators only), 403 otherwise; an
           archived or merged merchant gets nothing new (409 merchant_archived).
@@ -6136,7 +6136,7 @@ components:
       type: object
       description: The comparison in one currency. Nothing in it is converted.
       additionalProperties: false
-      required: [currency, still_due, overdue, upcoming, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at, overdue_months, balance_as_of, payments_after_balance]
+      required: [currency, still_due, overdue, upcoming, planned_outflows, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at, overdue_months, balance_as_of, payments_after_balance]
       properties:
         currency:
           $ref: "#/components/schemas/Currency"
@@ -6146,6 +6146,26 @@ components:
           $ref: "#/components/schemas/Money"
         upcoming:
           $ref: "#/components/schemas/Money"
+        planned_outflows:
+          type: object
+          description: |
+            The window with each outstanding amount placed in the month it is planned to be paid (deferral plans, ADR-0050, D-DF 8):
+            total = still_due - deferred_beyond + adjustments. A plan is not payment and not forgiveness: still_due, overdue and
+            upcoming are unchanged by plans. Nothing here is converted.
+          additionalProperties: false
+          required: [total, deferred_in, deferred_beyond, adjustments]
+          properties:
+            total:
+              $ref: "#/components/schemas/Money"
+            deferred_in:
+              description: The outstanding amount of occurrences planned into a later month of the window than their own, shown apart; part of still_due (and overdue past the due date) as before, and of total.
+              $ref: "#/components/schemas/Money"
+            deferred_beyond:
+              description: The part of still_due whose active plan falls in a month after the window; owed, not planned inside it. Can be understated when the window is truncated.
+              $ref: "#/components/schemas/Money"
+            adjustments:
+              description: Recorded fees, interest and other charges of active plans still planned (neither removed nor marked paid); not part of still_due.
+              $ref: "#/components/schemas/Money"
         overdue_count:
           type: integer
         unconverted_evidence_count:
@@ -6594,7 +6614,7 @@ components:
     MerchantRecord:
       type: object
       description: |
-        A merchant record (task M1, ADR-0056): a stable id, the name to show and the alias names a
+        A merchant record (task M1, ADR-0057): a stable id, the name to show and the alias names a
         transaction's merchant name resolves to it by. Decisions and organisation assignments refer to
         the id.
       required: [id, display_name, aliases, archived, archived_at, merged_into, version, created_at, updated_at]
@@ -6662,7 +6682,7 @@ components:
             - $ref: "#/components/schemas/ID"
             - type: "null"
           description: |
-            The merchant record of the identity shown (ADR-0056); name is then its display name. Null when
+            The merchant record of the identity shown (ADR-0057); name is then its display name. Null when
             nothing is shown, or the shown name is a source's name no alias knows.
         state:
           type: string
@@ -6716,7 +6736,7 @@ components:
           oneOf:
             - $ref: "#/components/schemas/ID"
             - type: "null"
-          description: The merchant record the identified name resolves to through an alias (ADR-0056); source and confidence_permille stay the answer's provenance.
+          description: The merchant record the identified name resolves to through an alias (ADR-0057); source and confidence_permille stay the answer's provenance.
         status:
           type: string
           enum: [identified, ambiguous, none, unavailable]
@@ -6752,7 +6772,7 @@ components:
           oneOf:
             - $ref: "#/components/schemas/ID"
             - type: "null"
-          description: The merchant record the decision attaches to (ADR-0056); null for a rejection.
+          description: The merchant record the decision attaches to (ADR-0057); null for a rejection.
         transaction_id:
           $ref: "#/components/schemas/ID"
           description: The transaction the decision was made about; the superseded pending transaction when the merchant's review_inherited is true.

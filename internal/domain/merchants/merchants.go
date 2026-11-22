@@ -72,7 +72,7 @@ type Enrichment struct {
 	// replaces an earlier answer.
 	LastFailedAt *time.Time
 	// MerchantID is the merchant record the identified name resolves to
-	// through an alias (task M1, ADR-0056), empty when no alias has the name.
+	// through an alias (task M1, ADR-0057), empty when no alias has the name.
 	// The source and confidence above stay the provenance of the answer.
 	MerchantID string
 	// MerchantName is that merchant's current display name, filled in on read.
@@ -165,7 +165,7 @@ type Review struct {
 	Decision      Decision
 	Name          string
 	// MerchantID is the merchant record the decision attaches to (task M1,
-	// ADR-0056): set for a confirmation or correction, empty for a rejection.
+	// ADR-0057): set for a confirmation or correction, empty for a rejection.
 	MerchantID string
 	// MerchantName is that merchant's current display name, filled in on read.
 	MerchantName string

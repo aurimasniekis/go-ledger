@@ -2,7 +2,7 @@
 
 Status: accepted. Builds on [ADR-0051](0051-merchant-model-and-corrections.md) (task E2). Decision D15, taken by the
 operator on 2026-11-20, fixes the policy; research is in the knowledge base (merchant/logo enrichment, R8).
-Amended (2026-11-22) by [ADR-0056](0056-merchant-records-aliases-and-merging.md): re-resolution per merchant and rechecks
+Amended (2026-11-22) by [ADR-0057](0057-merchant-records-aliases-and-merging.md): re-resolution per merchant and rechecks
 that reach every row (see the amendment at the end).
 
 ## Decisions
@@ -76,7 +76,7 @@ that reach every row (see the amendment at the end).
   A transaction is only enriched once a refresh runs after the upgrade.
 - Whether any remote source is ever enabled is still the operator's decision (D15).
 
-## Amendment: re-resolution per merchant and rechecks that reach every row (task M1, ADR-0056)
+## Amendment: re-resolution per merchant and rechecks that reach every row (task M1, ADR-0057)
 
 From the PR #124 reviews. (1) A decision, or clearing one, about a transaction flags the identified answers of the
 other undecided transactions of the same merchant record (or the same name when it has none); the next pass looks

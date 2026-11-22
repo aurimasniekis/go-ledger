@@ -976,7 +976,7 @@ func TestBucketsHoldCommitmentsAndAccountsOnly(t *testing.T) {
 	})
 }
 
-// Merchant assignments key on the merchant record's id (task M1, ADR-0056):
+// Merchant assignments key on the merchant record's id (task M1, ADR-0057):
 // renaming the merchant or adding a spelling keeps them, a name is no object
 // id, an archived merchant gets nothing new, and the audit target is the id.
 func TestMerchantsAreAssignableByID(t *testing.T) {

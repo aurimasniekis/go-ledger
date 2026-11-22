@@ -70,7 +70,7 @@ func TestObjectRef(t *testing.T) {
 	if errs := (ObjectRef{"widget", resource.NewID()}).Validate(); len(errs) == 0 {
 		t.Error("an unknown object type was accepted")
 	}
-	// A merchant is named by its record's id (ADR-0056), never by a name.
+	// A merchant is named by its record's id (ADR-0057), never by a name.
 	if errs := (ObjectRef{ObjectMerchant, "acme shop"}).Validate(); len(errs) == 0 {
 		t.Error("a merchant name was accepted as its id")
 	}

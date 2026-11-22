@@ -29,6 +29,12 @@ type outlookResponse struct {
 		NotRecordedCount int     `json:"not_recorded_count"`
 	} `json:"window"`
 	Currencies []struct {
+		PlannedOutflows struct {
+			Total          outlookMoney `json:"total"`
+			DeferredIn     outlookMoney `json:"deferred_in"`
+			DeferredBeyond outlookMoney `json:"deferred_beyond"`
+			Adjustments    outlookMoney `json:"adjustments"`
+		} `json:"planned_outflows"`
 		Currency            string        `json:"currency"`
 		StillDue            outlookMoney  `json:"still_due"`
 		Overdue             outlookMoney  `json:"overdue"`
@@ -77,7 +83,8 @@ type outlookResponse struct {
 		} `json:"excluded"`
 	} `json:"converted"`
 	PlannedOutflows struct {
-		Included bool `json:"included"`
+		Included bool   `json:"included"`
+		Note     string `json:"note"`
 	} `json:"planned_outflows"`
 }
 
@@ -129,7 +136,7 @@ func TestOutlookAPI(t *testing.T) {
 	if !strings.Contains(o.Notice, "Outlook against recorded commitments") || strings.Contains(strings.ToLower(o.Notice), "safe to spend") && !strings.Contains(o.Notice, "does not tell you how much money is safe to spend") {
 		t.Errorf("notice %q", o.Notice)
 	}
-	if o.AsOf != "2026-11-01" || o.Window.From == nil || *o.Window.From != "2026-10" || o.Window.Through != "2026-11" || o.PlannedOutflows.Included {
+	if o.AsOf != "2026-11-01" || o.Window.From == nil || *o.Window.From != "2026-10" || o.Window.Through != "2026-11" || !o.PlannedOutflows.Included {
 		t.Errorf("as of %s window %v..%s planned %v", o.AsOf, o.Window.From, o.Window.Through, o.PlannedOutflows.Included)
 	}
 	want := "EUR: due 200.00 EUR overdue 100.00 EUR upcoming 100.00 EUR balance 1250.40 EUR less 1050.40 EUR\n" +

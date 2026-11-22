@@ -64,7 +64,7 @@ const (
 	MerchantRejected      Action = "merchant.rejected"
 	MerchantReviewCleared Action = "merchant.review_cleared"
 
-	// Merchant records (task M1, ADR-0056, D-MER 1a). The target is the
+	// Merchant records (task M1, ADR-0057, D-MER 1a). The target is the
 	// merchant (target type "merchant", its id: an identifier, never a name).
 	// Details: via; origin (user or decision) when created; fields when
 	// updated; for a merge, merged_from (the merchant merged away) and the
@@ -85,7 +85,7 @@ const (
 	// their values: names are free text) or reassigned (how many assignments
 	// moved to the replacement). An assignment event targets the object
 	// (target type "transaction", "commitment", "account" or "merchant"; a
-	// merchant by its record's id since ADR-0056); details: kind,
+	// merchant by its record's id since ADR-0057); details: kind,
 	// change, origin, from (the origin of what it replaced, or none), via. An
 	// automatic run records one event per object it changed.
 	OrganisationDefinitionCreated    Action = "organisation.definition_created"

@@ -1,4 +1,4 @@
-# ADR-0056: Merchant records, aliases and merging
+# ADR-0057: Merchant records, aliases and merging
 
 Status: Accepted (task M1, 2026-11-22). Operator decision D-MER 1a (2026-11-22): a minimal merchant record (id, display
 name, alias names); confirmations and corrections (E1, D15) attach to it; organisation assignments (O1) key on the

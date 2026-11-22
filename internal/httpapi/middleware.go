@@ -86,7 +86,7 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 }
 
 // loggedPath is the path the access log records. A merchant is named in the
-// path by its record's id since ADR-0056, but a client of the earlier version
+// path by its record's id since ADR-0057, but a client of the earlier version
 // may still send a name key, which derives from bank text (decision D13
 // treats counterparty names as sensitive), so that segment is still replaced
 // (ADR-0053); every other path is logged as it is.

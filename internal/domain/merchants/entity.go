@@ -14,7 +14,7 @@ import (
 )
 
 // EntityTargetType is the audit target type of merchant records (task M1,
-// ADR-0056); the target ID is the merchant's.
+// ADR-0057); the target ID is the merchant's.
 const EntityTargetType = "merchant"
 
 // Entity is a merchant record (decision D-MER 1a): a stable identifier, the

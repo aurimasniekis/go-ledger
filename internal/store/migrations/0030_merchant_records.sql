@@ -1,5 +1,5 @@
 -- ledger:foreign-keys-off
--- Merchant records (task M1, ADR-0056, operator decision D-MER 1a).
+-- Merchant records (task M1, ADR-0057, operator decision D-MER 1a).
 --
 -- A merchant gets a record of its own: a stable id, the name to show, and the
 -- alias names a transaction's merchant name is matched by. The person's

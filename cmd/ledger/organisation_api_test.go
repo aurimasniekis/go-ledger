@@ -163,7 +163,7 @@ func TestOrganisationAPI(t *testing.T) {
 	if code, m, _ := admin.do("GET", obj("transaction", txID), ""); code != 200 || m["category"] != nil || len(asList(t, m["labels"])) != 0 || len(asList(t, m["buckets"])) != 0 {
 		t.Fatalf("empty assignments: %d %v", code, m)
 	}
-	// A merchant is named by its record's id (ADR-0056); its names derive
+	// A merchant is named by its record's id (ADR-0057); its names derive
 	// from bank text, so merchant routes need the admin-only merchants grant,
 	// whatever the organisation grants say.
 	code, mr, _ := admin.do("POST", "/api/v1/merchants", `{"display_name":"Acme Shop"}`)

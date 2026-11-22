@@ -53,7 +53,7 @@ type enrichmentJSON struct {
 	RetrievedAt        *time.Time `json:"retrieved_at"`
 	LastFailedAt       *time.Time `json:"last_failed_at"`
 	// MerchantID is the merchant record the identified name resolves to
-	// through an alias (ADR-0056), or null.
+	// through an alias (ADR-0057), or null.
 	MerchantID *string `json:"merchant_id"`
 }
 

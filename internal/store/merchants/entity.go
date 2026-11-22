@@ -16,7 +16,7 @@ import (
 
 var _ merchants.EntityStore = (*Store)(nil)
 
-// Merchant records (task M1, ADR-0056): the merchants and merchant_aliases
+// Merchant records (task M1, ADR-0057): the merchants and merchant_aliases
 // tables of migration 0030. Decisions and organisation assignments refer to a
 // merchant by id; a name reaches a merchant through an alias key
 // (merchants.AliasKey).

@@ -437,7 +437,7 @@ func registerDefinitions(s *Server, st organisation.Store, k organisation.Kind, 
 // merchantGate refuses a merchant route to a principal without the merchants
 // grant: a merchant's names and aliases are bank-derived text, so what is
 // filed under it is as sensitive as the merchant enrichment itself
-// (admin-only, ADR-0051; merchants are named by record id since ADR-0056).
+// (admin-only, ADR-0051; merchants are named by record id since ADR-0057).
 func merchantGate(r *http.Request, g authz.Grant) error {
 	if objectOf(r).Type != organisation.ObjectMerchant {
 		return nil

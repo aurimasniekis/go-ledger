@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	// Migration 0030 gives merchants a record (task M1, ADR-0056, D-MER 1a):
+	// Migration 0030 gives merchants a record (task M1, ADR-0057, D-MER 1a):
 	// one merchant per alias key from the v29 decisions and merchant-keyed
 	// assignments, deterministic ids, and every decision, identified answer
 	// and assignment refers to its merchant by id. Nothing is lost.

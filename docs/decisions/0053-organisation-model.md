@@ -3,7 +3,7 @@
 Status: Accepted (task O1, 2026-11-22). Decision D12 was taken on 2026-11-20. This increment is the model, the store
 and the Management API; the UI and the MCP tools are task O2, the Terraform data sources task T3, and the rule and
 model writers of suggestions task L6.
-Point 7 (provisional merchant name keys) is superseded by [ADR-0056](0056-merchant-records-aliases-and-merging.md) (see
+Point 7 (provisional merchant name keys) is superseded by [ADR-0057](0057-merchant-records-aliases-and-merging.md) (see
 the amendment at the end).
 
 ## Context
@@ -94,11 +94,11 @@ rename or retire it.
 - Reassigning on delete keeps a rule's or model's row automatic (origin, source, who and when unchanged); only the
   person's own rows are recorded as moved by the person.
 
-## Amendment: merchant assignments key on the merchant record (task M1, operator decision D-MER 1a, ADR-0056)
+## Amendment: merchant assignments key on the merchant record (task M1, operator decision D-MER 1a, ADR-0057)
 
 Point 7 is superseded. A merchant has a record now; its assignments refer to it by id (`merchant_id` with a foreign
 key, `object_id` = the id), so a rename or a new spelling keeps them. Migration 0030 moved the name-keyed assignments
 to the records it made from their keys. `/organisation/merchant/{object_id}` takes the merchant id; a name is a 400.
 An archived or merged merchant gets nothing new (409 `merchant_archived`); removals still work. The merchants grant
 still gates these routes, and the audit target of a merchant assignment is its id (an identifier, not derived from
-the name). Merging two merchants moves their assignments (ADR-0056 point 6).
+the name). Merging two merchants moves their assignments (ADR-0057 point 6).

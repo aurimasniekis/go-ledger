@@ -12,9 +12,13 @@ import { mkdtempSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { BANK_PORT, JOURNEY_PASSWORD, JOURNEY_USER, LEDGER_PORT, journeyDates } from './journey-data.mjs'
+import { BANK_PORT as DEFAULT_BANK_PORT, JOURNEY_PASSWORD, JOURNEY_USER, LEDGER_PORT as DEFAULT_LEDGER_PORT, deferralDates, journeyDates } from './journey-data.mjs'
 
 
+// A second instance (the deferral journey, DF3) runs on its own ports with its own bank data, so the two journeys never share state.
+const LEDGER_PORT = Number(process.env.JOURNEY_LEDGER_PORT ?? DEFAULT_LEDGER_PORT)
+const BANK_PORT = Number(process.env.JOURNEY_BANK_PORT ?? DEFAULT_BANK_PORT)
+const scenario = process.env.JOURNEY_SCENARIO ?? 'journey'
 const bin = process.argv[2] ?? '../bin/ledger'
 const dir = mkdtempSync(join(tmpdir(), 'ledger-journey-'))
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
@@ -30,7 +34,7 @@ const debit = (ref, day, amount, creditor, text) => ({
   entry_reference: ref, transaction_amount: eur(amount), credit_debit_indicator: 'DBIT', status: 'BOOK', booking_date: d.day(day), value_date: d.day(day),
   creditor: { name: creditor }, remittance_information: text,
 })
-const transactions = [
+const mainTransactions = [
   // Exactly the rent: Ledger confirms it on its own.
   debit('journey-rent', 2, '800.00', 'Example Landlord', ['RENT ' + d.prevMonth]),
   // Two identical payments for one hosting invoice: ambiguous, so only suggestions.
@@ -39,6 +43,13 @@ const transactions = [
   // Unrelated: matches no commitment.
   debit('journey-shop', 9, '23.17', 'Example Shop Ltd', ['CARD PURCHASE']),
 ]
+// The deferral journey (DF3): one booked payment of the gym membership dated on the date its deferral is carried to, which is in
+// the future. Its due date is more than 7 days away, so only the plan's planned date (D-DF 7) can make it a match.
+const dd = deferralDates()
+const deferralTransactions = [
+  { ...debit('deferral-gym', 1, '50.00', 'Example Fitness Ltd', ['GYM MEMBERSHIP']), booking_date: dd.carried, value_date: dd.carried },
+]
+const transactions = scenario === 'deferral' ? deferralTransactions : mainTransactions
 const control = { outage: false, revoked: false }
 const state = { sessions: new Map(), n: 0, redirectByState: new Map(), refreshes: 0 }
 

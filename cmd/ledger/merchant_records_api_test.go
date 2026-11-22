@@ -12,7 +12,7 @@ import (
 )
 
 // TestMerchantRecordsAPI drives the merchant record routes (task M1,
-// ADR-0056, D-MER 1a) as ledger serve wires them: a correction creates a
+// ADR-0057, D-MER 1a) as ledger serve wires them: a correction creates a
 // record, an organisation assignment keys on its id, a rename and a new
 // spelling keep it, a merge moves everything with If-Match, the read-only role
 // is refused, and the audit never carries a name.

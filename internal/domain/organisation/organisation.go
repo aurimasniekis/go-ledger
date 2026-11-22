@@ -61,7 +61,7 @@ func (t ObjectType) Valid() bool { return slices.Contains(ObjectTypes(), t) }
 func (t ObjectType) BucketMember() bool { return t == ObjectCommitment || t == ObjectAccount }
 
 // ObjectRef names one object by its ULID. A merchant is named by its merchant
-// record's id (task M1, ADR-0056, decision D-MER 1a), no longer by a name key.
+// record's id (task M1, ADR-0057, decision D-MER 1a), no longer by a name key.
 type ObjectRef struct {
 	Type ObjectType
 	ID   string
@@ -344,7 +344,7 @@ var (
 	// ErrNotApplicable means the definition cannot apply to the object type.
 	ErrNotApplicable = errors.New("buckets hold commitments and accounts only")
 	// ErrObjectArchived means the object is an archived (or merged) merchant:
-	// nothing new is assigned to it (task M1, ADR-0056).
+	// nothing new is assigned to it (task M1, ADR-0057).
 	ErrObjectArchived = errors.New("the merchant is archived or merged: nothing new is assigned to it")
 )
 

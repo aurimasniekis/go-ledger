@@ -12,7 +12,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
-// Error codes of the merchant record routes (task M1, ADR-0056). A stale
+// Error codes of the merchant record routes (task M1, ADR-0057). A stale
 // version is the usual version_conflict.
 const (
 	// CodeMerchantAliasTaken (409): the alias (or the new display name) already
@@ -118,7 +118,7 @@ func stringMember(doc map[string]json.RawMessage, key string) (string, []commitm
 }
 
 // registerMerchantRecords registers the merchant record routes (task M1,
-// ADR-0056, decision D-MER 1a): list, create, read, rename (PATCH), archive,
+// ADR-0057, decision D-MER 1a): list, create, read, rename (PATCH), archive,
 // unarchive, delete, aliases and merge. Merchant names and aliases derive
 // from bank text, so the grants are the administrator-only merchants grants,
 // like the rest of the merchant routes (ADR-0051).

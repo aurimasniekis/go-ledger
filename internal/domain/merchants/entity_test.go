@@ -2,7 +2,7 @@ package merchants
 
 import "testing"
 
-// Alias keys (task M1, ADR-0056): Unicode NFC, white space collapsed, lower
+// Alias keys (task M1, ADR-0057): Unicode NFC, white space collapsed, lower
 // case; invalid display text has no key.
 func TestAliasKey(t *testing.T) {
 	for in, want := range map[string]string{
