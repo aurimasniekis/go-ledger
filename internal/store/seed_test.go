@@ -24,12 +24,11 @@ func TestSeedGuardRecognisesTestBinary(t *testing.T) {
 	}
 }
 
-// TestSeedConcurrentOpensOfOnePath hammers one new path from several Opens, many
-// rounds. The old copy-in-place code (O_TRUNC on the target) could let one Open
-// truncate a database another had already opened; that is a timing race, so
-// this test can fail against it only probabilistically and cannot be made
-// deterministic without a test hook inside seedNewFile. It does catch any
-// corrupt or half-copied result deterministically.
+// TestSeedConcurrentOpensOfOnePath hammers one new path from several Opens. It
+// guards against corrupt or half-copied results (each Open must end with an
+// integrity_check of "ok"). It does NOT guard against the old copy-in-place
+// truncation race (O_TRUNC on the target): in 200 rounds against that code it
+// caught nothing, so it is kept short (2 rounds) to stay cheap under -race.
 func TestSeedConcurrentOpensOfOnePath(t *testing.T) {
 	seed := filepath.Join(t.TempDir(), "seed.db")
 	if err := NewSeed(seed); err != nil {
@@ -37,7 +36,7 @@ func TestSeedConcurrentOpensOfOnePath(t *testing.T) {
 	}
 	UseSeedForNewDatabases(seed)
 	t.Cleanup(func() { UseSeedForNewDatabases("") })
-	for round := 0; round < 20; round++ {
+	for round := 0; round < 2; round++ {
 		seedRound(t, filepath.Join(t.TempDir(), "new.db"))
 	}
 }
