@@ -24,7 +24,7 @@ func TestMerchantRequestShape(t *testing.T) {
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/merchants/m1":
 			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(r.URL.Path, "/merge"):
-			writeJSON(w, 200, MerchantMerge{Merchant: MerchantRecord{ID: "m1"}, Moved: MerchantMoved{Aliases: 2, Decisions: 1}, Kept: 3})
+			writeJSON(w, 200, MerchantMerge{Merchant: MerchantRecord{ID: "m1"}, Moved: MerchantMoved{Aliases: 2, Decisions: 1}, Kept: 3, Replaced: 1})
 		default:
 			writeJSON(w, 200, map[string]any{})
 		}
@@ -55,7 +55,7 @@ func TestMerchantRequestShape(t *testing.T) {
 	must(err)
 	merge, err := c.MergeMerchants(ctx, "m1", 6, "m2")
 	must(err)
-	if merge.Moved.Aliases != 2 || merge.Moved.Decisions != 1 || merge.Kept != 3 {
+	if merge.Moved.Aliases != 2 || merge.Moved.Decisions != 1 || merge.Kept != 3 || merge.Replaced != 1 {
 		t.Errorf("merge answer decoded as %+v", merge)
 	}
 	_, err = c.GetTransactionMerchant(ctx, "tx1")

@@ -64,7 +64,7 @@ func merchantRecordError(err error) error {
 		return &Error{Status: http.StatusConflict, Code: CodeMerchantAliasTaken, Message: err.Error(), Cause: err}
 	case errors.Is(err, merchants.ErrArchived), errors.Is(err, merchants.ErrMerged):
 		return &Error{Status: http.StatusConflict, Code: CodeMerchantArchived, Message: err.Error(), Cause: err}
-	case errors.Is(err, merchants.ErrInUse):
+	case errors.Is(err, merchants.ErrInUse), errors.Is(err, merchants.ErrMergedAway):
 		return &Error{Status: http.StatusConflict, Code: CodeMerchantInUse, Message: err.Error(), Cause: err}
 	case errors.Is(err, merchants.ErrMergeSelf):
 		return Validation("merchant_id", err.Error())
@@ -340,7 +340,8 @@ func registerMerchantRecords(s *Server, st merchants.EntityStore) {
 			"merchant": toMerchantRecordJSON(res.Into),
 			"moved": map[string]int{"aliases": res.Aliases, "decisions": res.Decisions, "enrichments": res.Enrichments,
 				"categories": res.Categories, "labels": res.Labels},
-			"kept": res.Kept,
+			"kept":     res.Kept,
+			"replaced": res.Replaced,
 		})
 	}))
 }

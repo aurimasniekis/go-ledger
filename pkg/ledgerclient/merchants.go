@@ -75,6 +75,9 @@ type MerchantMerge struct {
 	Merchant MerchantRecord `json:"merchant"`
 	Moved    MerchantMoved  `json:"moved"`
 	Kept     int            `json:"kept"`
+	// Replaced counts the remaining merchant's automatic assignments dropped
+	// because the merged merchant had the person's own for the slot.
+	Replaced int `json:"replaced"`
 }
 
 // MerchantEnrichment is what a lookup source said about a transaction's
