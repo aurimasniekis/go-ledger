@@ -36,6 +36,7 @@ type Config struct {
 	Merchants Merchants `cfg:"merchants"`
 	Auth      Auth      `cfg:"auth"`
 	MCP       MCP       `cfg:"mcp"`
+	Decisions Decisions `cfg:"decisions"`
 }
 
 // MCP configures the Model Context Protocol endpoint, POST /api/v1/mcp
@@ -246,4 +247,56 @@ func (e EnableBanking) Slots() []struct {
 type KEK struct {
 	Value string `cfg:"value" secret:"true" desc:"Key-encryption key for stored credentials (TOTP secrets are encrypted with a key derived from it). Use a long random value, for example 32 random bytes in base64. Changing it makes enrolled authenticators unusable: users then sign in with a recovery code, or the host resets their two-factor authentication. Required unless LEDGER_KEK_FILE is set. Secret: environment only, never in the YAML file and never a flag."`
 	File  string `cfg:"file" desc:"Path of a file that contains the key-encryption key. Alternative to LEDGER_KEK_VALUE; trailing newlines are ignored."`
+}
+
+// Decisions configures the model-assisted decision layer (L1, ADR-0057,
+// decision D13). Every task is off by default and nothing is sent anywhere
+// while it is off.
+type Decisions struct {
+	Providers DecisionProviders `cfg:"providers"`
+	Tasks     DecisionTasks     `cfg:"tasks"`
+}
+
+// DecisionProviders holds each decision provider's credentials.
+type DecisionProviders struct {
+	OpenRouter DecisionOpenRouter `cfg:"openrouter"`
+	OpenAI     DecisionProvider   `cfg:"openai"`
+	Anthropic  DecisionProvider   `cfg:"anthropic"`
+	TypeSafe   DecisionProvider   `cfg:"typesafe"`
+}
+
+// DecisionProvider is a provider's API key.
+type DecisionProvider struct {
+	APIKey     string `cfg:"api_key" secret:"true" desc:"API key of this decision provider. Secret: environment only, never in the YAML file and never a flag. Set this or api_key_file. Required when an enabled decision task (or its fallback) uses the provider; never logged or sent anywhere but to the provider."`
+	APIKeyFile string `cfg:"api_key_file" desc:"Path of a file that contains the API key of this decision provider. Alternative to the api_key variable; trailing newlines are ignored. Only the path is configuration; the key is never logged."`
+}
+
+// DecisionOpenRouter is OpenRouter's key and the upstream providers it may
+// forward to.
+type DecisionOpenRouter struct {
+	APIKey           string   `cfg:"api_key" secret:"true" desc:"OpenRouter API key. Secret: environment only, never in the YAML file and never a flag. Set this or api_key_file. Required when an enabled decision task (or its fallback) uses OpenRouter."`
+	APIKeyFile       string   `cfg:"api_key_file" desc:"Path of a file that contains the OpenRouter API key. Alternative to the api_key variable; trailing newlines are ignored."`
+	AllowedUpstreams []string `cfg:"allowed_upstreams" desc:"Upstream providers OpenRouter may forward Ledger's requests to (a list in YAML, comma separated in the variable), for example anthropic. Empty (the default) means downstream sharing is disabled and no task may use OpenRouter (decision D13). Consent for another provider never covers an upstream reached through OpenRouter."`
+}
+
+// DecisionTasks holds one slot per decision task.
+type DecisionTasks struct {
+	Categorisation  DecisionTask `cfg:"categorisation"`
+	LabelSuggestion DecisionTask `cfg:"label_suggestion"`
+	Alerts          DecisionTask `cfg:"alerts"`
+	PaymentMatching DecisionTask `cfg:"payment_matching"`
+}
+
+// DecisionTask is one task's provider, model and limits (decision D13).
+type DecisionTask struct {
+	Enabled         bool          `cfg:"enabled" default:"false" desc:"Ask a decision provider for suggestions for this task. Off by default. Even when on, nothing is sent until consent for this provider and this purpose is recorded; consent for one provider or purpose never covers another. Suggestions are kept apart from bank facts and are only suggestions: a failure never changes anything."`
+	Provider        string        `cfg:"provider" desc:"Decision provider for this task: openrouter, openai, anthropic or typesafe. Required when the task is enabled. typesafe serves decide tasks only (categorisation, label_suggestion, payment_matching), not alerts."`
+	Model           string        `cfg:"model" desc:"Model identifier at the provider. Required when the task is enabled. The model the provider reports is recorded with every suggestion."`
+	Capability      string        `cfg:"capability" desc:"Capability the task needs: decide (a choice among candidates: categorisation, label_suggestion, payment_matching) or generate (free text: alerts). Empty means the task's own; any other value than the task's is refused."`
+	Timeout         time.Duration `cfg:"timeout" default:"30s" desc:"Time limit for one run of the task on one provider, retries included (1s to 2m). A run that exceeds it ends without a suggestion and changes nothing."`
+	MonthlyRequests int           `cfg:"monthly_requests" default:"500" desc:"Most requests the task may send per calendar month (UTC), every attempt counted, retries and fallback providers included (1 to 1000000). Once reached, the task makes no suggestions until the next month. The default of 500 is a proposal awaiting the operator."`
+	Retries         int           `cfg:"retries" default:"2" desc:"Retries of a request the provider refused before generating anything (rate limit, overload: 0 to 2, decision D13), honouring Retry-After. A response that was generated, even a broken one, is never retried."`
+	AutoApply       bool          `cfg:"auto_apply" default:"false" desc:"Mark suggestions for automatic application instead of review. Allowed for categorisation only (decision D13); an applied suggestion is always reversible and never replaces a person's choice."`
+	Fields          []string      `cfg:"fields" desc:"Fields this task may send to its provider (a list in YAML, comma separated in the variable), from description, amount, currency, booking_date, merchant_name and candidate_names. Empty means the provider's default: all of them for openrouter, openai and anthropic (generate tasks have no candidates); description, merchant_name and candidate_names for typesafe. iban, account_number, counterparty_name and balance are never sent and are refused here. A decide task needs candidate_names. Applies to the main provider; fallback providers use their defaults."`
+	Fallback        []string      `cfg:"fallback" desc:"Explicit fallback providers, as provider:model entries tried in order only when the one before had an outage (a list in YAML, comma separated in the variable). Empty (the default) means no fallback: there is never an automatic one. Each needs its own consent and key."`
 }

@@ -109,6 +109,13 @@ const (
 	// Details: the outcome, the number of currencies refreshed and, on failure,
 	// the error kind and code: never a URL or a provider message.
 	RatesRefreshRequested Action = "rates.refresh_requested"
+
+	// Consent to send data to a decision provider for one purpose (L1,
+	// ADR-0057). The target is the consent (target type "decision_consent").
+	// Details: provider and purpose. Never the consent text or any field
+	// value.
+	DecisionConsentGranted Action = "decision_consent.granted"
+	DecisionConsentRevoked Action = "decision_consent.revoked"
 )
 
 // Fixed value sets for detail fields that are not identifiers.
@@ -135,6 +142,10 @@ var (
 	matchOrigins      = []string{"auto_rule", "model_suggestion", "user"}
 	matchFromStates   = []string{"none", "suggested", "confirmed", "rejected", "reversed"}
 	matchVias         = []string{string(ViaSession), string(ViaToken), string(ViaMCP), string(ViaSystem)}
+	// Decision providers and purposes (ADR-0057); the decisions package
+	// cannot be imported here, its test checks the lists agree.
+	decisionProviders = []string{"openrouter", "openai", "anthropic", "typesafe"}
+	decisionPurposes  = []string{"categorisation", "label_suggestion", "alerts", "payment_matching"}
 )
 
 func deferralFields(extra ...Field) []Field {
@@ -256,6 +267,8 @@ var Definitions = map[Action][]Field{
 	BankSessionEndFailed:           {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled")},
 	BankStatusUpdateSkipped:        {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled"), f("status", "reconnect_required", "failed")},
 	PaymentMatchingRun:             {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
+	DecisionConsentGranted:         {f("provider", decisionProviders...), f("purpose", decisionPurposes...), f("via", matchVias...)},
+	DecisionConsentRevoked:         {f("provider", decisionProviders...), f("purpose", decisionPurposes...), f("via", matchVias...)},
 	RatesRefreshRequested:          {f("outcome", "succeeded", "partial", "failed", "cancelled"), f("refreshed"), f("error_kind", "unavailable", "rate_limited", "permanent", "internal"), f("error_code")},
 }
 
