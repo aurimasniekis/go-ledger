@@ -66,7 +66,8 @@ async function fakeApi(page: Page, bank: FakeBank) {
         const body = req.postDataJSON() as { state: string; code?: string }
         if (!bank.pending.delete(body.state)) return err(route, 409, 'consent_not_found', 'no consent is waiting for this redirect')
         bank.revoked = false
-        bank.conn = bank.view()
+        // A reconnect keeps what was fetched before (including the failed run); only the consent is new.
+        bank.conn = bank.conn?.last_refresh_run ? { ...bank.conn, status: 'active', needs_reconnect: false, consent_granted_at: '2026-11-21T10:00:00Z', last_error: null } : bank.view()
         return json(route, bank.conn)
       }
       case `POST /bank-connections/${ID}/refresh`: {
@@ -161,6 +162,18 @@ test('connect, consent redirect, refresh; then a withdrawn consent and an outage
   await card.getByRole('button', { name: 'Reconnect bank' }).click()
   await page.getByRole('link', { name: 'Approve access' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Fake Bank is connected' })).toBeVisible()
+
+  // Back on the card: connected, last refresh time shown, a Refresh action, and no claim of fresh data yet.
+  await page.getByRole('link', { name: 'Go to bank connections' }).first().click()
+  await expect(card.getByText('Reconnected, not refreshed yet')).toBeVisible()
+  await expect(card.getByText('Reconnect needed')).toHaveCount(0)
+  await expect(card.getByText(/Data last refreshed/)).toBeVisible()
+  await expect(card.getByText('Up to date')).toHaveCount(0)
+  await expect(card.getByRole('button', { name: 'Refresh now' })).toBeVisible()
+  await expect(card.getByRole('button', { name: /Reconnect/ })).toHaveCount(0)
+  await card.getByRole('button', { name: 'Refresh now' }).click()
+  await expect(card.getByText('Up to date')).toBeVisible()
+  await expect(card.getByText('Reconnected, not refreshed yet')).toHaveCount(0)
 })
 
 test('the connections page fits a 320 px screen without sideways scrolling', async ({ page }) => {
