@@ -108,6 +108,11 @@ func TestAnswerValidation(t *testing.T) {
 		{Status: StatusIdentified, Name: "Acme", Source: "c", Confidence: -1},
 		{Status: StatusIdentified, Name: "Acme\n", Source: "c"},
 		{Status: StatusIdentified, Name: " Acme", Source: "c"},
+		// U+2028 and U+2029 separate lines and paragraphs: never in a name.
+		{Status: StatusIdentified, Name: "Acme\u2028Ltd", Source: "c"},
+		{Status: StatusIdentified, Name: "Acme\u2029Ltd", Source: "c"},
+		{Status: StatusIdentified, Name: "Acme", LogoRef: "logo\u2028", Source: "c"},
+		{Status: StatusAmbiguous, Candidates: []string{"A\u2029", "B"}, Source: "c"},
 		{Status: StatusIdentified, Name: "Acme", Source: "c", Candidates: []string{"A"}},
 		{Status: StatusAmbiguous, Candidates: []string{"A"}, Source: "c"},
 		{Status: StatusAmbiguous, Name: "A", Candidates: []string{"A", "B"}, Source: "c"},

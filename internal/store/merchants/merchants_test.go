@@ -416,6 +416,130 @@ func TestUnknownTransactionAndInvalidInput(t *testing.T) {
 	}
 }
 
+// TestInheritedDecisionIsClearedOnThePendingRow: a booking's inherited decision
+// cannot be cleared from the booking (ErrReviewInherited, nothing audited); it
+// goes when the pending row's own decision is cleared.
+func TestInheritedDecisionIsClearedOnThePendingRow(t *testing.T) {
+	f := newFixture(t)
+	pending, booked := f.tx("CARD PURCHASE BOOKSHOP"), f.tx("STREAMING SERVICE")
+	f.link(pending.ID, booked.ID)
+	f.review(pending.ID, merchants.Request{Decision: merchants.DecisionCorrected, Name: "Corner Books"})
+	audited := len(f.rec.events)
+
+	if _, err := f.ms.ClearReview(f.ctx, alice, booked.ID); !errors.Is(err, merchants.ErrReviewInherited) {
+		t.Fatalf("clearing an inherited decision: %v", err)
+	}
+	if len(f.rec.events) != audited {
+		t.Fatalf("a refused clear was audited: %v", f.events())
+	}
+	m, err := f.ms.Get(f.ctx, booked.ID)
+	if err != nil || !m.ReviewInherited || m.Review == nil || m.Review.TransactionID != pending.ID || m.Name != "Corner Books" {
+		t.Fatalf("the inherited decision moved: %+v %v", m, err)
+	}
+
+	if _, err := f.ms.ClearReview(f.ctx, alice, pending.ID); err != nil {
+		t.Fatalf("clearing the pending row: %v", err)
+	}
+	if m, err := f.ms.Get(f.ctx, booked.ID); err != nil || m.ReviewInherited || m.Review != nil {
+		t.Fatalf("the inherited decision survived its source: %+v %v", m, err)
+	}
+	if _, err := f.ms.ClearReview(f.ctx, alice, booked.ID); !errors.Is(err, merchants.ErrNoReview) {
+		t.Fatalf("nothing left to clear: %v", err)
+	}
+}
+
+// TestOwnDecisionAuditsInheritedFrom: a decision made on a booking that
+// replaces an inherited one records from=inherited, never none.
+func TestOwnDecisionAuditsInheritedFrom(t *testing.T) {
+	f := newFixture(t)
+	pending, booked := f.tx("CARD PURCHASE BOOKSHOP"), f.tx("STREAMING SERVICE")
+	f.link(pending.ID, booked.ID)
+	f.review(pending.ID, merchants.Request{Decision: merchants.DecisionRejected})
+	f.now = t0.Add(time.Hour)
+	f.review(booked.ID, merchants.Request{Decision: merchants.DecisionCorrected, Name: "Streamly Media"})
+	f.now = t0.Add(2 * time.Hour)
+	f.review(booked.ID, merchants.Request{Decision: merchants.DecisionRejected})
+	if _, err := f.ms.ClearReview(f.ctx, alice, booked.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"merchant.rejected from=none via=session",
+		"merchant.corrected from=inherited via=session",
+		"merchant.rejected from=corrected via=session",
+		"merchant.review_cleared from=rejected via=session",
+	}
+	if got := f.events(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("audit = %v, want %v", got, want)
+	}
+}
+
+// TestInheritedDecisionIsTheMostRecent: a booking can have several superseded
+// rows. It inherits the most recent decision along the chain, whatever order
+// the rows were linked or decided in, and a tie goes to the lower ID.
+func TestInheritedDecisionIsTheMostRecent(t *testing.T) {
+	f := newFixture(t)
+	p1, p2 := f.tx("CARD PURCHASE BOOKSHOP"), f.tx("CARD PURCHASE LONDON")
+	booked, deep := f.tx("STREAMING SERVICE"), f.tx("COFFEE KIOSK")
+	f.link(p1.ID, booked.ID)
+	f.link(p2.ID, booked.ID)
+	inherited := func() merchants.Merchant {
+		t.Helper()
+		m, err := f.ms.Get(f.ctx, booked.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+
+	// p2 is decided earlier than p1: p1's decision is inherited, on every read.
+	f.now = t0.Add(time.Hour)
+	f.review(p2.ID, merchants.Request{Decision: merchants.DecisionRejected})
+	f.now = t0.Add(2 * time.Hour)
+	f.review(p1.ID, merchants.Request{Decision: merchants.DecisionCorrected, Name: "Corner Books"})
+	for i := 0; i < 5; i++ {
+		if m := inherited(); m.Review == nil || m.Review.TransactionID != p1.ID || m.Name != "Corner Books" {
+			t.Fatalf("the later decision of p1 is not inherited (read %d): %+v", i, m)
+		}
+	}
+
+	// Now p2 is the later one.
+	f.now = t0.Add(3 * time.Hour)
+	f.review(p2.ID, merchants.Request{Decision: merchants.DecisionCorrected, Name: "Second Books"})
+	if m := inherited(); m.Review == nil || m.Review.TransactionID != p2.ID || m.Name != "Second Books" {
+		t.Fatalf("the later decision of p2 is not inherited: %+v", m)
+	}
+
+	// Along a chain the most recent decision wins, not the nearest one: deep is
+	// superseded by p1 and decided last.
+	f.link(deep.ID, p1.ID)
+	f.now = t0.Add(4 * time.Hour)
+	f.review(deep.ID, merchants.Request{Decision: merchants.DecisionRejected})
+	if m := inherited(); m.Review == nil || m.Review.TransactionID != deep.ID || m.State != merchants.StateRejected {
+		t.Fatalf("the most recent decision along the chain is not inherited: %+v", m)
+	}
+
+	// A tie in decision time goes to the lower transaction ID, whatever the
+	// order the decisions were made in. deep is unlinked so only p1 and p2 tie.
+	tie := p1.ID
+	if p2.ID < tie {
+		tie = p2.ID
+	}
+	err := f.db.WriteTx(f.ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "UPDATE bank_transactions SET superseded_by = NULL WHERE id = ?", string(deep.ID))
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.now = t0.Add(5 * time.Hour)
+	f.review(p2.ID, merchants.Request{Decision: merchants.DecisionRejected})
+	f.review(p1.ID, merchants.Request{Decision: merchants.DecisionRejected})
+	if m := inherited(); m.Review == nil || m.Review.TransactionID != tie {
+		t.Fatalf("a tie did not go to the lower ID %s: %+v", tie, m)
+	}
+}
+
 // TestAuditFailureRollsBackTheDecision pins that a decision and its audit
 // event are one transaction.
 func TestAuditFailureRollsBackTheDecision(t *testing.T) {

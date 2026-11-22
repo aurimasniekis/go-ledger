@@ -56,7 +56,8 @@ const (
 
 	// Merchant decisions (E1, ADR-0051). The target is the bank transaction
 	// (target type "transaction"). Details: from (the decision before: none,
-	// confirmed, corrected or rejected) and via. Never the merchant name: it is
+	// inherited from a superseded pending transaction, confirmed, corrected or
+	// rejected) and via. Never the merchant name: it is
 	// free text the person typed or a source returned.
 	MerchantConfirmed     Action = "merchant.confirmed"
 	MerchantCorrected     Action = "merchant.corrected"
@@ -128,7 +129,7 @@ func matchFields() []Field {
 }
 
 func merchantFields() []Field {
-	return []Field{f("from", "none", "confirmed", "corrected", "rejected"), f("via", matchVias...)}
+	return []Field{f("from", "none", "inherited", "confirmed", "corrected", "rejected"), f("via", matchVias...)}
 }
 
 // Field declares one allowed detail field. Enum, when set, lists the only

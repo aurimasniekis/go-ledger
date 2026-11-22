@@ -3159,8 +3159,14 @@ paths:
       summary: Take a merchant decision back
       description: |
         Removes the person's decision, so the merchant resolves from the
-        enrichment alone again. 404 when the transaction has no decision.
-        Audited as merchant.review_cleared.
+        enrichment alone again. Audited as merchant.review_cleared.
+
+        404 when the transaction has no decision of its own and inherits none.
+        409 review_inherited when the only decision is inherited from the
+        pending transaction this one superseded (review_inherited is true on
+        the merchant): nothing is removed here. review.transaction_id names
+        that pending transaction; clearing the decision there removes the
+        inherited one from this transaction too.
       tags: [merchants]
       responses:
         "200":
@@ -4791,7 +4797,8 @@ components:
             True when review is the decision made about the pending
             transaction this one superseded (its booking arrived under a new
             key). A new decision on this transaction replaces it; the
-            inherited one is never edited from here.
+            inherited one is not removed from here (409 review_inherited):
+            clear it on the transaction named by review.transaction_id.
         enrichment:
           oneOf:
             - $ref: "#/components/schemas/MerchantEnrichment"
@@ -4834,8 +4841,11 @@ components:
     MerchantReview:
       type: object
       description: The person's decision about the merchant. For confirmed, name is the enrichment name that was confirmed.
-      required: [decision, name, by, decided_at, version]
+      required: [transaction_id, decision, name, by, decided_at, version]
       properties:
+        transaction_id:
+          $ref: "#/components/schemas/ID"
+          description: The transaction the decision was made about; the superseded pending transaction when the merchant's review_inherited is true.
         decision:
           type: string
           enum: [confirmed, corrected, rejected]
@@ -5825,6 +5835,7 @@ components:
             - manual_payment_other_occurrence
             - manual_payment_not_replaceable
             - nothing_to_confirm
+            - review_inherited
             - password_sign_in_disabled
             - rates_refresh_unavailable
             - nothing_outstanding
