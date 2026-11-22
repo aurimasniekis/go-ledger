@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react'
-import { Link, Outlet } from '@tanstack/react-router'
+import { Link, Outlet, useNavigate, useRouterState, useSearch } from '@tanstack/react-router'
 import { AnnouncerProvider, useAnnounce } from '@/components/announcer'
 import { ThemeSelect } from '@/components/theme-select'
 import { DisconnectedState } from '@/components/state-panels'
 import { PrimaryNav, AccountMenu } from '@/components/nav'
 import { useOnline } from '@/lib/connection'
+import { oidcErrorMessage } from '@/lib/oidc'
+import { Button } from '@/components/ui/button'
+import { FormError } from '@/components/form-error'
 
 /**
  * The app shell (U1): skip link, header with the brand, the primary navigation, the account menu and
@@ -33,11 +36,46 @@ export function AppShell() {
           </div>
         </header>
         <OfflineBanner />
+        <OidcOutcome />
         <main id="main" tabIndex={-1} className="mx-auto max-w-5xl p-4 focus:outline-none">
           <Outlet />
         </main>
       </div>
     </AnnouncerProvider>
+  )
+}
+
+/**
+ * The outcome of a provider round trip (re-authentication, link, sign-in error) on whatever page the
+ * user lands on (ADR-0033). Sign-in and Account security already show their own errors, and the
+ * security page its own link confirmation, so those are left to them. A confirmed identity does not
+ * mean the action that needed it ran: the message says so.
+ */
+function OidcOutcome() {
+  const search = useSearch({ strict: false }) as { oidc?: unknown; oidc_error?: unknown }
+  const path = useRouterState({ select: (s) => s.location.pathname })
+  const navigate = useNavigate()
+  const own = path === '/sign-in' || path === '/account/security'
+  const error = typeof search.oidc_error === 'string' && !own ? oidcErrorMessage(search.oidc_error) : null
+  const reauthed = search.oidc === 'reauthenticated'
+  if (!error && !reauthed) return null
+  const dismiss = () =>
+    void navigate({ to: '.', search: ((prev: Record<string, unknown>) => ({ ...prev, oidc: undefined, oidc_error: undefined })) as never, replace: true })
+  return (
+    <div className="mx-auto flex max-w-5xl flex-wrap items-start gap-2 px-4 pt-4">
+      <div className="min-w-0 flex-1">
+        {error ? (
+          <FormError message={error} />
+        ) : (
+          <p role="status" className="rounded-md border border-border bg-surface p-3 text-sm">
+            Your identity was confirmed with the identity provider. The action that needed it has not been repeated yet; run it again.
+          </p>
+        )}
+      </div>
+      <Button type="button" variant="outline" onClick={dismiss}>
+        Dismiss
+      </Button>
+    </div>
   )
 }
 
