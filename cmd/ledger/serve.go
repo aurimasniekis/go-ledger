@@ -231,11 +231,21 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	// Bank connections (B4, ADR-0040) and the background refresh (B6, ADR-0028)
 	// share one engine, so one connection is never refreshed twice at once.
 	facts := bankfacts.New(db, nil).WithAudit(auditLog)
+	enricher, merchantSources, enrichKey, err := buildEnrichment(cfg.Merchants.Enrichment.Remote, parts.merchants, log)
+	if err != nil {
+		say(stderr, "ledger: "+err.Error())
+		return 1
+	}
+	redact.Default().Add(enrichKey)
+	parts.enricher, parts.merchantSources = enricher, merchantSources
 	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(ctx context.Context, _ bankimport.Result) {
 		// A failed run is retried after the next refresh, or on request.
 		if _, err := parts.matching.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
 		}
+		// Merchant identification is presentation only and runs after the
+		// import is stored; its failure never affects the import (E2).
+		enrichAfterRefresh(ctx, parts.enricher, log)
 	}})
 	var sched *bankimport.Scheduler
 	if cfg.Banking.Refresh.Enabled {
@@ -455,6 +465,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		Payments:    parts.payments,
 		Matches:     parts.matches,
 		Merchants:   parts.merchants,
+		MerchantSources: parts.merchantSources,
 		Deferrals:   deferralsDep(parts.deferrals),
 		Banking:     parts.banking,
 		Matching:    matching,

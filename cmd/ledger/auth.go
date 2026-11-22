@@ -24,6 +24,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/domain/tokens"
 	"github.com/aurimasniekis/go-ledger/internal/domain/users"
+	"github.com/aurimasniekis/go-ledger/internal/enrichment"
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	authstore "github.com/aurimasniekis/go-ledger/internal/store/auth"
@@ -66,7 +67,11 @@ type apiParts struct {
 	payments    *paymentstore.Store
 	matches     *matchstore.Store
 	merchants   *merchantstore.Store
-	deferrals   *deferralstore.Store
+	// enricher and merchantSources are the merchant enrichment service and its
+	// description (E2, ADR-0053); nil/empty in tests that do not build them.
+	enricher        *enrichment.Service
+	merchantSources []httpapi.MerchantSourceInfo
+	deferrals       *deferralstore.Store
 	// matching is the automatic payment matching (ADR-0039); registerAPI
 	// builds one when ledger serve has not.
 	matching *automatch.Engine

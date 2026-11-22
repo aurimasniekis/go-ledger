@@ -133,6 +133,7 @@ var permissionMatrix = map[string]string{
 	"POST /api/v1/bank-connections/{id}/disconnect":            "connections:write",
 	"POST /api/v1/payment-matching/runs":                       "commitments:write",
 	"GET /api/v1/transactions/{id}/merchant":                   "merchants:read",
+	"GET /api/v1/merchants/sources":                            "merchants:read",
 	"PUT /api/v1/transactions/{id}/merchant/review":            "merchants:write",
 	"DELETE /api/v1/transactions/{id}/merchant/review":         "merchants:write",
 	"GET /api/v1/rates":                                        "rates:read",

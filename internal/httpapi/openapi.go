@@ -75,6 +75,8 @@ type Deps struct {
 	Matches matches.Store
 	// Merchants stores merchant enrichments and decisions (ADR-0051).
 	Merchants merchants.Store
+	// MerchantSources describes the merchant-identification sources (ADR-0053).
+	MerchantSources []MerchantSourceInfo
 	// Deferrals stores deferral plans (DF1, ADR-0050); nil leaves the
 	// monthly view without plans (the plan routes are registered regardless,
 	// like the other stores').
@@ -154,6 +156,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerPayments(s, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerMatches(s, d.Matches)
 	registerMerchants(s, d.Merchants)
+	registerMerchantSources(s, d.MerchantSources)
 	registerDeferrals(s, d.Deferrals, d.Occurrences, d.Payments, todayFn, d.Grace)
 	registerBankConnections(s, d.Banking)
 	registerMatching(s, d.Matching)

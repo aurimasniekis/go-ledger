@@ -10,8 +10,9 @@ import (
 
 // TestMerchantInheritedReviewIsClearedOnThePendingRow drives an inherited
 // decision through the routes (ADR-0051): the booking reads the pending row's
-// decision, cannot clear it (409 review_inherited, the message names the
-// pending row), and loses it when the pending row's decision is cleared.
+// decision, cannot clear it (409 review_inherited; the message says the
+// decision is inherited and clear it there, while the pending row is named by
+// review.transaction_id of the merchant read), and loses it when the pending row's decision is cleared.
 func TestMerchantInheritedReviewIsClearedOnThePendingRow(t *testing.T) {
 	f := newAPIFixture(t)
 	b := importFakeBank(t, f)

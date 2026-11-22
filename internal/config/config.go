@@ -33,6 +33,7 @@ type Config struct {
 	Events    Events    `cfg:"events"`
 	Banking   Banking   `cfg:"banking"`
 	Rates     Rates     `cfg:"rates"`
+	Merchants Merchants `cfg:"merchants"`
 	Auth      Auth      `cfg:"auth"`
 	MCP       MCP       `cfg:"mcp"`
 }
@@ -163,6 +164,31 @@ type Rates struct {
 	RefreshInterval time.Duration `cfg:"refresh_interval" default:"24h" desc:"Time between background refreshes of the rates from every currency in use to the reporting currency (decision D11: daily), and how long a cached rate is used without asking Frankfurter again. 1h to the stale_after value. Needs reporting.currency; without it nothing is refreshed in the background."`
 	StaleAfter      time.Duration `cfg:"stale_after" default:"120h" desc:"How old a cached rate may get before it is treated as stale and left out of converted totals (decision D11: 5 days): measured from when it was last retrieved, and from its date to the date it is used for. 24h or more."`
 	Timeout         time.Duration `cfg:"timeout" default:"15s" desc:"Time limit for one request to Frankfurter (1s to 2m). A request that exceeds it counts as an outage: cached rates stay in use."`
+}
+
+// Merchants configures merchant identification (E2, ADR-0053). Decision D15:
+// the baseline is a local curated mapping plus the person's confirmations, fully
+// offline; the remote source is off and none is approved.
+type Merchants struct {
+	Enrichment MerchantEnrichment `cfg:"enrichment"`
+}
+
+// MerchantEnrichment configures the lookups that identify a merchant from bank text.
+type MerchantEnrichment struct {
+	Remote MerchantRemote `cfg:"remote"`
+}
+
+// MerchantRemote configures the optional remote merchant source. The adapter is
+// provider-neutral; it speaks the small JSON contract in ADR-0053.
+type MerchantRemote struct {
+	Enabled      bool          `cfg:"enabled" default:"false" desc:"Ask a remote merchant-identification service about transactions the local curated mapping and your confirmations cannot identify. Off by default and no service is approved (decision D15). Turning it on sends one cleaned merchant string per transaction (the counterparty name, else the start of the description) and, if merchants.enrichment.remote.country is set, that country code. Never amounts, dates, IBANs, account holders or balances. Needs url, and you are responsible for the service's terms: see attribution, store_logo_ref and retention."`
+	URL          string        `cfg:"url" desc:"Lookup endpoint of the remote service (POST, JSON; see ADR-0053 for the contract). https only (plain http only for a loopback test server), no credentials or query. Required when enabled."`
+	APIKeyFile   string        `cfg:"api_key_file" desc:"Path of a file with the bearer key for the remote service (trailing newlines ignored). The key is read at startup, sent only to the configured URL and never logged. Optional."`
+	Country      string        `cfg:"country" desc:"Optional ISO 3166-1 alpha-2 country code sent with each lookup as a hint, for example LT. Empty means no country is sent."`
+	Timeout      time.Duration `cfg:"timeout" default:"10s" desc:"Time limit for one lookup (1s to 1m). A failure or timeout leaves the transaction without a remote answer and never delays or fails an import."`
+	Attribution  string        `cfg:"attribution" desc:"Attribution text the service's licence requires, for example 'Logos by Example Service'. Shown with identities that came from it (GET /api/v1/merchants/sources). Up to 200 characters."`
+	StoreLogoRef bool          `cfg:"store_logo_ref" default:"false" desc:"Keep the logo reference the service returns. Leave false unless its licence allows storing or linking its logos: Ledger then shows the name with a neutral icon. Logos are never downloaded or copied by Ledger."`
+	Retention    time.Duration `cfg:"retention" default:"720h" desc:"How long answers from the remote service are kept (the longest a licence usually allows is 30 days, the default; 24h to 8760h, or 0 to keep them until replaced). Older answers are deleted, so the transaction is looked up again; your confirmations and corrections are never deleted."`
 }
 
 // Banking configures banking-data providers.

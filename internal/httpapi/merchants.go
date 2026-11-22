@@ -24,6 +24,10 @@ var (
 	grantMerchantsWrite = authz.G(authz.ResourceMerchants, authz.ActionWrite)
 )
 
+// MerchantsPath is the collection prefix of merchant resources that are not
+// per transaction.
+const MerchantsPath = "/api/v1/merchants"
+
 // CodeNothingToConfirm (409): the transaction has no identified merchant to
 // confirm (ADR-0051); correct it instead.
 const CodeNothingToConfirm Code = "nothing_to_confirm"
@@ -128,6 +132,43 @@ func merchantError(err error) error {
 		return NotFound(merchants.ErrNoReview.Error())
 	}
 	return err
+}
+
+// MerchantSourceInfo describes one merchant-identification source for the
+// client (task E2, ADR-0053): what it is, whether it is on, and what the
+// licence requires to be shown with its answers.
+type MerchantSourceInfo struct {
+	// Name is the source token stored with an answer (the enrichment's source).
+	Name string `json:"name"`
+	// Kind is local (offline) or remote.
+	Kind    string `json:"kind"`
+	Enabled bool   `json:"enabled"`
+	// Description says what the source does in a sentence.
+	Description string `json:"description"`
+	// SendsOffMachine lists what leaves the machine for a lookup; empty for a
+	// local source.
+	SendsOffMachine []string `json:"sends_off_machine"`
+	// Attribution is the text to show with identities from this source, or null.
+	Attribution *string `json:"attribution"`
+	// StoresLogoRef is whether the source's logo references are kept.
+	StoresLogoRef bool `json:"stores_logo_ref"`
+	// RetentionHours is how long its answers are kept, or null for until replaced.
+	RetentionHours *int `json:"retention_hours"`
+}
+
+// registerMerchantSources registers GET /api/v1/merchants/sources.
+func registerMerchantSources(s *Server, infos []MerchantSourceInfo) {
+	if infos == nil {
+		infos = []MerchantSourceInfo{}
+	}
+	for i := range infos {
+		if infos[i].SendsOffMachine == nil {
+			infos[i].SendsOffMachine = []string{}
+		}
+	}
+	s.HandleAPI("GET "+MerchantsPath+"/sources", Requires(grantMerchantsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WriteJSON(w, http.StatusOK, map[string]any{"sources": infos})
+	}))
 }
 
 // registerMerchants registers the merchant routes (task E1, ADR-0051): read a

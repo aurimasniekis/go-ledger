@@ -54,5 +54,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0050: Deferral plans](0050-deferral-plans.md)
 - [ADR-0051: Merchant model and corrections](0051-merchant-model-and-corrections.md)
 - [ADR-0052: Commitment leeway and priority](0052-commitment-leeway.md)
+- [ADR-0053: Merchant enrichment sources](0053-merchant-enrichment-sources.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.

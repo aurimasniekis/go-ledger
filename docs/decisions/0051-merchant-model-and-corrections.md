@@ -42,7 +42,7 @@ This task builds the model and the person's corrections so that any source, or n
    found along the `superseded_by` chain (bounded depth; a tie goes to the lower transaction ID) and marks it
    `review_inherited`; a decision on the booking replaces it (and clearing that decision makes the inherited one apply
    again). The inherited decision is cleared on the pending transaction only: clearing it on the booking is refused
-   (409 `review_inherited`, which names the pending transaction). Nothing is copied or rewritten, so
+   (409 `review_inherited`; the pending transaction is the one in `review.transaction_id` of the merchant read, the error body only says the decision is inherited). Nothing is copied or rewritten, so
    nothing can go stale. An inherited confirmation is checked against the booking's own enrichment like any other
    (decision 7). Corrections and rejections carry over unchanged.
 6. **What is shown.** `Resolve` returns a name and logo only when the person confirmed or corrected it, or an unreviewed
@@ -68,7 +68,8 @@ This task builds the model and the person's corrections so that any source, or n
 
 - **Reliability threshold.** 800 permille (`merchants.DefaultThreshold`) is a documented named default, not a decision
   of D15. The store takes it as an option (`WithThreshold`); there is no configuration key until one is needed.
-- **Reuse of confirmed mappings** (D15: confirmed mappings are reused as suggestions). Not built here: what counts as
+- **Reuse of confirmed mappings** (D15: confirmed mappings are reused as suggestions). Built in task E2, see
+  [ADR-0053](0053-merchant-enrichment-sources.md). Originally not built here: what counts as
   similar is task E2's design. The model does not presuppose it: a reused mapping is written as an enrichment answer
   with its own source (for instance `local_mapping`) and a confidence, so it is shown or held back by the same
   threshold and never outranks a person's decision on that transaction.
