@@ -323,7 +323,10 @@ type ManualPayment struct {
 	UpdatedAt    time.Time
 	// ReplacedByMatchID is the confirmed payment match that replaces the
 	// record now (decision D45, ADR-0049), empty when none. A replaced record
-	// is kept and listed but is not payment evidence: the match is.
+	// is kept and listed but is not payment evidence: the match is, and while
+	// the match's transaction does not count the record counts again (X5c).
+	// Replacing and restoring increase Version; the record's own fields
+	// never change.
 	ReplacedByMatchID string
 }
 

@@ -407,8 +407,37 @@ func (s *Store) checkConfirm(ctx context.Context, tx *sql.Tx, t matches.Transact
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	f.Evidence = kept
+	// A manual payment a match replaces (ADR-0049) counts again while that
+	// match's transaction does not count (X5c). Every confirmed match is
+	// counted here, countable or not, and so is the match being checked
+	// (whose replacements ConfirmReplacing has just written): the records
+	// they replace stay out of this check, or the payment would count twice.
+	replaced, err := activelyReplaced(ctx, tx, o.ID)
+	if err != nil {
+		return err
+	}
+	f.Evidence = slices.DeleteFunc(kept, func(e payments.Evidence) bool { return e.Kind == payments.EvidenceManual && replaced[e.ID] })
 	return matches.CheckConfirm(t, others, amount, o, f, allow)
+}
+
+// activelyReplaced returns the occurrence's manual payments that a match
+// replaces now (an active manual_payment_replacements row, ADR-0049).
+func activelyReplaced(ctx context.Context, tx *sql.Tx, occurrenceID string) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT r.manual_payment_id FROM manual_payment_replacements r JOIN manual_payments p ON p.id = r.manual_payment_id"+
+		" WHERE p.occurrence_id = ? AND r.restored_at IS NULL", occurrenceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // entry is a history entry to record: the change, the state and amount after
