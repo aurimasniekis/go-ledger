@@ -40,6 +40,13 @@ const (
 
 	ReportingTimezoneChanged Action = "settings.reporting_timezone_changed" // Details: from, to
 
+	// Runtime settings (ADR-0066). The target is the settings group (target
+	// type "setting_group", the group name). Details: group, fields (the
+	// member names written or reset, comma separated). Never a value: a value
+	// may be a URL with a token in it.
+	SettingsUpdated Action = "settings.updated"
+	SettingsReset   Action = "settings.reset"
+
 	// Payment matches (X1, ADR-0035). The target is the match. Details:
 	// occurrence_id, transaction_id, origin, from (the state before; none
 	// for a new match), currency. Never the amount, a reason or bank text.
@@ -255,6 +262,8 @@ var Definitions = map[Action][]Field{
 	CorrectionReversed: {f("kind", correctionKinds...)},
 
 	ReportingTimezoneChanged: {f("from"), f("to")},
+	SettingsUpdated:          {f("group"), f("fields")},
+	SettingsReset:            {f("group"), f("fields")},
 
 	CommitmentCreated: {f("kind"), f("currency")},
 	CommitmentUpdated: {f("fields")},

@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -64,13 +65,20 @@ type Options struct {
 	// Environ lists the process environment as KEY=VALUE, to find unknown
 	// LEDGER_ variables. It defaults to os.Environ.
 	Environ func() []string
+	// Stored is the stored settings layer (ADR-0066 point 4): values written
+	// through the Management API, keyed by dotted key, as JSON. It sits
+	// between the defaults and the YAML file, so every configuration layer
+	// beats it. Nil means none (the configuration alone).
+	Stored map[string]json.RawMessage
 }
 
 // Result is a loaded configuration and how it came to be.
 type Result struct {
 	Config Config
-	// Sources maps each key to where its value came from: "default", "yaml",
-	// "env LEDGER_X", "flag --x" or "file <path>".
+	// Sources maps each key to where its value came from: "default", "api"
+	// (the stored settings layer, ADR-0066), "yaml", "env LEDGER_X" (the real
+	// environment), "dotenv LEDGER_X" (the .env file), "flag --x" or
+	// "file <path>". [Layer] reduces a source to its layer name.
 	Sources map[string]string
 	// ConfigFile is the YAML path in use ("" when none was named) and
 	// ConfigFound whether it existed.
@@ -156,6 +164,15 @@ func Load(opts Options) (*Result, error) {
 		}
 		return v, ok && v != ""
 	}
+	// envSource labels a value from the real environment "env" and one from
+	// the .env file "dotenv", so the settings API can name the layer that pins
+	// a key (ADR-0066 point 5).
+	envSource := func(k string) string {
+		if _, real := lookup(k); real {
+			return "env " + k
+		}
+		return "dotenv " + k
+	}
 
 	res.ConfigFile = opts.ConfigPath
 	if res.ConfigFile == "" {
@@ -180,6 +197,9 @@ func Load(opts Options) (*Result, error) {
 		}
 		assign(target, f, v)
 	}
+
+	// Layer 1a: the stored settings layer (ADR-0066).
+	problems = append(problems, applyStored(target, byPath, opts.Stored, res.Sources)...)
 
 	// Layer 2: the YAML file.
 	if res.ConfigFile != "" {
@@ -209,7 +229,7 @@ func Load(opts Options) (*Result, error) {
 	}
 	for _, f := range all {
 		if raw, ok := envValue(f.Env); ok {
-			set(f, "env "+f.Env, raw)
+			set(f, envSource(f.Env), raw)
 		}
 		if raw, ok := opts.Flags[f.Path]; ok && !f.Secret {
 			set(f, "flag --"+f.Path, raw)
