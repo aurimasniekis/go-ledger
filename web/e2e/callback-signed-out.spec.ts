@@ -7,7 +7,8 @@ import { expect, test } from './fixtures'
 // A bank's return reaching a signed-out browser (A6g/A6h): the single-use consent code is never kept. The page is
 // sent to sign-in with a notice, history never brings the code back, and the server's own log (read here from a
 // dedicated instance of the binary, at info level) has the path of the request but not its query. Offline.
-const port = 18095
+// Not 18095: that is the commitments server's management port (18085 + 10, see playwright.config.ts).
+const port = 18087
 const bin = process.env.E2E_LEDGER_BIN ?? '../bin/ledger'
 test.use({ baseURL: `http://127.0.0.1:${port}` })
 

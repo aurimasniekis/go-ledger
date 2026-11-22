@@ -10,6 +10,8 @@ const port = 18080
 const journeyPort = 18081 // journey-server.mjs
 const deferralPort = 18083 // journey-server.mjs, deferral scenario (its bank double is on the next port)
 const commitmentsPort = 18085 // journey-server.mjs, commitments scenario (CM-UI; its bank double is on the next port)
+// Each journey server also listens for management on its port + 10 (18090-18096). e2e/callback-signed-out.spec.ts runs
+// its own instance on 18087 (+10 = 18097): keep new ports clear of all of these.
 // Opt-in for sandboxed hosts where Chromium crashes: PLAYWRIGHT_SINGLE_PROCESS=1
 // starts it with --single-process. Off by default; see CONTRIBUTING.md.
 const singleProcess = process.env.PLAYWRIGHT_SINGLE_PROCESS === '1'
