@@ -34,10 +34,7 @@ operator on 2026-11-20, fixes the policy; research is in the knowledge base (mer
    an ADR: the cleaned merchant string and the configured country code if any. The merchant string is the counterparty
    name, else the description, with every token that holds a digit removed (IBANs and account numbers, amounts, dates,
    references, store numbers), the words iban, bic, swift, account and acct removed, control characters removed, at
-   most 100 characters (decision C-E2-remote). Nothing is sent at all for a transfer (transfer words such as sepa or
-   transfer in the counterparty or description) or when the counterparty
-   looks like a person's name (two or three alphabetic words with no company form or business word: a heuristic, as the
-   bank data carries no counterparty kind, and it errs towards sending nothing). A key the person has already
+   most 100 characters (decision C-E2-remote). The text is split at white space and at the punctuation `, / . ;` before the digit tokens are dropped. Nothing is sent unless the cleaned text carries a positive merchant marker: a company form (UAB, Ltd, GmbH, AB, AS, SIA, Inc and the like) next to at least one other word, or a multi-word curated pattern such as apple com bill. Business words and single curated words are not markers, and names of people, transfers and anything else without a marker send nothing (positive-marker rule: the bank data carries no counterparty kind, so a person's name cannot be recognised reliably, and the rule errs towards sending nothing). Nothing is sent for a transfer (transfer words such as sepa or transfer in the counterparty or description) either. A key the person has already
    confirmed, corrected or rejected is never sent. Amounts, dates, IBANs, account holders, balances and transaction IDs
    have no field to travel in. Tests pin the request body and the cleaning rules. Because the merchant string can still
    hold personal data, enabling the source is the operator's explicit act, and `GET /api/v1/merchants/sources` states what
@@ -54,7 +51,7 @@ operator on 2026-11-20, fixes the policy; research is in the knowledge base (mer
    (grant `merchants:read`, administrator-only like the rest of the merchant routes). A client shows it wherever an
    identity whose `enrichment.source` is that source is shown (UI in task E3).
 6. **A failure never blocks an import.** Enrichment runs after a refresh stored its data (`bankimport.AfterRefresh`,
-   after payment matching), in a background goroutine bounded to one minute (passes never overlap and shutdown waits for a running one), with
+   after payment matching), in a background goroutine bounded to one minute (passes never overlap and shutdown cancels a running one, starts none afterwards, and waits for it after the refreshes and the scheduler have ended, before the database closes), with
    recovered panics, and returns nothing to the refresh. Inside a
    pass a failing remote lookup is an `unavailable` answer, which E1's store never lets replace an earlier answer; it
    only stamps `last_failed_at`. A store failure for one transaction is counted and logged (no names, no bank text),

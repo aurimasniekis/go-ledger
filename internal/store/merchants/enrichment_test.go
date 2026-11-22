@@ -88,7 +88,7 @@ func TestRemoteOutageLeavesImportedDataAndEarlierAnswers(t *testing.T) {
 	if rep, err := svc.Run(f.ctx); err != nil || rep.Failed != 0 {
 		t.Fatalf("up: %+v %v", rep, err)
 	}
-	id := f.tx("COFFEE KIOSK").ID
+	id := f.tx("SALARY OCTOBER").ID
 	if m, _ := f.ms.Get(f.ctx, id); m.State != merchants.StateReliable || m.Name != "Far Away Shop" {
 		t.Fatalf("remote answer: %+v", m)
 	}
@@ -120,7 +120,7 @@ func TestRemoteOutageLeavesImportedDataAndEarlierAnswers(t *testing.T) {
 		t.Fatalf("earlier answer kept: %+v", m)
 	}
 	// Bank facts are untouched by any of this.
-	if f.tx("COFFEE KIOSK").ID != id {
+	if f.tx("SALARY OCTOBER").ID != id {
 		t.Fatal("transaction changed")
 	}
 }

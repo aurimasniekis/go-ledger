@@ -119,3 +119,39 @@ func TestEnrichInBackgroundNeverBlocksTheRefresh(t *testing.T) {
 	}
 	enrichInBackground(context.Background(), nil, log, &running, &wg)
 }
+
+// After the application's context is done no pass starts, and Wait covers a
+// pass that is running when it is cancelled (shutdown ordering).
+func TestEnrichInBackgroundDoesNotStartAfterCancelAndWaitCoversARunningPass(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	st := slowStore{release: make(chan struct{}), started: make(chan struct{}, 2)}
+	svc := &enrichment.Service{Store: st}
+	var running atomic.Bool
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+	enrichInBackground(ctx, svc, log, &running, &wg)
+	<-st.started
+	waited := make(chan struct{})
+	go func() { wg.Wait(); close(waited) }()
+	select {
+	case <-waited:
+		t.Fatal("Wait returned while the pass was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel() // the pass ends with the context
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not return after the pass ended")
+	}
+	enrichInBackground(ctx, svc, log, &running, &wg)
+	wg.Wait()
+	select {
+	case <-st.started:
+		t.Fatal("a pass started after the context was cancelled")
+	default:
+	}
+	if running.Load() {
+		t.Fatal("running flag set by a refused start")
+	}
+}

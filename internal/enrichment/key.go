@@ -50,13 +50,18 @@ func (s Subject) Key() string {
 }
 
 // MerchantString is the only bank text a remote source may be asked about
-// (decision C-E2-remote, ADR-0054). It is empty, and nothing is sent, when the
-// transaction looks like a transfer (transfer words in the counterparty or
-// description) or the counterparty looks like a person. Otherwise it
-// is the counterparty name, else the description, with every token that holds a
-// digit removed (which takes out IBANs and account numbers, amounts, dates,
-// references and store numbers), the words iban, bic, swift, account and acct
-// removed, control characters removed, and at most 100 characters kept.
+// (decision C-E2-remote, ADR-0054). Nothing is sent unless the text carries a
+// positive merchant marker. The text is the counterparty name, else the
+// description. It is cleaned first: control characters removed, split at white
+// space and at the punctuation , / . and ;, every token that holds a digit
+// removed (IBANs and account numbers, amounts, dates, references, store
+// numbers) and the words iban, bic, swift, account and acct removed. The result
+// is sent only when it holds a company form (UAB, Ltd, GmbH, AB, AS, SIA, Inc
+// and the like) next to at least one other word, or a multi-word curated
+// pattern ("apple com bill"). Business words and single curated words are not
+// markers: they also sit in personal names. It is empty, and nothing is sent,
+// for transfers, for names of people and for everything else without a marker.
+// At most 100 characters are kept.
 func (s Subject) MerchantString() string {
 	used := s.Counterparty
 	if strings.TrimSpace(used) == "" {
@@ -65,25 +70,48 @@ func (s Subject) MerchantString() string {
 	if looksLikeTransfer(s.Counterparty) || looksLikeTransfer(s.Description) {
 		return ""
 	}
-	toks := tokens(used)
-	if strings.TrimSpace(s.Counterparty) != "" && looksLikePerson(toks) {
-		return ""
-	}
 	var out []string
-	for _, t := range toks {
+	for _, t := range tokens(used) {
 		if strings.IndexFunc(t, unicode.IsDigit) >= 0 || accountWords[strings.ToLower(t)] {
 			continue
 		}
 		out = append(out, t)
 	}
+	if !hasMerchantMarker(out) {
+		return ""
+	}
 	t := strings.Join(out, " ")
 	if r := []rune(t); len(r) > 100 {
 		t = strings.TrimSpace(string(r[:100]))
 	}
-	if strings.IndexFunc(t, unicode.IsLetter) < 0 {
-		return ""
-	}
 	return t
+}
+
+// hasMerchantMarker: a company form beside another word, or a multi-word
+// curated pattern.
+func hasMerchantMarker(toks []string) bool {
+	form, other := false, false
+	for _, t := range toks {
+		l := strings.ToLower(t)
+		switch {
+		case companyForms[l]:
+			form = true
+		case strings.IndexFunc(l, unicode.IsLetter) >= 0:
+			other = true
+		}
+	}
+	if form && other {
+		return true
+	}
+	key := Key(strings.Join(toks, " "))
+	for _, e := range DefaultCurated() {
+		for _, p := range e.Patterns {
+			if p = Key(p); strings.Contains(p, " ") && contains(key, p) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var accountWords = map[string]bool{"iban": true, "bic": true, "swift": true, "account": true, "acct": true}
@@ -94,21 +122,17 @@ var transferWords = map[string]bool{
 	"overforing": true, "ueberweisung": true, "überweisung": true, "virement": true,
 }
 
-// companyForms and businessWords tell a merchant from a person's name.
+// companyForms are the positive merchant marker.
 var companyForms = map[string]bool{
 	"uab": true, "ltd": true, "limited": true, "gmbh": true, "inc": true, "llc": true, "as": true, "sia": true, "oy": true,
 	"ab": true, "bv": true, "sa": true, "srl": true, "plc": true, "corp": true, "co": true, "ag": true, "oü": true,
 	"mb": true, "sp": true, "zoo": true, "kft": true, "sarl": true, "nv": true,
 }
-var businessWords = map[string]bool{
-	"shop": true, "store": true, "market": true, "supermarket": true, "cafe": true, "coffee": true, "bar": true, "pub": true,
-	"restaurant": true, "pharmacy": true, "hotel": true, "bank": true, "taxi": true, "pizza": true, "kiosk": true, "bakery": true,
-	"hardware": true, "services": true, "service": true, "group": true, "online": true, "express": true, "mobile": true,
-	"energy": true, "insurance": true, "telecom": true, "fitness": true, "gym": true, "books": true, "foods": true,
-}
 
 func tokens(s string) []string {
-	return strings.FieldsFunc(s, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) })
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r) || strings.ContainsRune(",/.;", r)
+	})
 }
 
 func looksLikeTransfer(s string) bool {
@@ -118,27 +142,6 @@ func looksLikeTransfer(s string) bool {
 		}
 	}
 	return false
-}
-
-// looksLikePerson: two or three purely alphabetic words, none a company form or
-// a common business word. It is a heuristic (the bank data carries no
-// counterparty kind) and errs towards sending nothing.
-func looksLikePerson(toks []string) bool {
-	if len(toks) < 2 || len(toks) > 3 {
-		return false
-	}
-	for _, t := range toks {
-		l := strings.ToLower(strings.Trim(t, ".,"))
-		if companyForms[l] || businessWords[l] || curatedWord(l) {
-			return false
-		}
-		for _, c := range t {
-			if !unicode.IsLetter(c) && c != '-' && c != '\'' && c != '.' {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // contains reports whether words (a Key) contains pattern (a Key) as whole,

@@ -3,7 +3,6 @@ package enrichment
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/merchants"
 )
@@ -45,21 +44,7 @@ func DefaultCurated() []Entry {
 // of unrelated businesses ("Bolt Hardware Store", "Apple Orchard Cafe"). Found
 // inside longer text they give only [ConfidenceCuratedWeak], a suggestion below
 // the display threshold; the whole text equal to them is still exact.
-var weakPatterns = map[string]bool{"bolt": true, "apple": true, "booking": true, "uber": true, "google": true}
-
-var curatedWords = func() map[string]bool {
-	m := map[string]bool{}
-	for _, e := range DefaultCurated() {
-		for _, p := range e.Patterns {
-			for _, w := range strings.Fields(Key(p)) {
-				m[w] = true
-			}
-		}
-	}
-	return m
-}()
-
-func curatedWord(w string) bool { return curatedWords[w] }
+var weakPatterns = map[string]bool{"bolt": true, "apple": true, "booking": true, "uber": true, "google": true, "amazon": true}
 
 // Curated is the local curated mapping source. It is pure and offline.
 type Curated struct {

@@ -136,7 +136,7 @@ func TestRemoteSendsOnlyTheAllowlistedFields(t *testing.T) {
 	// No country configured: none is sent. With no counterparty the
 	// description is the merchant string.
 	r2, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: rs.URL})
-	if q := r2.Query(enrichment.Subject{Description: "Only a description"}); q.Merchant != "Only a description" || q.Country != "" {
+	if q := r2.Query(enrichment.Subject{Description: "Only a description UAB"}); q.Merchant != "Only a description UAB" || q.Country != "" {
 		t.Fatalf("query %+v", q)
 	}
 }
@@ -145,7 +145,7 @@ func TestRemoteLogoReferenceFollowsTheLicence(t *testing.T) {
 	rs := newRemoteServer(t, reply(`{"status":"identified","name":"Shop","logo_url":"https://img.example.com/x.png","confidence_permille":900}`))
 	for _, keep := range []bool{false, true} {
 		r, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: rs.URL, Licence: enrichment.Licence{StoreLogoRef: keep}})
-		a, err := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "Shop"})
+		a, err := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "Example Shop UAB"})
 		if err != nil || (a.LogoRef != "") != keep {
 			t.Fatalf("keep=%v: %+v %v", keep, a, err)
 		}
@@ -153,7 +153,7 @@ func TestRemoteLogoReferenceFollowsTheLicence(t *testing.T) {
 	for _, bad := range []string{"http://img.example.com/x.png", "javascript:alert(1)", "https://u:p@img.example.com/x"} {
 		rs2 := newRemoteServer(t, reply(`{"status":"identified","name":"Shop","logo_url":`+jsonString(bad)+`,"confidence_permille":900}`))
 		r, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: rs2.URL, Licence: enrichment.Licence{StoreLogoRef: true}})
-		if a, _ := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "Shop"}); a.LogoRef != "" {
+		if a, _ := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "Example Shop UAB"}); a.LogoRef != "" {
 			t.Errorf("kept unsafe logo %q", bad)
 		}
 	}
@@ -176,19 +176,19 @@ func TestRemoteFailuresAreErrorsWithoutBankText(t *testing.T) {
 	} {
 		rs := newRemoteServer(t, h)
 		r, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: rs.URL, APIKey: "k"})
-		_, err := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "PRIVATE SHOP NAME"})
+		_, err := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "PRIVATE SHOP NAME UAB"})
 		if err == nil || strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "PRIVATE") || strings.Contains(err.Error(), rs.URL) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// Unreachable and timed out.
 	r, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: "http://127.0.0.1:1/x"})
-	if _, err := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "X"}); err == nil {
+	if _, err := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "X Shop UAB"}); err == nil {
 		t.Error("unreachable must fail")
 	}
 	slow := newRemoteServer(t, func(w http.ResponseWriter) { time.Sleep(300 * time.Millisecond) })
 	r, _ = enrichment.NewRemote(enrichment.RemoteOptions{URL: slow.URL, Timeout: 50 * time.Millisecond})
-	if _, err := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "X"}); err == nil {
+	if _, err := r.Lookup(context.Background(), enrichment.Subject{Counterparty: "X Shop UAB"}); err == nil {
 		t.Error("timeout must fail")
 	}
 	if _, err := enrichment.NewRemote(enrichment.RemoteOptions{URL: "https://u:p@example.com/"}); err == nil {
@@ -258,7 +258,7 @@ func TestRemoteIsOnlyAskedAboutWhatLocalSourcesCannotIdentify(t *testing.T) {
 	r, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: rs.URL, Licence: enrichment.Licence{Retention: 720 * time.Hour}})
 	st := &fakeStore{pending: []enrichment.Candidate{
 		{ID: "a", Subject: enrichment.Subject{Counterparty: "NETFLIX"}},
-		{ID: "b", Subject: enrichment.Subject{Counterparty: "UNKNOWN SHOP"}},
+		{ID: "b", Subject: enrichment.Subject{Counterparty: "UNKNOWN SHOP UAB"}},
 	}}
 	rep, err := newService(st, r).Run(context.Background())
 	if err != nil || rep.Identified != 2 || rep.Expired != 3 || rs.calls.Load() != 1 || st.deleted != "remote" {
@@ -274,8 +274,8 @@ func TestRemoteFailureDoesNotBlockAndIsRecordedAsUnavailable(t *testing.T) {
 	r, _ := enrichment.NewRemote(enrichment.RemoteOptions{URL: rs.URL})
 	st := &fakeStore{pending: []enrichment.Candidate{
 		{ID: "a", Subject: enrichment.Subject{Counterparty: "NETFLIX"}},
-		{ID: "b", Subject: enrichment.Subject{Counterparty: "UNKNOWN SHOP"}},
-		{ID: "c", Subject: enrichment.Subject{Counterparty: "OTHER SHOP"}},
+		{ID: "b", Subject: enrichment.Subject{Counterparty: "UNKNOWN SHOP UAB"}},
+		{ID: "c", Subject: enrichment.Subject{Counterparty: "OTHER SHOP UAB"}},
 	}}
 	rep, err := newService(st, r).Run(context.Background())
 	if err != nil || rep.Looked != 3 || rep.Identified != 1 || rep.Failed != 2 {
@@ -403,15 +403,26 @@ func TestMerchantStringSendsNoIdentifiersAmountsDatesOrTransfers(t *testing.T) {
 		want string
 	}{
 		{"merchant counterparty", enrichment.Subject{Counterparty: "Example Shop UAB"}, "Example Shop UAB"},
-		{"digits dropped from counterparty", enrichment.Subject{Counterparty: "LIDL 1523 VILNIUS"}, "LIDL VILNIUS"},
-		{"description iban amount date", enrichment.Subject{Description: "CARD PURCHASE Corner Kiosk LT121000011101001000 12.50 EUR 2026-10-01 ref 99A"}, "CARD PURCHASE Corner Kiosk EUR ref"},
-		{"split iban", enrichment.Subject{Description: "Kiosk IBAN LT12 1000 0111 0100 1000 account 4730"}, "Kiosk"},
-		{"comma amount and date", enrichment.Subject{Description: "Bakery 1,234.50 01/10/2026 14:30"}, "Bakery"},
+		{"company form with digits dropped", enrichment.Subject{Counterparty: "Example Shop 1523 UAB"}, "Example Shop UAB"},
+		{"description with form", enrichment.Subject{Description: "CARD PURCHASE Corner Kiosk Ltd LT121000011101001000 12.50 EUR 2026-10-01 ref 99A"}, "CARD PURCHASE Corner Kiosk Ltd EUR ref"},
+		{"split iban", enrichment.Subject{Description: "Kiosk GmbH IBAN LT12 1000 0111 0100 1000 account 4730"}, "Kiosk GmbH"},
+		{"multi-word curated pattern", enrichment.Subject{Description: "APPLE.COM/BILL 12345"}, "APPLE COM BILL"},
+		{"single curated word", enrichment.Subject{Counterparty: "LIDL 1523 VILNIUS"}, ""},
+		{"business word only", enrichment.Subject{Description: "Corner Kiosk Bakery"}, ""},
+		{"form alone", enrichment.Subject{Counterparty: "UAB"}, ""},
 		{"only numbers", enrichment.Subject{Description: "12345678 2026-10-01"}, ""},
 		{"sepa transfer", enrichment.Subject{Counterparty: "Example Shop UAB", Description: "SEPA credit transfer"}, ""},
-		{"transfer word", enrichment.Subject{Description: "Transfer to savings"}, ""},
+		{"transfer word", enrichment.Subject{Description: "Transfer to savings UAB"}, ""},
 		{"person counterparty", enrichment.Subject{Counterparty: "Jonas Jonaitis", Description: "rent"}, ""},
 		{"person with initial", enrichment.Subject{Counterparty: "Anna K. Smith"}, ""},
+		{"surname first", enrichment.Subject{Counterparty: "SMITH, JOHN"}, ""},
+		{"person and number", enrichment.Subject{Counterparty: "John Smith 12345"}, ""},
+		{"person and iban", enrichment.Subject{Counterparty: "John Smith LT121000011101001000"}, ""},
+		{"person and reason", enrichment.Subject{Counterparty: "John Smith / rent"}, ""},
+		{"single name", enrichment.Subject{Counterparty: "JONAS"}, ""},
+		{"initial dot surname", enrichment.Subject{Counterparty: "J.SMITH"}, ""},
+		{"particles", enrichment.Subject{Counterparty: "Maria del Carmen Lopez"}, ""},
+		{"curated word as surname", enrichment.Subject{Counterparty: "Mark Bolt"}, ""},
 		{"empty", enrichment.Subject{}, ""},
 	}
 	for _, c := range cases {

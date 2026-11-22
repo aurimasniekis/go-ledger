@@ -242,6 +242,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	parts.enricher, parts.merchantSources = enricher, merchantSources
 	var enrichRunning atomic.Bool
 	var enrichWG sync.WaitGroup
+	// enrichCtx ends where stop() runs (below), so a pass ends with the servers
+	// and none starts afterwards; the shutdown waits for it after the refreshes.
+	enrichCtx, enrichStop := context.WithCancel(ctx)
+	defer enrichStop()
 	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(refreshCtx context.Context, _ bankimport.Result) {
 		// A failed run is retried after the next refresh, or on request.
 		if _, err := parts.matching.Run(refreshCtx); err != nil && refreshCtx.Err() == nil {
@@ -251,11 +255,11 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		// import is stored; its failure never affects the import (E2).
 		// It runs in the background under the application's context, bounded
 		// by enrichmentBudget, and never delays the refresh.
-		enrichInBackground(ctx, parts.enricher, log, &enrichRunning, &enrichWG)
+		enrichInBackground(enrichCtx, parts.enricher, log, &enrichRunning, &enrichWG)
 	}})
 	// One pass at startup also purges remote answers past their retention when
 	// the remote source has been turned off since.
-	enrichInBackground(ctx, parts.enricher, log, &enrichRunning, &enrichWG)
+	enrichInBackground(enrichCtx, parts.enricher, log, &enrichRunning, &enrichWG)
 	var sched *bankimport.Scheduler
 	if cfg.Banking.Refresh.Enabled {
 		sched = bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
@@ -393,9 +397,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 			code = 1
 		}
 		stop()
+		enrichStop()
 	}
 	<-retentionDone // before the database closes
-	enrichWG.Wait() // a background enrichment pass ends with ctx; it needs the database
 	// A refresh on request that outlived its request is waited for too (bounded,
 	// so a stuck provider cannot hold the shutdown): its audit entry needs the
 	// database.
@@ -415,6 +419,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	if refreshDone != nil {
 		<-refreshDone
 	}
+	// Last of the refresh paths: one of them may have started a pass just before
+	// it ended. enrichStop already ran, so none starts now; a running one needs
+	// the database, so it is waited for before the database closes.
+	enrichWG.Wait()
 	if ratesDone != nil {
 		<-ratesDone
 	}

@@ -52,7 +52,7 @@ func buildEnrichment(cfg config.MerchantRemote, st *merchantstore.Store, log *sl
 		return nil, nil, "", err
 	}
 	svc.Remote = r
-	remote.SendsOffMachine = []string{"merchant string (the counterparty name, else the description, without digits, IBAN or account-like tokens, amounts and dates; nothing for transfers or person counterparties)"}
+	remote.SendsOffMachine = []string{"merchant string (the counterparty name, else the description, without digits, IBAN or account-like tokens, amounts and dates; sent only when it carries a company form such as UAB or Ltd next to another word, or a multi-word curated pattern; nothing for transfers, people or anything without that marker)"}
 	if cfg.Country != "" {
 		remote.SendsOffMachine = append(remote.SendsOffMachine, "country code")
 	}
@@ -73,7 +73,9 @@ func buildEnrichment(cfg config.MerchantRemote, st *merchantstore.Store, log *sl
 // while one runs is skipped (the running one, or the next refresh, covers the
 // rows). The pass uses base, the application's context, not the refresh's.
 func enrichInBackground(base context.Context, svc *enrichment.Service, log *slog.Logger, running *atomic.Bool, wg *sync.WaitGroup) {
-	if svc == nil || !running.CompareAndSwap(false, true) {
+	// Once base is done (the shutdown began) no pass starts: it would only
+	// race the database closing.
+	if svc == nil || base.Err() != nil || !running.CompareAndSwap(false, true) {
 		return
 	}
 	wg.Add(1)
