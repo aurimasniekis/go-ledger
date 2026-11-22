@@ -273,6 +273,14 @@ banking:
     # Environment: LEDGER_BANKING_REFRESH_INTERVAL  Flag: --banking.refresh.interval
     interval: "6h"
 
+    # How long after a refresh of a bank connection finished (whoever started
+    # it, whatever the outcome) another refresh on request for that connection
+    # is refused with HTTP 429 and Retry-After. It applies to the API, the web
+    # UI, the CLI and MCP; the background refresh is not held back. 0s
+    # switches it off; at most 24h (decision D-B6c).
+    # Environment: LEDGER_BANKING_REFRESH_REQUEST_COOLDOWN  Flag: --banking.refresh.request_cooldown
+    request_cooldown: "5m"
+
     # Longest wait after failed refreshes. The wait starts at 15 minutes and
     # doubles per consecutive failure. A rate limit waits at least 6 hours, or
     # the provider's Retry-After (at most 24 hours).
