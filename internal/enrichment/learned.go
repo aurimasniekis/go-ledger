@@ -3,6 +3,7 @@ package enrichment
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/merchants"
@@ -13,6 +14,8 @@ import (
 type Confirmation struct {
 	Subject Subject
 	Name    string
+	// Rejected marks a rejection ("this is no merchant"); Name is empty.
+	Rejected bool
 }
 
 // Learned reuses the person's confirmed and corrected mappings as suggestions
@@ -21,26 +24,68 @@ type Confirmation struct {
 // different names for one key are ambiguous, never a guess. It holds a snapshot
 // loaded by [Learned.Load].
 type Learned struct {
-	mu    sync.RWMutex
-	byKey map[string][]string
+	mu       sync.RWMutex
+	byKey    map[string][]string
+	rejected map[string]bool
+	print    string
+	loaded   bool
 }
 
 // NewLearned returns an empty Learned source.
-func NewLearned() *Learned { return &Learned{byKey: map[string][]string{}} }
+func NewLearned() *Learned {
+	return &Learned{byKey: map[string][]string{}, rejected: map[string]bool{}}
+}
 
-// Load replaces the snapshot with the given confirmations.
-func (l *Learned) Load(cs []Confirmation) {
+// Load replaces the snapshot with the given confirmations and reports whether
+// it differs from the previous one (the first load always does).
+func (l *Learned) Load(cs []Confirmation) bool {
 	m := map[string][]string{}
+	rej := map[string]bool{}
 	for _, c := range cs {
 		k := c.Subject.Key()
-		if k == "" || c.Name == "" {
+		if k == "" {
 			continue
 		}
-		m[k] = merchants.Candidates(append(m[k], c.Name))
+		switch {
+		case c.Rejected:
+			rej[k] = true
+		case c.Name != "":
+			m[k] = merchants.Candidates(append(m[k], c.Name))
+		}
 	}
+	var parts []string
+	for k, ns := range m {
+		parts = append(parts, "m|"+k+"|"+strings.Join(ns, "|"))
+	}
+	for k := range rej {
+		parts = append(parts, "r|"+k)
+	}
+	sort.Strings(parts)
+	print := strings.Join(parts, "\n")
 	l.mu.Lock()
-	l.byKey = m
-	l.mu.Unlock()
+	defer l.mu.Unlock()
+	changed := l.print != print || !l.loaded
+	l.byKey, l.rejected, l.print, l.loaded = m, rej, print, true
+	return changed
+}
+
+// Decided reports whether the person has a mapping or a rejection for the
+// subject's key. Such a decision beats a curated or remote identity for the
+// same key.
+func (l *Learned) Decided(s Subject) bool {
+	k := s.Key()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return k != "" && (len(l.byKey[k]) > 0 || l.rejected[k])
+}
+
+// Rejected reports whether the person rejected the subject's key and gave no
+// name for it.
+func (l *Learned) Rejected(s Subject) bool {
+	k := s.Key()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return k != "" && l.rejected[k] && len(l.byKey[k]) == 0
 }
 
 // Name implements [Source].

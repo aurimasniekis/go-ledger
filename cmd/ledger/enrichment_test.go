@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,7 +58,7 @@ type failingStore struct{ enrichment.Store }
 func (failingStore) Confirmations(context.Context) ([]enrichment.Confirmation, error) {
 	return nil, errors.New("database is locked")
 }
-func (failingStore) Pending(context.Context, int, time.Time) ([]enrichment.Candidate, error) {
+func (failingStore) Pending(context.Context, int, time.Time, bool) ([]enrichment.Candidate, error) {
 	panic("boom")
 }
 
@@ -67,4 +69,53 @@ func TestEnrichAfterRefreshNeverFailsTheImport(t *testing.T) {
 	enrichAfterRefresh(context.Background(), nil, log)
 	enrichAfterRefresh(context.Background(), &enrichment.Service{Store: failingStore{}, Learned: enrichment.NewLearned()}, log)
 	enrichAfterRefresh(context.Background(), &enrichment.Service{Store: failingStore{}}, log)
+}
+
+type slowStore struct {
+	enrichment.Store
+	release chan struct{}
+	started chan struct{}
+}
+
+func (s slowStore) Confirmations(context.Context) ([]enrichment.Confirmation, error) { return nil, nil }
+func (s slowStore) Pending(ctx context.Context, _ int, _ time.Time, _ bool) ([]enrichment.Candidate, error) {
+	s.started <- struct{}{}
+	select {
+	case <-s.release:
+	case <-ctx.Done():
+	}
+	return nil, nil
+}
+
+// The pass after a refresh runs in the background: the refresh is not held up,
+// a second request while one runs is skipped, and the pass can be waited for.
+func TestEnrichInBackgroundNeverBlocksTheRefresh(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	st := slowStore{release: make(chan struct{}), started: make(chan struct{}, 2)}
+	svc := &enrichment.Service{Store: st}
+	var running atomic.Bool
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+	go func() {
+		enrichInBackground(context.Background(), svc, log, &running, &wg)
+		enrichInBackground(context.Background(), svc, log, &running, &wg) // overlapping: skipped
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("enrichInBackground blocked on a slow pass")
+	}
+	<-st.started
+	select {
+	case <-st.started:
+		t.Fatal("a second pass started while one was running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(st.release)
+	wg.Wait()
+	if running.Load() {
+		t.Fatal("running flag not cleared")
+	}
+	enrichInBackground(context.Background(), nil, log, &running, &wg)
 }

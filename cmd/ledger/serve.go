@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
@@ -238,15 +240,22 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	}
 	redact.Default().Add(enrichKey)
 	parts.enricher, parts.merchantSources = enricher, merchantSources
-	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(ctx context.Context, _ bankimport.Result) {
+	var enrichRunning atomic.Bool
+	var enrichWG sync.WaitGroup
+	engine := bankimport.New(facts, bankimport.Options{Log: log, Meter: app, AfterRefresh: func(refreshCtx context.Context, _ bankimport.Result) {
 		// A failed run is retried after the next refresh, or on request.
-		if _, err := parts.matching.Run(ctx); err != nil && ctx.Err() == nil {
+		if _, err := parts.matching.Run(refreshCtx); err != nil && refreshCtx.Err() == nil {
 			log.Warn("automatic payment matching after a bank refresh failed", "error", err.Error())
 		}
 		// Merchant identification is presentation only and runs after the
 		// import is stored; its failure never affects the import (E2).
-		enrichAfterRefresh(ctx, parts.enricher, log)
+		// It runs in the background under the application's context, bounded
+		// by enrichmentBudget, and never delays the refresh.
+		enrichInBackground(ctx, parts.enricher, log, &enrichRunning, &enrichWG)
 	}})
+	// One pass at startup also purges remote answers past their retention when
+	// the remote source has been turned off since.
+	enrichInBackground(ctx, parts.enricher, log, &enrichRunning, &enrichWG)
 	var sched *bankimport.Scheduler
 	if cfg.Banking.Refresh.Enabled {
 		sched = bankimport.NewScheduler(facts, engine, providerMap(bankProviders), bankimport.SchedulerOptions{
@@ -386,6 +395,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		stop()
 	}
 	<-retentionDone // before the database closes
+	enrichWG.Wait() // a background enrichment pass ends with ctx; it needs the database
 	// A refresh on request that outlived its request is waited for too (bounded,
 	// so a stuck provider cannot hold the shutdown): its audit entry needs the
 	// database.

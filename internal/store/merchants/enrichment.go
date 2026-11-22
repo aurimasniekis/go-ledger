@@ -13,18 +13,20 @@ import (
 var _ enrichment.Store = (*Store)(nil)
 
 // Pending lists up to limit transactions the enrichment service should look
-// up (task E2): those without an answer, and those whose answer is "none" or
-// "unavailable" and was last tried before recheckBefore. Newest first.
+// up (task E2): first those without an answer, newest first; then those whose
+// answer is "unavailable", or "none" when recheckNone is set, and was last
+// tried before recheckBefore, oldest attempt first, so a small batch reaches
+// every row over several passes.
 // Transactions that a booking replaced are left out.
-func (s *Store) Pending(ctx context.Context, limit int, recheckBefore time.Time) ([]enrichment.Candidate, error) {
+func (s *Store) Pending(ctx context.Context, limit int, recheckBefore time.Time, recheckNone bool) ([]enrichment.Candidate, error) {
 	var out []enrichment.Candidate
 	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT t.id, t.raw_description, t.counterparty_name
 FROM bank_transactions t LEFT JOIN merchant_enrichments e ON e.transaction_id = t.id
 WHERE t.superseded_by IS NULL AND t.booking_status <> 'cancelled'
   AND (e.transaction_id IS NULL
-       OR (e.status IN ('none', 'unavailable') AND coalesce(e.last_failed_at, e.retrieved_at) < ?))
-ORDER BY t.imported_at DESC, t.id DESC LIMIT ?`, store.Timestamp{Time: recheckBefore.UTC()}, limit)
+       OR ((e.status = 'unavailable' OR (e.status = 'none' AND ?)) AND coalesce(e.last_failed_at, e.retrieved_at) < ?))
+ORDER BY e.transaction_id IS NOT NULL, coalesce(e.last_failed_at, e.retrieved_at), t.imported_at DESC, t.id DESC LIMIT ?`, recheckNone, store.Timestamp{Time: recheckBefore.UTC()}, limit)
 		if err != nil {
 			return err
 		}
@@ -43,14 +45,15 @@ ORDER BY t.imported_at DESC, t.id DESC LIMIT ?`, store.Timestamp{Time: recheckBe
 	return out, err
 }
 
-// Confirmations lists the person's confirmed and corrected mappings with the
-// bank text they were made about (task E2: reused as suggestions only).
+// Confirmations lists the person's confirmed and corrected mappings, and their
+// rejections, with the bank text they were made about (task E2: mappings are
+// reused as suggestions only; a rejection stops a curated identity).
 func (s *Store) Confirmations(ctx context.Context) ([]enrichment.Confirmation, error) {
 	var out []enrichment.Confirmation
 	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT t.raw_description, t.counterparty_name, r.name
+		rows, err := tx.QueryContext(ctx, `SELECT t.raw_description, t.counterparty_name, r.name, r.decision = 'rejected'
 FROM merchant_reviews r JOIN bank_transactions t ON t.id = r.transaction_id
-WHERE r.decision IN ('confirmed', 'corrected') AND r.name <> ''
+WHERE r.decision IN ('confirmed', 'corrected', 'rejected')
 ORDER BY r.transaction_id`)
 		if err != nil {
 			return err
@@ -58,7 +61,7 @@ ORDER BY r.transaction_id`)
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var c enrichment.Confirmation
-			if err := rows.Scan(&c.Subject.Description, &c.Subject.Counterparty, &c.Name); err != nil {
+			if err := rows.Scan(&c.Subject.Description, &c.Subject.Counterparty, &c.Name, &c.Rejected); err != nil {
 				return err
 			}
 			out = append(out, c)

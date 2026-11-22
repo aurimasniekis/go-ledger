@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/config"
@@ -25,6 +27,9 @@ const enrichmentBudget = time.Minute
 // with the redactor.
 func buildEnrichment(cfg config.MerchantRemote, st *merchantstore.Store, log *slog.Logger) (*enrichment.Service, []httpapi.MerchantSourceInfo, string, error) {
 	svc := &enrichment.Service{Store: st, Curated: enrichment.NewCurated(enrichment.DefaultCurated()), Learned: enrichment.NewLearned(), Log: log}
+	// Remote answers a disabled source cached earlier are still purged at the
+	// configured retention (0 keeps them until replaced, as documented).
+	svc.RemoteRetention = cfg.Retention
 	infos := []httpapi.MerchantSourceInfo{
 		{Name: enrichment.SourceCurated, Kind: "local", Enabled: true, Description: "A small built-in list of well-known merchants matched against the counterparty or description, offline."},
 		{Name: enrichment.SourceLearned, Kind: "local", Enabled: true, Description: "Your confirmed and corrected merchant names, reused as suggestions for similar transactions; never confirmed automatically."},
@@ -47,7 +52,7 @@ func buildEnrichment(cfg config.MerchantRemote, st *merchantstore.Store, log *sl
 		return nil, nil, "", err
 	}
 	svc.Remote = r
-	remote.SendsOffMachine = []string{"merchant string (counterparty name, else the start of the description)"}
+	remote.SendsOffMachine = []string{"merchant string (the counterparty name, else the description, without digits, IBAN or account-like tokens, amounts and dates; nothing for transfers or person counterparties)"}
 	if cfg.Country != "" {
 		remote.SendsOffMachine = append(remote.SendsOffMachine, "country code")
 	}
@@ -61,6 +66,22 @@ func buildEnrichment(cfg config.MerchantRemote, st *merchantstore.Store, log *sl
 		remote.RetentionHours = &h
 	}
 	return svc, append(infos, remote), key, nil
+}
+
+// enrichInBackground starts one bounded enrichment pass in its own goroutine,
+// so a refresh is never held up by it. Passes do not overlap: a pass requested
+// while one runs is skipped (the running one, or the next refresh, covers the
+// rows). The pass uses base, the application's context, not the refresh's.
+func enrichInBackground(base context.Context, svc *enrichment.Service, log *slog.Logger, running *atomic.Bool, wg *sync.WaitGroup) {
+	if svc == nil || !running.CompareAndSwap(false, true) {
+		return
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer running.Store(false)
+		enrichAfterRefresh(base, svc, log)
+	}()
 }
 
 // enrichAfterRefresh runs one bounded enrichment pass. It never returns an

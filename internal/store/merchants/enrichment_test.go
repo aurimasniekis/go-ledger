@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/merchants"
 	"github.com/aurimasniekis/go-ledger/internal/enrichment"
 )
@@ -134,6 +137,145 @@ func TestExpiryNeverDeletesADecision(t *testing.T) {
 	}
 	m, _ := f.ms.Get(f.ctx, id)
 	if m.Review == nil || m.Review.Decision != merchants.DecisionConfirmed || m.State != merchants.StateNotLookedUp && m.State != merchants.StateConfirmed {
+		t.Fatalf("%+v", m)
+	}
+}
+
+// Finding 2: never-looked-up rows come first, rechecks by oldest attempt, and a
+// batch of one reaches every row over several passes.
+func TestPendingOrdersNewRowsThenOldestRechecks(t *testing.T) {
+	f := newFixture(t)
+	ctx := f.ctx
+	far := f.now.Add(1000 * time.Hour)
+	all, err := f.ms.Pending(ctx, 100, far, true)
+	if err != nil || len(all) < 4 {
+		t.Fatalf("%d %v", len(all), err)
+	}
+	ids := func(cs []enrichment.Candidate) []banking.TransactionID {
+		var out []banking.TransactionID
+		for _, c := range cs {
+			out = append(out, c.ID)
+		}
+		return out
+	}
+	// all[0] was tried an hour ago-ish later than all[1]; the rest are untouched.
+	none := merchants.Answer{Status: merchants.StatusNone, Source: "local"}
+	f.now = t0.Add(2 * time.Hour)
+	f.record(all[0].ID, none)
+	f.now = t0.Add(1 * time.Hour)
+	f.record(all[1].ID, none)
+	f.now = t0.Add(72 * time.Hour)
+	got, err := f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(ids(all[2:]), all[1].ID, all[0].ID)
+	if g := ids(got); !reflect.DeepEqual(sortedTail(g, 2), sortedTail(want, 2)) || g[len(g)-2] != all[1].ID || g[len(g)-1] != all[0].ID {
+		t.Fatalf("order\n got %v\nwant never-looked-up first, then %v, %v", g, all[1].ID, all[0].ID)
+	}
+	// Without a reason to recheck none, only the new rows are listed.
+	if got, _ = f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), false); len(got) != len(all)-2 {
+		t.Fatalf("%d", len(got))
+	}
+	// Batch of one, no remote source and no changed confirmation: every new row
+	// is reached over several passes and the none answers are left alone.
+	svc := newEnricher(f, nil)
+	svc.Batch = 1
+	looked := 0
+	for i := 0; i < len(all)+2; i++ {
+		rep, err := svc.Run(ctx)
+		if err != nil || rep.Looked > 1 {
+			t.Fatalf("%+v %v", rep, err)
+		}
+		looked += rep.Looked
+	}
+	if looked != len(all)-2 {
+		t.Fatalf("a batch of one reached %d of %d new rows", looked, len(all)-2)
+	}
+	// With a remote source the due rechecks are reached too, oldest first.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"none"}`))
+	}))
+	defer srv.Close()
+	r, err := enrichment.NewRemote(enrichment.RemoteOptions{URL: srv.URL, HTTPClient: srv.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(48 * time.Hour)
+	due, _ := f.ms.Pending(ctx, 100, f.now.Add(-24*time.Hour), true)
+	if len(due) < 2 {
+		t.Fatalf("%d rechecks due", len(due))
+	}
+	svc = newEnricher(f, r)
+	svc.Batch = 1
+	looked = 0
+	for i := 0; i < len(due)+2; i++ {
+		rep, err := svc.Run(ctx)
+		if err != nil || rep.Looked > 1 {
+			t.Fatalf("%+v %v", rep, err)
+		}
+		looked += rep.Looked
+	}
+	if looked != len(due) {
+		t.Fatalf("a batch of one reached %d of %d due rows", looked, len(due))
+	}
+}
+
+func sortedTail(ids []banking.TransactionID, n int) []banking.TransactionID {
+	head := append([]banking.TransactionID(nil), ids[:len(ids)-n]...)
+	sort.Slice(head, func(i, j int) bool { return head[i] < head[j] })
+	return head
+}
+
+// Finding 4 against the real store: remote answers are purged by retention
+// after the remote source is switched off.
+func TestRemoteAnswersArePurgedAfterTheSourceIsOff(t *testing.T) {
+	f := newFixture(t)
+	id := f.tx("COFFEE KIOSK").ID
+	f.record(id, merchants.Answer{Status: merchants.StatusIdentified, Name: "Shop", Source: "remote", Confidence: 900})
+	svc := newEnricher(f, nil)
+	svc.RemoteRetention = 720 * time.Hour
+	f.now = f.now.Add(721 * time.Hour)
+	rep, err := svc.Run(f.ctx)
+	if err != nil || rep.Expired != 1 {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	if m, _ := f.ms.Get(f.ctx, id); m.Enrichment != nil && m.Enrichment.Source == "remote" {
+		t.Fatalf("remote answer survived: %+v", m.Enrichment)
+	}
+}
+
+// Finding 1 against the real store: a correction beats the curated list for
+// the next transaction with the same key.
+func TestCorrectionBeatsCuratedOverStoredTransactions(t *testing.T) {
+	f := newFixture(t)
+	svc := newEnricher(f, nil)
+	if _, err := svc.Run(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	a, b := f.tx("COFFEE KIOSK"), f.tx("CARD PURCHASE BOOKSHOP")
+	set := func(id banking.TransactionID, text string) {
+		if err := f.db.WriteTx(f.ctx, func(ctx context.Context, tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, "UPDATE bank_transactions SET raw_description = ?, counterparty_name = '' WHERE id = ?", text, string(id))
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(a.ID, "BOLT HARDWARE STORE 12")
+	f.review(a.ID, merchants.Request{Decision: merchants.DecisionCorrected, Name: "Bolt Hardware Store"})
+	set(b.ID, "BOLT HARDWARE STORE 99")
+	if err := f.db.WriteTx(f.ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM merchant_enrichments WHERE transaction_id = ?", string(b.ID))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Run(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := f.ms.Get(f.ctx, b.ID)
+	if m.Enrichment == nil || m.Enrichment.Name != "Bolt Hardware Store" || m.Enrichment.Source != "local_mapping" || m.State != merchants.StateUncertain {
 		t.Fatalf("%+v", m)
 	}
 }

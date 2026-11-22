@@ -9,16 +9,19 @@ operator on 2026-11-20, fixes the policy; research is in the knowledge base (mer
    - `curated`: a small built-in list (`DefaultCurated`) matched on whole words of a *matching key*. The key is the
      counterparty (else the description) reduced to lowercase letters-only words, without card-payment noise, so
      "LIDL 1523 VILNIUS" and "Lidl 0042 Vilnius" match alike and "AMAZONIA" is not Amazon. An exact match is 950
-     permille, a contained match 850. Two different merchants in one text give an *ambiguous* answer, never a guess.
+     permille, a contained match 850, except that a generic single word (bolt, apple, booking, uber, google) found inside longer text
+     ("Bolt Hardware Store") is only 650, a suggestion below the threshold. Two different merchants in one text give an *ambiguous* answer, never a guess.
      The list is a starting point, not a coverage claim, and no logo files ship (the interface uses its neutral icon).
    - `local_mapping`: the person's confirmed and corrected names, reused as **suggestions** for transactions with the
      same matching key. Its confidence is 700 permille, deliberately below the 800 reliability threshold
      (`merchants.DefaultThreshold`), so `Resolve` reports `uncertain` with `needs_review` and shows nothing until the
      person confirms. Nothing is ever auto-confirmed. Conflicting names for one key are ambiguous. The mapping is read
      from `merchant_reviews` joined to the transaction text at the start of each pass: no new table, no migration (so
-     there is nothing to renumber). Rejections are not reused.
-   Local sources are consulted first; the remote source only for what they cannot identify. The best local
-   identification wins (curated 850 to 950 over a suggestion).
+     there is nothing to renumber). A rejection is not reused as a name, but it stops a curated identity for the same key.
+   Local sources are consulted first; the remote source only for what they cannot identify. A key the person has
+   already confirmed, corrected or rejected beats a curated identity for it: their suggestion (or an ambiguous
+   answer, or none after a rejection) is returned, unless the curated answer names the same merchant. Otherwise the
+   best local identification wins (curated 850 to 950 over a suggestion).
 2. **A provider-neutral remote adapter exists and is off.** `merchants.enrichment.remote.enabled` defaults to false and
    no remote source is approved (D15: no paid enrichment). The adapter speaks one small contract, not a vendor's: `POST`
    to the configured https URL (plain http only on loopback) with `{"merchant": "...", "country": "LT"}`, answered by
@@ -28,25 +31,36 @@ operator on 2026-11-20, fixes the policy; research is in the knowledge base (mer
    data). The bearer key is read from a file, sent only to the configured URL, registered with the log redactor and never
    logged. Redirects are not followed. Replies are limited to 64 KiB and validated like any answer.
 3. **Field policy: what leaves the machine.** `RemoteQuery` has two fields and a new one is a privacy decision needing
-   an ADR: the cleaned merchant string (counterparty name, else the first 100 characters of the description, control
-   characters removed) and the configured country code if any. Amounts, dates, IBANs, account holders, balances and
-   transaction IDs have no field to travel in. A test pins the request body. Because the merchant string can still hold
-   personal data, enabling the source is the operator's explicit act, and `GET /api/v1/merchants/sources` states what
+   an ADR: the cleaned merchant string and the configured country code if any. The merchant string is the counterparty
+   name, else the description, with every token that holds a digit removed (IBANs and account numbers, amounts, dates,
+   references, store numbers), the words iban, bic, swift, account and acct removed, control characters removed, at
+   most 100 characters (decision C-E2-remote). Nothing is sent at all for a transfer (transfer words such as sepa or
+   transfer in the counterparty or description) or when the counterparty
+   looks like a person's name (two or three alphabetic words with no company form or business word: a heuristic, as the
+   bank data carries no counterparty kind, and it errs towards sending nothing). A key the person has already
+   confirmed, corrected or rejected is never sent. Amounts, dates, IBANs, account holders, balances and transaction IDs
+   have no field to travel in. Tests pin the request body and the cleaning rules. Because the merchant string can still
+   hold personal data, enabling the source is the operator's explicit act, and `GET /api/v1/merchants/sources` states what
    is sent.
 4. **Caching follows the licence.** The operator states it in configuration; Ledger cannot verify it, and the default is
    the most restrictive: `store_logo_ref` false (only the name is kept, the client shows its neutral icon), `retention`
    720h (the 30 days the researched vendors allow at most). Ledger never downloads or copies a logo; a kept logo
    reference must be an https URL without credentials. Each pass first deletes the remote source's answers older than
    the retention (`DeleteAnswersBefore`), so the transaction is looked up again; the person's decisions are never
-   deleted. `retention: 0` keeps answers until replaced, for a licence that allows it.
+   deleted. This also runs when the remote source has been turned off (a pass runs at startup and after each refresh), so
+   what it cached is still purged. `retention: 0` keeps answers until replaced, for a licence that allows it; once the
+   source is off nothing replaces them.
 5. **Attribution.** `attribution` (up to 200 characters) is exposed with the source in `GET /api/v1/merchants/sources`
    (grant `merchants:read`, administrator-only like the rest of the merchant routes). A client shows it wherever an
    identity whose `enrichment.source` is that source is shown (UI in task E3).
 6. **A failure never blocks an import.** Enrichment runs after a refresh stored its data (`bankimport.AfterRefresh`,
-   after payment matching), bounded to one minute, with recovered panics, and returns nothing to the refresh. Inside a
+   after payment matching), in a background goroutine bounded to one minute (passes never overlap and shutdown waits for a running one), with
+   recovered panics, and returns nothing to the refresh. Inside a
    pass a failing remote lookup is an `unavailable` answer, which E1's store never lets replace an earlier answer; it
    only stamps `last_failed_at`. A store failure for one transaction is counted and logged (no names, no bank text),
-   never fatal. `none` and `unavailable` answers are looked up again after 24 hours; `identified` and `ambiguous`
+   never fatal. Pending rows are taken never-looked-up first (newest first), then rechecks by oldest attempt, so a small batch reaches
+   every row. `unavailable` answers are looked up again after 24 hours, and `none` ones too, but only when a remote
+   source is on or the person's confirmations or rejections changed (or after a start); `identified` and `ambiguous`
    ones are not, until their retention ends or they are replaced.
 7. **Never financial.** The package imports no amounts, occurrences, matches or payment state, and the answers only feed
    E1's presentation-only merchant.

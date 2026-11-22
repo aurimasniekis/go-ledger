@@ -21,6 +21,7 @@ const (
 const (
 	ConfidenceCuratedExact    merchants.Confidence = 950 // the key is exactly the curated pattern
 	ConfidenceCuratedContains merchants.Confidence = 850 // the curated pattern is among the key's words
+	ConfidenceCuratedWeak     merchants.Confidence = 650 // a generic word (Bolt, Apple...) inside longer text: a suggestion
 	ConfidenceSuggestion      merchants.Confidence = 700 // reused from a confirmation: a suggestion
 )
 
