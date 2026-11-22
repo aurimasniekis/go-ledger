@@ -15,11 +15,13 @@ type fakeBanks struct {
 	accts map[banking.ConnectionID][]banking.StoredAccount
 	sync  map[banking.AccountID]banking.AccountSync
 	err   error
+	// acctErr fails the account read.
+	acctErr error
 }
 
 func (f fakeBanks) Connections(context.Context) ([]banking.Connection, error) { return f.conns, f.err }
 func (f fakeBanks) Accounts(_ context.Context, id banking.ConnectionID) ([]banking.StoredAccount, error) {
-	return f.accts[id], nil
+	return f.accts[id], f.acctErr
 }
 func (f fakeBanks) Balances(context.Context, banking.AccountID) ([]banking.StoredBalance, error) {
 	return nil, nil
@@ -61,6 +63,11 @@ func TestMonthBank(t *testing.T) {
 			conns: []banking.Connection{conn("c1", banking.ConnectionActive), conn("c2", banking.ConnectionDisconnected)},
 			accts: map[banking.ConnectionID][]banking.StoredAccount{"c1": {acct("a1")}},
 			sync:  map[banking.AccountID]banking.AccountSync{"a1": {LastSuccessAt: ok}}}},
+		{name: "failed, no account", available: true, n: 1, state: "failed", banks: fakeBanks{
+			conns: []banking.Connection{conn("c1", banking.ConnectionFailed)}}},
+		{name: "unreadable accounts", banks: fakeBanks{
+			conns:   []banking.Connection{conn("c1", banking.ConnectionActive)},
+			acctErr: errors.New("db")}, state: "unknown"},
 		{name: "reconnect required", available: true, n: 1, state: "reconnect_required", banks: fakeBanks{
 			conns: []banking.Connection{conn("c1", banking.ConnectionReconnectRequired)}}},
 	}

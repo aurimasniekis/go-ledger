@@ -156,7 +156,7 @@ func monthBank(ctx context.Context, banks outlook.Banks, at time.Time, staleAfte
 			}
 		}
 		if live == 0 { // no account yet: the connection's own status decides
-			consider(banking.AccountFreshness(c.Status, banking.AccountSync{}, at, staleAfter).State)
+			consider(connectionOwnFreshness(c.Status))
 		}
 	}
 	out.State = string(worst)

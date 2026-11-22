@@ -6,6 +6,11 @@ import { MonthBoard, OFFLINE_NOTE_ID, STALE_AFTER_MS, statusSummary, type MonthB
 import { item, payment, summary } from './fixtures'
 import type { MonthSummary } from './types'
 
+// The board links to other pages; these tests have no router, so a link renders as a plain anchor.
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({ to, children, ...rest }: { to: string; children?: React.ReactNode }) => <a href={to} {...rest}>{children}</a>,
+}))
+
 const T0 = Date.parse('2026-11-21T12:00:00Z')
 
 function board(over: Partial<MonthBoardProps> = {}) {
@@ -134,7 +139,33 @@ describe('MonthBoard states', () => {
 
   it('counts matched bank payments when there are some', () => {
     board({ data: withBank(bank({}), [item('a', { payment: payment({ status: 'paid', evidence_count: 1, bank_evidence_count: 1 }) })]) })
-    expect(screen.getByTestId('month-bank-line')).toHaveTextContent(/1 bank payment is matched/)
+    expect(screen.getByTestId('month-bank-line')).toHaveTextContent(/1 commitment has a matched bank payment/)
+  })
+
+  it('counts payments, not evidence rows: one payment with two bank rows is one', () => {
+    board({ data: withBank(bank({}), [
+      item('a', { payment: payment({ status: 'paid', evidence_count: 2, bank_evidence_count: 2 }) }),
+      item('b', { payment: payment({ status: 'paid', evidence_count: 1, bank_evidence_count: 1 }) }),
+      item('c'),
+    ]) })
+    expect(screen.getByTestId('month-bank-line')).toHaveTextContent(/2 commitments have a matched bank payment/)
+  })
+
+  it('shows the Bank connections link only to a session that may open the page', () => {
+    board({ data: withBank(bank({})) })
+    expect(screen.queryByRole('link', { name: 'Bank connections' })).toBeNull()
+  })
+
+  it('links to Bank connections when permitted', () => {
+    board({ data: withBank(bank({})), canViewConnections: true })
+    expect(screen.getByRole('link', { name: 'Bank connections' })).toHaveAttribute('href', '/connections')
+  })
+
+  it('unreadable connections (what the server sends: available false, state unknown) are not called "not connected"', () => {
+    board({ data: withBank({ available: false, connections: 0, state: 'unknown', last_success_at: null, note: '' }) })
+    expect(screen.queryByText(/No bank data connected yet/)).toBeNull()
+    expect(screen.getByText(/Bank status could not be read/)).toBeInTheDocument()
+    expect(screen.queryByTestId('month-bank-line')).toBeNull()
   })
 
   it.each([

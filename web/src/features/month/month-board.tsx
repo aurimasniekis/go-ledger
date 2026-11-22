@@ -35,6 +35,8 @@ export interface MonthBoardProps {
   /** The record-payment form, shown in place under the row with this id (the row that opened it). */
   formFor?: string | null
   form?: ReactNode
+  /** Whether the session may open the bank connections page (connections:read); the link is hidden otherwise. */
+  canViewConnections?: boolean
   /** True while the browser reports no network: recording a payment cannot be saved then. */
   offline?: boolean
   /** The Undo notice, placed right under the month navigation so it reads as part of the page, not of the title. */
@@ -156,9 +158,15 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
         ) : (
           ''
         )}
-        {data.freshness.bank.available ? '' : 'No bank data connected yet.'}
+        {data.freshness.bank.available ? '' : data.freshness.bank.state === 'unknown' ? 'Bank status could not be read just now, so bank data age is unknown.' : 'No bank data connected yet.'}
       </p>
-      {data.freshness.bank.available && <BankLine bank={data.freshness.bank} matched={data.items.reduce((n, i) => n + i.payment.bank_evidence_count, 0)} />}
+      {data.freshness.bank.available && (
+        <BankLine
+          bank={data.freshness.bank}
+          matched={data.items.filter((i) => i.payment.bank_evidence_count > 0).length}
+          canViewConnections={p.canViewConnections ?? false}
+        />
+      )}
     </section>
   )
 }
@@ -174,7 +182,7 @@ const BANK_STATE_COPY: Record<string, string> = {
 }
 
 /** The bank half of the freshness: shown only when a connection exists, and never calls a non-fresh state fresh. */
-function BankLine({ bank, matched }: { bank: MonthSummary['freshness']['bank']; matched: number }) {
+function BankLine({ bank, matched, canViewConnections }: { bank: MonthSummary['freshness']['bank']; matched: number; canViewConnections: boolean }) {
   const ok = bank.state === 'fresh'
   return (
     <p data-testid="month-bank-line" className={ok ? 'text-muted-foreground' : undefined} role={ok ? undefined : 'status'}>
@@ -185,8 +193,8 @@ function BankLine({ bank, matched }: { bank: MonthSummary['freshness']['bank']; 
           <time dateTime={bank.last_success_at} className="whitespace-nowrap">{utcStamp(bank.last_success_at)}</time>)
         </>
       ) : null}
-      . {matched === 0 ? 'No bank transactions matched this month’s commitments.' : `${matched} bank ${matched === 1 ? 'payment is' : 'payments are'} matched to this month’s commitments.`}{' '}
-      <Link to="/connections" className="underline">Bank connections</Link>
+      . {matched === 0 ? 'No bank transactions matched this month’s commitments.' : `${matched} ${matched === 1 ? 'commitment has' : 'commitments have'} a matched bank payment this month.`}{' '}
+      {canViewConnections && <Link to="/connections" className="underline">Bank connections</Link>}
     </p>
   )
 }

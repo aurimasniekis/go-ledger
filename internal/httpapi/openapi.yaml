@@ -3613,7 +3613,7 @@ components:
           properties:
             available:
               type: boolean
-              description: True when at least one bank connection exists, whatever its state; false only when there is none (or none can be read).
+              description: True when at least one bank connection exists, whatever its state. False when there is none (state none) and also when the connections could not be read (state unknown); read state to tell the two apart.
             connections:
               type: integer
               description: How many bank connections exist.
