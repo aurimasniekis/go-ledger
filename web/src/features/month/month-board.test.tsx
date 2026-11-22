@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
@@ -364,6 +364,7 @@ describe('MonthBoard content', () => {
 describe('a manual record replaced by a bank match (D45)', () => {
   it('shows it apart from the payments that count, with ISO date, a narrow no-break space in the amount and the reason it is not counted', async () => {
     installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'confirmed' }),
       'GET /api/v1/occurrences/a/manual-payments': ok({
         items: [
           { id: 'mp1', occurrence_id: 'a', amount: { amount: '1234.50', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' },
@@ -384,6 +385,7 @@ describe('a manual record replaced by a bank match (D45)', () => {
 
   it('still lists a replaced record when no bank payment counts any more (after a Reverse)', async () => {
     installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'reversed' }),
       'GET /api/v1/occurrences/a/manual-payments': ok({
         items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
         next_cursor: null,
@@ -397,8 +399,24 @@ describe('a manual record replaced by a bank match (D45)', () => {
     expect(within(box).queryByRole('link')).not.toBeInTheDocument()
   })
 
+  it('keys the reason on the replacing match, not on later bank evidence: a different bank match after a Reverse does not bring back the Unmatch copy', async () => {
+    installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'reversed' }),
+      'GET /api/v1/occurrences/a/manual-payments': ok({
+        items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
+        next_cursor: null,
+      }),
+    })
+    board({ data: summary([item('a', { payment: payment({ status: 'paid', bank_evidence_count: 1, evidence_count: 1 }) })]) })
+    const box = await screen.findByTestId('replaced-records')
+    await waitFor(() => expect(box).toHaveTextContent('was reversed'))
+    expect(box).not.toHaveTextContent('replaced by a matched bank payment')
+    expect(within(box).queryByRole('link')).not.toBeInTheDocument()
+  })
+
   it('names the way back (Unmatch on Payment matches) while a bank payment stands in for the record', async () => {
     installApi({
+      'GET /api/v1/payment-matches/m1': ok({ id: 'm1', state: 'confirmed' }),
       'GET /api/v1/occurrences/a/manual-payments': ok({
         items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
         next_cursor: null,
