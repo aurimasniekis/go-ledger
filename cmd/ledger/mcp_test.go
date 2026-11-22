@@ -545,10 +545,12 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 	// A tool that takes an object_type declares the merchants grant the route's merchantGate
 	// asks for: read for a read, write for a change. The route is the authority; its answer to a
 	// merchant object is checked below with and without that grant.
+	matched := 0
 	for _, tl := range mcpserver.Tools() {
 		if !strings.HasPrefix(tl.Path, "/organisation/{object_type}/") {
 			continue
 		}
+		matched++
 		want := authz.G(authz.ResourceMerchants, authz.ActionWrite)
 		if tl.Kind == mcpserver.KindRead {
 			want = authz.G(authz.ResourceMerchants, authz.ActionRead)
@@ -556,6 +558,10 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		if g, ok := tl.ObjectGrants["merchant"]; !ok || g != want {
 			t.Errorf("tool %s declares object grants %v for merchant, the route's merchantGate needs %s", tl.Name, tl.ObjectGrants, want)
 		}
+	}
+	// Zero matches would pass the loop above vacuously, so the guard must not be silent.
+	if matched == 0 {
+		t.Fatal("no MCP tool maps to /organisation/{object_type}/: the merchant grant parity check would test nothing")
 	}
 
 	// Real objects for the argument samples.
