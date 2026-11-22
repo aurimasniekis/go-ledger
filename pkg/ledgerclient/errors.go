@@ -24,6 +24,12 @@ const (
 	CodeRateLimited     = "rate_limited"
 	CodeUnavailable     = "dependency_unavailable"
 	CodeInternal        = "internal_error"
+	// Runtime settings (ADR-0066): a write names a key a configuration layer
+	// sets; a stored integration secret does not open; a reporting-zone change
+	// needs an explicit reclassify.
+	CodeSettingPinned            = "setting_pinned"
+	CodeSecretUnreadable         = "secret_unreadable"
+	CodeReclassificationRequired = "reclassification_required"
 )
 
 // FieldError is one invalid field of a validation error.
@@ -123,6 +129,10 @@ func IsConflict(err error) bool {
 	e := asAPIError(err)
 	return e != nil && e.Status == http.StatusConflict && e.Code != CodeVersionConflict
 }
+
+// IsSettingPinned reports a 409 setting_pinned: a configuration layer sets a
+// key the write named. The error's FieldErrors name the keys.
+func IsSettingPinned(err error) bool { return hasCode(err, CodeSettingPinned) }
 
 // IsValidation reports a 400 validation_failed; see APIError.FieldErrors.
 func IsValidation(err error) bool { return hasCode(err, CodeValidation) }

@@ -165,6 +165,9 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 	if lv, err := logging.ParseLevel(cfg.Log.Level); err == nil {
 		logLevel.Set(lv)
 	}
+	// The logging group is live: a change through the settings API applies to
+	// the running logger (ADR-0066 point 16).
+	defer bindLogging(settingsSvc, logLevel)()
 
 	// Banking-data providers (ADR-0023). The keys are parsed now so a bad key
 	// stops startup; nothing connects to Enable Banking until a connection is
@@ -368,6 +371,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		parts.rateCache.Refresher = rateJob
 	}
 	app.SetRatesProvider(rateSvc.HasProvider())
+	parts.settings = settingsSvc
 	registerAPI(srv, auditLog, parts, zone.Zone(), nil)
 
 	// Metrics and health are unauthenticated. They go on a separate
@@ -579,6 +583,7 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		// flagged.
 		Rates:             parts.rates,
 		RateCache:         parts.rateCache,
+		Settings:          parts.settings,
 		ConvertTimeout:    parts.convertTimeout,
 		Banks:             banks,
 		BankStaleAfter:    parts.bankStaleAfter,

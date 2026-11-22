@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/aurimasniekis/go-ledger/internal/domain/settings"
 )
 
 // Var documents one environment variable.
@@ -49,9 +51,12 @@ func exampleEnv(vars []Var) string {
 # Copy this file to .env for local development. A real environment variable
 # always wins over .env. Every line below is commented out and shows the
 # built-in default: uncomment a line to override it. Precedence, highest first:
-# command-line flags, environment variables, the YAML file, defaults.
-# Lists are comma separated, durations look like 30s. Never commit a real
-# secret.
+# command-line flags, environment variables (the real environment, then .env),
+# the YAML file, the value stored through the Management API (runtime settings
+# only), defaults. A key that any of the first three sets is pinned: the API
+# shows it with its source and refuses to change it, and removing the key
+# brings the stored value back. Lists are comma separated, durations look like
+# 30s. Never commit a real secret.
 `)
 	for _, v := range vars {
 		b.WriteString("\n")
@@ -64,6 +69,9 @@ func exampleEnv(vars []Var) string {
 		}
 		if v.Secret {
 			meta += " SECRET: the value is never printed or logged."
+		}
+		if v.Key != "" {
+			meta += settingNote(v.Key)
 		}
 		if v.Key != "" {
 			meta += " YAML key: " + v.Key + "."
@@ -81,6 +89,20 @@ func exampleEnv(vars []Var) string {
 	return b.String()
 }
 
+// settingNote says whether a key is a runtime setting (changeable through the
+// Management API, ADR-0066) or a deployment setting (configuration only), so
+// every key's description answers it. Keys that are neither (they have no
+// settings group yet) get no note.
+func settingNote(key string) string {
+	if g, _, ok := settings.GroupOfKey(key); ok {
+		return " Runtime setting (group " + g.Name + "): also changeable through the Management API unless a configuration layer sets it."
+	}
+	if settings.DeploymentKey(key) {
+		return " Deployment setting: configuration only; the API shows it read-only."
+	}
+	return ""
+}
+
 // ExampleYAML renders config.example.yaml: every non-secret key with its
 // default, fully commented. Secrets are described but never given a key.
 func ExampleYAML() string { return exampleYAML(fields()) }
@@ -94,9 +116,12 @@ func exampleYAML(fs []Field) string {
 # Pass it with --config or LEDGER_CONFIG. Every key can also be set with an
 # environment variable (LEDGER_ plus the dotted key in upper case with dots
 # turned into underscores) and, except secrets, a flag of the same name as the
-# key. Precedence, highest first: flags, environment variables, this file,
-# built-in defaults. Unknown keys and wrong types are rejected. Durations are
-# written like "30s". Secrets never go in this file.
+# key. Precedence, highest first: flags, environment variables (the real
+# environment, then .env), this file, the value stored through the Management
+# API (runtime settings only, see each key), built-in defaults. A key that any
+# of the first three sets is pinned: the API shows it with its source and
+# refuses to change it. Unknown keys and wrong types are rejected. Durations
+# are written like "30s". Secrets never go in this file.
 `)
 	var open []string
 	for _, f := range fs {
@@ -132,6 +157,11 @@ func exampleYAML(fs []Field) string {
 			note += "  Allowed: " + strings.Join(f.Enum, ", ")
 		}
 		b.WriteString(ind + "# " + note + "\n")
+		if sn := strings.TrimSpace(settingNote(f.Path)); sn != "" {
+			for _, l := range wrap(sn, 76-len(ind)) {
+				b.WriteString(ind + "# " + l + "\n")
+			}
+		}
 		b.WriteString(ind + leaf + ": " + yamlDefault(f) + "\n")
 	}
 	return b.String()

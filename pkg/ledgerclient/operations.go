@@ -136,6 +136,12 @@ var (
 	opGetAlert          = operation{ID: "getAlert", Method: http.MethodGet, Path: "/alerts/{id}"}
 	opDismissAlert      = operation{ID: "dismissAlert", Method: http.MethodPost, Path: "/alerts/{id}/dismiss"}
 
+	opListSettings         = operation{ID: "listSettings", Method: http.MethodGet, Path: "/settings"}
+	opGetDeploymentSetting = operation{ID: "getDeploymentSettings", Method: http.MethodGet, Path: "/settings/deployment"}
+	opGetSettingsGroup     = operation{ID: "getSettingsGroup", Method: http.MethodGet, Path: "/settings/{group}"}
+	opUpdateSettingsGroup  = operation{ID: "updateSettingsGroup", Method: http.MethodPatch, Path: "/settings/{group}"}
+	opResetSettingsGroup   = operation{ID: "resetSettingsGroup", Method: http.MethodDelete, Path: "/settings/{group}"}
+
 	// opCreateMyToken needs a root token of the root account (decision D25).
 	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
@@ -155,6 +161,7 @@ var operations = []operation{
 	opListDeferrals, opCreateDeferral, opGetDeferral, opReviseDeferral, opUndoDeferral, opDeferralHistory, opAddDeferralAdjust, opRemoveDeferralAdjust, opMarkAdjustmentPaid, opUnmarkAdjustmentPaid,
 	opListBankApps, opListBankInstitutions, opListBankConns, opStartBankConn, opGetBankConn, opReconnectBankConn, opRefreshBankConn, opDisconnectBankConn,
 	opListRates, opRatesStatus, opRefreshRates,
+	opListSettings, opGetDeploymentSetting, opGetSettingsGroup, opUpdateSettingsGroup, opResetSettingsGroup,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
 	opListCategories, opCreateCategory, opGetCategory, opUpdateCategory, opArchiveCategory, opUnarchiveCategory, opDeleteCategory, opListLabels, opCreateLabel, opGetLabel, opUpdateLabel, opArchiveLabel, opUnarchiveLabel, opDeleteLabel, opListBuckets, opCreateBucket, opGetBucket, opUpdateBucket, opArchiveBucket, opUnarchiveBucket, opDeleteBucket, opListBucketMembers, opAddBucketMember, opRemoveBucketMember, opGetObjectOrg, opSetObjectCategory, opResetObjectCategory, opAddObjectLabel, opRemoveObjectLabel,
 	opListMerchants, opCreateMerchant, opGetMerchant, opUpdateMerchant, opDeleteMerchant, opArchiveMerchant, opUnarchiveMerchant, opAddMerchantAlias, opRemoveMerchantAlias, opMergeMerchants, opListMerchantSources,
