@@ -65,9 +65,9 @@ func buildDecisions(cfg config.Decisions, db *store.DB, aw store.AuditWriter, no
 // transactions a bank refresh stored (L6d, ADR-0065), or nil when svc is nil
 // (no task enabled). It never fails an import: the import engine calls it after
 // the refresh was stored, every question is counted on meter and every failure
-// is logged. No merchant lookup is
-// given: nothing classifies a merchant as a transfer yet (ADR-0060 note N4), so
-// the merchant name is never sent rather than sent for a transfer.
+// is logged. No merchant lookup is given: nothing classifies a merchant as a
+// transfer yet (ADR-0060 note N4), so the merchant name is never sent rather
+// than sent for a transfer.
 func buildDecisionTrigger(svc *decisions.Service, cfg config.Decisions, db *store.DB, aw store.AuditWriter, now func() time.Time, facts banking.FactStore, org *organisationstore.Store, log *slog.Logger, meter decisiontasks.Meter) *decisiontasks.Trigger {
 	if svc == nil {
 		return nil
