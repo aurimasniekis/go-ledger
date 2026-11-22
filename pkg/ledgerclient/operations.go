@@ -23,13 +23,14 @@ var (
 	opCreateUser   = operation{ID: "createUser", Method: http.MethodPost, Path: "/users"}
 	opGetUser      = operation{ID: "getUser", Method: http.MethodGet, Path: "/users/{id}"}
 	opUpdateUser   = operation{ID: "updateUser", Method: http.MethodPatch, Path: "/users/{id}"}
-	opListCommit   = operation{ID: "listCommitments", Method: http.MethodGet, Path: "/commitments", Query: []string{"limit", "cursor", "kind", "priority", "currency"}}
+	opListCommit   = operation{ID: "listCommitments", Method: http.MethodGet, Path: "/commitments", Query: []string{"limit", "cursor", "category_id", "label_id", "kind", "priority", "currency"}}
 	opCreateCommit = operation{ID: "createCommitment", Method: http.MethodPost, Path: "/commitments"}
 	opGetCommit    = operation{ID: "getCommitment", Method: http.MethodGet, Path: "/commitments/{id}"}
 	opUpdateCommit = operation{ID: "updateCommitment", Method: http.MethodPatch, Path: "/commitments/{id}"}
 	opDeleteCommit = operation{ID: "deleteCommitment", Method: http.MethodDelete, Path: "/commitments/{id}"}
-	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "month", "commitment_id", "include_cancelled"}}
+	opListOccur    = operation{ID: "listOccurrences", Method: http.MethodGet, Path: "/occurrences", Query: []string{"limit", "cursor", "category_id", "label_id", "month", "commitment_id", "include_cancelled"}}
 	opGetOccur     = operation{ID: "getOccurrence", Method: http.MethodGet, Path: "/occurrences/{id}"}
+	opGetOutlook   = operation{ID: "getOutlook", Method: http.MethodGet, Path: "/outlook", Query: []string{"through", "currency", "bucket"}}
 
 	opListManualPayments  = operation{ID: "listManualPayments", Method: http.MethodGet, Path: "/occurrences/{id}/manual-payments", Query: []string{"limit", "cursor"}}
 	opRecordManualPayment = operation{ID: "recordManualPayment", Method: http.MethodPost, Path: "/occurrences/{id}/manual-payments"}
@@ -38,7 +39,7 @@ var (
 	opSetOverride         = operation{ID: "setOccurrenceStatusOverride", Method: http.MethodPut, Path: "/occurrences/{id}/status-override"}
 	opUndoOverride        = operation{ID: "undoOccurrenceStatusOverride", Method: http.MethodDelete, Path: "/occurrences/{id}/status-override"}
 
-	opListMatches    = operation{ID: "listPaymentMatches", Method: http.MethodGet, Path: "/payment-matches", Query: []string{"limit", "cursor", "transaction_id", "occurrence_id", "state", "origin"}}
+	opListMatches    = operation{ID: "listPaymentMatches", Method: http.MethodGet, Path: "/payment-matches", Query: []string{"limit", "cursor", "category_id", "label_id", "transaction_id", "occurrence_id", "state", "origin"}}
 	opCreateMatch    = operation{ID: "createPaymentMatch", Method: http.MethodPost, Path: "/payment-matches"}
 	opGetMatch       = operation{ID: "getPaymentMatch", Method: http.MethodGet, Path: "/payment-matches/{id}"}
 	opConfirmMatch   = operation{ID: "confirmPaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/confirm"}
@@ -58,6 +59,8 @@ var (
 	opDeferralHistory      = operation{ID: "listDeferralPlanHistory", Method: http.MethodGet, Path: "/deferral-plans/{id}/history", Query: []string{"limit", "cursor"}}
 	opAddDeferralAdjust    = operation{ID: "addDeferralAdjustment", Method: http.MethodPost, Path: "/deferral-plans/{id}/adjustments"}
 	opRemoveDeferralAdjust = operation{ID: "removeDeferralAdjustment", Method: http.MethodDelete, Path: "/deferral-plans/{id}/adjustments/{adjustment_id}"}
+	opMarkAdjustmentPaid   = operation{ID: "markDeferralAdjustmentPaid", Method: http.MethodPost, Path: "/deferral-plans/{id}/adjustments/{adjustment_id}/paid"}
+	opUnmarkAdjustmentPaid = operation{ID: "unmarkDeferralAdjustmentPaid", Method: http.MethodPost, Path: "/deferral-plans/{id}/adjustments/{adjustment_id}/unpaid"}
 
 	opListTokens           = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
 	opGetToken             = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
@@ -75,6 +78,37 @@ var (
 	opRatesStatus  = operation{ID: "getRatesStatus", Method: http.MethodGet, Path: "/rates/status"}
 	opRefreshRates = operation{ID: "refreshRates", Method: http.MethodPost, Path: "/rates/refreshes"}
 
+	// Organisation (tasks O1 and O2, ADR-0053).
+	opListCategories      = operation{ID: "listCategories", Method: http.MethodGet, Path: "/categories", Query: []string{"limit", "cursor", "archived", "parent_id", "name[prefix]"}}
+	opCreateCategory      = operation{ID: "createCategory", Method: http.MethodPost, Path: "/categories"}
+	opGetCategory         = operation{ID: "getCategory", Method: http.MethodGet, Path: "/categories/{id}"}
+	opUpdateCategory      = operation{ID: "updateCategory", Method: http.MethodPatch, Path: "/categories/{id}"}
+	opArchiveCategory     = operation{ID: "archiveCategory", Method: http.MethodPost, Path: "/categories/{id}/archive"}
+	opUnarchiveCategory   = operation{ID: "unarchiveCategory", Method: http.MethodPost, Path: "/categories/{id}/unarchive"}
+	opDeleteCategory      = operation{ID: "deleteCategory", Method: http.MethodDelete, Path: "/categories/{id}", Query: []string{"reassign_to"}}
+	opListLabels          = operation{ID: "listLabels", Method: http.MethodGet, Path: "/labels", Query: []string{"limit", "cursor", "archived", "name[prefix]"}}
+	opCreateLabel         = operation{ID: "createLabel", Method: http.MethodPost, Path: "/labels"}
+	opGetLabel            = operation{ID: "getLabel", Method: http.MethodGet, Path: "/labels/{id}"}
+	opUpdateLabel         = operation{ID: "updateLabel", Method: http.MethodPatch, Path: "/labels/{id}"}
+	opArchiveLabel        = operation{ID: "archiveLabel", Method: http.MethodPost, Path: "/labels/{id}/archive"}
+	opUnarchiveLabel      = operation{ID: "unarchiveLabel", Method: http.MethodPost, Path: "/labels/{id}/unarchive"}
+	opDeleteLabel         = operation{ID: "deleteLabel", Method: http.MethodDelete, Path: "/labels/{id}", Query: []string{"reassign_to"}}
+	opListBuckets         = operation{ID: "listBuckets", Method: http.MethodGet, Path: "/buckets", Query: []string{"limit", "cursor", "archived", "name[prefix]"}}
+	opCreateBucket        = operation{ID: "createBucket", Method: http.MethodPost, Path: "/buckets"}
+	opGetBucket           = operation{ID: "getBucket", Method: http.MethodGet, Path: "/buckets/{id}"}
+	opUpdateBucket        = operation{ID: "updateBucket", Method: http.MethodPatch, Path: "/buckets/{id}"}
+	opArchiveBucket       = operation{ID: "archiveBucket", Method: http.MethodPost, Path: "/buckets/{id}/archive"}
+	opUnarchiveBucket     = operation{ID: "unarchiveBucket", Method: http.MethodPost, Path: "/buckets/{id}/unarchive"}
+	opDeleteBucket        = operation{ID: "deleteBucket", Method: http.MethodDelete, Path: "/buckets/{id}", Query: []string{"reassign_to"}}
+	opListBucketMembers   = operation{ID: "listBucketMembers", Method: http.MethodGet, Path: "/buckets/{id}/members", Query: []string{"limit", "cursor"}}
+	opAddBucketMember     = operation{ID: "addBucketMember", Method: http.MethodPut, Path: "/buckets/{id}/members/{object_type}/{object_id}"}
+	opRemoveBucketMember  = operation{ID: "removeBucketMember", Method: http.MethodDelete, Path: "/buckets/{id}/members/{object_type}/{object_id}"}
+	opGetObjectOrg        = operation{ID: "getObjectOrganisation", Method: http.MethodGet, Path: "/organisation/{object_type}/{object_id}"}
+	opSetObjectCategory   = operation{ID: "setObjectCategory", Method: http.MethodPut, Path: "/organisation/{object_type}/{object_id}/category"}
+	opResetObjectCategory = operation{ID: "resetObjectCategory", Method: http.MethodDelete, Path: "/organisation/{object_type}/{object_id}/category"}
+	opAddObjectLabel      = operation{ID: "addObjectLabel", Method: http.MethodPut, Path: "/organisation/{object_type}/{object_id}/labels/{label_id}"}
+	opRemoveObjectLabel   = operation{ID: "removeObjectLabel", Method: http.MethodDelete, Path: "/organisation/{object_type}/{object_id}/labels/{label_id}"}
+
 	// opCreateMyToken needs a root token of the root account (decision D25).
 	opCreateMyToken = operation{ID: "createMyToken", Method: http.MethodPost, Path: "/auth/tokens"}
 )
@@ -86,13 +120,14 @@ var operations = []operation{
 	opGetMe, opGetGrants, opListAudit,
 	opListUsers, opCreateUser, opGetUser, opUpdateUser,
 	opListCommit, opCreateCommit, opGetCommit, opUpdateCommit, opDeleteCommit,
-	opListOccur, opGetOccur,
+	opListOccur, opGetOccur, opGetOutlook,
 	opListManualPayments, opRecordManualPayment, opGetManualPayment, opDeleteManualPayment,
 	opSetOverride, opUndoOverride,
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch, opUnconfirmMatch, opReplaceMatch,
 	opRunMatching,
-	opListDeferrals, opCreateDeferral, opGetDeferral, opReviseDeferral, opUndoDeferral, opDeferralHistory, opAddDeferralAdjust, opRemoveDeferralAdjust,
+	opListDeferrals, opCreateDeferral, opGetDeferral, opReviseDeferral, opUndoDeferral, opDeferralHistory, opAddDeferralAdjust, opRemoveDeferralAdjust, opMarkAdjustmentPaid, opUnmarkAdjustmentPaid,
 	opListBankApps, opListBankInstitutions, opListBankConns, opStartBankConn, opGetBankConn, opReconnectBankConn, opRefreshBankConn, opDisconnectBankConn,
 	opListRates, opRatesStatus, opRefreshRates,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,
+	opListCategories, opCreateCategory, opGetCategory, opUpdateCategory, opArchiveCategory, opUnarchiveCategory, opDeleteCategory, opListLabels, opCreateLabel, opGetLabel, opUpdateLabel, opArchiveLabel, opUnarchiveLabel, opDeleteLabel, opListBuckets, opCreateBucket, opGetBucket, opUpdateBucket, opArchiveBucket, opUnarchiveBucket, opDeleteBucket, opListBucketMembers, opAddBucketMember, opRemoveBucketMember, opGetObjectOrg, opSetObjectCategory, opResetObjectCategory, opAddObjectLabel, opRemoveObjectLabel,
 }

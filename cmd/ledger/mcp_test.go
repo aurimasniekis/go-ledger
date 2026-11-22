@@ -561,6 +561,7 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"get_commitment":    func() (string, string, string) { return "GET", "/commitments/" + c.ID, "" },
 		"list_occurrences":  func() (string, string, string) { return "GET", "/occurrences?month=2026-11", "" },
 		"get_month_summary": func() (string, string, string) { return "GET", "/occurrences/summary?month=2026-11", "" },
+		"get_outlook":       func() (string, string, string) { return "GET", "/outlook", "" },
 		"get_occurrence":    func() (string, string, string) { return "GET", "/occurrences/" + occ.Items[0].ID, "" },
 		"create_commitment": func() (string, string, string) {
 			b, _ := json.Marshal(newCommitmentArgs("Parity 2"))
@@ -618,6 +619,12 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"remove_deferral_adjustment": func() (string, string, string) {
 			return "DELETE", "/deferral-plans/" + fakeID + "/adjustments/" + fakeID, ""
 		},
+		"mark_deferral_adjustment_paid": func() (string, string, string) {
+			return "POST", "/deferral-plans/" + fakeID + "/adjustments/" + fakeID + "/paid", ""
+		},
+		"unmark_deferral_adjustment_paid": func() (string, string, string) {
+			return "POST", "/deferral-plans/" + fakeID + "/adjustments/" + fakeID + "/unpaid", ""
+		},
 
 		"list_bank_applications": func() (string, string, string) { return "GET", "/bank-applications", "" },
 		"list_bank_institutions": func() (string, string, string) {
@@ -629,12 +636,55 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 
 		"list_exchange_rates":      func() (string, string, string) { return "GET", "/rates", "" },
 		"get_exchange_rate_status": func() (string, string, string) { return "GET", "/rates/status", "" },
+
+		"list_categories":     func() (string, string, string) { return "GET", "/categories", "" },
+		"get_category":        func() (string, string, string) { return "GET", "/categories/" + fakeID, "" },
+		"create_category":     func() (string, string, string) { return "POST", "/categories", `{"name":"Parity"}` },
+		"update_category":     func() (string, string, string) { return "PATCH", "/categories/" + fakeID, `{"name":"Parity 2"}` },
+		"archive_category":    func() (string, string, string) { return "POST", "/categories/" + fakeID + "/archive", "{}" },
+		"unarchive_category":  func() (string, string, string) { return "POST", "/categories/" + fakeID + "/unarchive", "{}" },
+		"delete_category":     func() (string, string, string) { return "DELETE", "/categories/" + fakeID, "" },
+		"list_labels":         func() (string, string, string) { return "GET", "/labels", "" },
+		"get_label":           func() (string, string, string) { return "GET", "/labels/" + fakeID, "" },
+		"create_label":        func() (string, string, string) { return "POST", "/labels", `{"name":"Parity"}` },
+		"update_label":        func() (string, string, string) { return "PATCH", "/labels/" + fakeID, `{"name":"Parity 2"}` },
+		"archive_label":       func() (string, string, string) { return "POST", "/labels/" + fakeID + "/archive", "{}" },
+		"unarchive_label":     func() (string, string, string) { return "POST", "/labels/" + fakeID + "/unarchive", "{}" },
+		"delete_label":        func() (string, string, string) { return "DELETE", "/labels/" + fakeID, "" },
+		"list_buckets":        func() (string, string, string) { return "GET", "/buckets", "" },
+		"get_bucket":          func() (string, string, string) { return "GET", "/buckets/" + fakeID, "" },
+		"create_bucket":       func() (string, string, string) { return "POST", "/buckets", `{"name":"Parity"}` },
+		"update_bucket":       func() (string, string, string) { return "PATCH", "/buckets/" + fakeID, `{"name":"Parity 2"}` },
+		"archive_bucket":      func() (string, string, string) { return "POST", "/buckets/" + fakeID + "/archive", "{}" },
+		"unarchive_bucket":    func() (string, string, string) { return "POST", "/buckets/" + fakeID + "/unarchive", "{}" },
+		"delete_bucket":       func() (string, string, string) { return "DELETE", "/buckets/" + fakeID, "" },
+		"list_bucket_members": func() (string, string, string) { return "GET", "/buckets/" + fakeID + "/members", "" },
+		"add_bucket_member": func() (string, string, string) {
+			return "PUT", "/buckets/" + fakeID + "/members/commitment/" + fakeID, ""
+		},
+		"remove_bucket_member": func() (string, string, string) {
+			return "DELETE", "/buckets/" + fakeID + "/members/commitment/" + fakeID, ""
+		},
+		"get_object_organisation": func() (string, string, string) { return "GET", "/organisation/transaction/" + fakeID, "" },
+		"set_object_category": func() (string, string, string) {
+			return "PUT", "/organisation/transaction/" + fakeID + "/category", `{"category_id":null}`
+		},
+		"reset_object_category": func() (string, string, string) {
+			return "DELETE", "/organisation/transaction/" + fakeID + "/category", ""
+		},
+		"add_object_label": func() (string, string, string) {
+			return "PUT", "/organisation/transaction/" + fakeID + "/labels/" + fakeID, ""
+		},
+		"remove_object_label": func() (string, string, string) {
+			return "DELETE", "/organisation/transaction/" + fakeID + "/labels/" + fakeID, ""
+		},
 	}
 	mcpArgs := map[string]map[string]any{
 		"list_commitments":  nil,
 		"get_commitment":    {"id": c.ID},
 		"list_occurrences":  {"month": "2026-11"},
 		"get_month_summary": {"month": "2026-11"},
+		"get_outlook":       nil,
 		"get_occurrence":    {"id": occ.Items[0].ID},
 		"create_commitment": newCommitmentArgs("Parity 2"),
 		"delete_commitment": {"id": "01JD3Y4C8V9M2Q7W5R6T0XZBNT", "version": 1},
@@ -662,6 +712,9 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		"add_deferral_adjustment":    {"id": fakeID, "version": 1, "kind": "fee", "amount": map[string]any{"amount": "1.00", "currency": "EUR"}},
 		"remove_deferral_adjustment": {"id": fakeID, "adjustment_id": fakeID, "version": 1},
 
+		"mark_deferral_adjustment_paid":   {"id": fakeID, "adjustment_id": fakeID, "version": 1},
+		"unmark_deferral_adjustment_paid": {"id": fakeID, "adjustment_id": fakeID, "version": 1},
+
 		"list_bank_applications":  nil,
 		"list_bank_institutions":  {"application": "fake-app", "country": "FI"},
 		"list_bank_connections":   nil,
@@ -670,6 +723,36 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 
 		"list_exchange_rates":      nil,
 		"get_exchange_rate_status": nil,
+
+		"list_categories":         nil,
+		"get_category":            {"id": fakeID},
+		"create_category":         {"name": "Parity"},
+		"update_category":         {"id": fakeID, "version": 1, "name": "Parity 2"},
+		"archive_category":        {"id": fakeID, "version": 1},
+		"unarchive_category":      {"id": fakeID, "version": 1},
+		"delete_category":         {"id": fakeID, "version": 1},
+		"list_labels":             nil,
+		"get_label":               {"id": fakeID},
+		"create_label":            {"name": "Parity"},
+		"update_label":            {"id": fakeID, "version": 1, "name": "Parity 2"},
+		"archive_label":           {"id": fakeID, "version": 1},
+		"unarchive_label":         {"id": fakeID, "version": 1},
+		"delete_label":            {"id": fakeID, "version": 1},
+		"list_buckets":            nil,
+		"get_bucket":              {"id": fakeID},
+		"create_bucket":           {"name": "Parity"},
+		"update_bucket":           {"id": fakeID, "version": 1, "name": "Parity 2"},
+		"archive_bucket":          {"id": fakeID, "version": 1},
+		"unarchive_bucket":        {"id": fakeID, "version": 1},
+		"delete_bucket":           {"id": fakeID, "version": 1},
+		"list_bucket_members":     {"id": fakeID},
+		"add_bucket_member":       {"id": fakeID, "object_type": "commitment", "object_id": fakeID},
+		"remove_bucket_member":    {"id": fakeID, "object_type": "commitment", "object_id": fakeID},
+		"get_object_organisation": {"object_type": "transaction", "object_id": fakeID},
+		"set_object_category":     {"object_type": "transaction", "object_id": fakeID, "category_id": nil},
+		"reset_object_category":   {"object_type": "transaction", "object_id": fakeID},
+		"add_object_label":        {"object_type": "transaction", "object_id": fakeID, "label_id": fakeID},
+		"remove_object_label":     {"object_type": "transaction", "object_id": fakeID, "label_id": fakeID},
 	}
 	subjects := []struct {
 		name   string
@@ -684,6 +767,8 @@ func TestMCPHTTPGrantParity(t *testing.T) {
 		{"connections:read", f.admin, []string{"connections:read"}},
 		{"connections:write", f.admin, []string{"connections:write"}},
 		{"rates:read", f.admin, []string{"rates:read"}},
+		{"organisation:read", f.admin, []string{"organisation:read"}},
+		{"organisation:write", f.admin, []string{"organisation:write"}},
 		{"read grant of a read-only owner", f.ro, []string{"commitments:read"}},
 	}
 	for _, sub := range subjects {

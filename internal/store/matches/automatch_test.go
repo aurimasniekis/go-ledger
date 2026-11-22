@@ -14,10 +14,12 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/banking/bankingtest"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
+	deferralstore "github.com/aurimasniekis/go-ledger/internal/store/deferrals"
 )
 
 // named creates a monthly commitment due on day from January 2026, with an
@@ -416,4 +418,159 @@ func TestSnapshotLeavesOutClosedFacts(t *testing.T) {
 	}
 	// November occurrences are materialised for early payments.
 	f.occurrence(f.named("Phone", "20.00", 3, "").ID, "2026-11")
+}
+
+// planFor records an active deferral plan on o with the planned date.
+func (f *fixture) planFor(o occurrences.Occurrence, planned string) deferrals.Plan {
+	f.t.Helper()
+	why := "waiting for salary"
+	p, err := deferralstore.New(f.db, f.rec, f.clock.Now, nil).Create(f.ctx, alice, deferrals.NewPlan{OccurrenceID: o.ID,
+		Fields: deferrals.Fields{Type: deferrals.TypePersonal, PlannedDate: d(planned), Reason: &why}}, d("2026-11-01"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return p
+}
+
+// D-DF 7: the September rent (due 20 September) was deferred to 2 October,
+// the day the fake bank booked 800.00 EUR. The engine confirms it through the
+// planned-date window; the store's own guard agrees.
+func TestAutomaticMatchingAcceptsActivePlannedDate(t *testing.T) {
+	f := newFixture(t)
+	rent := f.occurrence(f.named("Rent", "800.00", 20, "").ID, "2026-09")
+	f.planFor(rent, "2026-10-02")
+	res := f.run(f.matcher())
+	if res.Confirmed != 1 {
+		t.Fatalf("run: %+v", res)
+	}
+	got := f.matchesOf(rent)
+	if states(got) != "auto_rule/confirmed" || got[0].Reason == nil || !strings.Contains(*got[0].Reason, "0 days from the planned date") {
+		t.Fatalf("rent: %s %+v", states(got), got)
+	}
+	if st := f.state(rent); st.Status != payments.StatusPaid {
+		t.Errorf("state %+v", st)
+	}
+}
+
+// An undone plan no longer widens the window: the same pair is not even a
+// candidate (12 days from the due date), and the store refuses an automatic
+// confirmation there.
+func TestUndonePlanDoesNotWidenAutomaticWindow(t *testing.T) {
+	f := newFixture(t)
+	rent := f.occurrence(f.named("Rent", "800.00", 20, "").ID, "2026-09")
+	plan := f.planFor(rent, "2026-10-02")
+	if _, err := deferralstore.New(f.db, f.rec, f.clock.Now, nil).Undo(f.ctx, alice, plan.ID, plan.Version, nil); err != nil {
+		t.Fatal(err)
+	}
+	if res := f.run(f.matcher()); res.Changed() || res.Candidates != 0 || f.countMatches() != 0 {
+		t.Fatalf("run: %+v", res)
+	}
+	_, err := f.ms.Create(f.ctx, audit.System, matches.New{TransactionID: f.tx("RENT 2026-10").ID, OccurrenceID: rent.ID,
+		Amount: money.MustParse("800.00", "EUR"), Origin: matches.OriginAutoRule, State: matches.StateConfirmed})
+	if !errors.Is(err, matches.ErrAutoDate) {
+		t.Errorf("store after undo: %v", err)
+	}
+}
+
+// The store's guard accepts the planned window only while the plan is active.
+func TestStoreAutoGuardUsesActivePlan(t *testing.T) {
+	f := newFixture(t)
+	rent := f.occurrence(f.named("Rent", "800.00", 20, "").ID, "2026-09")
+	n := matches.New{TransactionID: f.tx("RENT 2026-10").ID, OccurrenceID: rent.ID, Amount: money.MustParse("800.00", "EUR"), Origin: matches.OriginAutoRule, State: matches.StateConfirmed}
+	if _, err := f.ms.Create(f.ctx, audit.System, n); !errors.Is(err, matches.ErrAutoDate) {
+		t.Fatalf("no plan: %v", err)
+	}
+	f.planFor(rent, "2026-10-02")
+	if _, err := f.ms.Create(f.ctx, audit.System, n); err != nil {
+		t.Errorf("active plan: %v", err)
+	}
+}
+
+// withRent is a fake-bank change that adds a rent-sized EUR card payment, on
+// the given date, to the everyday account before the first import. A pending
+// payment has no booking date yet, as in the fixtures.
+func withRent(description string, status banking.BookingStatus, on string) func(*bankingtest.Dataset) {
+	return func(ds *bankingtest.Dataset) {
+		tx := banking.Transaction{Status: status, Amount: money.MustParse("-800.00", "EUR"), TransactionDate: d(on), Description: description}
+		if status == banking.StatusBooked {
+			tx.EntryReference, tx.ProviderStatus = "fake-ref-"+description, "BOOK"
+			tx.BookingDate, tx.ValueDate = d(on), d(on)
+		} else {
+			tx.ProviderStatus = "PDNG"
+		}
+		ds.Accounts[0].Transactions = append(ds.Accounts[0].Transactions, tx)
+	}
+}
+
+// A revision moves the automatic-confirmation window with the planned date:
+// before the revision the new date is refused, after it the old date is
+// refused and the new date accepted (the store reads the revised date inside
+// its write transaction).
+func TestRevisedPlanMovesAutomaticWindow(t *testing.T) {
+	f := newFixtureWith(t, withRent("RENT 2026-10 LATE", banking.StatusBooked, "2026-10-20"))
+	rent := f.occurrence(f.named("Rent", "800.00", 20, "").ID, "2026-09")
+	early, late := f.tx("RENT 2026-10"), f.tx("RENT 2026-10 LATE")
+	confirm := func(t banking.StoredTransaction) matches.New {
+		return matches.New{TransactionID: t.ID, OccurrenceID: rent.ID, Amount: money.MustParse("800.00", "EUR"), Origin: matches.OriginAutoRule, State: matches.StateConfirmed}
+	}
+	plan := f.planFor(rent, "2026-10-02")
+	if _, err := f.ms.Create(f.ctx, audit.System, confirm(late)); !errors.Is(err, matches.ErrAutoDate) {
+		t.Fatalf("new date before the revision: %v", err)
+	}
+	revised, err := deferralstore.New(f.db, f.rec, f.clock.Now, nil).Revise(f.ctx, alice, plan.ID, plan.Version,
+		deferrals.Fields{Type: plan.Type, PlannedDate: d("2026-10-20"), Reason: plan.Reason}, d("2026-11-01"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revised.PlannedDate.String() != "2026-10-20" || revised.Version != plan.Version+1 {
+		t.Fatalf("revised plan: %+v", revised)
+	}
+	if _, err := f.ms.Create(f.ctx, audit.System, confirm(early)); !errors.Is(err, matches.ErrAutoDate) {
+		t.Errorf("old date after the revision: %v", err)
+	}
+	if _, err := f.ms.Create(f.ctx, audit.System, confirm(late)); err != nil {
+		t.Fatalf("new date after the revision: %v", err)
+	}
+	if st := f.state(rent); st.Status != payments.StatusPaid {
+		t.Errorf("state %+v", st)
+	}
+}
+
+// A suggestion made through the planned-date window is dropped once the plan
+// is undone: the engine drops its own stale suggestion, and the store refuses
+// the same transaction as an automatic confirmation.
+func TestUndoDropsPlannedWindowSuggestion(t *testing.T) {
+	f := newFixtureWith(t, withRent("RENT PENDING", banking.StatusPending, "2026-10-12"))
+	rent := f.occurrence(f.named("Rent", "800.00", 20, "").ID, "2026-09")
+	e := f.matcher()
+	// 22 days from the due date: not a candidate without the plan.
+	if res := f.run(e); res.Candidates != 0 || f.countMatches() != 0 {
+		t.Fatalf("without a plan: %+v", res)
+	}
+	plan := f.planFor(rent, "2026-10-12")
+	if res := f.run(e); res != (automatch.Result{Candidates: 1, Suggested: 1}) {
+		t.Fatalf("with the plan: %+v", res)
+	}
+	if got := f.matchesOf(rent); states(got) != "auto_rule/suggested" || got[0].Reason == nil || !strings.Contains(*got[0].Reason, "pending") {
+		t.Fatalf("suggestion: %s %+v", states(got), got)
+	}
+	if _, err := deferralstore.New(f.db, f.rec, f.clock.Now, nil).Undo(f.ctx, alice, plan.ID, plan.Version, nil); err != nil {
+		t.Fatal(err)
+	}
+	res := f.run(e)
+	if res.Dropped != 1 || res.Confirmed != 0 || res.Suggested != 0 {
+		t.Fatalf("after the undo: %+v", res)
+	}
+	got := f.matchesOf(rent)
+	if states(got) != "auto_rule/rejected" || got[0].DecidedBy == nil || got[0].DecidedBy.Kind != audit.ActorSystem ||
+		got[0].Reason == nil || !strings.HasPrefix(*got[0].Reason, "automatic suggestion dropped") {
+		t.Errorf("dropped suggestion: %s %+v", states(got), got)
+	}
+	if st := f.state(rent); st.Status == payments.StatusPaid {
+		t.Errorf("state %+v", st)
+	}
+	if _, err := f.ms.Create(f.ctx, audit.System, matches.New{TransactionID: f.tx("RENT PENDING").ID, OccurrenceID: rent.ID,
+		Amount: money.MustParse("800.00", "EUR"), Origin: matches.OriginAutoRule, State: matches.StateConfirmed}); !errors.Is(err, matches.ErrAutoDate) {
+		t.Errorf("store after the undo: %v", err)
+	}
 }

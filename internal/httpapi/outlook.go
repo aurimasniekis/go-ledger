@@ -13,6 +13,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
 	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
+	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
 
 // OutlookPath is the outlook against recorded commitments (task FX3,
@@ -48,6 +49,7 @@ type outlookLineJSON struct {
 	StillDue                money.Money               `json:"still_due"`
 	Overdue                 money.Money               `json:"overdue"`
 	Upcoming                money.Money               `json:"upcoming"`
+	PlannedOutflows         outlookPlannedJSON        `json:"planned_outflows"`
 	OverdueCount            int                       `json:"overdue_count"`
 	UnconvertedEvidence     int                       `json:"unconverted_evidence_count"`
 	Balance                 *money.Money              `json:"balance"`
@@ -58,6 +60,20 @@ type outlookLineJSON struct {
 	OverdueMonths           []outlookOverdueMonthJSON `json:"overdue_months"`
 	BalanceAsOf             *calendar.Date            `json:"balance_as_of"`
 	PaymentsAfterBalance    *outlookPaymentsAfterJSON `json:"payments_after_balance"`
+}
+
+// outlookPlannedJSON is the window with every outstanding amount placed in the
+// month it is planned to be paid (ADR-0050): total = still_due -
+// deferred_beyond + adjustments. A plan is not payment: still_due is unchanged.
+type outlookPlannedJSON struct {
+	Total          money.Money `json:"total"`
+	DeferredIn     money.Money `json:"deferred_in"`
+	DeferredBeyond money.Money `json:"deferred_beyond"`
+	Adjustments    money.Money `json:"adjustments"`
+	// MissedCount and MissedOutstanding: active plans of the window whose date passed while something planned is unpaid,
+	// and the outstanding principal of those occurrences.
+	MissedCount       int         `json:"missed_count"`
+	MissedOutstanding money.Money `json:"missed_outstanding"`
 }
 
 type outlookOverdueMonthJSON struct {
@@ -121,6 +137,7 @@ type outlookConvertedJSON struct {
 	Complete             bool                  `json:"complete"`
 	StillDue             money.Money           `json:"still_due"`
 	Overdue              money.Money           `json:"overdue"`
+	PlannedTotal         money.Money           `json:"planned_total"`
 	Balance              *money.Money          `json:"balance"`
 	BalanceLessStillDue  *money.Money          `json:"balance_less_still_due"`
 	BalanceAccounts      int                   `json:"balance_account_count"`
@@ -129,9 +146,20 @@ type outlookConvertedJSON struct {
 	Excluded             []outlookExcludedJSON `json:"excluded"`
 }
 
+// outlookSliceJSON says the outlook is a slice: restricted to the commitments
+// and accounts of one bucket (decision D12). It is absent on the whole outlook.
+type outlookSliceJSON struct {
+	Bucket          definitionJSON `json:"bucket"`
+	CommitmentCount int            `json:"commitment_count"`
+	AccountCount    int            `json:"account_count"`
+	Note            string         `json:"note"`
+}
+
 type outlookJSON struct {
 	AsOf   calendar.Date `json:"as_of"`
 	Notice string        `json:"notice"`
+	// Slice is null for the whole outlook and describes the bucket otherwise.
+	Slice  *outlookSliceJSON `json:"slice"`
 	Window struct {
 		From      *calendar.YearMonth `json:"from"`
 		Through   calendar.YearMonth  `json:"through"`
@@ -165,7 +193,7 @@ const (
 	outlookBalancesShownNote  = "Balances are the latest each bank reported; check each account's freshness before relying on them."
 	outlookBalancesGrantNote  = "Bank balances are not shown: they need the connections:read grant."
 	outlookBalancesSourceNote = "Bank balances are not available on this server."
-	outlookPlannedNote        = "Planned outflows (deferral plans) are not part of Ledger yet; only recorded commitments are compared."
+	outlookPlannedNote        = "Planned outflows follow deferral plans: each outstanding amount is planned in the month of its plan's date, deferred amounts are shown apart as deferred in, and recorded fees still planned are added. A plan is not payment: what is still due is unchanged."
 )
 
 func optTime(t time.Time) *time.Time {
@@ -189,9 +217,13 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 		from := o.From
 		out.Window.From = &from
 	}
+	if sl := o.Slice; sl != nil {
+		out.Slice = &outlookSliceJSON{Bucket: toDefinitionJSON(sl.Bucket), CommitmentCount: sl.Commitments, AccountCount: sl.Accounts, Note: outlook.SliceNotice}
+	}
 	out.Window.Through, out.Window.Truncated, out.Window.NotRecordedCount = o.Through, o.Truncated, o.NotRecordedCount
 	for i, l := range o.Currencies {
-		out.Currencies[i] = outlookLineJSON{Currency: l.Currency, StillDue: l.StillDue, Overdue: l.Overdue, Upcoming: l.Upcoming, OverdueCount: l.OverdueCount,
+		out.Currencies[i] = outlookLineJSON{Currency: l.Currency, StillDue: l.StillDue, Overdue: l.Overdue, Upcoming: l.Upcoming,
+			PlannedOutflows: outlookPlannedJSON{Total: l.Planned.Total, DeferredIn: l.Planned.DeferredIn, DeferredBeyond: l.Planned.DeferredBeyond, Adjustments: l.Planned.Adjustments, MissedCount: l.Planned.MissedCount, MissedOutstanding: l.Planned.MissedOutstanding}, OverdueCount: l.OverdueCount,
 			UnconvertedEvidence: l.UnconvertedEvidence, Balance: l.Balance, BalanceLessStillDue: l.BalanceLessStillDue,
 			AccountCount: l.Accounts, StaleAccountCount: l.StaleAccounts, OldestBalanceObtainedAt: l.OldestBalanceAt,
 			OverdueMonths: make([]outlookOverdueMonthJSON, len(l.OverdueMonths))}
@@ -240,7 +272,7 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 		out.Accounts[i] = aj
 	}
 	if c := o.Converted; c != nil {
-		cj := &outlookConvertedJSON{Currency: c.Currency, Complete: c.Complete(), StillDue: c.StillDue, Overdue: c.Overdue, Balance: c.Balance,
+		cj := &outlookConvertedJSON{Currency: c.Currency, Complete: c.Complete(), StillDue: c.StillDue, Overdue: c.Overdue, PlannedTotal: c.PlannedTotal, Balance: c.Balance,
 			BalanceLessStillDue: c.BalanceLessStillDue, BalanceAccounts: c.BalanceAccounts, StaleBalanceAccounts: c.StaleBalanceAccounts, Included: make([]outlookIncludedJSON, len(c.Included)), Excluded: make([]outlookExcludedJSON, len(c.Excluded))}
 		for i, u := range c.Included {
 			ij := outlookIncludedJSON{Currency: u.Currency, Rate: toOutlookRate(u.Rate), FromCache: u.FromCache, RefreshFailed: u.RefreshFailed}
@@ -255,7 +287,7 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 		}
 		out.Converted = cj
 	}
-	out.PlannedOutflow.Note = outlookPlannedNote
+	out.PlannedOutflow.Included, out.PlannedOutflow.Note = true, outlookPlannedNote
 	out.Freshness.ComputedAt = now.UTC()
 	out.Freshness.OccurrencesChangedAt = o.OccurrencesChangedAt
 	return out
@@ -272,8 +304,8 @@ func registerOutlook(s *Server, svc outlook.Service, reporting money.Currency, n
 	s.HandleAPI("GET "+OutlookPath, Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		for k := range q {
-			if k != "through" && k != "currency" {
-				WriteError(w, r, Validation(k, "unknown parameter "+k+"; the outlook takes through and currency"))
+			if k != "through" && k != "currency" && k != "bucket" {
+				WriteError(w, r, Validation(k, "unknown parameter "+k+"; the outlook takes through, currency and bucket"))
 				return
 			}
 		}
@@ -303,10 +335,25 @@ func registerOutlook(s *Server, svc outlook.Service, reporting money.Currency, n
 			req.Currency = c
 		}
 		p, _ := authz.FromContext(r.Context())
+		if raw, ok := q["bucket"]; ok {
+			if len(raw) != 1 || !resource.ValidID(raw[0]) {
+				WriteError(w, r, Validation("bucket", "bucket must be given once, as a bucket identifier"))
+				return
+			}
+			// A slice reads the bucket and its members.
+			if !p.Allows(grantOrganisationRead) {
+				WriteError(w, r, Forbidden("slicing the outlook by a bucket requires the "+grantOrganisationRead.String()+" grant"))
+				return
+			}
+			req.Bucket = raw[0]
+		}
 		allowed := p.Allows(grantOutlookBalances)
 		req.Balances = allowed
 		o, err := svc.Build(r.Context(), req)
 		if err != nil {
+			if req.Bucket != "" && errors.Is(err, resource.ErrNotFound) {
+				err = Validation("bucket", "bucket does not exist")
+			}
 			if errors.Is(err, outlook.ErrBeyondHorizon) {
 				err = Validation("through", fmt.Sprintf("through must be within %d months after the current month", occurrences.MaxMonthsAhead))
 			}

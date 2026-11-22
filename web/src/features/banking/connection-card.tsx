@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { OrganiseDisclosure } from '@/features/organisation/organise-panel'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '@/lib/api'
 import { isNetworkError } from '@/lib/connection'
@@ -94,6 +95,7 @@ function AccountRow({ a, superseded }: { a: BankAccount; superseded: boolean }) 
           ))}
         </ul>
       )}
+      <OrganiseDisclosure objectType="account" objectId={a.id} subject={a.name || 'this account'} />
       <dl className="grid gap-x-4 gap-y-0.5 text-xs text-muted-foreground sm:grid-cols-2">
         <div>
           <dt className="inline">Last successful refresh: </dt>

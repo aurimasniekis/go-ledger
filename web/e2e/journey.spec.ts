@@ -140,6 +140,28 @@ test('import, commitments, monthly view, match, correction, reload, outlook and 
     await expectCorrectedMonth()
   })
 
+  await test.step('organise: set a category on an occurrence and on a commitment with none this month, reload, and the origin says it is the person\'s', async () => {
+    const res = await post(page, '/api/v1/categories', { name: 'Housing' })
+    expect(res.status(), await res.text()).toBe(201)
+    await monthView()
+    await occurrence('Rent').getByRole('button', { name: 'Organise Rent' }).click()
+    const panel = page.getByRole('group', { name: 'Organisation of Rent' })
+    await expect(panel.getByText('No category yet')).toBeVisible()
+    await panel.getByLabel('Category for Rent').selectOption({ label: 'Housing' })
+    await panel.getByRole('button', { name: 'Set category' }).click()
+    await expect(panel.getByText('Saved: Housing is your choice for Rent.')).toBeVisible()
+    await page.reload()
+    await expect(page.getByTestId('status-summary')).toBeVisible()
+    await occurrence('Rent').getByRole('button', { name: 'Organise Rent' }).click()
+    const again = page.getByRole('group', { name: 'Organisation of Rent' })
+    await expect(again.locator('strong', { hasText: 'Housing' })).toBeVisible()
+    await expect(again.getByText(/Your choice/)).toBeVisible()
+    // The commitment that starts next month has no occurrence here, and can still be organised from its own list.
+    await page.goto('/commitments')
+    await page.getByRole('button', { name: 'Organise Domain renewal' }).click()
+    await expect(page.getByRole('group', { name: 'Organisation of Domain renewal' }).getByText('No category yet')).toBeVisible()
+  })
+
   await test.step('outlook: balance with its date, payments recorded after it, the commitment still due', async () => {
     await page.goto('/outlook?through=' + d.nextMonth)
     const card = page.getByTestId('outlook-EUR')

@@ -54,7 +54,7 @@ func Standard() Dataset {
 					{Type: banking.BalanceAvailable, ProviderType: "ITAV", Amount: money.MustParse("1180.40", "EUR")},
 				},
 				Transactions: []banking.Transaction{
-					booked(RefSalary, "2500.00", "EUR", 1, "SALARY OCTOBER", "Example Employer"),
+					booked(RefSalary, "2500.00", "EUR", 1, "SALARY OCTOBER", "Example Employer UAB"),
 					booked(RefRent, "-800.00", "EUR", 2, "RENT 2026-10", "Example Landlord"),
 					booked("", "-12.99", "EUR", 5, "STREAMING SERVICE", ""),
 					booked("", "-3.50", "EUR", 7, "COFFEE KIOSK", ""),

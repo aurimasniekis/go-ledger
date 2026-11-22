@@ -13,6 +13,8 @@ import { MonthPage } from '@/features/month/month-page'
 import { MatchesPage } from '@/features/matches/matches-page'
 import { isMonth, monthOf } from '@/features/month/month'
 import { OutlookPage } from '@/features/outlook/outlook-page'
+import { CommitmentsPage } from '@/features/organisation/commitments-page'
+import { OrganisationPage } from '@/features/organisation/organisation-page'
 import { RatesPage } from '@/features/rates/rates-page'
 import { RequireSession } from '@/features/auth/require-session'
 import { SignInPage } from '@/features/auth/sign-in'
@@ -102,17 +104,18 @@ const connectionsCallbackRoute = createRoute({
   },
 })
 
-// The outlook (FX3): ?through=YYYY-MM and ?currency=XXX are optional; the server defaults them.
+// The outlook (FX3): ?through=YYYY-MM and ?currency=XXX are optional; the server defaults them. ?bucket=<id> slices it by a bucket (O3).
 const outlookRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/outlook',
-  validateSearch: (s: Record<string, unknown>): { through?: string; currency?: string } => ({
+  validateSearch: (s: Record<string, unknown>): { through?: string; currency?: string; bucket?: string } => ({
     ...(isMonth(s.through) ? { through: s.through } : {}),
     ...(typeof s.currency === 'string' && /^[A-Z]{3}$/.test(s.currency) ? { currency: s.currency } : {}),
+    ...(typeof s.bucket === 'string' && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(s.bucket) ? { bucket: s.bucket } : {}),
   }),
   component: function OutlookRoute() {
-    const { through, currency } = outlookRoute.useSearch()
-    return <OutlookPage through={through} currency={currency} />
+    const { through, currency, bucket } = outlookRoute.useSearch()
+    return <OutlookPage through={through} currency={currency} bucket={bucket} />
   },
 })
 
@@ -127,6 +130,8 @@ const routeTree = rootRoute.addChildren([
     connectionsCallbackRoute,
     outlookRoute,
     child('/rates', RatesPage),
+    child('/organisation', OrganisationPage),
+    child('/commitments', CommitmentsPage),
     child('/account/security', SecurityPage),
     child('/account/sessions', SessionsPage),
     child('/account/tokens', MyTokensPage),

@@ -17,9 +17,8 @@ import (
 
 // Limits on stored text.
 const (
-	MaxName        = 80
-	MaxSource      = 200
-	MaxMerchantKey = 200
+	MaxName   = 80
+	MaxSource = 200
 )
 
 // Kind is a kind of definition.
@@ -61,8 +60,8 @@ func (t ObjectType) Valid() bool { return slices.Contains(ObjectTypes(), t) }
 // group commitments and accounts only (decision D12).
 func (t ObjectType) BucketMember() bool { return t == ObjectCommitment || t == ObjectAccount }
 
-// ObjectRef names one object. For a merchant, ID is the merchant key (see
-// [MerchantKey]); for the others a ULID.
+// ObjectRef names one object by its ULID. A merchant is named by its merchant
+// record's id (task M1, ADR-0058, decision D-MER 1a), no longer by a name key.
 type ObjectRef struct {
 	Type ObjectType
 	ID   string
@@ -73,27 +72,10 @@ func (o ObjectRef) Validate() []commitments.FieldError {
 	switch {
 	case !o.Type.Valid():
 		return []commitments.FieldError{{Field: "object_type", Message: "object_type must be transaction, commitment, account or merchant"}}
-	case o.Type == ObjectMerchant:
-		if k, ok := MerchantKey(o.ID); !ok || k != o.ID {
-			return []commitments.FieldError{{Field: "object_id", Message: "a merchant is named by its key: the merchant name in lower case, white space collapsed, at most 200 characters"}}
-		}
 	case !resource.ValidID(o.ID):
 		return []commitments.FieldError{{Field: "object_id", Message: "object_id must be an identifier"}}
 	}
 	return nil
-}
-
-// MerchantKey returns the key that names a merchant: the name with white space
-// collapsed and lower-cased. Merchants have no record of their own yet
-// (ADR-0051 identifies a transaction's merchant, not a merchant), so the key is
-// what ties assignments to one. ok is false for an empty, over-long or
-// control-character name.
-func MerchantKey(name string) (string, bool) {
-	k := strings.ToLower(NormalizeName(name))
-	if k == "" || utf8.RuneCountInString(k) > MaxMerchantKey || checkText(k) != "" {
-		return "", false
-	}
-	return k, true
 }
 
 // Origin is where an assignment came from.
@@ -259,6 +241,36 @@ type Assignments struct {
 	Buckets []Definition
 }
 
+// MaxSelected bounds how many objects [Store.Select] may return: a filter that
+// matches more must be narrowed, so a list request never builds an unbounded
+// query.
+const MaxSelected = 5000
+
+// Filter selects objects by their effective organisation (decision D12,
+// task O3). Within one list a repeated value matches any of them; the two
+// lists combine (an object must satisfy both). A category also matches its
+// children, so a parent selects its whole branch. An archived definition
+// still matches: archiving keeps history.
+type Filter struct {
+	CategoryIDs []string
+	LabelIDs    []string
+}
+
+// Empty reports whether the filter selects nothing in particular.
+func (f Filter) Empty() bool { return len(f.CategoryIDs) == 0 && len(f.LabelIDs) == 0 }
+
+// ErrTooManyObjects means a filter matches more than [MaxSelected] objects.
+var ErrTooManyObjects = fmt.Errorf("the filter matches more than %d objects: narrow it", MaxSelected)
+
+// UnknownDefinitionError means a filter names a category or label that does
+// not exist.
+type UnknownDefinitionError struct {
+	Kind Kind
+	ID   string
+}
+
+func (e *UnknownDefinitionError) Error() string { return "unknown " + string(e.Kind) + " " + e.ID }
+
 // Member is an object in a bucket.
 type Member struct {
 	Object ObjectRef
@@ -361,6 +373,9 @@ var (
 	ErrInheritedAssignment = errors.New("the assignment is inherited from the pending transaction it replaces; reset it there")
 	// ErrNotApplicable means the definition cannot apply to the object type.
 	ErrNotApplicable = errors.New("buckets hold commitments and accounts only")
+	// ErrObjectArchived means the object is an archived (or merged) merchant:
+	// nothing new is assigned to it (task M1, ADR-0058).
+	ErrObjectArchived = errors.New("the merchant is archived or merged: nothing new is assigned to it")
 )
 
 // InUseError means a definition is still assigned and no replacement was
@@ -404,6 +419,17 @@ type Store interface {
 	AddToBucket(ctx context.Context, actor audit.Actor, bucketID string, obj ObjectRef) error
 	RemoveFromBucket(ctx context.Context, actor audit.Actor, bucketID string, obj ObjectRef) error
 	ListMembers(ctx context.Context, bucketID string, f MemberFilter) ([]Member, error)
+	// MemberIDs returns the IDs of every member of a bucket of type t, sorted
+	// (resource.ErrNotFound for an unknown bucket). It backs the bucket slice
+	// of the outlook.
+	MemberIDs(ctx context.Context, bucketID string, t ObjectType) ([]string, error)
+	// Select returns the IDs of the objects of type t whose effective
+	// organisation satisfies f, sorted: what the list filters use. A
+	// transaction's effective organisation includes what it inherits from the
+	// pending transaction it superseded, like [Store.Get]. It returns
+	// *UnknownDefinitionError for a category or label that does not exist and
+	// ErrTooManyObjects beyond [MaxSelected].
+	Select(ctx context.Context, t ObjectType, f Filter) ([]string, error)
 	// ApplyAutomatic applies a rule's or a model's proposal for one object,
 	// never replacing what [CanReplace] forbids.
 	ApplyAutomatic(ctx context.Context, actor audit.Actor, obj ObjectRef, a Automatic) (AutomaticResult, error)

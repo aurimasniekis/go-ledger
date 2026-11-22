@@ -247,6 +247,15 @@ func (s *Store) List(ctx context.Context, f commitments.ListFilter) ([]commitmen
 			vals = append(vals, c.Code())
 		}
 	}
+	if f.IDsSet {
+		if len(f.IDs) == 0 {
+			return nil, nil
+		}
+		where = append(where, in("id", len(f.IDs)))
+		for _, id := range f.IDs {
+			vals = append(vals, id)
+		}
+	}
 	vals = append(vals, f.Limit+1)
 	var out []commitments.Commitment
 	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {

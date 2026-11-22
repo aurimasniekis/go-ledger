@@ -1230,11 +1230,15 @@ describe('the Closed list: rejected and reversed matches, read only', () => {
     const list = await screen.findByRole('list', { name: 'Closed matches' })
     const rent = await within(list).findByRole('article', { name: 'Rent' })
     expect(rent).toHaveTextContent('Rejected by you.')
-    expect(rent.querySelectorAll('button:not(summary)')).toHaveLength(0)
+    // A closed match offers no action on the match; Organise is the separate control of the bank transaction's category and labels.
+    expect(Array.from(rent.querySelectorAll('button:not(summary)')).filter((b) => !(b.getAttribute('aria-label') ?? '').startsWith('Organise'))).toHaveLength(0)
     const gym = await within(list).findByRole('article', { name: 'Gym' })
     expect(gym).toHaveTextContent('Reversed by an MCP client (not this screen).')
     expect(gym).toHaveTextContent('Via MCP')
-    expect(within(gym).queryByRole('button')).not.toBeInTheDocument()
+    expect(within(gym).queryAllByRole('button').filter((b) => !(b.getAttribute('aria-label') ?? '').startsWith('Organise'))).toHaveLength(0)
+    const names = within(list).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '').filter((n) => n.startsWith('Organise'))
+    expect(names).toHaveLength(2)
+    expect(new Set(names).size).toBe(2) // each card's control says which transaction it is
     const get = calls.find((c) => c.method === 'GET' && c.path.endsWith('/payment-matches') && c.query.getAll('state').length === 2)!
     expect(get.query.getAll('state')).toEqual(['rejected', 'reversed'])
   })

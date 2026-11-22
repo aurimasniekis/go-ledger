@@ -71,6 +71,15 @@ type Enrichment struct {
 	// LastFailedAt is the latest failed lookup, if any. A failure never
 	// replaces an earlier answer.
 	LastFailedAt *time.Time
+	// MerchantID is the merchant record the identified name resolves to
+	// through an alias (task M1, ADR-0058), empty when no alias has the name.
+	// The source and confidence above stay the provenance of the answer.
+	MerchantID string
+	// MerchantName is that merchant's current display name, filled in on read.
+	MerchantName string
+	// Recheck is set when a person's decision about another transaction of the
+	// same merchant may change this answer: the next pass looks it up again.
+	Recheck bool
 }
 
 // Answer is a lookup source's answer as an adapter hands it over (task E2),
@@ -155,7 +164,12 @@ type Review struct {
 	TransactionID banking.TransactionID
 	Decision      Decision
 	Name          string
-	By            audit.Actor
+	// MerchantID is the merchant record the decision attaches to (task M1,
+	// ADR-0058): set for a confirmation or correction, empty for a rejection.
+	MerchantID string
+	// MerchantName is that merchant's current display name, filled in on read.
+	MerchantName string
+	By           audit.Actor
 	// Via is how the decision came (session, token, mcp, system).
 	Via       audit.Via
 	DecidedAt time.Time
@@ -165,8 +179,11 @@ type Review struct {
 // Request is a decision as a client sends it.
 type Request struct {
 	Decision Decision
-	// Name is required for a correction and ignored otherwise.
+	// Name is the correction's merchant name. A correction gives a name or a
+	// MerchantID, not both.
 	Name string
+	// MerchantID corrects to an existing merchant record (task M1).
+	MerchantID string
 }
 
 // Validate checks a request and reports every problem. Names are trimmed by
@@ -175,12 +192,21 @@ func (r Request) Validate() []commitments.FieldError {
 	var errs []commitments.FieldError
 	switch r.Decision {
 	case DecisionCorrected:
-		if msg := checkText(r.Name, MaxName, false); msg != "" {
-			errs = append(errs, commitments.FieldError{Field: "name", Message: "name " + msg})
+		switch {
+		case r.MerchantID != "" && r.Name != "":
+			errs = append(errs, commitments.FieldError{Field: "merchant_id", Message: "a correction gives a name or a merchant_id, not both"})
+		case r.MerchantID != "":
+		default:
+			if msg := checkText(r.Name, MaxName, false); msg != "" {
+				errs = append(errs, commitments.FieldError{Field: "name", Message: "name " + msg})
+			}
 		}
 	case DecisionConfirmed, DecisionRejected:
 		if r.Name != "" {
 			errs = append(errs, commitments.FieldError{Field: "name", Message: "name is only for a correction"})
+		}
+		if r.MerchantID != "" {
+			errs = append(errs, commitments.FieldError{Field: "merchant_id", Message: "merchant_id is only for a correction"})
 		}
 	default:
 		errs = append(errs, commitments.FieldError{Field: "decision", Message: "decision must be confirmed, corrected or rejected"})
@@ -188,9 +214,10 @@ func (r Request) Validate() []commitments.FieldError {
 	return errs
 }
 
-// Normalized trims the name and collapses runs of white space.
+// Normalized trims the name, collapses runs of white space and composes it
+// (NFC).
 func (r Request) Normalized() Request {
-	r.Name = strings.Join(strings.Fields(r.Name), " ")
+	r.Name = NormalizeDisplayName(r.Name)
 	return r
 }
 
@@ -243,6 +270,10 @@ const (
 type Merchant struct {
 	TransactionID banking.TransactionID
 	State         State
+	// MerchantID is the merchant record of the identity shown, empty when
+	// nothing is shown or the shown name has no record (an unreviewed source
+	// name no alias knows). Name is then that record's display name.
+	MerchantID string
 	// Name and LogoRef are the identity to show, empty when none may be.
 	// A correction has no logo: the source's logo belongs to its own name.
 	Name    string
@@ -284,13 +315,18 @@ func Resolve(e *Enrichment, r *Review, threshold Confidence) Merchant {
 		switch r.Decision {
 		case DecisionCorrected:
 			m.State, m.Name, m.IdentitySource = StateCorrected, r.Name, "user"
+			m.MerchantID, m.Name = r.MerchantID, shownName(r.Name, r.MerchantName)
 			return m
 		case DecisionRejected:
 			m.State = StateRejected
 			return m
 		case DecisionConfirmed:
-			if e != nil && e.Status == StatusIdentified && e.Name == r.Name {
-				m.State, m.Name, m.LogoRef, m.IdentitySource = StateConfirmed, e.Name, e.LogoRef, "user"
+			// A confirmation stands while the source still reports the name
+			// that was confirmed, or another spelling of the same merchant
+			// (an alias of the record the confirmation attached to).
+			if e != nil && e.Status == StatusIdentified && (e.Name == r.Name || r.MerchantID != "" && e.MerchantID == r.MerchantID) {
+				m.State, m.LogoRef, m.IdentitySource = StateConfirmed, e.LogoRef, "user"
+				m.MerchantID, m.Name = r.MerchantID, shownName(e.Name, r.MerchantName)
 				return m
 			}
 			m.ConfirmationOutdated, m.NeedsReview = true, true
@@ -300,7 +336,8 @@ func Resolve(e *Enrichment, r *Review, threshold Confidence) Merchant {
 	case e == nil:
 		m.State = StateNotLookedUp
 	case e.Status == StatusIdentified && e.Confidence >= threshold:
-		m.State, m.Name, m.LogoRef, m.IdentitySource = StateReliable, e.Name, e.LogoRef, e.Source
+		m.State, m.Name, m.LogoRef, m.IdentitySource = StateReliable, shownName(e.Name, e.MerchantName), e.LogoRef, e.Source
+		m.MerchantID = e.MerchantID
 	case e.Status == StatusIdentified:
 		m.State, m.NeedsReview = StateUncertain, true
 	case e.Status == StatusAmbiguous:
@@ -311,6 +348,15 @@ func Resolve(e *Enrichment, r *Review, threshold Confidence) Merchant {
 		m.State = StateUnavailable
 	}
 	return m
+}
+
+// shownName is the record's display name when the identity has a record,
+// else the name as decided or reported.
+func shownName(name, merchantName string) string {
+	if merchantName != "" {
+		return merchantName
+	}
+	return name
 }
 
 // Errors of the merchant store.
@@ -344,4 +390,6 @@ type Store interface {
 	// Review records the person's decision; ClearReview takes it back.
 	Review(ctx context.Context, actor audit.Actor, id banking.TransactionID, r Request) (Merchant, error)
 	ClearReview(ctx context.Context, actor audit.Actor, id banking.TransactionID) (Merchant, error)
+	// EntityStore keeps the merchant records decisions attach to (task M1).
+	EntityStore
 }
