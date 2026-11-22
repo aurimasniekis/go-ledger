@@ -18,9 +18,10 @@ operator decision covers; they are listed for the operator under Consequences.
 > (short only), booked, exactly one candidate transaction and one candidate occurrence, nothing already assigned.
 > An **undone** plan no longer widens either window, and a plan revision moves the window with its planned date.
 > The store reads the active plan's planned date inside the write transaction, like the tolerance, so
-> `matches.CheckAutoPlanned` (and `ErrAutoDate`, now naming both dates) holds whatever the plan decided. The reason of a
-> confirmation made through the planned window says so ("N days from the planned date of its deferral plan"); a failed
-> date check lists both distances. Two transactions, one near the due date and one near the planned date, make the
+> `matches.CheckAutoPlanned` holds whatever the plan decided. Its refusal is `ErrAutoDate`, whose message names the
+> due-date window only in general terms and does not give the distances. The engine's reason text is where the distances
+> appear: a confirmation made through the planned window says "N days from the planned date of its deferral plan", and a
+> failed date check reads "date_outside_window (N days from the due date, M from the planned date)". Two transactions, one near the due date and one near the planned date, make the
 > occurrence ambiguous and are only suggested.
 
 ## Context
