@@ -177,7 +177,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
     if (refusal) refusalBox.current?.focus()
   }, [refusal])
   const replaceBtn = canReplace && (
-    <ReplaceManual match={m} records={replaceable} offline={offline} offlineNoteId={OFFLINE_NOTE_ID} primary={paidBy === 'manual'} onRefused={setRefusal}
+    <ReplaceManual match={m} records={replaceable} offline={offline} offlineNoteId={OFFLINE_NOTE_ID} primary={paidBy === 'manual'} onRefused={setRefusal} onStart={() => setRefusal(null)}
       onSaved={(saved, replaced) => { setRefusal(null); onSaved(saved, 'confirm', m, { name: name.data, month: occ.data?.month, replaced }) }} />
   )
   const alertBox = useRef<HTMLDivElement>(null)
@@ -195,10 +195,13 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
   const marker = deciderMarker(m)
   const shortfall = m.state === 'confirmed' && occ.data?.payment?.status === 'paid' && occ.data.payment.shortfall_amount && !isZeroAmount(occ.data.payment.shortfall_amount.amount) ? occ.data.payment.shortfall_amount : null
   // The reason typed in a form belongs to that form's action only: a one-step Confirm never carries it.
-  const run = (action: MatchAction, extra: Partial<ActionInput> = {}) =>
+  const run = (action: MatchAction, extra: Partial<ActionInput> = {}) => {
+    setRefusal(null)
     save.save({ action, version: m.version, currency: m.amount.currency, ...extra })
+  }
   const open = (a: MatchAction) => {
     focus.remember()
+    setRefusal(null)
     discard()
     setReason('')
     setAmount(m.amount.amount)
@@ -387,7 +390,7 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
         >
           <p className="text-muted-foreground">
             {EXPLAIN[form]}
-            {form === 'unmatch' && replacedNow > 0 && ' Your manual record of this payment comes back and counts again.'}
+            {form === 'unmatch' && replacedNow > 0 && ` Your manual ${replacedNow === 1 ? 'record' : 'records'} of this payment ${replacedNow === 1 ? 'comes' : 'come'} back and ${replacedNow === 1 ? 'counts' : 'count'} again.`}
             {form === 'reverse' && replacedNow > 0 && ' Your manual record of this payment stays replaced (it was that payment); you can record a new payment in the monthly view.'}
           </p>
           {form === 'correct' && (

@@ -866,6 +866,17 @@ describe('"This is the payment I recorded" (D45)', () => {
     expect(within(card).getByRole('form')).toHaveTextContent('Your manual record of this payment comes back')
   })
 
+  it('Unmatch says "records come back and count again" in the plural for several replaced records', async () => {
+    const c = confirmedRepl()
+    c.history[0]!.replaced_manual_payment_ids = ['mp1', 'mp2']
+    store = [c]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    expect(within(card).getByRole('form')).toHaveTextContent('Your manual records of this payment come back and count again.')
+  })
+
   const openForm = async () => {
     const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
     await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
@@ -988,6 +999,20 @@ describe('"This is the payment I recorded" (D45)', () => {
     expect(alert).toHaveFocus()
     await userEvent.click(within(alert).getByRole('button', { name: 'Dismiss' }))
     expect(within(card).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('clears the refusal when another action starts on the card', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => {
+      records = [rec('mp1', { replaced_by_match_id: 'zz' })]
+      return fail(409, 'manual_payment_not_replaceable', 'x')
+    }
+    start()
+    const card = await openForm()
+    await submit(card)
+    await new Promise((r) => setTimeout(r, 700))
+    expect(within(card).getByRole('alert')).toHaveTextContent('Nothing was saved')
+    await userEvent.click(within(card).getByRole('button', { name: /^Reject/ }))
+    expect(within(card).queryByTestId('replace-refused')).not.toBeInTheDocument()
   })
 
   it('puts the recorded-payment choice first and relabels Confirm as a separate payment', async () => {

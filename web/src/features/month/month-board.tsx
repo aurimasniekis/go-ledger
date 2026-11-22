@@ -365,7 +365,7 @@ function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting }: 
           </Button>
         )}
       </div>
-      <ReplacedRecords occurrenceId={i.id} bankEvidenceCount={p.bank_evidence_count} unmatchLink />
+      <ReplacedRecords occurrenceId={i.id} unmatchLink />
       {p.timing === 'overdue' && p.grace_until && (
         <p className="text-sm">
           {p.within_grace ? (
