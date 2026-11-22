@@ -28,6 +28,7 @@ import { KIND_NAME, KINDS, type BucketMember, type Definition, type Kind } from 
 /** Why a change was not saved, in words: nothing is shown as saved until the server accepted it. */
 export function problemText(e: unknown): string {
   if (e instanceof NetworkError) return 'Not saved: there is no connection to the server. Nothing was changed.'
+  if (e instanceof ApiError && e.code === 'merchant_archived') return 'This merchant is archived or merged, so nothing new can be put on it. Unarchive it first (a merged merchant stays merged). Nothing was changed.'
   if (e instanceof ApiError && e.code === 'version_conflict') return 'This was changed elsewhere. The list is reloaded: check it and try again. Nothing was changed.'
   return e instanceof Error ? e.message : 'Something went wrong. Nothing was changed.'
 }
@@ -49,7 +50,7 @@ export function OrganisationPage() {
           Assign them where the item is shown: open <strong>Organise</strong> on an occurrence, a bank account or a suggested payment.
         </p>
         <p className="text-sm text-muted-foreground">
-          Archiving keeps a definition and everything assigned to it, and only stops new use. Deleting is for one that nothing uses, or that you move to another first. Merchants cannot be organised yet: they have no record of their own.
+          Archiving keeps a definition and everything assigned to it, and only stops new use. Deleting is for one that nothing uses, or that you move to another first. Merchants are organised on their own page ({'/merchants/<id>'}), and that needs the administrator-only merchants:read and merchants:write grants as well.
         </p>
         {!canWrite && <p className="text-sm text-muted-foreground">You can read these but not change them: your token or role does not hold organisation:write.</p>}
       </header>
