@@ -184,6 +184,12 @@ func TestMissedIsDerivedFromDateAndWhatIsStillOwed(t *testing.T) {
 	if r := withFee.MissedReason(state(o, "50.00", today), today); r != "" {
 		t.Errorf("fee marked paid: reason %q, want none", r)
 	}
+	removedFee := plan("2026-11-19")
+	rmAt := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	removedFee.Adjustments = []deferrals.Adjustment{{ID: "a", Kind: deferrals.AdjustmentFee, Amount: money.MustParse("3.00", "EUR"), RemovedAt: &rmAt}}
+	if r := removedFee.MissedReason(state(o, "50.00", today), today); r != "" {
+		t.Errorf("fee removed: reason %q, want none", r)
+	}
 	undone := plan("2026-11-19")
 	at := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
 	undone.UndoneAt = &at
