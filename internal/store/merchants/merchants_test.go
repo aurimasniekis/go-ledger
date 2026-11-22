@@ -340,7 +340,7 @@ func TestDecisionSurvivesSupersededPending(t *testing.T) {
 	f := newFixture(t)
 	pending := f.tx("CARD PURCHASE BOOKSHOP")
 	booked := f.tx("STREAMING SERVICE")
-	other := f.tx("SALARY ACME")
+	other := f.tx("CARD PURCHASE LONDON")
 	f.record(pending.ID, identified("Bookshop Ltd", 900))
 	f.record(booked.ID, identified("Streamly", 900))
 	f.record(other.ID, identified("Acme Payroll", 900))
@@ -383,7 +383,7 @@ func TestDecisionSurvivesSupersededPending(t *testing.T) {
 		t.Fatalf("inherited along a chain: %+v", m)
 	}
 	// Nothing about the bank rows changed.
-	if f.tx("SALARY ACME").Description != "SALARY ACME" {
+	if f.tx("CARD PURCHASE LONDON").Description != "CARD PURCHASE LONDON" {
 		t.Fatal("bank description changed")
 	}
 }

@@ -258,8 +258,8 @@ type Merchant struct {
 	// transaction this one superseded (the booking arrived under a new key),
 	// not one made about this transaction itself.
 	ReviewInherited bool
-	Enrichment           *Enrichment
-	Review               *Review
+	Enrichment      *Enrichment
+	Review          *Review
 }
 
 // Fallback reports whether the client must use its neutral presentation.

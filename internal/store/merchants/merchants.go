@@ -133,7 +133,7 @@ func inheritedReview(ctx context.Context, tx *sql.Tx, id banking.TransactionID) 
 			for rows.Next() {
 				var p string
 				if err := rows.Scan(&p); err != nil {
-					rows.Close()
+					_ = rows.Close()
 					return nil, err
 				}
 				preds = append(preds, banking.TransactionID(p))
