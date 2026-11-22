@@ -714,7 +714,9 @@ paths:
           description: |
             version_conflict (stale version, with reconciliation) or
             pending_terms_change (an earlier edit takes effect after this
-            edit's effective_from).
+            edit's effective_from) or deferral_plan_currency (the edit would
+            change the currency of an occurrence with an active deferral
+            plan; undo the plan first).
           content:
             application/json:
               schema:
@@ -3200,6 +3202,348 @@ paths:
                 $ref: "#/components/schemas/RatesRefreshRun"
         default:
           $ref: "#/components/responses/Error"
+  /deferral-plans:
+    get:
+      operationId: listDeferralPlans
+      x-ledger-access: commitments:read
+      summary: List deferral plans
+      description: |
+        Deferral plans (task DF1, ADR-0050), ordered by ID (creation order),
+        active and undone, each with its adjustments and its occurrence's
+        payment state today. Filter by occurrence_id, commitment_id, state
+        (repeat a filter for any of several values) or planned_month (the
+        month of the planned date, once).
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: occurrence_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: commitment_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: state
+          in: query
+          schema:
+            $ref: "#/components/schemas/DeferralPlanState"
+        - name: planned_month
+          in: query
+          schema:
+            $ref: "#/components/schemas/YearMonth"
+      responses:
+        "200":
+          description: One page of plans.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DeferralPlan"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createDeferralPlan
+      x-ledger-access: commitments:write
+      summary: Defer an occurrence
+      description: |
+        Records the user's plan to pay an outstanding occurrence on a later
+        date: within its month or in a later one. A plan is not payment,
+        forgiveness or a creditor agreement unless its plan_type says so
+        (creditor_agreed, documented_grace); it never changes the
+        occurrence's due date, amount, payment evidence or status, so the
+        occurrence stays outstanding and, past its original due date,
+        overdue (decision D7). The monthly view plans its outstanding amount
+        in the planned date's month instead of its own (never both). The
+        occurrence must owe something (409 nothing_outstanding when paid or
+        not recorded; 409 occurrence_cancelled when cancelled), have no
+        active plan (409 deferral_plan_exists: revise or undo it), and the
+        planned date must be after its due date and within the
+        materialisation horizon (400 on planned_date). Audited as
+        deferral_plan.created.
+      tags: [deferral-plans]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [occurrence_id, plan_type, planned_date]
+              properties:
+                occurrence_id:
+                  $ref: "#/components/schemas/ID"
+                plan_type:
+                  $ref: "#/components/schemas/DeferralPlanType"
+                planned_date:
+                  $ref: "#/components/schemas/Date"
+                reason:
+                  $ref: "#/components/schemas/DeferralReason"
+      responses:
+        "201":
+          description: The new plan.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              description: The new plan's URL.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getDeferralPlan
+      x-ledger-access: commitments:read
+      summary: Get a deferral plan
+      tags: [deferral-plans]
+      responses:
+        "200":
+          description: The plan with its adjustments.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: reviseDeferralPlan
+      x-ledger-access: commitments:write
+      summary: Revise a deferral plan
+      description: |
+        A JSON Merge Patch of plan_type, planned_date and reason (null
+        clears the reason) on an active plan. The merged plan is checked as
+        on creation against the occurrence as it is now (409
+        nothing_outstanding once it is paid). An undone plan cannot change
+        (409 deferral_plan_undone). Requires the version in If-Match or the
+        body; a stale version is a 409 version_conflict with
+        reconciliation. A patch that changes nothing answers the plan as it
+        is. The revision is kept in the plan's history. Audited as
+        deferral_plan.revised with the names of the changed fields.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                plan_type:
+                  $ref: "#/components/schemas/DeferralPlanType"
+                planned_date:
+                  $ref: "#/components/schemas/Date"
+                reason:
+                  $ref: "#/components/schemas/DeferralReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The revised plan.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}/undo:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: undoDeferralPlan
+      x-ledger-access: commitments:write
+      summary: Undo a deferral plan
+      description: |
+        Ends an active plan: the occurrence's outstanding amount is planned
+        in its own month again. Nothing about the occurrence or its payments
+        changes. The plan and its history are kept (state undone) and never
+        change again; the occurrence can be deferred anew. An optional
+        reason is kept in the history. Requires the version in If-Match or
+        the body. Audited as deferral_plan.undone.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  $ref: "#/components/schemas/DeferralReason"
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "200":
+          description: The undone plan.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}/history:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: listDeferralPlanHistory
+      x-ledger-access: commitments:read
+      summary: List a deferral plan's history
+      description: |
+        Every change of the plan, oldest first: creation, revisions,
+        adjustments added and removed, and the undo, each with the plan's
+        type and planned date after it, who made it and how, and the reason
+        recorded with it.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of history entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DeferralPlanEvent"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}/adjustments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: addDeferralAdjustment
+      x-ledger-access: commitments:write
+      summary: Record a fee or charge on a deferral plan
+      description: |
+        Records an explicit fee, interest or other charge on an active plan
+        (decision D14: a plan never adds one by itself). The amount is
+        positive and in the plan's currency (400 on amount.currency; nothing
+        is converted). It is added to the planned total of the plan's month
+        while the occurrence still owes something; it never changes the
+        occurrence's amount or what is outstanding. Requires the plan's
+        version in If-Match or the body. Audited as
+        deferral_plan.adjustment_added, without the amount or note.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, amount]
+              properties:
+                kind:
+                  $ref: "#/components/schemas/DeferralAdjustmentKind"
+                amount:
+                  $ref: "#/components/schemas/PositiveMoney"
+                note:
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 500
+                version:
+                  $ref: "#/components/schemas/Version"
+      responses:
+        "201":
+          description: The plan with the new adjustment.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
+  /deferral-plans/{id}/adjustments/{adjustment_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+      - name: adjustment_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    delete:
+      operationId: removeDeferralAdjustment
+      x-ledger-access: commitments:write
+      summary: Remove an adjustment from a deferral plan
+      description: |
+        Removes an adjustment of an active plan: it is kept as history
+        (removed_at) and no longer counts. Removing it again is a 409
+        deferral_adjustment_removed. A malformed adjustment_id is a 400. Requires the plan's version in
+        If-Match. Audited as deferral_plan.adjustment_removed.
+      tags: [deferral-plans]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The plan after the removal.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeferralPlan"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: mcp
     description: Model Context Protocol server.
@@ -3213,6 +3557,8 @@ tags:
     description: The append-only audit log (administrative, read-only).
   - name: commitments
     description: Recurring commitment definitions.
+  - name: deferral-plans
+    description: Plans to pay an outstanding occurrence later (personal, creditor-agreed or documented grace), with revisions, undo, explicit fees and history. Never payment.
   - name: auth
     description: Sign-in, sessions, re-authentication and your own password.
   - name: occurrences
@@ -3551,7 +3897,7 @@ components:
       type: object
       description: The monthly view (ADR-0034).
       additionalProperties: false
-      required: [month, as_of, items, totals, freshness]
+      required: [month, as_of, items, carried_in, totals, freshness]
       properties:
         month:
           $ref: "#/components/schemas/YearMonth"
@@ -3564,11 +3910,29 @@ components:
             allOf:
               - $ref: "#/components/schemas/Occurrence"
               - type: object
-                required: [commitment_name]
+                required: [commitment_name, deferral]
                 properties:
                   commitment_name:
                     type: string
                     description: The name of the commitment the occurrence belongs to.
+                  deferral:
+                    description: The occurrence's active deferral plan (ADR-0050); null when none. It never changes the payment state.
+                    oneOf:
+                      - $ref: "#/components/schemas/DeferralPlan"
+                      - type: "null"
+        carried_in:
+          type: array
+          description: Occurrences of earlier months whose active deferral plan falls in this month, by due date, then ID. They keep their own month and due date, count only in the planned figures and are listed apart from this month's own occurrences.
+          items:
+            allOf:
+              - $ref: "#/components/schemas/Occurrence"
+              - type: object
+                required: [commitment_name, deferral]
+                properties:
+                  commitment_name:
+                    type: string
+                  deferral:
+                    $ref: "#/components/schemas/DeferralPlan"
         totals:
           type: array
           description: One entry per currency present, sorted by currency code. Empty for an empty month.
@@ -3580,7 +3944,7 @@ components:
       type: object
       description: Exact totals of the occurrences in one currency. Evidence in another currency is not converted or counted.
       additionalProperties: false
-      required: [currency, due, paid, outstanding, overdue, overpaid, occurrence_count, overdue_count, unconverted_evidence_count]
+      required: [currency, due, paid, outstanding, overdue, overpaid, occurrence_count, overdue_count, unconverted_evidence_count, planned, deferred_out, carried_in, adjustments]
       properties:
         currency:
           $ref: "#/components/schemas/Currency"
@@ -3601,6 +3965,146 @@ components:
         unconverted_evidence_count:
           type: integer
           description: Occurrences with payment evidence in another currency, which no total includes.
+    DeferralPlanType:
+      type: string
+      enum: [personal, creditor_agreed, documented_grace]
+      description: |
+        On what authority the payment is planned later (decision D14).
+        personal: the user's own plan, nothing agreed with the creditor.
+        creditor_agreed: a later date the creditor agreed to.
+        documented_grace: a grace period the creditor documents; the planned
+        date is its last day. The occurrence is overdue from its original due
+        date in every case (decision D7).
+    DeferralPlanState:
+      type: string
+      enum: [active, undone]
+    DeferralAdjustmentKind:
+      type: string
+      enum: [fee, interest, other]
+    DeferralReason:
+      type: [string, "null"]
+      minLength: 1
+      maxLength: 500
+      description: Why, in 1 to 500 characters; optional (null for none).
+    DeferralAdjustment:
+      type: object
+      description: An explicit fee, interest or other charge recorded on a plan, in the plan's currency.
+      additionalProperties: false
+      required: [id, kind, amount, note, created_at, removed_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        kind:
+          $ref: "#/components/schemas/DeferralAdjustmentKind"
+        amount:
+          $ref: "#/components/schemas/PositiveMoney"
+        note:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        removed_at:
+          type: [string, "null"]
+          format: date-time
+          description: Set once removed; a removed adjustment is history and does not count.
+    DeferralPlan:
+      type: object
+      description: |
+        A deferral plan (ADR-0050): the user's plan to pay an outstanding
+        occurrence later than its due date. It is separate from the
+        occurrence and never payment. original_due_date, original_amount and
+        outstanding_when_planned are what the occurrence was and owed when
+        the plan was made (history). occurrence_status, outstanding_amount and
+        overdue_since are the occurrence's live state, which only payment
+        evidence changes.
+      additionalProperties: false
+      required: [id, occurrence_id, commitment_id, plan_type, state, planned_date, planned_month, reason, original_due_date, original_amount, outstanding_when_planned,
+        occurrence_status, outstanding_amount, overdue_since, grace_until, within_grace, adjustment_total, adjustments, version, created_at, updated_at, undone_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        occurrence_id:
+          $ref: "#/components/schemas/ID"
+        commitment_id:
+          $ref: "#/components/schemas/ID"
+        plan_type:
+          $ref: "#/components/schemas/DeferralPlanType"
+        state:
+          $ref: "#/components/schemas/DeferralPlanState"
+        planned_date:
+          $ref: "#/components/schemas/Date"
+        planned_month:
+          $ref: "#/components/schemas/YearMonth"
+        reason:
+          $ref: "#/components/schemas/DeferralReason"
+        original_due_date:
+          $ref: "#/components/schemas/Date"
+        original_amount:
+          $ref: "#/components/schemas/PositiveMoney"
+        outstanding_when_planned:
+          $ref: "#/components/schemas/PositiveMoney"
+        occurrence_status:
+          $ref: "#/components/schemas/PaymentStatus"
+        outstanding_amount:
+          $ref: "#/components/schemas/Money"
+        overdue_since:
+          description: The occurrence's current due date while it is overdue; null otherwise. A plan never moves it (original_due_date is the due date when the plan was made).
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        grace_until:
+          description: The planned date of an active documented_grace plan; null otherwise.
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        within_grace:
+          type: boolean
+          description: True while the occurrence is overdue and today is not after grace_until ("overdue, within documented grace until grace_until").
+        adjustment_total:
+          $ref: "#/components/schemas/Money"
+        adjustments:
+          type: array
+          description: Every adjustment, oldest first, removed ones included.
+          items:
+            $ref: "#/components/schemas/DeferralAdjustment"
+        version:
+          $ref: "#/components/schemas/Version"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        undone_at:
+          type: [string, "null"]
+          format: date-time
+    DeferralPlanEvent:
+      type: object
+      description: One change of a plan, with the plan's type and planned date after it.
+      additionalProperties: false
+      required: [action, plan_version, plan_type, planned_date, reason, adjustment_id, by, at]
+      properties:
+        action:
+          type: string
+          enum: [created, revised, undone, adjustment_added, adjustment_removed]
+        plan_version:
+          $ref: "#/components/schemas/Version"
+        plan_type:
+          $ref: "#/components/schemas/DeferralPlanType"
+        planned_date:
+          $ref: "#/components/schemas/Date"
+        reason:
+          $ref: "#/components/schemas/DeferralReason"
+        adjustment_id:
+          description: The adjustment added or removed; null for other changes.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        by:
+          $ref: "#/components/schemas/MatchActor"
+        at:
+          type: string
+          format: date-time
     MonthFreshness:
       type: object
       additionalProperties: false
@@ -5109,6 +5613,11 @@ components:
             - manual_payment_not_replaceable
             - password_sign_in_disabled
             - rates_refresh_unavailable
+            - nothing_outstanding
+            - deferral_plan_exists
+            - deferral_plan_undone
+            - deferral_adjustment_removed
+            - deferral_plan_currency
         message:
           type: string
         field:

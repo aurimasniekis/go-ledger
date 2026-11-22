@@ -293,6 +293,20 @@ func (e *PendingTermsError) Error() string {
 		e.Effective.String() + " would overwrite the earlier terms in between"
 }
 
+// CurrencyChangePlanError means a terms edit was refused because it would
+// change the currency of an occurrence with an active deferral plan. The plan's
+// fees are in the occurrence's currency, so the edit would leave them in one
+// currency and the obligation in another (ADR-0050). Undo the plan first.
+type CurrencyChangePlanError struct {
+	OccurrenceID string
+	PlanID       string
+}
+
+func (e *CurrencyChangePlanError) Error() string {
+	return "occurrences: the terms edit changes the currency of occurrence " + e.OccurrenceID +
+		", which has the active deferral plan " + e.PlanID + "; undo the plan first"
+}
+
 // ErrCancelled means an occurrence is cancelled (D31) and takes no new payment,
 // match or status override.
 var ErrCancelled = errors.New("occurrences: the occurrence is cancelled; it takes no new payment")

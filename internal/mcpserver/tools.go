@@ -3,10 +3,12 @@ package mcpserver
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/authz"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
+	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
 )
 
@@ -122,7 +124,7 @@ var grantCommitmentsRead = authz.G(authz.ResourceCommitments, authz.ActionRead)
 var grantCommitmentsWrite = authz.G(authz.ResourceCommitments, authz.ActionWrite)
 
 func registry() []Tool {
-	return append(append(append(coreTools(), matchTools()...), bankTools()...), rateTools()...)
+	return slices.Concat(coreTools(), matchTools(), deferralTools(), bankTools(), rateTools())
 }
 
 func coreTools() []Tool {
@@ -286,6 +288,94 @@ func matchTools() []Tool {
 				"payment_id": idArg("manual payment"),
 				"version":    versionArg("manual payment"),
 			}, "id", "payment_id", "version"),
+		},
+	}
+}
+
+// deferralTools are the deferral plan tools (task DF1, ADR-0050). A plan is
+// the person's decision to pay later; it is never payment, never forgiveness
+// and never a creditor agreement unless its plan_type records one. Write
+// tools must be used on the person's instruction.
+func deferralTools() []Tool {
+	reason := map[string]any{"type": []string{"string", "null"}, "minLength": 1, "maxLength": 500, "description": "Why, in 1 to 500 characters; optional (null for none)."}
+	planType := enum("personal: the person's own plan; creditor_agreed: a later date the creditor agreed to; documented_grace: a grace period the creditor documents, ending on planned_date. Never record creditor_agreed or documented_grace unless the person says the creditor agreed or documents it.", deferrals.PlanTypes())
+	date := func(desc string) map[string]any {
+		return map[string]any{"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": desc}
+	}
+	return []Tool{
+		{
+			Name: "list_deferral_plans", Title: "List deferral plans", Method: "GET", Path: "/deferral-plans",
+			Grant: grantCommitmentsRead, Kind: KindRead,
+			Description: "List plans to pay outstanding occurrences later, oldest first, one page at a time, each with its type, planned date, explicit fees, the occurrence's original due date and amount, and the occurrence's live payment state (a plan never changes it: a deferred occurrence stays outstanding and, past its original due date, overdue). Filters combine; a repeated filter accepts any of its values.",
+			Schema: object(pagingArgs(map[string]any{
+				"occurrence_id": map[string]any{"type": "array", "items": idArg("occurrence"), "description": "Only plans of these occurrences."},
+				"commitment_id": map[string]any{"type": "array", "items": idArg("commitment"), "description": "Only plans of these commitments' occurrences."},
+				"state":         map[string]any{"type": "array", "items": enum("", deferrals.States()), "description": "active or undone."},
+				"planned_month": monthArg("Only plans whose planned date is in this month, such as 2026-11."),
+			})),
+		},
+		{
+			Name: "get_deferral_plan", Title: "Get a deferral plan", Method: "GET", Path: "/deferral-plans/{id}",
+			Grant: grantCommitmentsRead, Kind: KindRead,
+			Description: "Get one deferral plan, including its version (needed to revise or undo it) and its adjustments.",
+			Schema:      object(map[string]any{"id": idArg("deferral plan")}, "id"),
+		},
+		{
+			Name: "list_deferral_plan_history", Title: "List a deferral plan's history", Method: "GET", Path: "/deferral-plans/{id}/history",
+			Grant: grantCommitmentsRead, Kind: KindRead,
+			Description: "Every change of a deferral plan, oldest first: created, revised, adjustments added or removed, undone, each with the type and planned date after it, who made it and how, and the reason recorded with it.",
+			Schema:      object(pagingArgs(map[string]any{"id": idArg("deferral plan")}), "id"),
+		},
+		{
+			Name: "create_deferral_plan", Title: "Defer an occurrence", Method: "POST", Path: "/deferral-plans",
+			Grant: grantCommitmentsWrite, Kind: KindWrite,
+			Description: "Record the person's plan to pay an outstanding occurrence on a later date, in the same month or a later one. It is NOT a payment: the occurrence keeps its due date and amount and stays outstanding and, past its due date, overdue. The monthly view then plans its outstanding amount in the planned date's month instead of its own, never in both. Refused for an occurrence that owes nothing (nothing_outstanding), that already has an active plan (deferral_plan_exists: revise it instead) or for a planned date not after the due date. Fees are never added automatically: record them with add_deferral_adjustment only when the person states them. Not idempotent while no plan exists.",
+			Schema: object(map[string]any{
+				"occurrence_id": idArg("occurrence"),
+				"plan_type":     planType,
+				"planned_date":  date("The date the person plans to pay, YYYY-MM-DD, after the occurrence's due date."),
+				"reason":        reason,
+			}, "occurrence_id", "plan_type", "planned_date"),
+		},
+		{
+			Name: "revise_deferral_plan", Title: "Revise a deferral plan", Method: "PATCH", Path: "/deferral-plans/{id}",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindWrite,
+			Description: "Change an active plan's type, planned date or reason (send only what changes; null clears the reason). The previous values stay in the plan's history. Refused once the plan was undone or the occurrence owes nothing.",
+			Schema: object(map[string]any{
+				"id":           idArg("deferral plan"),
+				"version":      versionArg("deferral plan"),
+				"plan_type":    planType,
+				"planned_date": date("The new planned date, YYYY-MM-DD, after the occurrence's due date."),
+				"reason":       reason,
+			}, "id", "version"),
+		},
+		{
+			Name: "undo_deferral_plan", Title: "Undo a deferral plan", Method: "POST", Path: "/deferral-plans/{id}/undo",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindDestructive,
+			Description: "End an active plan: the occurrence's outstanding amount is planned in its own month again. Nothing about the occurrence or its payments changes; the plan is kept as history and cannot be revised afterwards (a new plan can be made). Destructive; confirm with the person first.",
+			Schema:      object(map[string]any{"id": idArg("deferral plan"), "version": versionArg("deferral plan"), "reason": reason}, "id", "version"),
+		},
+		{
+			Name: "add_deferral_adjustment", Title: "Record a fee on a deferral plan", Method: "POST", Path: "/deferral-plans/{id}/adjustments",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindWrite,
+			Description: "Record an explicit fee, interest or other charge the person states for an active plan, in the plan's currency. It adds to the planned total of the plan's month while the occurrence still owes something; it never changes the occurrence's amount. Never infer a fee. Not idempotent: calling it twice records two charges.",
+			Schema: object(map[string]any{
+				"id":      idArg("deferral plan"),
+				"version": versionArg("deferral plan"),
+				"kind":    enum("fee, interest or other.", deferrals.AdjustmentKinds()),
+				"amount":  withDescription(moneyArg(), "The charge, greater than zero, in the plan's currency."),
+				"note":    map[string]any{"type": []string{"string", "null"}, "maxLength": 500, "description": "Free-form note, up to 500 characters."},
+			}, "id", "version", "kind", "amount"),
+		},
+		{
+			Name: "remove_deferral_adjustment", Title: "Remove a fee from a deferral plan", Method: "DELETE", Path: "/deferral-plans/{id}/adjustments/{adjustment_id}",
+			Grant: grantCommitmentsWrite, IfMatchArg: "version", Kind: KindDestructive,
+			Description: "Remove an adjustment of an active plan; it is kept as history and no longer counts. Destructive; confirm with the person first.",
+			Schema: object(map[string]any{
+				"id":            idArg("deferral plan"),
+				"adjustment_id": idArg("adjustment"),
+				"version":       versionArg("deferral plan"),
+			}, "id", "adjustment_id", "version"),
 		},
 	}
 }

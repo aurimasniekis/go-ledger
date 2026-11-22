@@ -50,6 +50,15 @@ var (
 	opReverseMatch   = operation{ID: "reversePaymentMatch", Method: http.MethodPost, Path: "/payment-matches/{id}/reverse"}
 	opRunMatching    = operation{ID: "runPaymentMatching", Method: http.MethodPost, Path: "/payment-matching/runs"}
 
+	opListDeferrals        = operation{ID: "listDeferralPlans", Method: http.MethodGet, Path: "/deferral-plans", Query: []string{"limit", "cursor", "occurrence_id", "commitment_id", "state", "planned_month"}}
+	opCreateDeferral       = operation{ID: "createDeferralPlan", Method: http.MethodPost, Path: "/deferral-plans"}
+	opGetDeferral          = operation{ID: "getDeferralPlan", Method: http.MethodGet, Path: "/deferral-plans/{id}"}
+	opReviseDeferral       = operation{ID: "reviseDeferralPlan", Method: http.MethodPatch, Path: "/deferral-plans/{id}"}
+	opUndoDeferral         = operation{ID: "undoDeferralPlan", Method: http.MethodPost, Path: "/deferral-plans/{id}/undo"}
+	opDeferralHistory      = operation{ID: "listDeferralPlanHistory", Method: http.MethodGet, Path: "/deferral-plans/{id}/history", Query: []string{"limit", "cursor"}}
+	opAddDeferralAdjust    = operation{ID: "addDeferralAdjustment", Method: http.MethodPost, Path: "/deferral-plans/{id}/adjustments"}
+	opRemoveDeferralAdjust = operation{ID: "removeDeferralAdjustment", Method: http.MethodDelete, Path: "/deferral-plans/{id}/adjustments/{adjustment_id}"}
+
 	opListTokens           = operation{ID: "listTokens", Method: http.MethodGet, Path: "/tokens", Query: []string{"limit", "cursor", "owner_id"}}
 	opGetToken             = operation{ID: "getToken", Method: http.MethodGet, Path: "/tokens/{id}"}
 	opRevokeToken          = operation{ID: "revokeToken", Method: http.MethodDelete, Path: "/tokens/{id}"}
@@ -82,6 +91,7 @@ var operations = []operation{
 	opSetOverride, opUndoOverride,
 	opListMatches, opCreateMatch, opGetMatch, opConfirmMatch, opRejectMatch, opUnmatchMatch, opCorrectMatch, opReverseMatch, opUnconfirmMatch, opReplaceMatch,
 	opRunMatching,
+	opListDeferrals, opCreateDeferral, opGetDeferral, opReviseDeferral, opUndoDeferral, opDeferralHistory, opAddDeferralAdjust, opRemoveDeferralAdjust,
 	opListBankApps, opListBankInstitutions, opListBankConns, opStartBankConn, opGetBankConn, opReconnectBankConn, opRefreshBankConn, opDisconnectBankConn,
 	opListRates, opRatesStatus, opRefreshRates,
 	opListTokens, opGetToken, opRevokeToken, opCreateMyToken,

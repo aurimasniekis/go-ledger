@@ -40,6 +40,9 @@ var moneyPackages = []string{
 	"../../store/matches",
 	"../automatch",
 	"../outlook",
+	"../deferrals",
+	"../../store/deferrals",
+	"../monthview",
 	"../../providers/enablebanking",
 }
 

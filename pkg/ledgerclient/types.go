@@ -619,3 +619,94 @@ type RatesStatus struct {
 	LastSuccessAt       *string          `json:"last_success_at"`
 	AsOf                string           `json:"as_of"`
 }
+
+// Deferral plan types (DF1, ADR-0050).
+const (
+	DeferralPersonal        = "personal"
+	DeferralCreditorAgreed  = "creditor_agreed"
+	DeferralDocumentedGrace = "documented_grace"
+
+	DeferralActive = "active"
+	DeferralUndone = "undone"
+
+	AdjustmentFee      = "fee"
+	AdjustmentInterest = "interest"
+	AdjustmentOther    = "other"
+)
+
+// DeferralAdjustment is an explicit fee, interest or other charge recorded on
+// a deferral plan. RemovedAt is set once it was removed; it then no longer
+// counts.
+type DeferralAdjustment struct {
+	ID        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	Amount    Money   `json:"amount"`
+	Note      *string `json:"note"`
+	CreatedAt string  `json:"created_at"`
+	RemovedAt *string `json:"removed_at"`
+}
+
+// DeferralPlan is a plan to pay an outstanding occurrence later than its due
+// date. It is never payment: OccurrenceStatus and OutstandingAmount are the
+// occurrence's live state, which only payment evidence changes, and
+// OverdueSince stays the original due date while it is overdue. Original* and
+// OutstandingWhenPlanned are history from when the plan was made.
+type DeferralPlan struct {
+	ID                     string               `json:"id"`
+	OccurrenceID           string               `json:"occurrence_id"`
+	CommitmentID           string               `json:"commitment_id"`
+	PlanType               string               `json:"plan_type"`
+	State                  string               `json:"state"`
+	PlannedDate            string               `json:"planned_date"`
+	PlannedMonth           string               `json:"planned_month"`
+	Reason                 *string              `json:"reason"`
+	OriginalDueDate        string               `json:"original_due_date"`
+	OriginalAmount         Money                `json:"original_amount"`
+	OutstandingWhenPlanned Money                `json:"outstanding_when_planned"`
+	OccurrenceStatus       string               `json:"occurrence_status"`
+	OutstandingAmount      Money                `json:"outstanding_amount"`
+	OverdueSince           *string              `json:"overdue_since"`
+	GraceUntil             *string              `json:"grace_until"`
+	WithinGrace            bool                 `json:"within_grace"`
+	AdjustmentTotal        Money                `json:"adjustment_total"`
+	Adjustments            []DeferralAdjustment `json:"adjustments"`
+	Version                int64                `json:"version"`
+	CreatedAt              string               `json:"created_at"`
+	UpdatedAt              string               `json:"updated_at"`
+	UndoneAt               *string              `json:"undone_at"`
+}
+
+// DeferralPlanEvent is one change in a plan's history, with the plan's type
+// and planned date after it.
+type DeferralPlanEvent struct {
+	Action       string     `json:"action"`
+	PlanVersion  int64      `json:"plan_version"`
+	PlanType     string     `json:"plan_type"`
+	PlannedDate  string     `json:"planned_date"`
+	Reason       *string    `json:"reason"`
+	AdjustmentID *string    `json:"adjustment_id"`
+	By           MatchActor `json:"by"`
+	At           string     `json:"at"`
+}
+
+// NewDeferralPlan defers an outstanding occurrence to PlannedDate
+// (YYYY-MM-DD, after its due date).
+type NewDeferralPlan struct {
+	OccurrenceID string  `json:"occurrence_id"`
+	PlanType     string  `json:"plan_type"`
+	PlannedDate  string  `json:"planned_date"`
+	Reason       *string `json:"reason,omitempty"`
+}
+
+// NewDeferralAdjustment is an explicit charge to record on a plan, in its
+// currency.
+type NewDeferralAdjustment struct {
+	Kind   string  `json:"kind"`
+	Amount Money   `json:"amount"`
+	Note   *string `json:"note,omitempty"`
+}
+
+// DeferralUndo is the optional reason for undoing a plan.
+type DeferralUndo struct {
+	Reason *string `json:"reason,omitempty"`
+}

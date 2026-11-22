@@ -37,6 +37,7 @@ const (
 	CodeCSRF               Code = "csrf_failed"               // 403: a cookie-authenticated write without the session's CSRF token, or from another origin
 	CodeReauthRequired     Code = "reauthentication_required" // 403: the action needs a recent password check (POST /auth/reauthenticate)
 	CodeRootTokenRequired  Code = "root_token_required"       // 403: only a root token of the root account may do this with a token (D32)
+	CodeDeferralCurrency   Code = "deferral_plan_currency"    // 409: a terms edit would change the currency of an occurrence with an active deferral plan
 	CodePendingTerms       Code = "pending_terms_change"      // 409: a commitment terms edit is refused because an earlier edit takes effect later
 	// CodeEnrollmentRequired: 403, auth.require_2fa is on and the signed-in
 	// user has not enrolled a second factor; only enrolment, the current
