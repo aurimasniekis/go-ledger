@@ -1,17 +1,20 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"time"
 
+	"github.com/aurimasniekis/go-ledger/internal/domain/banking"
 	"github.com/aurimasniekis/go-ledger/internal/domain/calendar"
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/monthview"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	"github.com/aurimasniekis/go-ledger/internal/domain/outlook"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 )
@@ -92,12 +95,74 @@ type monthFreshnessJSON struct {
 	ComputedAt time.Time `json:"computed_at"`
 	// OccurrencesChangedAt is the newest update among the month's
 	// occurrences; null for an empty month.
-	OccurrencesChangedAt *time.Time `json:"occurrences_changed_at"`
-	// Bank is always {"available": false} until bank freshness is exposed.
-	Bank struct {
-		Available bool   `json:"available"`
-		Note      string `json:"note"`
-	} `json:"bank"`
+	OccurrencesChangedAt *time.Time    `json:"occurrences_changed_at"`
+	Bank                 monthBankJSON `json:"bank"`
+}
+
+// monthBankJSON is what the month view knows about bank data. Available is
+// true when at least one bank connection exists (connected or not); State is
+// the worst freshness among them, so a disconnected or stale connection is
+// never reported as fresh. State is "none" without a connection and "unknown"
+// when the connections could not be read.
+type monthBankJSON struct {
+	Available     bool       `json:"available"`
+	Connections   int        `json:"connections"`
+	State         string     `json:"state"`
+	LastSuccessAt *time.Time `json:"last_success_at"`
+	Note          string     `json:"note"`
+}
+
+// monthBank derives the bank part of the freshness from the stored facts.
+func monthBank(ctx context.Context, banks outlook.Banks, at time.Time, staleAfter time.Duration) monthBankJSON {
+	out := monthBankJSON{State: "none", Note: bankNoneNote}
+	if banks == nil {
+		return out
+	}
+	unknown := monthBankJSON{State: "unknown", Note: bankUnknownNote}
+	conns, err := banks.Connections(ctx)
+	if err != nil {
+		return unknown
+	}
+	if len(conns) == 0 {
+		return out
+	}
+	out.Available, out.Connections = true, len(conns)
+	worst, rank := banking.FreshnessState(""), len(freshnessRank)
+	var last time.Time
+	consider := func(st banking.FreshnessState) {
+		if r := freshnessRank[st]; r < rank {
+			worst, rank = st, r
+		}
+	}
+	for _, c := range conns {
+		accts, err := banks.Accounts(ctx, c.ID)
+		if err != nil {
+			return unknown
+		}
+		live := 0
+		for _, a := range accts {
+			if !a.NoLongerReportedAt.IsZero() {
+				continue
+			}
+			live++
+			sync, err := banks.AccountSync(ctx, a.ID)
+			if err != nil {
+				return unknown
+			}
+			f := banking.AccountFreshness(c.Status, sync, at, staleAfter)
+			consider(f.State)
+			if f.LastSuccessAt.After(last) {
+				last = f.LastSuccessAt
+			}
+		}
+		if live == 0 { // no account yet: the connection's own status decides
+			consider(connectionOwnFreshness(c.Status))
+		}
+	}
+	out.State = string(worst)
+	out.LastSuccessAt = timePtr(last)
+	out.Note = bankNote[worst]
+	return out
 }
 
 // monthItemJSON is an occurrence of the monthly view: the occurrence plus the
@@ -115,9 +180,22 @@ type monthSummaryJSON struct {
 	Freshness monthFreshnessJSON `json:"freshness"`
 }
 
-const bankFreshnessNote = "Bank data age is not available from this endpoint yet; the totals cover recorded commitments and manual payments only."
+const (
+	bankNoneNote    = "No bank connection exists; the totals cover recorded commitments and manual payments only."
+	bankUnknownNote = "Bank connections could not be read just now, so their data age is unknown."
+)
 
-func toMonthSummaryJSON(s monthview.Summary, now time.Time) monthSummaryJSON {
+// bankNote says what the worst freshness state means for what the view shows.
+var bankNote = map[banking.FreshnessState]string{
+	banking.FreshnessFresh:             "Bank data is current.",
+	banking.FreshnessStale:             "Bank data is stale: the latest successful fetch is older than the staleness limit.",
+	banking.FreshnessNeverRefreshed:    "A bank is connected but no data has been fetched yet.",
+	banking.FreshnessFailed:            "The latest bank fetch failed; the data may be out of date.",
+	banking.FreshnessDisconnected:      "A bank connection is disconnected; its data is not being updated.",
+	banking.FreshnessReconnectRequired: "A bank connection needs a new consent; its data is not being updated.",
+}
+
+func toMonthSummaryJSON(s monthview.Summary, now time.Time, bank monthBankJSON) monthSummaryJSON {
 	out := monthSummaryJSON{Month: s.Month, AsOf: s.AsOf, Items: make([]monthItemJSON, len(s.Rows)), Totals: make([]monthTotalsJSON, len(s.Totals))}
 	for i, r := range s.Rows {
 		out.Items[i] = monthItemJSON{occurrenceJSON: toOccurrenceJSON(r.Occurrence, r.State), CommitmentName: r.CommitmentName}
@@ -128,13 +206,13 @@ func toMonthSummaryJSON(s monthview.Summary, now time.Time) monthSummaryJSON {
 	}
 	out.Freshness.ComputedAt = now.UTC()
 	out.Freshness.OccurrencesChangedAt = s.LatestChange
-	out.Freshness.Bank.Note = bankFreshnessNote
+	out.Freshness.Bank = bank
 	return out
 }
 
 // Occurrences are derived from commitment definitions, so reading them needs
 // the commitments read grant; there is no separate occurrence grant.
-func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, cs commitments.Store, todayFn today, grace payments.GraceFunc, now func() time.Time) {
+func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, cs commitments.Store, todayFn today, grace payments.GraceFunc, now func() time.Time, banks outlook.Banks, bankStaleAfter time.Duration) {
 	if now == nil {
 		now = time.Now
 	}
@@ -215,7 +293,7 @@ func registerOccurrences(s *Server, st occurrences.Reader, pay payments.Store, c
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		WriteJSON(w, http.StatusOK, toMonthSummaryJSON(sum, now()))
+		WriteJSON(w, http.StatusOK, toMonthSummaryJSON(sum, now(), monthBank(r.Context(), banks, now(), bankStaleAfter)))
 	}))
 	s.HandleAPI("GET "+OccurrencesPath+"/{id}", Requires(grantCommitmentsRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		o, err := st.Get(r.Context(), r.PathValue("id"))

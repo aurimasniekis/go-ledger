@@ -35,6 +35,8 @@ export interface MonthBoardProps {
   /** The record-payment form, shown in place under the row with this id (the row that opened it). */
   formFor?: string | null
   form?: ReactNode
+  /** Whether the session may open the bank connections page (connections:read); the link is hidden otherwise. */
+  canViewConnections?: boolean
   /** True while the browser reports no network: recording a payment cannot be saved then. */
   offline?: boolean
   /** The Undo notice, placed right under the month navigation so it reads as part of the page, not of the title. */
@@ -156,9 +158,44 @@ function Freshness(p: MonthBoardProps & { data: MonthSummary }) {
         ) : (
           ''
         )}
-        {data.freshness.bank.available ? '' : 'No bank data connected yet.'}
+        {data.freshness.bank.available ? '' : data.freshness.bank.state === 'unknown' ? 'Bank status could not be read just now, so bank data age is unknown.' : 'No bank data connected yet.'}
       </p>
+      {data.freshness.bank.available && (
+        <BankLine
+          bank={data.freshness.bank}
+          matched={data.items.filter((i) => i.payment.bank_evidence_count > 0).length}
+          canViewConnections={p.canViewConnections ?? false}
+        />
+      )}
     </section>
+  )
+}
+
+const BANK_STATE_COPY: Record<string, string> = {
+  fresh: 'Bank data is current',
+  stale: 'Bank data is stale',
+  never_refreshed: 'A bank is connected but no data has been fetched yet',
+  failed: 'The latest bank fetch failed; bank data may be out of date',
+  disconnected: 'A bank connection is disconnected; its data is not being updated',
+  reconnect_required: 'A bank connection needs a new consent; its data is not being updated',
+  unknown: 'Bank connection status could not be read, so its data age is unknown',
+}
+
+/** The bank half of the freshness: shown only when a connection exists, and never calls a non-fresh state fresh. */
+function BankLine({ bank, matched, canViewConnections }: { bank: MonthSummary['freshness']['bank']; matched: number; canViewConnections: boolean }) {
+  const ok = bank.state === 'fresh'
+  return (
+    <p data-testid="month-bank-line" className={ok ? 'text-muted-foreground' : undefined} role={ok ? undefined : 'status'}>
+      {BANK_STATE_COPY[bank.state] ?? 'Bank data state is unknown'}
+      {bank.last_success_at ? (
+        <>
+          {' '}(last successful fetch{' '}
+          <time dateTime={bank.last_success_at} className="whitespace-nowrap">{utcStamp(bank.last_success_at)}</time>)
+        </>
+      ) : null}
+      . {matched === 0 ? 'No bank transactions matched this month’s commitments.' : `${matched} ${matched === 1 ? 'commitment has' : 'commitments have'} a matched bank payment this month.`}{' '}
+      {canViewConnections && <Link to="/connections" className="underline">Bank connections</Link>}
+    </p>
   )
 }
 
