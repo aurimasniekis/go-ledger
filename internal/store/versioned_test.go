@@ -159,6 +159,7 @@ var unversionedTables = map[string]string{
 	"deferral_plan_events":           "append-only deferral plan history (ADR-0050); triggers refuse updates and deletes, and concurrency is the plan's version",
 	"deferral_plan_adjustments":      "explicit fees and charges on a deferral plan (ADR-0050): rows only gain their removal once and are never deleted; concurrency is the plan's version, which every change increases",
 	"decision_usage":                 "per-task monthly request counts of the decision providers (ADR-0060), written only by the decision service when it counts an attempt; never edited through the API",
+	"decision_suggestion_reversals":  "append-only record that a person took back an auto-applied suggestion (ADR-0065): one row per suggestion, triggers refuse updates and deletes, and the suggestion carries the version",
 	"manual_payment_replacements":    "replacement history of manual payments (ADR-0049): rows only gain their restoration once and are never deleted; concurrency is the match's and the occurrence's version, which every change increases",
 }
 

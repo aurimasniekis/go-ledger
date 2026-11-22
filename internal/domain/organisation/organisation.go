@@ -368,6 +368,9 @@ var (
 	ErrParentArchived = errors.New("the parent category is archived: unarchive it first")
 	// ErrNoAssignment means there is nothing to remove or reset.
 	ErrNoAssignment = errors.New("there is no such assignment")
+	// ErrAssignmentChanged means a conditional reset found the category is no
+	// longer the automatic one it was meant to take back.
+	ErrAssignmentChanged = errors.New("the category is no longer the automatic assignment it was asked to reset")
 	// ErrInheritedAssignment means the assignment a reset would remove is
 	// inherited from the pending transaction this one replaced; reset it there.
 	ErrInheritedAssignment = errors.New("the assignment is inherited from the pending transaction it replaces; reset it there")

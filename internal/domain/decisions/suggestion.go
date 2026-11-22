@@ -2,6 +2,7 @@ package decisions
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"slices"
 	"time"
@@ -79,6 +80,17 @@ type Suggestions interface {
 	// the same task and object superseded, in one transaction.
 	Record(ctx context.Context, s NewSuggestion) (Suggestion, error)
 }
+
+// Errors of suggestion handling (beyond resource.ErrNotFound).
+var (
+	// ErrNotPending means the suggestion was already accepted, rejected or
+	// superseded: a state moves once.
+	ErrNotPending = errors.New("the suggestion is not pending")
+	// ErrNotReversible means the suggestion has nothing to take back: it was
+	// not auto-applied, was already reverted, or the person (or a stronger
+	// origin) has since changed what it applied.
+	ErrNotReversible = errors.New("the suggestion's effect cannot be reverted")
+)
 
 // Consents answers whether consent is recorded for sending data to a
 // provider for a purpose. Consent is exact: a grant for (typesafe,
