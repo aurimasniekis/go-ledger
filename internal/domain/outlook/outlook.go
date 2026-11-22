@@ -223,14 +223,33 @@ type CurrencyLine struct {
 //	    or not the principal is paid. They are not part of StillDue.
 //
 // A plan is not payment and not forgiveness: StillDue keeps counting every
-// deferred amount. When the window is truncated (see [Outlook.Truncated]) an
-// amount deferred from before it into it is counted in DeferredIn only, so
-// DeferredBeyond can then be understated.
+// deferred amount. The principal figures count only occurrences of the
+// window's own months: an amount deferred into the window from before a
+// truncated window (see [Outlook.Truncated]) is not in StillDue, so it is in
+// none of DeferredIn, DeferredBeyond and Total. The identity above therefore
+// holds in a truncated window too and no figure is understated or negative
+// because of it. Fees still planned in the window stay in Adjustments.
+//
+// MissedCount and MissedOutstanding count the active plans of the window's
+// occurrences whose planned date has passed while something planned is still
+// unpaid ([deferrals.Plan.Missed]), and the outstanding principal of those
+// occurrences. A missed plan stays in every other figure as it was.
 type PlannedFigures struct {
-	Total          money.Money
-	DeferredIn     money.Money
-	DeferredBeyond money.Money
-	Adjustments    money.Money
+	Total             money.Money
+	DeferredIn        money.Money
+	DeferredBeyond    money.Money
+	Adjustments       money.Money
+	MissedCount       int
+	MissedOutstanding money.Money
+}
+
+// owedOf is the outstanding principal of a state, zero for an occurrence that
+// fell due before its commitment was recorded.
+func owedOf(st payments.State, zero money.Money) money.Money {
+	if st.Status != payments.StatusPaid && st.Timing == payments.StatusNotRecorded {
+		return zero
+	}
+	return st.Outstanding
 }
 
 // OverdueMonth is the overdue part of one currency that falls in one month.
@@ -293,6 +312,10 @@ type Converted struct {
 	Currency money.Currency
 	StillDue money.Money
 	Overdue  money.Money
+	// PlannedTotal is the per-currency planned total converted with the same
+	// rate and rounding as StillDue; the other planned figures (deferred in,
+	// beyond, fees, missed) stay per currency only.
+	PlannedTotal money.Money
 	// Balance and BalanceLessStillDue are nil when balances are not shown or
 	// no included currency has a balance.
 	Balance             *money.Money
@@ -379,7 +402,7 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 		l := lines[cur]
 		if l == nil {
 			z, _ := money.Zero(cur, scale)
-			l = &CurrencyLine{Currency: cur, StillDue: z, Overdue: z, Upcoming: z, Planned: PlannedFigures{Total: z, DeferredIn: z, DeferredBeyond: z, Adjustments: z}}
+			l = &CurrencyLine{Currency: cur, StillDue: z, Overdue: z, Upcoming: z, Planned: PlannedFigures{Total: z, DeferredIn: z, DeferredBeyond: z, Adjustments: z, MissedOutstanding: z}}
 			lines[cur] = l
 		}
 		return l
@@ -417,6 +440,13 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 					out.NotRecordedCount++
 				}
 				cur := row.Occurrence.Amount.Currency()
+				if row.Deferral != nil && row.Deferral.Active() && row.Deferral.Missed(st, today) {
+					scale := row.Occurrence.Amount.Amount().Scale()
+					zero, _ := money.Zero(cur, scale)
+					l := line(cur, scale)
+					l.Planned.MissedCount++
+					l.Planned.MissedOutstanding, _ = l.Planned.MissedOutstanding.Add(owedOf(st, zero))
+				}
 				for _, e := range row.Evidence {
 					// Evidence in another currency is never counted (D5).
 					if e.Amount.Currency() == cur {
@@ -438,12 +468,22 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 					l.OverdueMonths = append(l.OverdueMonths, OverdueMonth{Month: m, Count: t.OverdueCount, Amount: t.Overdue})
 				}
 				l.UnconvertedEvidence += t.Unconverted
+				// Carried-in amounts of occurrences before the window are not in StillDue: they
+				// are left out of the principal planned figures.
+				outside, _ := money.Zero(t.Currency, t.Outstanding.Amount().Scale())
+				for _, c := range sum.CarriedIn {
+					if c.Occurrence.Month.Compare(from) < 0 && c.Occurrence.Amount.Currency() == t.Currency && c.State.Status != payments.StatusCancelled {
+						outside, _ = outside.Add(owedOf(c.State, outside))
+					}
+				}
+				carried, _ := t.CarriedIn.Sub(outside)
 				l.Planned.Total, _ = l.Planned.Total.Add(t.Planned)
-				// Each month's deferred_out and carried_in cancel inside the window; what is left of
-				// deferred_out is planned after it.
+				l.Planned.Total, _ = l.Planned.Total.Sub(outside)
+				// Each month's deferred_out and in-window carried_in cancel inside the window;
+				// what is left of deferred_out is planned after it.
 				l.Planned.DeferredBeyond, _ = l.Planned.DeferredBeyond.Add(t.DeferredOut)
-				l.Planned.DeferredBeyond, _ = l.Planned.DeferredBeyond.Sub(t.CarriedIn)
-				l.Planned.DeferredIn, _ = l.Planned.DeferredIn.Add(t.CarriedIn)
+				l.Planned.DeferredBeyond, _ = l.Planned.DeferredBeyond.Sub(carried)
+				l.Planned.DeferredIn, _ = l.Planned.DeferredIn.Add(carried)
 				l.Planned.Adjustments, _ = l.Planned.Adjustments.Add(t.Adjustments)
 			}
 			if m, err = m.AddMonths(1); err != nil {
@@ -695,7 +735,7 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 	if err != nil {
 		return Converted{}, fmt.Errorf("outlook: reporting currency: %w", err)
 	}
-	out := Converted{Currency: to, StillDue: zero, Overdue: zero, Included: []RateUse{}, Excluded: []Exclusion{}}
+	out := Converted{Currency: to, StillDue: zero, Overdue: zero, PlannedTotal: zero, Included: []RateUse{}, Excluded: []Exclusion{}}
 	var balance *money.Money
 	parent := ctx
 	if s.ConvertTimeout > 0 {
@@ -704,7 +744,7 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 		defer cancel()
 	}
 	for _, l := range lines {
-		figures := []money.Money{l.StillDue, l.Overdue}
+		figures := []money.Money{l.StillDue, l.Overdue, l.Planned.Total}
 		if balances && l.Balance != nil {
 			figures = append(figures, *l.Balance)
 		}
@@ -759,18 +799,19 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 			continue
 		}
 		out.Included = append(out.Included, use)
-		if len(values) == 3 {
+		if len(values) == 4 {
 			out.BalanceAccounts += l.Accounts
 			out.StaleBalanceAccounts += l.StaleAccounts
 		}
 		out.StillDue, _ = out.StillDue.Add(values[0])
 		out.Overdue, _ = out.Overdue.Add(values[1])
-		if len(values) == 3 {
+		out.PlannedTotal, _ = out.PlannedTotal.Add(values[2])
+		if len(values) == 4 {
 			if balance == nil {
-				v := values[2]
+				v := values[3]
 				balance = &v
 			} else {
-				v, _ := balance.Add(values[2])
+				v, _ := balance.Add(values[3])
 				balance = &v
 			}
 		}

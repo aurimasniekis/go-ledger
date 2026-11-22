@@ -49,7 +49,7 @@ export function PlanDetails({ item, plan, offline, onClose, onChanged }: PlanDet
   const refresh = useRefreshAfterPlanChange()
   // One write at a time, for the fee actions: each says what it is doing while it waits.
   const act = useMutation({
-    mutationFn: ({ run }: { label: string; run: () => Promise<DeferralPlan> }) => run(),
+    mutationFn: ({ run }: { label: string; run: () => Promise<DeferralPlan>; onDone?: () => void; onFailed?: () => void }) => run(),
     onSettled: () => refresh(plan.id),
     onSuccess: (_p, v) => announce(`${v.label}: saved.`),
   })
@@ -75,7 +75,7 @@ export function PlanDetails({ item, plan, offline, onClose, onChanged }: PlanDet
         Plan for {name}
       </h3>
 
-      <Fees plan={plan} offline={offline} busy={busy} run={(label, run) => act.mutate({ label, run })} />
+      <Fees plan={plan} offline={offline} busy={busy} run={(label, run, cb) => act.mutate({ label, run }, { onSuccess: cb?.onDone, onError: cb?.onFailed })} />
 
       {act.isPending && (
         <p role="status">
@@ -128,9 +128,11 @@ export function PlanDetails({ item, plan, offline, onClose, onChanged }: PlanDet
   )
 }
 
-function Fees({ plan, offline, busy, run }: { plan: DeferralPlan; offline?: boolean; busy: boolean; run: (label: string, fn: () => Promise<DeferralPlan>) => void }) {
+function Fees({ plan, offline, busy, run }: { plan: DeferralPlan; offline?: boolean; busy: boolean; run: (label: string, fn: () => Promise<DeferralPlan>, cb?: { onDone?: () => void; onFailed?: () => void }) => void }) {
   const uid = useId()
   const [adding, setAdding] = useState(false)
+  // Counts failed saves of the fee form, so it can move focus back to its input.
+  const [failures, setFailures] = useState(0)
   return (
     <div className="space-y-2" data-testid="plan-fees">
       <h4 className="text-sm font-semibold">Fees and interest on this plan</h4>
@@ -157,11 +159,15 @@ function Fees({ plan, offline, busy, run }: { plan: DeferralPlan; offline?: bool
           idPrefix={uid}
           currency={plan.original_amount.currency}
           busy={busy}
+          failures={failures}
           onCancel={() => setAdding(false)}
-          onAdd={(v) => {
-            run('Recording the fee', () => addAdjustment(plan, { ...v, currency: plan.original_amount.currency }))
-            setAdding(false)
-          }}
+          // The form stays open, with what was typed, until the server has saved the fee.
+          onAdd={(v) =>
+            run('Recording the fee', () => addAdjustment(plan, { ...v, currency: plan.original_amount.currency }), {
+              onDone: () => setAdding(false),
+              onFailed: () => setFailures((n) => n + 1),
+            })
+          }
         />
       ) : (
         <Button variant="outline" size="sm" onClick={() => setAdding(true)} disabled={busy || offline}>
@@ -172,7 +178,7 @@ function Fees({ plan, offline, busy, run }: { plan: DeferralPlan; offline?: bool
   )
 }
 
-const isZero = (a: string) => /^0(\.0*)?$/.test(a)
+const isZero = (a: string) => /^0+(\.0*)?$/.test(a)
 
 function Fee({ a, plan, offline, busy, run }: { a: DeferralAdjustment; plan: DeferralPlan; offline?: boolean; busy: boolean; run: (label: string, fn: () => Promise<DeferralPlan>) => void }) {
   const state = a.removed_at ? 'removed' : a.paid_at ? 'paid' : 'planned'
@@ -220,11 +226,15 @@ function Fee({ a, plan, offline, busy, run }: { a: DeferralAdjustment; plan: Def
   )
 }
 
-function FeeForm({ idPrefix, currency, busy, onAdd, onCancel }: { idPrefix: string; currency: string; busy: boolean; onAdd: (v: { kind: AdjustmentKind; amount: string; note: string | null }) => void; onCancel: () => void }) {
+function FeeForm({ idPrefix, currency, busy, failures, onAdd, onCancel }: { idPrefix: string; currency: string; busy: boolean; failures: number; onAdd: (v: { kind: AdjustmentKind; amount: string; note: string | null }) => void; onCancel: () => void }) {
   const [kind, setKind] = useState<AdjustmentKind>('fee')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const amountInput = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (failures > 0) amountInput.current?.focus()
+  }, [failures])
   return (
     <div role="group" aria-label="Record a fee or interest" className="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-3">
       <label className="grid gap-1 text-sm">
@@ -240,6 +250,7 @@ function FeeForm({ idPrefix, currency, busy, onAdd, onCancel }: { idPrefix: stri
       <label className="grid gap-1 text-sm">
         Amount ({currency})
         <input
+          ref={amountInput}
           inputMode="decimal"
           autoComplete="off"
           className={CONTROL + ' font-mono'}

@@ -44,6 +44,10 @@ export interface OutlookCurrency {
     deferred_beyond: Money
     /** Fees and charges still planned (not removed, not marked paid); not part of still_due. */
     adjustments: Money
+    /** Active plans of the window whose date passed while something planned is unpaid. Absent from older servers. */
+    missed_count?: number
+    /** Outstanding principal of the occurrences behind missed_count. */
+    missed_outstanding?: Money
   }
 }
 
@@ -74,6 +78,8 @@ export interface OutlookConverted {
   complete: boolean
   still_due: Money
   overdue: Money
+  /** The per-currency planned total converted with the same rate as still_due; other planned figures are per currency only. */
+  planned_total?: Money
   balance: Money | null
   balance_less_still_due: Money | null
   balance_account_count: number

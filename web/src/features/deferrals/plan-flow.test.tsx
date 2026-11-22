@@ -24,6 +24,7 @@ beforeEach(() => {
     ['GET ' + MONTH]: () => json(200, month),
     ['POST ' + PLANS]: (r) => routes['POST ' + PLANS]!(r),
     ['POST ' + PLANS + '/p1/undo']: (r) => routes['undo']!(r),
+    ['POST ' + PLANS + '/p1/adjustments']: (r) => routes['addFee']!(r),
     ['POST ' + PLANS + '/p1/adjustments/f1/paid']: (r) => routes['paid']!(r),
     ['GET ' + PLANS + '/p1']: () => json(200, plan({ version: 3 })),
     'GET /api/v1/payment-matches': () => json(200, { items: [], next_cursor: null }),
@@ -187,6 +188,37 @@ describe('Changing and undoing a plan', () => {
     expect(notice).toHaveTextContent('Plan undone')
     expect(notice).toHaveTextContent('Nothing was marked paid')
     expect(screen.queryByTestId('plan-summary')).toBeNull()
+  })
+
+  it('keeps the fee form open with what was typed, and focuses it, when the server refuses; closes it only on success', async () => {
+    withPlan(plan({ version: 3 }))
+    routes['addFee'] = () => json(409, { code: 'version_conflict', message: 'stale', request_id: 'r', reconciliation: { current_version: 4 } })
+    const panel = await manage()
+    await userEvent.click(within(panel).getByRole('button', { name: 'Record a fee or interest' }))
+    const form = within(panel).getByRole('group', { name: 'Record a fee or interest' })
+    await userEvent.type(within(form).getByLabelText(/Amount/), '5.00')
+    await userEvent.type(within(form).getByLabelText(/Note/), 'late charge')
+    await userEvent.click(within(form).getByRole('button', { name: 'Save fee' }))
+    expect(await within(panel).findByText('Not saved')).toBeInTheDocument()
+    const again = within(panel).getByRole('group', { name: 'Record a fee or interest' })
+    expect(within(again).getByLabelText(/Amount/)).toHaveValue('5.00')
+    expect(within(again).getByLabelText(/Note/)).toHaveValue('late charge')
+    await waitFor(() => expect(within(again).getByLabelText(/Amount/)).toHaveFocus())
+    routes['addFee'] = () => json(201, plan({ version: 4 }))
+    await userEvent.click(within(again).getByRole('button', { name: 'Save fee' }))
+    await waitFor(() => expect(within(panel).queryByRole('group', { name: 'Record a fee or interest' })).toBeNull())
+  })
+
+  it('refuses a zero amount written with extra zeros before sending', async () => {
+    withPlan(plan({ version: 3 }))
+    routes['addFee'] = () => json(201, plan({ version: 4 }))
+    const panel = await manage()
+    await userEvent.click(within(panel).getByRole('button', { name: 'Record a fee or interest' }))
+    const form = within(panel).getByRole('group', { name: 'Record a fee or interest' })
+    await userEvent.type(within(form).getByLabelText(/Amount/), '00.00')
+    await userEvent.click(within(form).getByRole('button', { name: 'Save fee' }))
+    expect(await within(form).findByText('Enter a positive amount such as 5.00.')).toBeInTheDocument()
+    expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/adjustments'))).toBe(false)
   })
 
   it('shows the server refusal when undo is refused for a fee, and keeps the plan', async () => {

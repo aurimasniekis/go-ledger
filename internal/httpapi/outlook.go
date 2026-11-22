@@ -69,6 +69,10 @@ type outlookPlannedJSON struct {
 	DeferredIn     money.Money `json:"deferred_in"`
 	DeferredBeyond money.Money `json:"deferred_beyond"`
 	Adjustments    money.Money `json:"adjustments"`
+	// MissedCount and MissedOutstanding: active plans of the window whose date passed while something planned is unpaid,
+	// and the outstanding principal of those occurrences.
+	MissedCount       int         `json:"missed_count"`
+	MissedOutstanding money.Money `json:"missed_outstanding"`
 }
 
 type outlookOverdueMonthJSON struct {
@@ -132,6 +136,7 @@ type outlookConvertedJSON struct {
 	Complete             bool                  `json:"complete"`
 	StillDue             money.Money           `json:"still_due"`
 	Overdue              money.Money           `json:"overdue"`
+	PlannedTotal         money.Money           `json:"planned_total"`
 	Balance              *money.Money          `json:"balance"`
 	BalanceLessStillDue  *money.Money          `json:"balance_less_still_due"`
 	BalanceAccounts      int                   `json:"balance_account_count"`
@@ -203,7 +208,7 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 	out.Window.Through, out.Window.Truncated, out.Window.NotRecordedCount = o.Through, o.Truncated, o.NotRecordedCount
 	for i, l := range o.Currencies {
 		out.Currencies[i] = outlookLineJSON{Currency: l.Currency, StillDue: l.StillDue, Overdue: l.Overdue, Upcoming: l.Upcoming,
-			PlannedOutflows: outlookPlannedJSON{Total: l.Planned.Total, DeferredIn: l.Planned.DeferredIn, DeferredBeyond: l.Planned.DeferredBeyond, Adjustments: l.Planned.Adjustments}, OverdueCount: l.OverdueCount,
+			PlannedOutflows: outlookPlannedJSON{Total: l.Planned.Total, DeferredIn: l.Planned.DeferredIn, DeferredBeyond: l.Planned.DeferredBeyond, Adjustments: l.Planned.Adjustments, MissedCount: l.Planned.MissedCount, MissedOutstanding: l.Planned.MissedOutstanding}, OverdueCount: l.OverdueCount,
 			UnconvertedEvidence: l.UnconvertedEvidence, Balance: l.Balance, BalanceLessStillDue: l.BalanceLessStillDue,
 			AccountCount: l.Accounts, StaleAccountCount: l.StaleAccounts, OldestBalanceObtainedAt: l.OldestBalanceAt,
 			OverdueMonths: make([]outlookOverdueMonthJSON, len(l.OverdueMonths))}
@@ -252,7 +257,7 @@ func toOutlookJSON(o outlook.Outlook, balancesAllowed, balancesAvailable bool, n
 		out.Accounts[i] = aj
 	}
 	if c := o.Converted; c != nil {
-		cj := &outlookConvertedJSON{Currency: c.Currency, Complete: c.Complete(), StillDue: c.StillDue, Overdue: c.Overdue, Balance: c.Balance,
+		cj := &outlookConvertedJSON{Currency: c.Currency, Complete: c.Complete(), StillDue: c.StillDue, Overdue: c.Overdue, PlannedTotal: c.PlannedTotal, Balance: c.Balance,
 			BalanceLessStillDue: c.BalanceLessStillDue, BalanceAccounts: c.BalanceAccounts, StaleBalanceAccounts: c.StaleBalanceAccounts, Included: make([]outlookIncludedJSON, len(c.Included)), Excluded: make([]outlookExcludedJSON, len(c.Excluded))}
 		for i, u := range c.Included {
 			ij := outlookIncludedJSON{Currency: u.Currency, Rate: toOutlookRate(u.Rate), FromCache: u.FromCache, RefreshFailed: u.RefreshFailed}
