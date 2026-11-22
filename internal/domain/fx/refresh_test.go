@@ -251,6 +251,32 @@ func TestRequestNeverOverlapsARunAndCancellationIsNotRecorded(t *testing.T) {
 	}
 }
 
+func TestRequestRecordsASuccessEvenWhenTheCallerLeavesAfterIt(t *testing.T) {
+	e := newJobEnv(t, "USD", "GBP")
+	spy := &meterSpy{}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	e.job.Meter = spy
+	// The caller leaves once the cycle is over: the first clock read after
+	// both provider calls is the run stamping its finish.
+	e.job.Now = func() time.Time {
+		if len(e.prov.Calls()) == 2 {
+			cancel()
+		}
+		return *e.clock
+	}
+	st, err := e.job.Request(ctx)
+	if !errors.Is(err, context.Canceled) || st.Outcome != fx.RunSucceeded || st.Refreshed != 2 {
+		t.Fatalf("run = %+v, %v", st, err)
+	}
+	if last, ok := e.job.Last(); !ok || last != st || !e.job.LastSuccess().Equal(*e.clock) {
+		t.Errorf("status not recorded: %+v, %v", last, ok)
+	}
+	if len(spy.runs) != 1 || spy.runs[0] != "manual/success" {
+		t.Errorf("metered %v", spy.runs)
+	}
+}
+
 func TestRequestTimeoutIsAFailedRun(t *testing.T) {
 	e := newJobEnv(t, "USD")
 	e.prov.Hold()
