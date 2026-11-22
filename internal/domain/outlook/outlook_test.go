@@ -413,6 +413,37 @@ func TestAfterTheDeadlineCachedRatesStillConvert(t *testing.T) {
 	}
 }
 
+// After the deadline a cached rate older than the stale threshold is reported
+// as stale, not as timed out, and is not used.
+func TestAfterTheDeadlineStaleCachedRateIsReportedStale(t *testing.T) {
+	e := newEnv(t)
+	e.seedRate(t, "GBP/USD", "1.2500", "2026-10-04", t0.Add(-40*24*time.Hour))
+	prov := fxtest.NewProvider("frankfurter", "ECB")
+	prov.Hold()
+	svc, err := fx.NewService(e.cache, prov, fx.Options{Now: func() time.Time { return t0 }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := e.service(t, false)
+	s.Rates, s.ConvertTimeout = svc, 100*time.Millisecond
+	o, err := s.Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("USD")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, x := range o.Converted.Excluded {
+		if x.Currency.Code() == "GBP" {
+			found = true
+			if x.Status != fx.StatusStale || x.Reason != string(fx.ReasonNotRetrievedRecently) {
+				t.Errorf("GBP excluded %+v", x)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("GBP not excluded: %+v", o.Converted)
+	}
+}
+
 func TestWithoutARateServiceOnlyTheReportingCurrencyIsCounted(t *testing.T) {
 	e := newEnv(t)
 	o, err := e.service(t, false).Build(context.Background(), outlook.Request{Balances: true, Currency: money.MustParseCurrency("EUR")})

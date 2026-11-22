@@ -160,7 +160,7 @@ func (s *Store) List(ctx context.Context, f fx.ListFilter) ([]fx.Rate, error) {
 		args = append(args, f.Provider)
 	}
 	if f.Source != "" {
-		query += " AND source = ?"
+		query += " AND source = ? COLLATE NOCASE"
 		args = append(args, f.Source)
 	}
 	if !f.Base.IsZero() {

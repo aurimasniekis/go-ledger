@@ -86,6 +86,13 @@ func (j *RefreshJob) Run(ctx context.Context) error {
 	for {
 		j.runMu.Lock()
 		out, _ := j.run(ctx, failures, TriggerScheduled)
+		// A wake token left by a manual success before this run finished
+		// says nothing about the run's own failure: drop it, or it would
+		// cut the backoff short.
+		select {
+		case <-j.wakeCh():
+		default:
+		}
 		j.runMu.Unlock()
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -95,10 +102,20 @@ func (j *RefreshJob) Run(ctx context.Context) error {
 		} else {
 			failures = 0
 		}
+		wait := out.Wait
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-after(out.Wait):
+		case <-after(wait):
+		case <-j.wakeCh():
+			// A manual refresh succeeded meanwhile: forget the failures and
+			// wait a normal interval from now.
+			failures = 0
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-after(j.Interval):
+			}
 		}
 	}
 }

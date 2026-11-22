@@ -73,6 +73,22 @@ CLI, MCP read tool, UI) without making the optional rate provider a dependency.
    `internal/domain/fx` into the adapter package; the domain service no longer normalises, and configuration and wiring
    call the adapter's function.
 
+10. **FX2d follow-ups (the #95 review).** (F1) The manual refresh's audit entry is written with a context the caller
+    cannot cancel, and a refresh the caller cancels mid-run is audited too, with outcome `cancelled` (a new allowed
+    value), so every run that started leaves a `rates.refresh_requested` row. A run that had already succeeded when
+    the caller left keeps its real outcome (`succeeded`); a request refused before a run started (too soon, already
+    running, idle) leaves no row. (F2) A run whose time ran
+    out reports error kind `unavailable` and code `timeout` (the provider did not answer), not `internal`. (Nit)
+    The `source` filter matches case-insensitively (`ecb` finds `ECB`); the other filters stay exact. (Nit) After
+    the outlook's deadline, a cached rate that is too old is reported with its stale reason, not as
+    `conversion_timed_out`. (Nit) The page shows loading and failure states for the status as it does for the list.
+    (Nit) A successful manual refresh ends the scheduled job's failure backoff: its next run is a normal interval away.
+    (Nit, documented rather than changed) `stale` is computed per row by the conversion's own rule, so a historical
+    row (an older rate date of a pair) and a row of a provider that is no longer configured are flagged stale once they
+    pass the threshold, and stay so. That is accurate for them: conversion never uses a stale rate, and the list shows
+    what is cached, not what is current. Reading it as "the pair needs a refresh" would be wrong; use the newest row
+    of a pair for that.
+
 ## Consequences
 
 - No migration. New: `internal/domain/fx/list.go` and `refresh_status.go`, `internal/httpapi/rates.go`,

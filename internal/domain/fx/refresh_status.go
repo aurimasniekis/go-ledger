@@ -38,8 +38,8 @@ type RunStatus struct {
 	// ErrorKind and ErrorCode classify the first failure: a provider
 	// [ErrorKind] ("unavailable", "rate_limited", "permanent"), or "internal"
 	// for Ledger's own failures (the currencies could not be listed); the
-	// code is the provider's short code, or "timeout" when the run's time
-	// ran out. Both are empty on success.
+	// code is the provider's short code. A run whose time ran out is
+	// "unavailable" with code "timeout". Both are empty on success.
 	ErrorKind string
 	ErrorCode string
 }
@@ -71,6 +71,17 @@ type runState struct {
 	last        *RunStatus
 	lastSuccess time.Time
 	lastManual  time.Time
+	wake        chan struct{} // a manual success tells the scheduled loop to drop its backoff
+}
+
+// wakeCh returns the channel a successful manual refresh signals.
+func (j *RefreshJob) wakeCh() chan struct{} {
+	j.st.mu.Lock()
+	defer j.st.mu.Unlock()
+	if j.st.wake == nil {
+		j.st.wake = make(chan struct{}, 1)
+	}
+	return j.st.wake
 }
 
 func (j *RefreshJob) now() time.Time {
@@ -122,6 +133,11 @@ func (j *RefreshJob) run(ctx context.Context, failures int, trigger string) (Out
 				st.ErrorCode = string(pe.Kind)
 			}
 		case errors.Is(out.Err, context.DeadlineExceeded):
+			// The run's time ran out: the provider did not answer in time,
+			// which is "unavailable", not a Ledger failure.
+			st.ErrorKind, st.ErrorCode = string(KindUnavailable), "timeout"
+		}
+		if pe != nil && pe.Kind == KindUnavailable && pe.Code == "" && errors.Is(out.Err, context.DeadlineExceeded) {
 			st.ErrorCode = "timeout"
 		}
 	}
@@ -173,6 +189,14 @@ func (j *RefreshJob) Request(ctx context.Context) (RunStatus, error) {
 		return RunStatus{}, &TooSoonError{RetryAfter: gap - since}
 	}
 	_, st := j.run(ctx, 0, TriggerManual)
+	if st.Outcome == RunSucceeded && ctx.Err() == nil {
+		// Every currency is fresh: the scheduled loop's failure backoff no
+		// longer applies.
+		select {
+		case j.wakeCh() <- struct{}{}:
+		default:
+		}
+	}
 	if err := ctx.Err(); errors.Is(err, context.Canceled) {
 		return st, err
 	}
