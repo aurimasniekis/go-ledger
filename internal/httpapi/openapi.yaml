@@ -3110,6 +3110,38 @@ paths:
                 $ref: "#/components/schemas/PaymentMatchingRun"
         default:
           $ref: "#/components/responses/Error"
+  /merchants/sources:
+    get:
+      operationId: listMerchantSources
+      x-ledger-access: merchants:read
+      summary: The merchant-identification sources
+      description: |
+        Which sources identify merchants (task E2, ADR-0054; decision D15):
+        the built-in curated mapping and the reuse of the person's confirmed
+        mappings as suggestions, both local and always on, and a remote
+        source that is off unless the operator enabled it. For each: whether
+        it is on, what leaves the machine for a lookup (nothing for a local
+        source), the attribution its licence requires next to identities it
+        provided, whether its logo references are kept and how long its
+        answers are kept. Show the attribution wherever an identity from that
+        source (enrichment.source) is shown. Administrators only.
+      tags: [merchants]
+      responses:
+        "200":
+          description: The sources.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MerchantSource"
+        default:
+          $ref: "#/components/responses/Error"
   /transactions/{id}/merchant:
     parameters:
       - name: id
@@ -6102,6 +6134,36 @@ components:
             is still that person's.
           type: [string, "null"]
           enum: [session, token, mcp, system, null]
+    MerchantSource:
+      type: object
+      additionalProperties: false
+      required: [name, kind, enabled, description, sends_off_machine, attribution, stores_logo_ref, retention_hours]
+      description: One merchant-identification source (task E2, ADR-0054).
+      properties:
+        name:
+          type: string
+          description: The token stored as enrichment.source for this source's answers (curated, local_mapping, remote).
+        kind:
+          type: string
+          enum: [local, remote]
+        enabled:
+          type: boolean
+        description:
+          type: string
+        sends_off_machine:
+          type: array
+          description: What leaves the machine for one lookup; empty for a local source.
+          items:
+            type: string
+        attribution:
+          type: [string, "null"]
+          description: Text the source's licence requires next to identities it provided, or null.
+        stores_logo_ref:
+          type: boolean
+          description: Whether the logo references the source returns are kept. Ledger never downloads or copies a logo.
+        retention_hours:
+          type: [integer, "null"]
+          description: How long the source's answers are kept; null means until replaced. A person's decisions are never deleted.
     Merchant:
       type: object
       description: |
