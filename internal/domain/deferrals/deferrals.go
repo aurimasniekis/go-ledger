@@ -195,12 +195,13 @@ func (p Plan) HasUnpaidAdjustments() bool {
 	return slices.ContainsFunc(p.Adjustments, Adjustment.Planned)
 }
 
-// Missed reports whether the plan's date has passed while the occurrence, in
-// payment state st, still owes something: the person planned to pay by
-// PlannedDate and has not. It is derived when read (from the plan and the
+// Missed reports whether the plan's date has passed while something planned
+// is still unpaid ([Plan.MissedReason] says which: the occurrence's principal,
+// or a recorded fee): the person planned to pay by PlannedDate and has not. It is derived when read (from the plan and the
 // occurrence's evidence) and never stored, and it is not payment state: it
-// clears when the occurrence is paid, when the plan is revised to a later date
-// and when the plan is undone. A plan whose date is today is not missed yet.
+// clears when nothing planned is unpaid any more (the occurrence is paid and
+// every fee is paid or removed), when the plan is revised to a later date and
+// when the plan is undone. A plan whose date is today is not missed yet.
 func (p Plan) Missed(st payments.State, today calendar.Date) bool {
 	return p.MissedReason(st, today) != ""
 }

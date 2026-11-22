@@ -164,7 +164,7 @@ func RegisterAPI(s *Server, d Deps) {
 	registerMatching(s, d.Matching)
 	registerRates(s, d.RateCache, d.Now)
 	registerOutlook(s, outlook.Service{
-		Months:      monthview.Service{Occurrences: d.Occurrences, Payments: d.Payments, Grace: d.Grace},
+		Months:      monthview.Service{Occurrences: d.Occurrences, Payments: d.Payments, Grace: d.Grace, Deferrals: plans},
 		Commitments: d.Commitments, Banks: d.Banks, Rates: d.Rates, ConvertTimeout: d.ConvertTimeout, Today: todayFn, Now: d.Now, BankStaleAfter: d.BankStaleAfter, Zone: d.Zone,
 	}, d.ReportingCurrency, d.Now)
 	registerMCP(s, d.MCP)

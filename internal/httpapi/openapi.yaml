@@ -5677,7 +5677,7 @@ components:
       type: object
       description: The comparison in one currency. Nothing in it is converted.
       additionalProperties: false
-      required: [currency, still_due, overdue, upcoming, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at, overdue_months, balance_as_of, payments_after_balance]
+      required: [currency, still_due, overdue, upcoming, planned_outflows, overdue_count, unconverted_evidence_count, balance, balance_less_still_due, account_count, stale_account_count, oldest_balance_obtained_at, overdue_months, balance_as_of, payments_after_balance]
       properties:
         currency:
           $ref: "#/components/schemas/Currency"
@@ -5687,6 +5687,26 @@ components:
           $ref: "#/components/schemas/Money"
         upcoming:
           $ref: "#/components/schemas/Money"
+        planned_outflows:
+          type: object
+          description: |
+            The window with each outstanding amount placed in the month it is planned to be paid (deferral plans, ADR-0050, D-DF 8):
+            total = still_due - deferred_beyond + adjustments. A plan is not payment and not forgiveness: still_due, overdue and
+            upcoming are unchanged by plans. Nothing here is converted.
+          additionalProperties: false
+          required: [total, deferred_in, deferred_beyond, adjustments]
+          properties:
+            total:
+              $ref: "#/components/schemas/Money"
+            deferred_in:
+              description: The outstanding amount of occurrences planned into a later month of the window than their own, shown apart; part of still_due (and overdue past the due date) as before, and of total.
+              $ref: "#/components/schemas/Money"
+            deferred_beyond:
+              description: The part of still_due whose active plan falls in a month after the window; owed, not planned inside it. Can be understated when the window is truncated.
+              $ref: "#/components/schemas/Money"
+            adjustments:
+              description: Recorded fees, interest and other charges of active plans still planned (neither removed nor marked paid); not part of still_due.
+              $ref: "#/components/schemas/Money"
         overdue_count:
           type: integer
         unconverted_evidence_count:
