@@ -696,6 +696,24 @@ describe('ambiguity and reasons in plain words', () => {
     }
   })
 
+  it('shows the short transaction id in mono with the full id on hover, and says the bank reported separate transactions', async () => {
+    const base = match('a').transaction
+    const longId = 'bank-tx-0000111122223333'
+    const other = 'bank-tx-0000111144445555'
+    store = [match('a', { transaction_id: longId, transaction: { ...base, id: longId } }), match('b', { occurrence_id: 'occ-a', transaction_id: other, transaction: { ...base, id: other } })]
+    start()
+    const [a, b] = await screen.findAllByRole('article', { name: 'Rent' })
+    const refA = within(a!).getByTestId('bank-ref')
+    const refB = within(b!).getByTestId('bank-ref')
+    expect(refA).toHaveTextContent('…22223333')
+    expect(refB).toHaveTextContent('…44445555')
+    expect(refA).toHaveClass('font-mono')
+    expect(refA).toHaveAttribute('title', longId)
+    expect(refB).toHaveAttribute('title', other)
+    expect(within(a!).getByTestId('competing')).toHaveTextContent('The bank reported these as separate transactions')
+    expect(a).not.toHaveTextContent('same text')
+  })
+
   it('does not call a single suggestion ambiguous', async () => {
     start()
     await screen.findByRole('article', { name: 'Rent' })
