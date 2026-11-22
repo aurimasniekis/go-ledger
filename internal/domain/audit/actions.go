@@ -69,7 +69,8 @@ const (
 	// Details: via; origin (user or decision) when created; fields when
 	// updated; for a merge, merged_from (the merchant merged away) and the
 	// counts of aliases, decisions, enrichments, categories and labels moved,
-	// of assignments kept and of automatic assignments replaced. Never a name or an alias: they derive from bank text.
+	// of assignments kept and of automatic assignments replaced. Never a name
+	// or an alias: they derive from bank text.
 	MerchantCreated      Action = "merchant.created"
 	MerchantUpdated      Action = "merchant.updated"
 	MerchantArchived     Action = "merchant.archived"
