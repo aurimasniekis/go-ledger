@@ -82,7 +82,9 @@ export function RatesPage() {
       <p className="rounded-md border border-border bg-surface p-3 text-sm">
         These are the published reference rates Ledger converts with in the outlook's secondary totals. They are not what a bank or card would charge, and each shows the day it is for and when Ledger last retrieved it.
       </p>
-      {status.data && <StatusPanel s={status.data} />}
+      <QueryState query={status} label="the rate provider status">
+        {(s) => <StatusPanel s={s} />}
+      </QueryState>
       <QueryState query={list} label="exchange rates">
         {(rates) =>
           rates.length === 0 ? (

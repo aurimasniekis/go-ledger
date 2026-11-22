@@ -257,7 +257,7 @@ func TestRequestTimeoutIsAFailedRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	st, err := e.job.Request(ctx)
-	if err != nil || st.Outcome != fx.RunFailed || st.ErrorCode != "timeout" {
+	if err != nil || st.Outcome != fx.RunFailed || st.ErrorCode != "timeout" || st.ErrorKind != "unavailable" {
 		t.Fatalf("run = %+v, %v", st, err)
 	}
 }
@@ -295,5 +295,33 @@ func TestStaleReasonFollowsD11(t *testing.T) {
 	}
 	if svc.HasProvider() || svc.Freshness() != fx.DefaultFreshness {
 		t.Error("provider or freshness")
+	}
+}
+
+// A manual refresh that succeeds ends the scheduled loop's failure backoff:
+// the loop waits a normal interval instead of its shortened retry.
+func TestSuccessfulManualRefreshResetsTheScheduledBackoff(t *testing.T) {
+	e := newJobEnv(t, "USD")
+	e.prov.SetDown(&fx.ProviderError{Kind: fx.KindUnavailable, Provider: "p", Op: "latest"})
+	ticks := make(chan time.Time)
+	waits := make(chan time.Duration, 8)
+	e.job.After = func(d time.Duration) <-chan time.Time { waits <- d; return ticks }
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- e.job.Run(ctx) }()
+	if d := <-waits; d != fx.FirstBackoff {
+		t.Fatalf("wait after a failure = %v, want %v", d, fx.FirstBackoff)
+	}
+	*e.clock = e.clock.Add(time.Hour) // past the provider's failure pause
+	e.prov.SetDown(nil)
+	if st, err := e.job.Request(t.Context()); err != nil || st.Outcome != fx.RunSucceeded {
+		t.Fatalf("manual refresh = %+v, %v", st, err)
+	}
+	if d := <-waits; d != 24*time.Hour {
+		t.Errorf("wait after a manual success = %v, want the interval", d)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("Run = %v", err)
 	}
 }

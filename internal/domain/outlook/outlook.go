@@ -689,7 +689,9 @@ func (s Service) convert(ctx context.Context, to money.Currency, lines []Currenc
 			// converts (its age and staleness are judged as usual). Only a
 			// currency with no usable cached rate is excluded as timed out.
 			if cc, ok := s.Rates.(CachedConverter); ok {
-				if cached, cerr := cc.ConvertCached(parent, figures[0], to); cerr == nil && cached.Acceptable() {
+				if cached, cerr := cc.ConvertCached(parent, figures[0], to); cerr == nil && (cached.Acceptable() || (cached.Status == fx.StatusStale && cached.Rate != nil)) {
+					// A stale cached rate is reported as stale (below), not
+					// as a timeout: the rate exists, it is just too old.
 					c, err, timedOut = cached, nil, false
 				}
 			}

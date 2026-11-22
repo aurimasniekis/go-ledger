@@ -95,10 +95,20 @@ func (j *RefreshJob) Run(ctx context.Context) error {
 		} else {
 			failures = 0
 		}
+		wait := out.Wait
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-after(out.Wait):
+		case <-after(wait):
+		case <-j.wakeCh():
+			// A manual refresh succeeded meanwhile: forget the failures and
+			// wait a normal interval from now.
+			failures = 0
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-after(j.Interval):
+			}
 		}
 	}
 }

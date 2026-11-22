@@ -108,7 +108,7 @@ func TestRatesAPIListStatusAndRefresh(t *testing.T) {
 	}
 
 	// Filters and paging.
-	for q, n := range map[string]int{"base=USD": 1, "quote=EUR": 2, "quote=USD": 0, "provider=frankfurter&source=ECB": 2, "source=blended": 0,
+	for q, n := range map[string]int{"base=USD": 1, "quote=EUR": 2, "quote=USD": 0, "provider=frankfurter&source=ECB": 2, "source=blended": 0, "source=ecb": 2,
 		"date[gte]=2026-11-21": 0, "date[lte]=2026-11-20&date[gte]=2026-11-20": 2} {
 		code, body, _ = reader.do("GET", "/api/v1/rates?"+q, "")
 		if code != 200 || len(asList(t, body["items"])) != n {

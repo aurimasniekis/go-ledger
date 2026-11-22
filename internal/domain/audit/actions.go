@@ -191,7 +191,7 @@ var Definitions = map[Action][]Field{
 	BankRefreshRequested:           {f("provider"), f("application"), f("outcome", refreshOutcomes...)},
 	BankSessionEndFailed:           {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled")},
 	PaymentMatchingRun:             {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
-	RatesRefreshRequested:          {f("outcome", "succeeded", "partial", "failed"), f("refreshed"), f("error_kind", "unavailable", "rate_limited", "permanent", "internal"), f("error_code")},
+	RatesRefreshRequested:          {f("outcome", "succeeded", "partial", "failed", "cancelled"), f("refreshed"), f("error_kind", "unavailable", "rate_limited", "permanent", "internal"), f("error_code")},
 }
 
 // SignIn returns a sign-in event. An actor of kind anonymous means no account

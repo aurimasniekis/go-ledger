@@ -219,6 +219,24 @@ func registerRates(s *Server, d *RatesDeps, now func() time.Time) {
 		WriteError(w, r, Unavailable("exchange rates are not available", nil))
 	}
 
+	// recordRefresh audits an accepted manual refresh. It uses a context the
+	// caller cannot cancel: a client that went away must not erase the record
+	// of a run that already asked the provider.
+	recordRefresh := func(r *http.Request, run fx.RunStatus, outcome string) error {
+		if d.Audit == nil {
+			return nil
+		}
+		if outcome == "" {
+			outcome = run.Outcome
+		}
+		details := map[string]string{"outcome": outcome, "refreshed": strconv.Itoa(run.Refreshed)}
+		if run.ErrorKind != "" {
+			details["error_kind"], details["error_code"] = run.ErrorKind, run.ErrorCode
+		}
+		ev := audit.Event{Action: audit.RatesRefreshRequested, Actor: actor(r), TargetType: "rates", TargetID: "refresh", At: now().UTC(), Details: details}
+		return d.Audit.Record(context.WithoutCancel(r.Context()), ev)
+	}
+
 	// Listing reads the cache only; it never calls the provider. Rates come
 	// grouped by provider, source and pair, newest rate date first.
 	s.HandleAPI("GET "+RatesPath, Requires(grantRatesRead), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -344,20 +362,18 @@ func registerRates(s *Server, d *RatesDeps, now func() time.Time) {
 			WriteError(w, r, &Error{Status: http.StatusConflict, Code: CodeRatesRefreshUnavailable,
 				Message: "no exchange-rate refresh can run: set rates.enabled and a reporting currency (reporting.currency)", Cause: err})
 			return
+		case errors.Is(err, context.Canceled):
+			// The caller went away mid-run. The run asked the provider, so it
+			// is audited all the same (ADR-0048 point 3).
+			WriteError(w, r, Internal(errors.Join(err, recordRefresh(r, run, "cancelled"))))
+			return
 		case err != nil:
 			WriteError(w, r, Internal(err))
 			return
 		}
-		if d.Audit != nil {
-			details := map[string]string{"outcome": run.Outcome, "refreshed": strconv.Itoa(run.Refreshed)}
-			if run.ErrorKind != "" {
-				details["error_kind"], details["error_code"] = run.ErrorKind, run.ErrorCode
-			}
-			ev := audit.Event{Action: audit.RatesRefreshRequested, Actor: actor(r), TargetType: "rates", TargetID: "refresh", At: now().UTC(), Details: details}
-			if err := d.Audit.Record(r.Context(), ev); err != nil {
-				WriteError(w, r, Internal(err))
-				return
-			}
+		if err := recordRefresh(r, run, ""); err != nil {
+			WriteError(w, r, Internal(err))
+			return
 		}
 		WriteJSON(w, http.StatusOK, toRateRunJSON(run))
 	}))

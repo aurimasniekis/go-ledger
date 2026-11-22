@@ -106,4 +106,22 @@ describe('rates page', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Exchange rates' }))
     expect(await screen.findByRole('heading', { name: 'Exchange rates' })).toBeInTheDocument()
   })
+
+  it('says when the status could not be loaded instead of showing nothing, while the rates still show', async () => {
+    installApi({
+      ...signedIn(),
+      'GET /api/v1/rates/status': fail(400, 'validation_failed', 'boom'),
+      'GET /api/v1/rates': ok({ items: [rate()], next_cursor: null }),
+    })
+    renderApp('/rates')
+    expect(await screen.findByText(/Could not load the rate provider status/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+    expect(await screen.findByRole('table', { name: /Cached exchange rates/ })).toBeInTheDocument()
+  })
+
+  it('shows a loading state for the status while it loads', async () => {
+    installApi({ ...signedIn(), 'GET /api/v1/rates/status': () => new Promise(() => {}), 'GET /api/v1/rates': ok({ items: [rate()], next_cursor: null }) })
+    renderApp('/rates')
+    expect(await screen.findByText(/Loading the rate provider status/)).toBeInTheDocument()
+  })
 })
