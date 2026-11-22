@@ -10,7 +10,7 @@ import { formatAmount, isIsoDate } from '@/lib/format'
 import { money } from './month-board'
 import { ReplacedRecords } from './replaced-records'
 import { isZeroAmount, monthLabel } from './month'
-import { deletePayment, monthKey, recordPayment } from './api'
+import { deletePayment, manualPaymentsKey, monthKey, recordPayment } from './api'
 import type { ManualPayment, MonthItem } from './types'
 
 
@@ -223,7 +223,11 @@ export function UndoNotice({ payment, item, month, shownMonth, onDone }: UndoNot
   const undo = useMutation({
     mutationFn: () => deletePayment(payment),
     // Undo acts on the month the payment was recorded in, not the one on screen.
-    onSettled: () => qc.invalidateQueries({ queryKey: monthKey(month) }),
+    onSettled: () => Promise.all([
+      qc.invalidateQueries({ queryKey: monthKey(month) }),
+      // The occurrence's record list may show the deleted record: a match card reads it to say what counts again (X5k).
+      qc.invalidateQueries({ queryKey: manualPaymentsKey(payment.occurrence_id) }),
+    ]),
   })
   const name = item.commitment_name || item.commitment_id
   // Keyboard focus follows the change: to this notice when it appears and again
