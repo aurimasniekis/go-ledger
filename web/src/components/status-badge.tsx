@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   Ban,
   BadgeCheck,
+  CalendarX2,
   CircleHelp,
   CloudOff,
   KeyRound,
@@ -84,6 +85,9 @@ export const DATA_STATES = {
   // user to approve access again and retrying cannot help (strong); temporary can be retried and the consent is fine (default).
   reconnect: { label: 'Reconnect needed', Icon: Link2Off, tier: 'strong', color: 'error' },
   temporary: { label: 'Temporary problem', Icon: CloudOff, tier: 'default', color: 'stale' },
+  // A deferral plan whose planned date has passed while something planned is still unpaid. A prompt to plan again, not an
+  // overdue or error look: the amount's own status badge says whether it is overdue.
+  plan_missed: { label: 'Plan date passed', Icon: CalendarX2, tier: 'default', color: 'stale' },
   never_fetched: { label: 'Not fetched yet', Icon: CircleHelp, tier: 'quiet', color: 'stale' },
   awaiting: { label: 'Waiting for the bank', Icon: KeyRound, tier: 'default', color: 'stale' },
   // Up to date is a settled, neutral note: it takes no status hue, so a green tick never reads as "paid".

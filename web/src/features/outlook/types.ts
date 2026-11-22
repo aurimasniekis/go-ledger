@@ -32,6 +32,19 @@ export interface OutlookCurrency {
   balance_as_of: string | null
   /** Payments dated strictly after balance_as_of: a caveat, never netted into the balance. Null without a balance. */
   payments_after_balance: { count: number; amount: Money } | null
+  /**
+   * The window with each outstanding amount placed in the month it is planned to be paid (deferral plans): total =
+   * still_due − deferred_beyond + adjustments. A plan never changes still_due, overdue or upcoming. Absent from older servers.
+   */
+  planned_outflows?: {
+    total: Money
+    /** Part of still_due planned into a later month of the window than its own. */
+    deferred_in: Money
+    /** Part of still_due planned after the window. */
+    deferred_beyond: Money
+    /** Fees and charges still planned (not removed, not marked paid); not part of still_due. */
+    adjustments: Money
+  }
 }
 
 export type FreshnessState = 'fresh' | 'stale' | 'failed' | 'reconnect_required' | 'disconnected' | 'never_refreshed'

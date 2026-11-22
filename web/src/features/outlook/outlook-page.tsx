@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -155,7 +155,7 @@ export function OutlookPage({ through, currency }: { through?: string; currency?
               No commitment is still due in this window{q.data.balances.shown ? ' and no bank balance is counted' : ''}. Add commitments, or <Link to="/connections" className="underline">connect a bank on the Connections page</Link>, to see the outlook.
             </EmptyState>
           ) : (
-            <Currencies lines={q.data.currencies} accounts={q.data.accounts} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} />
+            <Currencies lines={q.data.currencies} accounts={q.data.accounts} balancesShown={q.data.balances.shown} staleAfter={q.data.balances.stale_after_seconds} through={q.data.window.through} />
           )}
           {q.data.converted && (
             <Converted
@@ -226,7 +226,7 @@ function Freshness(p: {
   )
 }
 
-function Currencies({ lines, accounts, balancesShown, staleAfter }: { lines: OutlookCurrency[]; accounts: OutlookAccount[]; balancesShown: boolean; staleAfter: number | null }) {
+function Currencies({ lines, accounts, balancesShown, staleAfter, through }: { lines: OutlookCurrency[]; accounts: OutlookAccount[]; balancesShown: boolean; staleAfter: number | null; through: string }) {
   return (
     <section aria-labelledby="outlook-currencies" className="space-y-2">
       <h2 id="outlook-currencies" className="font-semibold">
@@ -278,6 +278,7 @@ function Currencies({ lines, accounts, balancesShown, staleAfter }: { lines: Out
                   <dd className={AMOUNT}>{money(l.balance_less_still_due)}</dd>
                 </>
               )}
+              {l.planned_outflows && <PlannedOutflows p={l.planned_outflows} through={through} />}
             </dl>
             {l.overdue_months.length > 0 && (
               <div className="mt-1 text-xs">
@@ -308,6 +309,42 @@ function Currencies({ lines, accounts, balancesShown, staleAfter }: { lines: Out
         ))}
       </ul>
     </section>
+  )
+}
+
+/**
+ * The window with each amount placed in the month it is planned to be paid (deferral plans, D-DF 8). It sits beside the
+ * obligation rows and never replaces them: a plan changes when an amount is planned, not whether it is still owed.
+ * Each row names what it is, so deferred and fee amounts are told apart by their words, not by colour.
+ */
+function PlannedOutflows({ p, through }: { p: NonNullable<OutlookCurrency['planned_outflows']>; through: string }) {
+  const rows: [string, string, Money][] = []
+  if (!isZeroAmount(p.deferred_in.amount)) rows.push(['deferred-in', 'of which deferred in: still due, planned in a later month than its own', p.deferred_in])
+  if (!isZeroAmount(p.adjustments.amount)) rows.push(['fees', 'of which fees and charges still planned (not part of "still due")', p.adjustments])
+  return (
+    <>
+      <dt className="mt-1 border-t border-border pt-1 font-semibold sm:col-span-2" data-testid="outlook-planned-heading">
+        Planned outflows
+      </dt>
+      <dt>Planned to be paid through {monthLabel(through)}</dt>
+      <dd data-testid="outlook-planned-total" className={AMOUNT}>
+        {money(p.total)}
+      </dd>
+      {rows.map(([key, label, m]) => (
+        <Fragment key={key}>
+          <dt className="pl-3" data-testid={'outlook-planned-' + key}>
+            {label}
+          </dt>
+          <dd className={AMOUNT}>{money(m)}</dd>
+        </Fragment>
+      ))}
+      {!isZeroAmount(p.deferred_beyond.amount) && (
+        <>
+          <dt data-testid="outlook-planned-beyond">Still due but planned after {monthLabel(through)} (deferred beyond this view)</dt>
+          <dd className={AMOUNT}>{money(p.deferred_beyond)}</dd>
+        </>
+      )}
+    </>
   )
 }
 

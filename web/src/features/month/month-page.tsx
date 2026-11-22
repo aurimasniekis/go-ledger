@@ -11,6 +11,9 @@ import { useOnline } from '@/lib/connection'
 import { MonthBoard, OFFLINE_NOTE_ID } from './month-board'
 import { PaymentPanel, UndoNotice } from './payment-panel'
 import type { ManualPayment, MonthItem } from './types'
+import { PlanDetails, type PlanChange } from '@/features/deferrals/plan-details'
+import { PlanForm } from '@/features/deferrals/plan-form'
+import { PlanNotice } from '@/features/deferrals/plan-notice'
 
 /** The /month screen. Its one primary action is "Record a payment". */
 export function MonthPage({ month }: { month: string }) {
@@ -28,6 +31,9 @@ export function MonthPage({ month }: { month: string }) {
   // The notice belongs to the month the payment was recorded in, so Undo still refreshes that month after the user moves on.
   // It has no timeout (D37): it stays until dismissed or replaced by the next payment.
   const [saved, setSaved] = useState<{ payment: ManualPayment; item: MonthItem; month: string } | null>(null)
+  // The occurrence whose plan form or plan details are open in place under its row, and the last plan change (its notice).
+  const [planOpen, setPlanOpen] = useState<MonthItem | null>(null)
+  const [planChange, setPlanChange] = useState<PlanChange | null>(null)
   const headerButton = useRef<HTMLButtonElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
   // Give focus back to what opened the form, or to the primary button when that is gone; when nothing
@@ -35,8 +41,16 @@ export function MonthPage({ month }: { month: string }) {
   const focus = useFocusRestore(() => [headerButton.current, headingRef.current])
   const openPanel = (item: MonthItem | null, inPlace: boolean) => {
     focus.remember()
+    setPlanOpen(null)
     setPanel(item ? { item, inPlace } : null)
   }
+  const openPlan = (item: MonthItem) => {
+    focus.remember()
+    setPanel(null)
+    setPlanOpen(item)
+  }
+  // The row as the server last sent it (own or carried in), so a plan's version is never an old one.
+  const planItem = planOpen ? ([...(q.data?.items ?? []), ...(q.data?.carried_in ?? [])].find((i) => i.id === planOpen.id) ?? planOpen) : null
   // Moving to another month is announced (focus stays on the Previous/Next button the user pressed).
   const announce = useAnnounce()
   const shown = useRef(month)
@@ -71,10 +85,54 @@ export function MonthPage({ month }: { month: string }) {
         offline={!online}
         canViewConnections={holds(me.data?.grants, 'connections:read')}
         waiting={waiting}
-        notice={saved && <UndoNotice key={saved.payment.id} {...saved} shownMonth={month} onDone={() => {
-          setSaved(null)
-          focus.restore()
-        }} />}
+        notice={
+          <>
+            {saved && <UndoNotice key={saved.payment.id} {...saved} shownMonth={month} onDone={() => {
+              setSaved(null)
+              focus.restore()
+            }} />}
+            {planChange && <PlanNotice key={planChange.plan.id + ':' + planChange.plan.version + planChange.kind} change={planChange} onDone={() => {
+              setPlanChange(null)
+              focus.restore()
+            }} />}
+          </>
+        }
+        onPlan={openPlan}
+        planFor={planItem?.id ?? null}
+        planPanel={
+          planItem && q.data ? (
+            planItem.deferral ? (
+              <PlanDetails
+                key={planItem.id}
+                item={planItem}
+                plan={planItem.deferral}
+                offline={!online}
+                onClose={() => {
+                  setPlanOpen(null)
+                  focus.restore()
+                }}
+                onChanged={(c) => {
+                  setPlanOpen(null)
+                  setPlanChange(c)
+                }}
+              />
+            ) : (
+              <PlanForm
+                key={planItem.id}
+                item={planItem}
+                offline={!online}
+                onClose={() => {
+                  setPlanOpen(null)
+                  focus.restore()
+                }}
+                onSaved={(plan, kind) => {
+                  setPlanOpen(null)
+                  setPlanChange({ kind, plan, item: planItem })
+                }}
+              />
+            )
+          ) : null
+        }
         month={month}
         status={q.status}
         data={q.data}
@@ -85,6 +143,7 @@ export function MonthPage({ month }: { month: string }) {
         titleRef={headingRef}
         onMonthChange={(m) => {
           setPanel(null)
+          setPlanOpen(null)
           void navigate({ to: '/month', search: { month: m } })
         }}
         onRetry={() => void q.refetch()}

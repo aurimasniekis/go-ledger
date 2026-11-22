@@ -703,8 +703,8 @@ type DeferralPlan struct {
 	GraceUntil             *string `json:"grace_until"`
 	WithinGrace            bool    `json:"within_grace"`
 	// Missed is true while the plan is active, its planned date has passed
-	// and the occurrence still owes something. Derived on every read, never
-	// stored and not payment state.
+	// and something planned is still unpaid: the principal or a recorded fee.
+	// Derived on every read, never stored and not payment state.
 	Missed bool `json:"missed"`
 	// MissedReason is "principal" or "fee" while Missed, otherwise nil.
 	MissedReason *string `json:"missed_reason"`

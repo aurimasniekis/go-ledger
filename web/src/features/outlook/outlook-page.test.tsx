@@ -78,6 +78,33 @@ describe('Outlook page', () => {
     expect(calls.find((c) => c.path === PATH)!.query.toString()).toBe('')
   })
 
+  it('shows planned outflows beside, never instead of, what is still due: deferred in, deferred beyond and fees in words', async () => {
+    const base = outlook()
+    const withPlans = outlook({
+      currencies: [
+        { ...base.currencies[0]!, planned_outflows: { total: eur('205.00'), deferred_in: eur('100.00'), deferred_beyond: eur('60.00'), adjustments: eur('5.00') } },
+        { ...base.currencies[1]!, planned_outflows: { total: gbp('7.50'), deferred_in: gbp('0.00'), deferred_beyond: gbp('0.00'), adjustments: gbp('0.00') } },
+      ],
+    })
+    responder = () => ({ status: 200, json: withPlans })
+    renderApp('/outlook')
+    const e = within(await screen.findByTestId('outlook-EUR'))
+    // The obligation rows are unchanged by plans.
+    expect(e.getByText('Recorded commitments still due').nextElementSibling).toHaveTextContent('260.00 EUR')
+    expect(e.getByText('of which overdue (past original due date)').nextElementSibling).toHaveTextContent('160.00 EUR')
+    expect(e.getByTestId('outlook-planned-heading')).toHaveTextContent('Planned outflows')
+    expect(e.getByText('Planned to be paid through November 2026').nextElementSibling).toHaveTextContent('205.00 EUR')
+    expect(e.getByTestId('outlook-planned-deferred-in')).toHaveTextContent('of which deferred in: still due, planned in a later month than its own')
+    expect(e.getByTestId('outlook-planned-deferred-in').nextElementSibling).toHaveTextContent('100.00 EUR')
+    expect(e.getByTestId('outlook-planned-fees')).toHaveTextContent('fees and charges still planned (not part of "still due")')
+    expect(e.getByTestId('outlook-planned-beyond')).toHaveTextContent('Still due but planned after November 2026 (deferred beyond this view)')
+    // A currency with no plan effect shows its planned total only, with no zero rows.
+    const g = within(screen.getByTestId('outlook-GBP'))
+    expect(g.getByText('Planned to be paid through November 2026').nextElementSibling).toHaveTextContent('7.50 GBP')
+    expect(g.queryByTestId('outlook-planned-deferred-in')).toBeNull()
+    expect(g.queryByTestId('outlook-planned-beyond')).toBeNull()
+  })
+
   it('shows the converted totals without calling a rates endpoint, and links to the rates page only with rates:read', async () => {
     responder = () => ({ status: 200, json: outlook() })
     // A role without rates:read (D-FX-R): the totals carry their own rates, so nothing here needs the rates API.

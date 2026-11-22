@@ -93,10 +93,11 @@ type deferralPlanJSON struct {
 	GraceUntil  *calendar.Date `json:"grace_until"`
 	WithinGrace bool           `json:"within_grace"`
 	// Missed is true while the plan is active, its planned date has passed
-	// and the occurrence still owes something ("plan date passed, still
-	// owed"). It is derived on every read, never stored, and is not payment
-	// state: it clears when the occurrence is paid, the plan is revised to
-	// a later date or undone.
+	// and something planned is still unpaid: the occurrence's principal, or a
+	// recorded fee ("plan date passed, still owed"). It is derived on every
+	// read, never stored, and is not payment state: it clears when nothing
+	// planned is unpaid any more, the plan is revised to a later date or
+	// undone.
 	Missed bool `json:"missed"`
 	// MissedReason is why it is missed: "principal" (the occurrence is overdue
 	// and still owes something) or "fee" (a recorded fee is still planned after
