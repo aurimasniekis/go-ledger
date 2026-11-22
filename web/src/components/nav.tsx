@@ -62,6 +62,7 @@ export function PrimaryNav() {
         <Link to="/month" className={navLink}>Monthly view</Link>
         <Link to="/outlook" className={navLink}>Outlook</Link>
         <Link to="/matches" className={navLink}>Payment matches</Link>
+        {holds(grants, 'decisions:read') && <Link to="/suggestions" className={navLink}>Suggestions</Link>}
         {holds(grants, 'commitments:read') && <Link to="/commitments" className={navLink}>Commitments</Link>}
         {holds(grants, 'organisation:read') && <Link to="/organisation" className={navLink}>Organisation</Link>}
         {holds(grants, 'merchants:read') && <Link to="/merchants" className={navLink}>Merchants</Link>}

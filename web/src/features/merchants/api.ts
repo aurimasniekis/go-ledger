@@ -17,8 +17,8 @@ export function useMerchants(includeArchived: boolean, enabled = true) {
   return usePagedList<MerchantRecord>([...merchantsKey, 'list'], base, { archived: includeArchived ? 'true' : undefined }, { enabled })
 }
 
-export function useMerchant(id: string) {
-  return useQuery({ queryKey: merchantKey(id), queryFn: ({ signal }) => apiFetch<MerchantRecord>(`${base}/${enc(id)}`, { signal }) })
+export function useMerchant(id: string, enabled = true) {
+  return useQuery({ queryKey: merchantKey(id), enabled, queryFn: ({ signal }) => apiFetch<MerchantRecord>(`${base}/${enc(id)}`, { signal }) })
 }
 
 export const createMerchant = (body: { display_name: string; aliases?: string[] }) => apiFetch<MerchantRecord>(base, { method: 'POST', json: body })
