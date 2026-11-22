@@ -312,6 +312,17 @@ describe('a manual record replaced by a bank match (D45)', () => {
     expect(box).not.toHaveTextContent('2026-11-19')
   })
 
+  it('still lists a replaced record when no bank payment counts any more (after a Reverse)', async () => {
+    installApi({
+      'GET /api/v1/occurrences/a/manual-payments': ok({
+        items: [{ id: 'mp1', occurrence_id: 'a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, replaced_by_match_id: 'm1' }],
+        next_cursor: null,
+      }),
+    })
+    board({ data: summary([item('a', { payment: payment({ status: 'due' }) })]) })
+    expect(await screen.findByTestId('replaced-records')).toHaveTextContent('Manual record replaced')
+  })
+
   it('shows nothing when the records cannot be read', async () => {
     installApi({})
     board({ data: summary([item('a', { payment: payment({ status: 'paid', bank_evidence_count: 1, evidence_count: 1 }) })]) })

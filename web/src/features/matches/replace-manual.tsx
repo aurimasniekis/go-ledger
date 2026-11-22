@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -29,6 +29,27 @@ export function replacedIds(m: PaymentMatch): string[] {
   return [...ids]
 }
 
+/** Refusals that repeating cannot change: the records or the match are not what the form was built on. */
+export const FINAL_REPLACE_CODES = ['manual_payment_not_replaceable', 'manual_payment_other_occurrence', 'validation_failed']
+/** Undo refusals that repeating cannot change (the window is closed, it is not the person's decision, the match moved on). */
+export const FINAL_UNDO_CODES = ['match_undo_window_closed', 'match_undo_not_decider', 'invalid_match_state', 'version_conflict']
+
+/** Our own sentence for the refusals of confirm-replacing; undefined for any other error. */
+export function replaceRefusal(code: string | undefined): string | undefined {
+  switch (code) {
+    case 'occurrence_overpaid':
+      return 'The records you did not choose, plus this payment, would pay more than the amount due. Choose every record this payment covers, or allow the overpayment.'
+    case 'manual_payment_not_replaceable':
+      return 'One of the chosen records was deleted or is already replaced by another bank payment, so it cannot be replaced again. The list has been reloaded.'
+    case 'manual_payment_other_occurrence':
+      return 'One of the chosen records belongs to a different payment than this match. The list has been reloaded.'
+    case 'validation_failed':
+      return 'The server did not accept this choice of records. The list has been reloaded; choose again.'
+    default:
+      return undefined
+  }
+}
+
 export const REPLACE_EXPLAIN =
   'This bank transaction is the payment you recorded by hand. Ledger confirms the match and your manual record is replaced by it: the record is kept in history and no longer counted, so the payment counts once, from the bank. You can undo this right after, and unmatching later brings your record back.'
 
@@ -47,15 +68,24 @@ export interface ReplaceManualProps {
  * optimistic: until the server answers the card says "Not saved yet", and a failure says nothing changed.
  */
 export function ReplaceManual({ match: m, records, offline, offlineNoteId, primary, onSaved }: ReplaceManualProps) {
-  const uid = useId()
   const [open, setOpen] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
   const first = useRef<HTMLInputElement>(null)
   const focus = useFocusRestore()
+  const qc = useQueryClient()
   const save = useOptimisticSave<{ ids: string[]; allowOverpayment?: boolean }, PaymentMatch>({
     queryKey: matchesKey,
-    mutationFn: (v) => confirmReplacing(m.id, { version: m.version, manualPaymentIds: v.ids, allowOverpayment: v.allowOverpayment }),
+    mutationFn: async (v) => {
+      try {
+        return await confirmReplacing(m.id, { version: m.version, manualPaymentIds: v.ids, allowOverpayment: v.allowOverpayment })
+      } catch (e) {
+        // A final refusal means the records changed under us: other cards offering the same record are stale too.
+        if (e instanceof ApiError && FINAL_REPLACE_CODES.includes(e.code ?? '')) void qc.invalidateQueries({ queryKey: ['occurrences'] })
+        throw e
+      }
+    },
     onSaved: (saved, v) => {
+      void qc.invalidateQueries({ queryKey: ['occurrences'] })
       setOpen(false)
       onSaved(saved, records.filter((r) => v.ids.includes(r.id)))
     },
@@ -64,6 +94,7 @@ export function ReplaceManual({ match: m, records, offline, offlineNoteId, prima
   const pending = save.phase === 'pending'
   const failed = save.phase === 'failed'
   const err = save.error instanceof ApiError ? save.error : null
+  const final = failed && FINAL_REPLACE_CODES.includes(err?.code ?? '')
   const overpaid = failed && err?.code === 'occurrence_overpaid' && !save.vars?.allowOverpayment
   useEffect(() => {
     if (open) first.current?.focus()
@@ -104,11 +135,11 @@ export function ReplaceManual({ match: m, records, offline, offlineNoteId, prima
           }}
         >
           <p className="text-muted-foreground">{REPLACE_EXPLAIN}</p>
-          <fieldset className="min-w-0 space-y-1" disabled={false}>
+          <fieldset className="min-w-0 space-y-1">
             <legend className="font-medium">Which of your manual records is this payment?</legend>
             {records.map((r, i) => (
               <label key={r.id} className="flex min-w-0 items-start gap-2">
-                <input ref={i === 0 ? first : undefined} type="checkbox" className="mt-1 size-4 shrink-0" readOnly={pending} checked={picked.includes(r.id)}
+                <input ref={i === 0 ? first : undefined} type="checkbox" className="mt-1 size-4 shrink-0" disabled={pending} checked={picked.includes(r.id)}
                   onChange={(e) => !pending && setPicked((p) => (e.target.checked ? [...p, r.id] : p.filter((x) => x !== r.id)))} />
                 <span className="min-w-0">
                   <Amount className="font-mono" amount={r.amount.amount} currency={r.amount.currency} /> paid on <DateText value={r.paid_on} />
@@ -127,13 +158,13 @@ export function ReplaceManual({ match: m, records, offline, offlineNoteId, prima
           </div>
           {pending && <p className="text-xs text-muted-foreground">Waiting for the server. Nothing has changed yet: the match is still a suggestion and your record still counts.</p>}
           {failed && (
-            <div role="alert" id={`${uid}-err`} className="space-y-2">
+            <div role="alert" className="space-y-2">
               <StatusBadge status="save_failed" label="Not saved" />
               <p>
-                {overpaid ? 'The records you did not choose, plus this payment, would pay more than the amount due. Choose every record this payment covers, or allow the overpayment.' : save.error?.message} Nothing was saved: the match and your records are unchanged.
+                {replaceRefusal(err?.code) ?? save.error?.message} Nothing was saved: the match and your records are unchanged.
               </p>
               <div className="flex flex-wrap gap-2">
-                {!overpaid && err?.code !== 'version_conflict' && <Button size="sm" className="h-auto min-h-8 py-1" onClick={() => save.retry()}>Try again</Button>}
+                {!overpaid && !final && err?.code !== 'version_conflict' && <Button size="sm" className="h-auto min-h-8 py-1" onClick={() => save.retry()}>Try again</Button>}
                 {overpaid && save.vars && <Button size="sm" variant="outline" className="h-auto min-h-8 whitespace-normal py-1" onClick={() => save.save({ ...save.vars!, allowOverpayment: true })}>Allow overpayment and try again</Button>}
                 <Button size="sm" variant="ghost" className="h-auto min-h-8 py-1" onClick={() => save.discard()}>Dismiss</Button>
               </div>
@@ -160,6 +191,7 @@ export function ReplacedNotice({ saved, replaced, where, onDone }: { saved: Paym
     },
   })
   useEffect(() => box.current?.focus(), [undo.isSuccess])
+  const undoFinal = undo.error instanceof ApiError && FINAL_UNDO_CODES.includes(undo.error.code ?? '')
   const records = (
     <ul className="space-y-1">
       {replaced.map((r) => (
@@ -196,7 +228,7 @@ export function ReplacedNotice({ saved, replaced, where, onDone }: { saved: Paym
           <p>Your manual {replaced.length === 1 ? 'record' : 'records'} {replaced.length === 1 ? 'was' : 'were'} replaced by it. {replaced.length === 1 ? 'It is' : 'They are'} kept in history and no longer counted, so the payment counts once:</p>
           {records}
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" className="h-auto min-h-8 whitespace-normal py-1 text-left aria-disabled:opacity-50" aria-disabled={undo.isPending || undefined} onClick={() => { if (!undo.isPending) undo.mutate() }}>
+            <Button variant="outline" size="sm" className="h-auto min-h-8 whitespace-normal py-1 text-left aria-disabled:opacity-50" aria-disabled={undo.isPending || undoFinal || undefined} onClick={() => { if (!undo.isPending && !undoFinal) undo.mutate() }}>
               {undo.isPending ? 'Undoing…' : 'Undo: bring my record back'}
             </Button>
             <Button variant="ghost" size="sm" aria-disabled={undo.isPending || undefined} onClick={() => { if (!undo.isPending) onDone() }}>Dismiss</Button>
@@ -206,7 +238,7 @@ export function ReplacedNotice({ saved, replaced, where, onDone }: { saved: Paym
       )}
       {undo.isError && (
         <p role="alert">
-          <StatusBadge status="save_failed" label="Undo not saved" /> The match stays confirmed and your record stays replaced. {undo.error.message} If the undo window has passed, Unmatch on the Confirmed list brings your record back too, but it closes this pair for good.
+          <StatusBadge status="save_failed" label="Undo not saved" /> The match stays confirmed and your record stays replaced. {undoFinal ? 'Undo is not available any more.' : undo.error.message} Unmatch on the Confirmed list brings your record back too, but it closes this pair for good.
         </p>
       )}
     </div>
