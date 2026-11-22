@@ -571,6 +571,10 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 	if err != nil {
 		return View{}, err
 	}
+	// started closes once the run is stored as running.
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	bg = bankimport.WithRunStarted(bg, func(banking.RefreshRun) { startedOnce.Do(func() { close(started) }) })
 	go func() {
 		defer s.detached.Done()
 		defer release()
@@ -615,7 +619,33 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 		return s.View(ctx, id)
 	case <-deadline:
 		// Still running: answer with what is stored and let the caller poll.
-		// The goroutine finishes the run and writes the audit entry.
+		// The goroutine finishes the run and writes the audit entry. The run
+		// may not be stored yet (a slow store): wait briefly for it, so the
+		// answer never says "running" about a run it does not show.
+		grace := time.NewTimer(refreshStartGrace)
+		defer grace.Stop()
+		select {
+		case <-started:
+		case d := <-done:
+			if d.res.Run.ID == "" || d.auditErr != nil {
+				if d.res.Run.ID == "" {
+					if errors.Is(d.rerr, bankimport.ErrNotRefreshable) {
+						return View{}, ErrNotActive
+					}
+					if d.rerr == nil {
+						d.rerr = errors.New("bankconnect: the refresh returned no run")
+					}
+					return View{}, d.rerr
+				}
+				return View{}, d.auditErr
+			}
+			return s.View(ctx, id)
+		case <-grace.C:
+			// Not stored yet: report what is stored, without claiming a run.
+			return s.View(ctx, id)
+		case <-ctx.Done():
+			return View{}, ctx.Err()
+		}
 		v, err := s.View(ctx, id)
 		if err != nil {
 			return View{}, err
@@ -626,6 +656,10 @@ func (s *Service) Refresh(ctx context.Context, actor audit.Actor, id banking.Con
 		return View{}, ctx.Err()
 	}
 }
+
+// refreshStartGrace bounds how long a refresh past its deadline waits for its
+// run to be stored before answering.
+const refreshStartGrace = 2 * time.Second
 
 // refreshDone is what a detached refresh produced.
 type refreshDone struct {

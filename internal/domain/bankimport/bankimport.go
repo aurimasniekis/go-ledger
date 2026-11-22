@@ -205,6 +205,23 @@ type Result struct {
 	Accounts []AccountResult
 }
 
+type runStartedKey struct{}
+
+// WithRunStarted returns a context whose Refresh calls fn once the run is
+// stored as running, before any provider call. A caller that stops waiting
+// early uses it to answer only about a run that exists.
+func WithRunStarted(ctx context.Context, fn func(banking.RefreshRun)) context.Context {
+	return context.WithValue(ctx, runStartedKey{}, fn)
+}
+
+// NotifyRunStarted calls the function [WithRunStarted] put in ctx, if any. The
+// engine calls it once the run is stored; test doubles of the engine do too.
+func NotifyRunStarted(ctx context.Context, run banking.RefreshRun) {
+	if fn, ok := ctx.Value(runStartedKey{}).(func(banking.RefreshRun)); ok {
+		fn(run)
+	}
+}
+
 // Refresh refreshes connection id through p, which must be the provider
 // application the connection was made with. It returns the finished run.
 // The error is nil only when the run succeeded; otherwise it is the first
@@ -246,6 +263,7 @@ func (e *Engine) refreshLocked(ctx context.Context, id banking.ConnectionID, con
 	if err != nil {
 		return Result{}, err
 	}
+	NotifyRunStarted(ctx, run)
 	jl := e.log.With("job_id", string(run.ID), "job", JobName, "connection_id", string(id))
 	r := &refresh{e: e, ctx: ctx, conn: conn, caps: caps, p: p, log: jl}
 	res, cause := r.run()
