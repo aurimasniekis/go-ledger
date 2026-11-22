@@ -34,15 +34,20 @@ choices below are this task's own, within them; none is an operator decision.
 7. **The outlook follows plans (D-DF 8).** `GET /outlook` adds per currency `planned_outflows` = `{total, deferred_in,
    deferred_beyond, adjustments}` with total = still due − deferred_beyond + adjustments (ADR-0050 "Outlook"). Still due,
    overdue and upcoming and the balance comparison are unchanged by plans; the page shows the planned total beside them and
-   names the deferred-in, deferred-beyond and fee amounts apart. The converted aggregate stays an obligation figure
-   (converted planned figures would need a conversion policy for fees and are not built). A currency whose only planned amount
-   is a fee on a paid occurrence still gets a line.
+   names the deferred-in, deferred-beyond and fee amounts apart. The converted aggregate adds `planned_total`: each
+   currency line's planned total converted with the same single rate and one half-even rounding as the line's still due and
+   overdue (a currency without an acceptable rate is excluded from every converted figure together). The converted
+   deferred-in, deferred-beyond and fee parts are not built. Each line also carries `missed_count` and `missed_outstanding`
+   (plans whose date passed with something planned still unpaid, and their outstanding principal); a cancelled occurrence
+   whose plan has an unpaid fee counts, with no principal. A currency whose only planned amount is a fee on a paid occurrence
+   still gets a line.
 
 ## Limits
 
 - The monthly view's status summary line is unchanged; it does not count plans.
 - `deferred_beyond` can be understated for a truncated window (ADR-0050 / `window.truncated`).
-- The outlook does not show how many plans are missed; the monthly rows do.
+- The outlook shows only the count and outstanding principal of missed plans; which plans, and whether the reason is
+  principal or fee, are on the monthly rows.
 - The end-to-end deferral journey uses next month's occurrence: with the real clock a past occurrence is "not recorded"
   (ADR-0047), so a plan on an overdue one is covered by the component and Go tests, not by the browser journey. The simulated
   bank serves one booked payment dated on the planned date, which is in the future: the journey relies on the import and the

@@ -274,7 +274,8 @@ type CurrencyLine struct {
 // MissedCount and MissedOutstanding count the active plans of the window's
 // occurrences whose planned date has passed while something planned is still
 // unpaid ([deferrals.Plan.Missed]), and the outstanding principal of those
-// occurrences. A missed plan stays in every other figure as it was.
+// occurrences. A cancelled occurrence whose plan still has an unpaid fee is
+// counted (with no principal), as on the monthly view. A missed plan stays in every other figure as it was.
 type PlannedFigures struct {
 	Total             money.Money
 	DeferredIn        money.Money
@@ -508,19 +509,22 @@ func (s Service) Build(ctx context.Context, r Request) (Outlook, error) {
 			}
 			for _, row := range sum.Rows {
 				st := row.State
-				if st.Status == payments.StatusCancelled {
-					continue
-				}
-				if st.Status != payments.StatusPaid && st.Timing == payments.StatusNotRecorded {
-					out.NotRecordedCount++
-				}
 				cur := row.Occurrence.Amount.Currency()
+				// A plan is missed by the same rule as on the monthly view, so a
+				// cancelled occurrence whose plan still has an unpaid fee counts
+				// too (D-DF-b 2a); it owes no principal, so it adds zero outstanding.
 				if row.Deferral != nil && row.Deferral.Active() && row.Deferral.Missed(st, today) {
 					scale := row.Occurrence.Amount.Amount().Scale()
 					zero, _ := money.Zero(cur, scale)
 					l := line(cur, scale)
 					l.Planned.MissedCount++
 					l.Planned.MissedOutstanding, _ = l.Planned.MissedOutstanding.Add(owedOf(st, zero))
+				}
+				if st.Status == payments.StatusCancelled {
+					continue
+				}
+				if st.Status != payments.StatusPaid && st.Timing == payments.StatusNotRecorded {
+					out.NotRecordedCount++
 				}
 				for _, e := range row.Evidence {
 					// Evidence in another currency is never counted (D5).

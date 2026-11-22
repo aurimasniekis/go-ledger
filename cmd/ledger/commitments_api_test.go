@@ -146,9 +146,21 @@ func TestCommitmentLifecycle(t *testing.T) {
 	if want := "commitment.created|commitment.updated amount,notes|occurrences.regenerated|commitment.deleted"; strings.Join(got, "|") != want {
 		t.Fatalf("audit trail\n got %s\nwant %s", strings.Join(got, "|"), want)
 	}
-	for _, secret := range []string{"Hetzner-like", "Renewal moved", "20.00", "VPS"} {
-		if strings.Contains(f.log.String(), secret) {
-			t.Errorf("the log carries user content %q", secret)
+	// Check the logged fields, not the raw text: duration_ms is a float whose
+	// digits can contain "20.00" by chance.
+	for _, line := range strings.Split(strings.TrimSpace(f.log.String()), "\n") {
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+			t.Errorf("log line is not JSON: %v", err)
+			continue
+		}
+		delete(fields, "duration_ms")
+		for k, v := range fields {
+			for _, secret := range []string{"Hetzner-like", "Renewal moved", "20.00", "VPS"} {
+				if strings.Contains(fmt.Sprint(v), secret) {
+					t.Errorf("log field %q carries user content %q", k, secret)
+				}
+			}
 		}
 	}
 }

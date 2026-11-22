@@ -915,3 +915,59 @@ func TestPlannedFiguresCountOnlyTheWindowsOwnOccurrencesWhenTruncated(t *testing
 		t.Errorf("planned figures %s, want %s (still due %s)", got, want, lineOf(t, o, "EUR").StillDue)
 	}
 }
+
+func planWithFee(t *testing.T, o occurrences.Occurrence, planned, fee string) deferrals.Plan {
+	t.Helper()
+	return deferrals.Plan{ID: "p" + o.ID, OccurrenceID: o.ID, CommitmentID: o.CommitmentID, Type: deferrals.TypePersonal, PlannedDate: d(t, planned),
+		OriginalDueDate: o.DueDate, OriginalAmount: o.Amount, OutstandingWhenPlanned: o.Amount, Version: 1,
+		Adjustments: []deferrals.Adjustment{{ID: "a" + o.ID, PlanID: "p" + o.ID, Kind: deferrals.AdjustmentFee, Amount: m(t, fee, o.Amount.Currency().Code()), CreatedAt: t0}}}
+}
+
+// A cancelled occurrence owes no principal, but a fee still planned on its
+// plan after the plan date is missed (D-DF-b 2a), as the monthly view says.
+func TestMissedCountIncludesCancelledOccurrenceWithUnpaidFee(t *testing.T) {
+	cancelledAt := t0.Add(-time.Hour)
+	o := occurrences.Occurrence{ID: "x", CommitmentID: "c", Month: ym(t, "2026-11"), DueDate: d(t, "2026-11-05"), Amount: m(t, "30.00", "EUR"), Version: 1,
+		UpdatedAt: t0.Add(-time.Hour), CancelledAt: &cancelledAt, CancelledReason: occurrences.CancelTermsChange}
+	view := monthview.Service{
+		Occurrences: occGetter{occReader{items: []occurrences.Occurrence{o}}},
+		Payments:    factStore{},
+		Deferrals:   planStore{plans: []deferrals.Plan{planWithFee(t, o, "2026-11-10", "5.00")}},
+	}
+	cs := commitmentList{{ID: "c", Fields: commitments.Fields{StartDate: d(t, "2026-11-01")}}}
+	out, err := outlook.Service{Months: view, Commitments: cs, Today: func() (calendar.Date, error) { return d(t, "2026-11-16"), nil }}.Build(context.Background(), outlook.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := lineOf(t, out, "EUR").Planned
+	got := fmt.Sprintf("total=%s fees=%s missed=%d/%s", p.Total, p.Adjustments, p.MissedCount, p.MissedOutstanding)
+	if want := "total=5.00 EUR fees=5.00 EUR missed=1/0.00 EUR"; got != want {
+		t.Errorf("planned figures %s, want %s", got, want)
+	}
+}
+
+// The converted planned total uses the line's single rate and one rounding,
+// like the rest of the converted aggregate: 25.55 USD at 0.9200 is 23.506,
+// 23.51 EUR (half-even), not the sum of separately rounded parts.
+func TestConvertedPlannedTotalUsesTheLinesRateAndRounding(t *testing.T) {
+	e := newEnv(t)
+	e.seedRate(t, "USD/EUR", "0.9200", "2026-11-13", t0.Add(-2*time.Hour))
+	o := occurrences.Occurrence{ID: "u", CommitmentID: "cusd", Month: ym(t, "2026-11"), DueDate: d(t, "2026-11-20"), Amount: m(t, "20.00", "USD"), Version: 1, UpdatedAt: t0.Add(-time.Hour)}
+	s := e.service(t, true)
+	s.Months = monthview.Service{
+		Occurrences: occGetter{occReader{items: []occurrences.Occurrence{o}}},
+		Payments:    factStore{},
+		Deferrals:   planStore{plans: []deferrals.Plan{planWithFee(t, o, "2026-11-18", "5.55")}},
+	}
+	out, err := s.Build(context.Background(), outlook.Request{Currency: money.MustParseCurrency("EUR")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lineOf(t, out, "USD").Planned.Total.String(); got != "25.55 USD" {
+		t.Fatalf("planned total %s", got)
+	}
+	c := out.Converted
+	if c == nil || c.PlannedTotal.String() != "23.51 EUR" || c.StillDue.String() != "18.40 EUR" {
+		t.Errorf("converted %+v, want planned total 23.51 EUR and still due 18.40 EUR", c)
+	}
+}
