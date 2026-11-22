@@ -11,6 +11,7 @@ import { AppShell } from '@/components/app-shell'
 import { DesignPage } from '@/routes-design'
 import { MonthPage } from '@/features/month/month-page'
 import { MatchesPage } from '@/features/matches/matches-page'
+import { SuggestionsPage } from '@/features/decisions/suggestions-page'
 import { isMonth, monthOf } from '@/features/month/month'
 import { OutlookPage } from '@/features/outlook/outlook-page'
 import { CommitmentsPage } from '@/features/organisation/commitments-page'
@@ -151,6 +152,7 @@ const routeTree = rootRoute.addChildren([
     indexRoute,
     monthRoute,
     child('/matches', MatchesPage),
+    child('/suggestions', SuggestionsPage),
     connectionsRoute,
     connectionsCallbackRoute,
     outlookRoute,
