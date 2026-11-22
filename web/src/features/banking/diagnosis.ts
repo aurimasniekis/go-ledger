@@ -57,10 +57,22 @@ export function lastRefreshedAt(c: BankConnection): string | null {
 /** What one account's badge says. An account failure never claims a reconnect unless its error kind says so. */
 export type AccountState = 'fresh' | 'stale' | 'never' | 'reconnect' | 'temporary' | 'rejected' | 'disconnected'
 
-export function accountState(a: BankAccount, reconnected = false): AccountState {
+/**
+ * An account's reconnect_required error is superseded when its last attempt began before the current consent was granted
+ * and the connection is active again: the user has reconnected since. Decided per account, so a running refresh or an
+ * account that is no longer reported (and keeps its old error) is judged by its own last attempt.
+ */
+export function reconnectSuperseded(a: BankAccount, c: BankConnection): boolean {
+  const f = a.freshness
+  if (c.status !== 'active' || !c.consent_granted_at || !f.last_attempt_at) return false
+  if (f.state !== 'reconnect_required' && f.last_error?.kind !== 'reconnect_required') return false
+  return Date.parse(f.last_attempt_at) < Date.parse(c.consent_granted_at)
+}
+
+export function accountState(a: BankAccount, superseded = false): AccountState {
   const f = a.freshness
   // After a reconnect the old "reconnect needed" no longer applies, but nothing has been refreshed yet: stale, never fresh.
-  if (reconnected && (f.state === 'reconnect_required' || f.last_error?.kind === 'reconnect_required')) return 'stale'
+  if (superseded) return 'stale'
   switch (f.state) {
     case 'fresh':
       return 'fresh'
