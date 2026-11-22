@@ -285,8 +285,13 @@ type ListFilter struct {
 	Kinds      []Kind
 	Priorities []Priority
 	Currencies []money.Currency
-	After      string
-	Limit      int
+	// IDs restricts the list to these commitments when IDsSet is true (an
+	// empty set then matches nothing): the organisation filters (task O3)
+	// resolve to commitment IDs.
+	IDs    []string
+	IDsSet bool
+	After  string
+	Limit  int
 }
 
 // Store is the commitments port; internal/store/commitments implements it.

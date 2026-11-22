@@ -1,5 +1,5 @@
 // Package decisions persists the decision layer's consent records, request
-// counts and suggestions (task L1, ADR-0059) in the tables of migration
+// counts and suggestions (task L1, ADR-0060) in the tables of migration
 // 0031_decision_providers.
 //
 // It implements [decisions.Consents], [decisions.Usage] and
@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -66,21 +67,24 @@ func who(a audit.Actor) (string, any) {
 
 func consentEvent(action audit.Action, actor audit.Actor, c decisions.Consent, at time.Time) audit.Event {
 	return audit.Event{Action: action, Actor: actor, TargetType: "decision_consent", TargetID: c.ID, At: at,
-		Details: map[string]string{"provider": c.Provider, "purpose": string(c.Purpose), "via": string(actor.Channel())}}
+		Details: map[string]string{"provider": c.Provider, "purpose": string(c.Purpose), "fields": joinFieldNames(c.Fields), "via": string(actor.Channel())}}
 }
 
-const consentColumns = "id, provider, purpose, terms, granted_by_kind, granted_by_user, granted_at, revoked_by_kind, revoked_by_user, revoked_at, version"
+const consentColumns = "id, provider, purpose, terms, fields, granted_by_kind, granted_by_user, granted_at, revoked_by_kind, revoked_by_user, revoked_at, version"
 
 func scanConsent(row interface{ Scan(...any) error }) (decisions.Consent, error) {
 	var c decisions.Consent
-	var purpose, gk string
+	var purpose, gk, fields string
 	var gu, rk, ru sql.Null[string]
 	var granted store.Timestamp
 	var revoked sql.Null[store.Timestamp]
-	if err := row.Scan(&c.ID, &c.Provider, &purpose, &c.Terms, &gk, &gu, &granted, &rk, &ru, &revoked, &c.Version); err != nil {
+	if err := row.Scan(&c.ID, &c.Provider, &purpose, &c.Terms, &fields, &gk, &gu, &granted, &rk, &ru, &revoked, &c.Version); err != nil {
 		return decisions.Consent{}, err
 	}
 	c.Purpose = decisions.TaskName(purpose)
+	if err := parseFields(fields, &c.Fields); err != nil {
+		return decisions.Consent{}, err
+	}
 	c.GrantedBy = audit.Actor{Kind: audit.ActorKind(gk), UserID: gu.V}
 	c.GrantedAt = granted.Time
 	if revoked.Valid {
@@ -93,14 +97,18 @@ func scanConsent(row interface{ Scan(...any) error }) (decisions.Consent, error)
 
 // Grant records consent for one provider and purpose
 // ([decisions.ErrConsentExists] when one is active).
-func (s *Store) Grant(ctx context.Context, actor audit.Actor, provider string, purpose decisions.TaskName, terms string) (decisions.Consent, error) {
+func (s *Store) Grant(ctx context.Context, actor audit.Actor, provider string, purpose decisions.TaskName, terms string, fields []decisions.Field) (decisions.Consent, error) {
 	terms = strings.TrimSpace(terms)
-	if errs := decisions.ValidateConsent(provider, purpose, terms); len(errs) > 0 {
+	if errs := decisions.ValidateConsent(provider, purpose, terms, fields); len(errs) > 0 {
 		return decisions.Consent{}, commitments.Validation(errs)
 	}
+	fieldsJSON, err := marshalFields(fields)
+	if err != nil {
+		return decisions.Consent{}, err
+	}
 	now := s.now().UTC()
-	c := decisions.Consent{ID: s.newID(), Provider: provider, Purpose: purpose, Terms: terms, GrantedBy: actor, GrantedAt: now, Version: 1}
-	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	c := decisions.Consent{ID: s.newID(), Provider: provider, Purpose: purpose, Terms: terms, Fields: slices.Clone(fields), GrantedBy: actor, GrantedAt: now, Version: 1}
+	err = s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM decision_consents WHERE provider = ? AND purpose = ? AND revoked_at IS NULL", provider, string(purpose)).Scan(&n); err != nil {
 			return err
@@ -109,8 +117,8 @@ func (s *Store) Grant(ctx context.Context, actor audit.Actor, provider string, p
 			return decisions.ErrConsentExists
 		}
 		kind, user := who(actor)
-		if _, err := tx.ExecContext(ctx, "INSERT INTO decision_consents (id, provider, purpose, terms, granted_by_kind, granted_by_user, granted_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			c.ID, provider, string(purpose), terms, kind, user, store.Timestamp{Time: now}); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO decision_consents (id, provider, purpose, terms, fields, granted_by_kind, granted_by_user, granted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			c.ID, provider, string(purpose), terms, fieldsJSON, kind, user, store.Timestamp{Time: now}); err != nil {
 			return err
 		}
 		return s.audit.WriteAudit(ctx, tx, consentEvent(audit.DecisionConsentGranted, actor, c, now))
@@ -171,13 +179,46 @@ func (s *Store) Consents(ctx context.Context) ([]decisions.Consent, error) {
 }
 
 // Granted implements [decisions.Consents]: only an active consent for exactly
-// this provider and purpose counts.
-func (s *Store) Granted(ctx context.Context, provider string, purpose decisions.TaskName) (bool, error) {
-	var n int
+// this provider and purpose counts, and it covers the fields it recorded.
+func (s *Store) Granted(ctx context.Context, provider string, purpose decisions.TaskName) ([]decisions.Field, bool, error) {
+	var raw string
+	var ok bool
 	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT count(*) FROM decision_consents WHERE provider = ? AND purpose = ? AND revoked_at IS NULL", provider, string(purpose)).Scan(&n)
+		err := tx.QueryRowContext(ctx, "SELECT fields FROM decision_consents WHERE provider = ? AND purpose = ? AND revoked_at IS NULL", provider, string(purpose)).Scan(&raw)
+		ok = err == nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
 	})
-	return n > 0, err
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	var fields []decisions.Field
+	if err := parseFields(raw, &fields); err != nil {
+		return nil, false, err
+	}
+	return fields, true, nil
+}
+
+func joinFieldNames(fs []decisions.Field) string {
+	s := make([]string, len(fs))
+	for i, f := range fs {
+		s[i] = string(f)
+	}
+	return strings.Join(s, ",")
+}
+
+func marshalFields(fields []decisions.Field) (string, error) {
+	b, err := json.Marshal(fields)
+	return string(b), err
+}
+
+func parseFields(raw string, out *[]decisions.Field) error {
+	if err := json.Unmarshal([]byte(raw), out); err != nil {
+		return fmt.Errorf("decisions: stored consent fields: %w", err)
+	}
+	return nil
 }
 
 // Reserve implements [decisions.Usage]: one attempt is counted, in one write,

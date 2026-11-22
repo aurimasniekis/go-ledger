@@ -88,8 +88,11 @@ rename or retire it.
   resolutions, collides for different merchants with one name, has no Unicode normalisation, no foreign key and no
   lifecycle. The operator must choose between a minimal merchant entity (id, display name, alias keys; assignments keyed
   by its id) and keeping name keys with a documented migration, before O2, L6 or E2 build on it.
-- **UI, MCP tools and the Go client methods** are built (O2, ADR-0057); the **CLI commands** (O4, control decision
-  C-O2-gaps: in scope, not dropped) and **Terraform data sources** (T3) are separate tasks and not built yet.
+- **UI, MCP tools and the Go client methods** are built (O2, ADR-0057); the **CLI commands** (O4) are built: `ledger
+  categories|labels|buckets` (list, get, create, rename, archive, unarchive, delete with `--reassign-to`; `categories move`;
+  `buckets members|add-member|remove-member`) and `ledger organisation` (get, set-category, reset-category, add-label,
+  remove-label). The API has no reset for a removed label, so the CLI has none either: a removal stays the person's word
+  until the label is added again. **Terraform data sources** (T3) are a separate task and not built yet.
 - **Bulk assignment**, category reporting (spend by category) and a category tree read are not built.
 - Reassigning on delete keeps a rule's or model's row automatic (origin, source, who and when unchanged); only the
   person's own rows are recorded as moved by the person.

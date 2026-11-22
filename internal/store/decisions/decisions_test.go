@@ -205,7 +205,7 @@ func cfg(provider string) decisions.TaskConfig {
 // match or an assignment is written.
 func TestOutageLeavesTheDatabaseUnchanged(t *testing.T) {
 	f := newFixture(t, true)
-	if _, err := f.ds.Grant(f.ctx, alice, "openai", decisions.TaskCategorisation, "v1"); err != nil {
+	if _, err := f.ds.Grant(f.ctx, alice, "openai", decisions.TaskCategorisation, "v1", decisions.Permitted()); err != nil {
 		t.Fatal(err)
 	}
 	before := f.dump("decision_usage")
@@ -242,7 +242,7 @@ func TestOutageLeavesTheDatabaseUnchanged(t *testing.T) {
 // and the excluded fields of the stored transaction never left.
 func TestSuggestionIsStoredApartFromFacts(t *testing.T) {
 	f := newFixture(t, true)
-	if _, err := f.ds.Grant(f.ctx, alice, "openai", decisions.TaskCategorisation, "v1"); err != nil {
+	if _, err := f.ds.Grant(f.ctx, alice, "openai", decisions.TaskCategorisation, "v1", decisions.Permitted()); err != nil {
 		t.Fatal(err)
 	}
 	before := f.dump("decision_usage", "decision_suggestions")
@@ -289,7 +289,7 @@ func TestSuggestionIsStoredApartFromFacts(t *testing.T) {
 
 func TestConsentIsPerProviderAndPurpose(t *testing.T) {
 	f := newFixture(t, false)
-	c, err := f.ds.Grant(f.ctx, alice, "typesafe", decisions.TaskPaymentMatching, "typesafe-matching-v1")
+	c, err := f.ds.Grant(f.ctx, alice, "typesafe", decisions.TaskPaymentMatching, "typesafe-matching-v1", decisions.Permitted())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,15 +304,15 @@ func TestConsentIsPerProviderAndPurpose(t *testing.T) {
 		{"openai", decisions.TaskPaymentMatching, false},
 		{"anthropic", decisions.TaskPaymentMatching, false},
 	} {
-		if got, err := f.ds.Granted(f.ctx, k.provider, k.purpose); err != nil || got != k.want {
+		if _, got, err := f.ds.Granted(f.ctx, k.provider, k.purpose); err != nil || got != k.want {
 			t.Errorf("%s/%s: %v %v", k.provider, k.purpose, got, err)
 		}
 	}
-	if _, err := f.ds.Grant(f.ctx, alice, "typesafe", decisions.TaskPaymentMatching, "again"); !errors.Is(err, decisions.ErrConsentExists) {
+	if _, err := f.ds.Grant(f.ctx, alice, "typesafe", decisions.TaskPaymentMatching, "again", decisions.Permitted()); !errors.Is(err, decisions.ErrConsentExists) {
 		t.Fatalf("second grant: %v", err)
 	}
 	for _, bad := range [][3]string{{"mystery", "alerts", "v"}, {"openai", "budgeting", "v"}, {"openai", "alerts", " "}} {
-		if _, err := f.ds.Grant(f.ctx, alice, bad[0], decisions.TaskName(bad[1]), bad[2]); err == nil {
+		if _, err := f.ds.Grant(f.ctx, alice, bad[0], decisions.TaskName(bad[1]), bad[2], decisions.Permitted()); err == nil {
 			t.Errorf("accepted %v", bad)
 		}
 	}
@@ -320,13 +320,13 @@ func TestConsentIsPerProviderAndPurpose(t *testing.T) {
 	if err != nil || r.ID != c.ID || r.Active() || r.Version != 2 {
 		t.Fatalf("revoke %+v %v", r, err)
 	}
-	if got, _ := f.ds.Granted(f.ctx, "typesafe", decisions.TaskPaymentMatching); got {
+	if _, got, _ := f.ds.Granted(f.ctx, "typesafe", decisions.TaskPaymentMatching); got {
 		t.Fatal("a revoked consent still counts")
 	}
 	if _, err := f.ds.Revoke(f.ctx, alice, "typesafe", decisions.TaskPaymentMatching); !errors.Is(err, decisions.ErrNoConsent) {
 		t.Fatalf("second revoke: %v", err)
 	}
-	if _, err := f.ds.Grant(f.ctx, alice, "typesafe", decisions.TaskPaymentMatching, "typesafe-matching-v2"); err != nil {
+	if _, err := f.ds.Grant(f.ctx, alice, "typesafe", decisions.TaskPaymentMatching, "typesafe-matching-v2", decisions.Permitted()); err != nil {
 		t.Fatalf("grant after revoke: %v", err)
 	}
 	all, err := f.ds.Consents(f.ctx)
@@ -345,7 +345,7 @@ func TestConsentIsPerProviderAndPurpose(t *testing.T) {
 
 func TestDatabaseGuardsConsentsAndSuggestions(t *testing.T) {
 	f := newFixture(t, false)
-	if _, err := f.ds.Grant(f.ctx, alice, "openai", decisions.TaskAlerts, "v1"); err != nil {
+	if _, err := f.ds.Grant(f.ctx, alice, "openai", decisions.TaskAlerts, "v1", decisions.Permitted()); err != nil {
 		t.Fatal(err)
 	}
 	sg, err := f.ds.Record(f.ctx, decisions.NewSuggestion{Task: decisions.TaskAlerts, Provider: "openai", Model: "m",
@@ -356,7 +356,8 @@ func TestDatabaseGuardsConsentsAndSuggestions(t *testing.T) {
 	for name, q := range map[string]string{
 		"consent delete":         "DELETE FROM decision_consents",
 		"consent edit":           "UPDATE decision_consents SET terms = 'other'",
-		"second active consent":  "INSERT INTO decision_consents (id, provider, purpose, terms, granted_by_kind, granted_at) SELECT '01JD3Y4C8V9M2Q7W5R6T0XZBN9', provider, purpose, 'x', 'system', granted_at FROM decision_consents",
+		"consent fields edit":    "UPDATE decision_consents SET fields = '[\"amount\"]'",
+		"second active consent":  "INSERT INTO decision_consents (id, provider, purpose, terms, fields, granted_by_kind, granted_at) SELECT '01JD3Y4C8V9M2Q7W5R6T0XZBN9', provider, purpose, 'x', fields, 'system', granted_at FROM decision_consents",
 		"suggestion edit":        "UPDATE decision_suggestions SET decision = '{}'",
 		"auto-apply on alerts":   "INSERT INTO decision_suggestions (id, task, provider, model, object_type, object_id, decision, auto_apply, created_at) SELECT '01JD3Y4C8V9M2Q7W5R6T0XZBN8', 'alerts', 'openai', 'm', 'occurrence', 'o2', '{}', 1, created_at FROM decision_suggestions",
 		"two pending":            "INSERT INTO decision_suggestions (id, task, provider, model, object_type, object_id, decision, auto_apply, created_at) SELECT '01JD3Y4C8V9M2Q7W5R6T0XZBN7', task, provider, model, object_type, object_id, '{}', 0, created_at FROM decision_suggestions",
@@ -430,5 +431,29 @@ func TestReserveHoldsUnderConcurrency(t *testing.T) {
 	wg.Wait()
 	if granted != 7 {
 		t.Fatalf("granted %d of a cap of 7", granted)
+	}
+}
+
+func TestConsentRecordsTheFieldSet(t *testing.T) {
+	f := newFixture(t, false)
+	narrow := []decisions.Field{decisions.FieldDescription, decisions.FieldMerchantName}
+	c, err := f.ds.Grant(f.ctx, alice, "typesafe", decisions.TaskPaymentMatching, "v1", narrow)
+	if err != nil || !slices.Equal(c.Fields, narrow) {
+		t.Fatalf("grant %+v %v", c, err)
+	}
+	got, ok, err := f.ds.Granted(f.ctx, "typesafe", decisions.TaskPaymentMatching)
+	if err != nil || !ok || !slices.Equal(got, narrow) {
+		t.Fatalf("granted %v %v %v", got, ok, err)
+	}
+	if !decisions.Covers(got, []decisions.Field{decisions.FieldDescription}) || decisions.Covers(got, []decisions.Field{decisions.FieldDescription, decisions.FieldAmount}) {
+		t.Fatal("Covers: narrowing must be fine and widening refused")
+	}
+	if last := f.rec.events[len(f.rec.events)-1]; last.Details["fields"] != "description,merchant_name" {
+		t.Fatalf("audit details %v", last.Details)
+	}
+	for _, bad := range [][]decisions.Field{nil, {}, {"iban"}, {decisions.FieldAmount, decisions.FieldAmount}} {
+		if _, err := f.ds.Grant(f.ctx, alice, "openai", decisions.TaskAlerts, "v1", bad); err == nil {
+			t.Errorf("accepted fields %v", bad)
+		}
 	}
 }

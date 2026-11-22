@@ -57,7 +57,7 @@ func (s Subject) Key() string {
 // digit removed (IBANs, account numbers, store numbers) and the words iban,
 // bic, swift, account and acct removed. The result is sent only when it starts
 // or ends, as a whole token in any case, with one of the unambiguous company
-// forms in [CompanyForms] and holds at least one other word with a letter in
+// forms in companyFormList and holds at least one other word with a letter in
 // it. A bare form, a form plus punctuation ("UAB &"), the short ambiguous forms
 // (as, co, sa, ab, ag, sp, oy, nv, bv), names of people and transfers send
 // nothing. At most 100 characters are kept.
@@ -106,15 +106,17 @@ var transferWords = map[string]bool{
 	"overforing": true, "ueberweisung": true, "überweisung": true, "virement": true,
 }
 
-// CompanyForms is the fixed list of unambiguous company forms that mark a
+// companyFormList is the fixed list of unambiguous company forms that mark a
 // counterparty as a business (decision C-E2-forms-2). Short forms that are
 // also ordinary words or initials (as, co, sa, ab, ag, sp, oy, nv, bv) are not
-// on it and never count.
-var CompanyForms = []string{"uab", "mb", "sia", "ltd", "limited", "llc", "gmbh", "inc", "plc", "corp", "srl", "sarl", "kft", "oü"}
+// on it and never count. It is unexported and never changed after init: the
+// lookup set companyForms is built from it once, and callers outside this
+// package cannot modify either.
+var companyFormList = []string{"uab", "mb", "sia", "ltd", "limited", "llc", "gmbh", "inc", "plc", "corp", "srl", "sarl", "kft", "oü"}
 
 var companyForms = func() map[string]bool {
 	m := map[string]bool{}
-	for _, f := range CompanyForms {
+	for _, f := range companyFormList {
 		m[f] = true
 	}
 	return m

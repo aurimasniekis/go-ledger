@@ -22,6 +22,15 @@ func (m *outlookMoney) String() string {
 type outlookResponse struct {
 	AsOf   string `json:"as_of"`
 	Notice string `json:"notice"`
+	Slice  *struct {
+		Bucket struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"bucket"`
+		CommitmentCount int    `json:"commitment_count"`
+		AccountCount    int    `json:"account_count"`
+		Note            string `json:"note"`
+	} `json:"slice"`
 	Window struct {
 		From             *string `json:"from"`
 		Through          string  `json:"through"`

@@ -91,25 +91,30 @@ func (p *Provider) Calls() int { return len(p.Sent()) }
 // Consents is a memory consent record keyed by provider and purpose.
 type Consents struct {
 	mu      sync.Mutex
-	granted map[string]bool
+	granted map[string][]decisions.Field
 	Err     error
 }
 
 // Grant records consent for one provider and purpose.
-func (c *Consents) Grant(provider string, purpose decisions.TaskName) {
+// Without fields it covers every permitted field.
+func (c *Consents) Grant(provider string, purpose decisions.TaskName, fields ...decisions.Field) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.granted == nil {
-		c.granted = map[string]bool{}
+		c.granted = map[string][]decisions.Field{}
 	}
-	c.granted[provider+"\x00"+string(purpose)] = true
+	if len(fields) == 0 {
+		fields = decisions.Permitted()
+	}
+	c.granted[provider+"\x00"+string(purpose)] = fields
 }
 
 // Granted implements decisions.Consents.
-func (c *Consents) Granted(_ context.Context, provider string, purpose decisions.TaskName) (bool, error) {
+func (c *Consents) Granted(_ context.Context, provider string, purpose decisions.TaskName) ([]decisions.Field, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.granted[provider+"\x00"+string(purpose)], c.Err
+	f, ok := c.granted[provider+"\x00"+string(purpose)]
+	return f, ok, c.Err
 }
 
 // Usage is a memory request counter.

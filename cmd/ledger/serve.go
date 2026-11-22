@@ -291,7 +291,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		return 1
 	}
 	parts.rates = rateSvc
-	// Decision providers (L1, ADR-0059): nothing runs them yet (L6), but an
+	// Decision providers (L1, ADR-0060): nothing runs them yet (L6), but an
 	// enabled task must be servable, so a misconfiguration stops startup.
 	if _, err := buildDecisions(cfg.Decisions, db, auditLog, time.Now); err != nil {
 		log.Error("invalid decision-provider settings", "error", err.Error())

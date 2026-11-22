@@ -1,4 +1,4 @@
-# ADR-0059: Decision-provider layer and policy enforcement
+# ADR-0060: Decision-provider layer and policy enforcement
 
 Status: Accepted (2026-11-22)
 
@@ -57,7 +57,11 @@ that run it are L6, the review UI and settings L7, the TypeSafe matcher X3.
 5. Consent is exact: a provider may be called for a purpose only while an
    active consent for that pair is recorded (`decision_consents`). Consent for
    TypeSafe payment matching enables no other provider, purpose or upstream.
-   Every route, fallback included, needs its own.
+   Every route, fallback included, needs its own. The consent also records
+   the field set it covers (`fields`, audited by name): when the fields a
+   route would send are not all in it, the run is refused as `no_consent`
+   until a new consent is granted. Narrowing the configured fields is fine;
+   widening them (or a wider provider default) is not.
 6. Each attempt is first counted against the task's monthly cap
    (`decision_usage`, calendar month in UTC); a full cap stops before sending.
    The task's timeout bounds one run on one route, retries included. Only an
@@ -115,5 +119,16 @@ that run it are L6, the review UI and settings L7, the TypeSafe matcher X3.
   and whether free-text fields such as the description should be scrubbed of
   account numbers before sending (today the description is sent as the bank
   wrote it when the allowlist permits it).
+- Review notes kept open (staff review of this PR): N2 the startup error text
+  appends "no adapters yet" to every `decisions.New` error and must name the
+  missing adapter once L2 lands; N3 suggestions are orphaned when their object
+  goes away and do not record which input version they answered, so L6 must
+  recheck the object before applying; N4 `merchant_name` may carry a person's
+  name for transfers, so L6 sends it only for merchant records not classified
+  as transfers; N5 a fallback without consent hides the primary's outage
+  reason, a consent granted by actor kind `system` should be refused when L7
+  adds the API, and two adapters sharing a name silently resolve to the last.
+- `ledger config check` runs the same adapter check as `serve` (an enabled
+  task whose provider has no adapter in this build fails both).
 - New migration `0031_decision_providers`; `decision_usage` is exempt from
   the version column (server bookkeeping).

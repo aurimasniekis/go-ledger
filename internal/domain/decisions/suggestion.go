@@ -85,7 +85,9 @@ type Suggestions interface {
 // payment_matching) says nothing about any other provider, any other purpose
 // or any upstream provider a routing provider reaches.
 type Consents interface {
-	Granted(ctx context.Context, provider string, purpose TaskName) (bool, error)
+	// Granted returns the fields the active consent covers; ok is false when
+	// there is none.
+	Granted(ctx context.Context, provider string, purpose TaskName) (fields []Field, ok bool, err error)
 }
 
 // Usage counts requests against the per-task monthly cap (decision D13).

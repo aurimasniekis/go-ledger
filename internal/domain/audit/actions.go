@@ -126,8 +126,8 @@ const (
 	RatesRefreshRequested Action = "rates.refresh_requested"
 
 	// Consent to send data to a decision provider for one purpose (L1,
-	// ADR-0059). The target is the consent (target type "decision_consent").
-	// Details: provider and purpose. Never the consent text or any field
+	// ADR-0060). The target is the consent (target type "decision_consent").
+	// Details: provider, purpose and the consented field names. Never the consent text or any field
 	// value.
 	DecisionConsentGranted Action = "decision_consent.granted"
 	DecisionConsentRevoked Action = "decision_consent.revoked"
@@ -157,7 +157,7 @@ var (
 	matchOrigins      = []string{"auto_rule", "model_suggestion", "user"}
 	matchFromStates   = []string{"none", "suggested", "confirmed", "rejected", "reversed"}
 	matchVias         = []string{string(ViaSession), string(ViaToken), string(ViaMCP), string(ViaSystem)}
-	// Decision providers and purposes (ADR-0059); the decisions package
+	// Decision providers and purposes (ADR-0060); the decisions package
 	// cannot be imported here, its test checks the lists agree.
 	decisionProviders = []string{"openrouter", "openai", "anthropic", "typesafe"}
 	decisionPurposes  = []string{"categorisation", "label_suggestion", "alerts", "payment_matching"}
@@ -290,8 +290,8 @@ var Definitions = map[Action][]Field{
 	BankSessionEndFailed:           {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled")},
 	BankStatusUpdateSkipped:        {f("provider"), f("application"), f("kind", "reconnect_required", "rate_limited", "retryable", "permanent", "canceled"), f("status", "reconnect_required", "failed")},
 	PaymentMatchingRun:             {f("confirmed"), f("suggested"), f("dropped"), f("skipped")},
-	DecisionConsentGranted:         {f("provider", decisionProviders...), f("purpose", decisionPurposes...), f("via", matchVias...)},
-	DecisionConsentRevoked:         {f("provider", decisionProviders...), f("purpose", decisionPurposes...), f("via", matchVias...)},
+	DecisionConsentGranted:         {f("provider", decisionProviders...), f("purpose", decisionPurposes...), f("fields"), f("via", matchVias...)},
+	DecisionConsentRevoked:         {f("provider", decisionProviders...), f("purpose", decisionPurposes...), f("fields"), f("via", matchVias...)},
 	RatesRefreshRequested:          {f("outcome", "succeeded", "partial", "failed", "cancelled"), f("refreshed"), f("error_kind", "unavailable", "rate_limited", "permanent", "internal"), f("error_code")},
 }
 

@@ -2,6 +2,7 @@ package decisions
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,7 +19,10 @@ type Consent struct {
 	Purpose  TaskName
 	// Terms names the consent text the operator accepted (for example its
 	// version); never a secret.
-	Terms     string
+	Terms string
+	// Fields are the fields the operator consented to send; sending more
+	// than these needs a new consent.
+	Fields    []Field
 	GrantedBy audit.Actor
 	GrantedAt time.Time
 	RevokedBy *audit.Actor
@@ -39,7 +43,7 @@ var (
 )
 
 // ValidateConsent checks a consent to record.
-func ValidateConsent(provider string, purpose TaskName, terms string) []commitments.FieldError {
+func ValidateConsent(provider string, purpose TaskName, terms string, fields []Field) []commitments.FieldError {
 	var errs []commitments.FieldError
 	if _, ok := KnownProvider(provider); !ok {
 		errs = append(errs, commitments.FieldError{Field: "provider", Message: "provider must be openrouter, openai, anthropic or typesafe"})
@@ -50,5 +54,26 @@ func ValidateConsent(provider string, purpose TaskName, terms string) []commitme
 	if t := strings.TrimSpace(terms); t == "" || utf8.RuneCountInString(t) > 200 || !utf8.ValidString(t) {
 		errs = append(errs, commitments.FieldError{Field: "terms", Message: "terms must name the consent text accepted, 1 to 200 characters"})
 	}
+	if len(fields) == 0 {
+		errs = append(errs, commitments.FieldError{Field: "fields", Message: "fields must name at least one field the consent covers"})
+	}
+	seen := map[Field]bool{}
+	for _, f := range fields {
+		if !IsPermitted(f) || seen[f] {
+			errs = append(errs, commitments.FieldError{Field: "fields", Message: "fields must be distinct permitted fields: " + joinFields(Permitted())})
+			break
+		}
+		seen[f] = true
+	}
 	return errs
+}
+
+// Covers reports whether every field to send is in the consented set.
+func Covers(consented, send []Field) bool {
+	for _, f := range send {
+		if !slices.Contains(consented, f) {
+			return false
+		}
+	}
+	return true
 }

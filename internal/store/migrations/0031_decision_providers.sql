@@ -1,4 +1,4 @@
--- Decision providers (task L1, ADR-0059, decision D13): consent per provider
+-- Decision providers (task L1, ADR-0060, decision D13): consent per provider
 -- and purpose, the per-task monthly request count, and model suggestions.
 --
 -- None of these tables refers to or changes a bank fact, a payment, a match,
@@ -11,12 +11,15 @@
 -- payment_matching) enables nothing else. A consent is revoked, never edited
 -- or deleted, so the history of what was allowed stays; at most one active
 -- consent exists per provider and purpose. terms names the consent text the
--- operator accepted (its version), never a secret.
+-- operator accepted (its version), never a secret. fields is the JSON array of
+-- fields the operator consented to send: sending is refused when the configured
+-- fields are not all in it (narrowing is fine, widening needs a new consent).
 CREATE TABLE decision_consents (
     id              TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     provider        TEXT NOT NULL CHECK (provider IN ('openrouter', 'openai', 'anthropic', 'typesafe')),
     purpose         TEXT NOT NULL CHECK (purpose IN ('categorisation', 'label_suggestion', 'alerts', 'payment_matching')),
     terms           TEXT NOT NULL CHECK (length(terms) BETWEEN 1 AND 200),
+    fields          TEXT NOT NULL CHECK (json_valid(fields) AND json_type(fields) = 'array' AND json_array_length(fields) > 0),
     granted_by_kind TEXT NOT NULL CHECK (granted_by_kind IN ('user', 'token', 'system')),
     granted_by_user TEXT CHECK (granted_by_user IS NULL OR (length(granted_by_user) = 26 AND granted_by_user GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]')),
     granted_at      TEXT NOT NULL CHECK (length(granted_at) = 30 AND granted_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]Z'),
@@ -33,7 +36,7 @@ CREATE UNIQUE INDEX decision_consents_active ON decision_consents (provider, pur
 CREATE TRIGGER decision_consents_only_revoked
 BEFORE UPDATE ON decision_consents
 WHEN OLD.revoked_at IS NOT NULL
-  OR NEW.id IS NOT OLD.id OR NEW.provider IS NOT OLD.provider OR NEW.purpose IS NOT OLD.purpose OR NEW.terms IS NOT OLD.terms
+  OR NEW.id IS NOT OLD.id OR NEW.provider IS NOT OLD.provider OR NEW.purpose IS NOT OLD.purpose OR NEW.terms IS NOT OLD.terms OR NEW.fields IS NOT OLD.fields
   OR NEW.granted_by_kind IS NOT OLD.granted_by_kind OR NEW.granted_by_user IS NOT OLD.granted_by_user OR NEW.granted_at IS NOT OLD.granted_at
 BEGIN
     SELECT RAISE(ABORT, 'a decision consent can only be revoked, once');

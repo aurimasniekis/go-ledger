@@ -753,3 +753,135 @@ type NewDeferralAdjustment struct {
 type DeferralUndo struct {
 	Reason *string `json:"reason,omitempty"`
 }
+
+// Outlook is the outlook against recorded commitments (ADR-0044). Every
+// amount is per currency; Converted is the only figure that combines
+// currencies, and only through the rates it lists. Slice is set when the
+// outlook was restricted to a bucket.
+type Outlook struct {
+	AsOf   string `json:"as_of"`
+	Notice string `json:"notice"`
+	// Slice is nil for the whole outlook.
+	Slice  *OutlookSlice `json:"slice"`
+	Window struct {
+		From             *string `json:"from"`
+		Through          string  `json:"through"`
+		Truncated        bool    `json:"truncated"`
+		NotRecordedCount int     `json:"not_recorded_count"`
+	} `json:"window"`
+	Currencies []OutlookCurrency `json:"currencies"`
+	Balances   struct {
+		Shown             bool   `json:"shown"`
+		Note              string `json:"note"`
+		StaleAfterSeconds *int64 `json:"stale_after_seconds"`
+	} `json:"balances"`
+	Accounts       []OutlookAccount  `json:"accounts"`
+	Converted      *OutlookConverted `json:"converted"`
+	PlannedOutflow struct {
+		Included bool   `json:"included"`
+		Note     string `json:"note"`
+	} `json:"planned_outflows"`
+	Freshness struct {
+		ComputedAt           string  `json:"computed_at"`
+		OccurrencesChangedAt *string `json:"occurrences_changed_at"`
+	} `json:"freshness"`
+}
+
+// OutlookSlice says an outlook covers one bucket only. A bucket allocates no
+// money: a balance is still the whole balance of each account in it.
+type OutlookSlice struct {
+	Bucket          Definition `json:"bucket"`
+	CommitmentCount int        `json:"commitment_count"`
+	AccountCount    int        `json:"account_count"`
+	Note            string     `json:"note"`
+}
+
+// OutlookCurrency is the comparison for one currency.
+type OutlookCurrency struct {
+	Currency                string  `json:"currency"`
+	StillDue                Money   `json:"still_due"`
+	Overdue                 Money   `json:"overdue"`
+	Upcoming                Money   `json:"upcoming"`
+	OverdueCount            int     `json:"overdue_count"`
+	UnconvertedEvidence     int     `json:"unconverted_evidence_count"`
+	Balance                 *Money  `json:"balance"`
+	BalanceLessStillDue     *Money  `json:"balance_less_still_due"`
+	AccountCount            int     `json:"account_count"`
+	StaleAccountCount       int     `json:"stale_account_count"`
+	OldestBalanceObtainedAt *string `json:"oldest_balance_obtained_at"`
+	OverdueMonths           []struct {
+		Month  string `json:"month"`
+		Count  int    `json:"count"`
+		Amount Money  `json:"amount"`
+	} `json:"overdue_months"`
+	BalanceAsOf          *string `json:"balance_as_of"`
+	PaymentsAfterBalance *struct {
+		Count  int   `json:"count"`
+		Amount Money `json:"amount"`
+	} `json:"payments_after_balance"`
+}
+
+// OutlookAccount is a bank account the outlook counts or shows.
+type OutlookAccount struct {
+	ID           string `json:"id"`
+	ConnectionID string `json:"connection_id"`
+	Name         string `json:"name"`
+	Institution  string `json:"institution"`
+	Currency     string `json:"currency"`
+	Balances     []struct {
+		Type          string  `json:"type"`
+		ProviderType  string  `json:"provider_type"`
+		Amount        Money   `json:"amount"`
+		ReferenceDate *string `json:"reference_date"`
+		ObtainedAt    string  `json:"obtained_at"`
+	} `json:"balances"`
+	Counted          bool    `json:"counted"`
+	NotCountedReason *string `json:"not_counted_reason"`
+	Freshness        struct {
+		State         string  `json:"state"`
+		Stale         bool    `json:"stale"`
+		LastSuccessAt *string `json:"last_success_at"`
+		LastAttemptAt *string `json:"last_attempt_at"`
+		LastErrorKind *string `json:"last_error_kind"`
+		LastErrorCode *string `json:"last_error_code"`
+		NoticeCode    *string `json:"notice_code"`
+	} `json:"freshness"`
+}
+
+// OutlookRate is a rate used or found too old, with its provenance.
+type OutlookRate struct {
+	Provider         string `json:"provider"`
+	Source           string `json:"source"`
+	Base             string `json:"base"`
+	Quote            string `json:"quote"`
+	Value            string `json:"value"`
+	Date             string `json:"date"`
+	RetrievedAt      string `json:"retrieved_at"`
+	ConfirmedThrough string `json:"confirmed_through"`
+}
+
+// OutlookConverted is the secondary aggregate in one reporting currency. A
+// currency without an acceptable rate is in Excluded, and Complete is false.
+type OutlookConverted struct {
+	Currency             string `json:"currency"`
+	Complete             bool   `json:"complete"`
+	StillDue             Money  `json:"still_due"`
+	Overdue              Money  `json:"overdue"`
+	Balance              *Money `json:"balance"`
+	BalanceLessStillDue  *Money `json:"balance_less_still_due"`
+	BalanceAccounts      int    `json:"balance_account_count"`
+	StaleBalanceAccounts int    `json:"stale_balance_account_count"`
+	Included             []struct {
+		Currency      string       `json:"currency"`
+		Rate          *OutlookRate `json:"rate"`
+		AgeSeconds    *int64       `json:"age_seconds"`
+		FromCache     bool         `json:"from_cache"`
+		RefreshFailed bool         `json:"refresh_failed"`
+	} `json:"included"`
+	Excluded []struct {
+		Currency string       `json:"currency"`
+		Status   string       `json:"status"`
+		Reason   string       `json:"reason"`
+		Rate     *OutlookRate `json:"rate"`
+	} `json:"excluded"`
+}

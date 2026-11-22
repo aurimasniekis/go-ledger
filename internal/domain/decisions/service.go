@@ -288,11 +288,13 @@ func (s *Service) Run(ctx context.Context, name TaskName, in Input) (Result, err
 	var res Result
 	for i, r := range append([]Route{tc.Route}, tc.Fallback...) {
 		res.Provider = r.Provider
-		granted, err := s.deps.Consents.Granted(ctx, r.Provider, name)
+		consented, granted, err := s.deps.Consents.Granted(ctx, r.Provider, name)
 		if err != nil {
 			return Result{}, fmt.Errorf("decisions: reading consent: %w", err)
 		}
-		if !granted {
+		// Widening the configured fields past the consented set needs a new
+		// consent; narrowing is fine.
+		if !granted || !Covers(consented, fieldsFor(name, tc, r, i == 0)) {
 			res.Reason = ReasonNoConsent
 			return res, nil
 		}

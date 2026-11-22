@@ -62,6 +62,12 @@ func configCheck(args []string, stdout, stderr io.Writer, base config.Options) i
 		say(stderr, "ledger: "+err.Error())
 		return 1
 	}
+	// serve refuses an enabled decision task whose provider has no adapter in
+	// this build; check must refuse the same.
+	if err := checkDecisions(res.Config.Decisions); err != nil {
+		say(stderr, "ledger: "+err.Error())
+		return 1
+	}
 	reportSources(stdout, res)
 	return 0
 }

@@ -104,17 +104,18 @@ const connectionsCallbackRoute = createRoute({
   },
 })
 
-// The outlook (FX3): ?through=YYYY-MM and ?currency=XXX are optional; the server defaults them.
+// The outlook (FX3): ?through=YYYY-MM and ?currency=XXX are optional; the server defaults them. ?bucket=<id> slices it by a bucket (O3).
 const outlookRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/outlook',
-  validateSearch: (s: Record<string, unknown>): { through?: string; currency?: string } => ({
+  validateSearch: (s: Record<string, unknown>): { through?: string; currency?: string; bucket?: string } => ({
     ...(isMonth(s.through) ? { through: s.through } : {}),
     ...(typeof s.currency === 'string' && /^[A-Z]{3}$/.test(s.currency) ? { currency: s.currency } : {}),
+    ...(typeof s.bucket === 'string' && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(s.bucket) ? { bucket: s.bucket } : {}),
   }),
   component: function OutlookRoute() {
-    const { through, currency } = outlookRoute.useSearch()
-    return <OutlookPage through={through} currency={currency} />
+    const { through, currency, bucket } = outlookRoute.useSearch()
+    return <OutlookPage through={through} currency={currency} bucket={bucket} />
   },
 })
 

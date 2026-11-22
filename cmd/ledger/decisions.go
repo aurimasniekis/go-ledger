@@ -18,7 +18,26 @@ var decisionAdapters = func(config.Decisions) []decisions.Provider { return nil 
 // decisionProviderNames lists the providers whose key may be configured.
 var decisionProviderNames = []string{"openrouter", "openai", "anthropic", "typesafe"}
 
-// buildDecisions returns the decision service (ADR-0059), or nil when no task
+// checkDecisions is what `ledger config check` runs: the checks serve makes at
+// startup that need no database, so a configuration that check accepts is not
+// refused by serve for its decision settings. Both use ValidateConfig against
+// the adapters built into this binary.
+func checkDecisions(cfg config.Decisions) error {
+	dc, ps := cfg.Domain()
+	if len(ps) > 0 {
+		return fmt.Errorf("decision settings: %s: %s", ps[0].Key, ps[0].Msg)
+	}
+	var descs []decisions.Descriptor
+	for _, p := range decisionAdapters(cfg) {
+		descs = append(descs, p.Descriptor())
+	}
+	if ps := decisions.ValidateConfig(dc, descs); len(ps) > 0 {
+		return fmt.Errorf("%w (this version has no decision-provider adapters yet; switch the decisions.tasks.* off)", &decisions.ConfigError{Problems: ps})
+	}
+	return nil
+}
+
+// buildDecisions returns the decision service (ADR-0060), or nil when no task
 // is enabled. An enabled task whose provider has no adapter in this build is
 // a startup error, never a silent no-op: the operator asked for something
 // Ledger cannot do.

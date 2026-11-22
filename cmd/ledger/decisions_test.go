@@ -11,6 +11,22 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/store"
 )
 
+func TestCheckDecisionsMatchesServe(t *testing.T) {
+	var cfg config.Decisions
+	cfg.Tasks.Categorisation.Timeout, cfg.Tasks.Categorisation.MonthlyRequests, cfg.Tasks.Categorisation.Retries = 30*time.Second, 500, 2
+	if err := checkDecisions(cfg); err != nil {
+		t.Fatalf("all off: %v", err)
+	}
+	cfg.Tasks.Categorisation.Enabled = true
+	cfg.Tasks.Categorisation.Provider = "anthropic"
+	cfg.Tasks.Categorisation.Model = "m"
+	cfg.Providers.Anthropic.APIKey = "SENTINEL-KEY"
+	err := checkDecisions(cfg)
+	if err == nil || !strings.Contains(err.Error(), "not available") || strings.Contains(err.Error(), "SENTINEL-KEY") {
+		t.Fatalf("enabled without an adapter: %v", err)
+	}
+}
+
 func TestBuildDecisions(t *testing.T) {
 	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "ledger.db"), store.Options{})
 	if err != nil {

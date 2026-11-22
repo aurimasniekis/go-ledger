@@ -576,3 +576,37 @@ func TestLongValuesAreCut(t *testing.T) {
 		t.Fatal("a value was not cut")
 	}
 }
+
+// TestConsentIsBoundToTheFieldSet: a consent covers the fields recorded with
+// it. Widening the configured fields past them is refused (no_consent, nothing
+// sent, no attempt counted) until a new consent; narrowing is fine.
+func TestConsentIsBoundToTheFieldSet(t *testing.T) {
+	ctx := context.Background()
+	narrow := []decisions.Field{decisions.FieldDescription, decisions.FieldCandidateNames}
+	run := func(consented []decisions.Field, configured []decisions.Field) (decisions.Result, *decisionstest.Provider) {
+		e := newEnv()
+		e.consents.Grant("openai", decisions.TaskCategorisation, consented...)
+		p := decisionstest.NewProvider("openai", decisionstest.Reply{Output: okChoice})
+		tc := taskCfg("openai", "m")
+		tc.Fields = configured
+		res, err := e.service(t, one(decisions.TaskCategorisation, tc), p).Run(ctx, decisions.TaskCategorisation, input())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res, p
+	}
+	res, p := run(narrow, append([]decisions.Field{decisions.FieldAmount}, narrow...))
+	if res.Reason != decisions.ReasonNoConsent || res.Suggestion != nil || res.Attempts != 0 || len(p.Sent()) != 0 {
+		t.Fatalf("widened fields under the old consent: %+v sent=%d", res, len(p.Sent()))
+	}
+	if res, p = run(narrow, narrow); res.Suggestion == nil || len(p.Sent()) != 1 {
+		t.Fatalf("the consented set itself: %+v", res)
+	}
+	if res, p = run(decisions.Permitted(), narrow); res.Suggestion == nil || len(p.Sent()) != 1 {
+		t.Fatalf("narrowing: %+v", res)
+	}
+	// Unset fields mean the provider's defaults, which count too.
+	if res, _ = run(narrow, nil); res.Reason != decisions.ReasonNoConsent {
+		t.Fatalf("default fields wider than the consent: %+v", res)
+	}
+}

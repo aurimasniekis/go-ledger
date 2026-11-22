@@ -462,6 +462,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/CategoryFilter"
+        - $ref: "#/components/parameters/LabelFilter"
         - name: kind
           in: query
           description: Only commitments of these kinds (repeat for any of several).
@@ -1557,6 +1559,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/CategoryFilter"
+        - $ref: "#/components/parameters/LabelFilter"
         - name: month
           in: query
           required: true
@@ -1627,6 +1631,8 @@ paths:
         Months more than 60 months after the current month are refused.
       tags: [occurrences]
       parameters:
+        - $ref: "#/components/parameters/CategoryFilter"
+        - $ref: "#/components/parameters/LabelFilter"
         - name: month
           in: query
           required: true
@@ -1718,6 +1724,16 @@ paths:
           description: Reporting currency of the converted aggregate; default reporting.currency.
           schema:
             $ref: "#/components/schemas/Currency"
+        - name: bucket
+          in: query
+          required: false
+          description: |
+            Slice the outlook by a bucket (decision D12): only the commitments and the accounts in the bucket are counted, per currency, and
+            converted only under the same conversion policy. The response then carries slice. It is a view, not an allocation: a bucket
+            holds no money, each balance is the whole balance of an account in the bucket, and the figures are never money that is safe to
+            spend. An archived bucket still slices. Needs the organisation:read grant as well; an unknown bucket is a validation error.
+          schema:
+            $ref: "#/components/schemas/ID"
       responses:
         "200":
           description: The outlook.
@@ -2147,6 +2163,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/CategoryFilter"
+        - $ref: "#/components/parameters/LabelFilter"
         - name: transaction_id
           in: query
           schema:
@@ -5380,6 +5398,27 @@ components:
       name: __Host-ledger_session
       description: The browser session cookie set by sign-in. State-changing requests made with it also send X-CSRF-Token.
   parameters:
+    CategoryFilter:
+      name: category_id
+      in: query
+      required: false
+      description: |
+        Only objects whose effective category is this one or one of its children (repeat for any of several). A category groups; it allocates no
+        money. Combined with label_id, an object must satisfy both. Needs the organisation:read grant as well as the endpoint's own. For
+        occurrences, the month view and its totals, the category is the commitment's; for payment matches it is the transaction's, including
+        what it inherits from the pending transaction it replaced. An unknown category is a validation error. A filter that matches more than
+        5000 objects is refused: narrow it.
+      schema:
+        $ref: "#/components/schemas/ID"
+    LabelFilter:
+      name: label_id
+      in: query
+      required: false
+      description: |
+        Only objects carrying this label (repeat for any of several). Labels group; they allocate no money. Combined with category_id, an
+        object must satisfy both. Needs the organisation:read grant as well as the endpoint's own. Same object rules and limits as category_id.
+      schema:
+        $ref: "#/components/schemas/ID"
     Limit:
       name: limit
       in: query
@@ -5784,12 +5823,30 @@ components:
       type: object
       description: The monthly view (ADR-0034).
       additionalProperties: false
-      required: [month, as_of, items, carried_in, totals, freshness]
+      required: [month, as_of, items, carried_in, totals, freshness, filter]
       properties:
         month:
           $ref: "#/components/schemas/YearMonth"
         as_of:
           $ref: "#/components/schemas/Date"
+        filter:
+          description: Null for the whole month. Set when category_id or label_id restricted it; the items and the totals then cover only the matching commitments, never the whole month.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [category_ids, label_ids, note]
+              properties:
+                category_ids:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ID"
+                label_ids:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ID"
+                note:
+                  type: string
+            - type: "null"
         items:
           type: array
           description: Every occurrence of the month, by due date, then ID, each with its commitment's name.
@@ -6063,13 +6120,32 @@ components:
       type: object
       description: The outlook against recorded commitments (ADR-0044). Not a forecast and not money that is safe to spend.
       additionalProperties: false
-      required: [as_of, notice, window, currencies, balances, accounts, converted, planned_outflows, freshness]
+      required: [as_of, notice, slice, window, currencies, balances, accounts, converted, planned_outflows, freshness]
       properties:
         as_of:
           $ref: "#/components/schemas/Date"
         notice:
           type: string
           description: The wording to show with the outlook.
+        slice:
+          description: Null for the whole outlook. Set when the outlook was restricted to a bucket (the bucket parameter); every figure then covers only that bucket's commitments and accounts.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [bucket, commitment_count, account_count, note]
+              properties:
+                bucket:
+                  $ref: "#/components/schemas/OrganisationDefinition"
+                commitment_count:
+                  type: integer
+                  description: Commitments in the bucket.
+                account_count:
+                  type: integer
+                  description: Accounts in the bucket.
+                note:
+                  type: string
+                  description: The wording to show with a slice.
+            - type: "null"
         window:
           type: object
           additionalProperties: false
