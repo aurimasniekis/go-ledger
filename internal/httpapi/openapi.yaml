@@ -5724,9 +5724,11 @@ components:
           description: |
             The window with each outstanding amount placed in the month it is planned to be paid (deferral plans, ADR-0050, D-DF 8):
             total = still_due - deferred_beyond + adjustments. A plan is not payment and not forgiveness: still_due, overdue and
-            upcoming are unchanged by plans. Nothing here is converted.
+            upcoming are unchanged by plans. Per currency only: the converted aggregate carries only the converted total.
+            Only occurrences of the window's own months count: an amount deferred into a truncated window from before it is
+            not in still_due and so is in none of total, deferred_in and deferred_beyond.
           additionalProperties: false
-          required: [total, deferred_in, deferred_beyond, adjustments]
+          required: [total, deferred_in, deferred_beyond, adjustments, missed_count, missed_outstanding]
           properties:
             total:
               $ref: "#/components/schemas/Money"
@@ -5734,10 +5736,16 @@ components:
               description: The outstanding amount of occurrences planned into a later month of the window than their own, shown apart; part of still_due (and overdue past the due date) as before, and of total.
               $ref: "#/components/schemas/Money"
             deferred_beyond:
-              description: The part of still_due whose active plan falls in a month after the window; owed, not planned inside it. Can be understated when the window is truncated.
+              description: The part of still_due whose active plan falls in a month after the window; owed, not planned inside it. Counts only occurrences of the window.
               $ref: "#/components/schemas/Money"
             adjustments:
               description: Recorded fees, interest and other charges of active plans still planned (neither removed nor marked paid); not part of still_due.
+              $ref: "#/components/schemas/Money"
+            missed_count:
+              type: integer
+              description: Active plans of occurrences in the window whose planned date has passed while something planned (principal or a fee) is still unpaid. Derived when read; not payment state.
+            missed_outstanding:
+              description: The outstanding principal of the occurrences behind missed_count (zero when only fees are unpaid).
               $ref: "#/components/schemas/Money"
         overdue_count:
           type: integer
@@ -5859,7 +5867,7 @@ components:
       type: object
       description: The secondary aggregate in one reporting currency (decision D5). Only currencies with an acceptable rate are included.
       additionalProperties: false
-      required: [currency, complete, still_due, overdue, balance, balance_less_still_due, balance_account_count, stale_balance_account_count, included, excluded]
+      required: [currency, complete, still_due, overdue, planned_total, balance, balance_less_still_due, balance_account_count, stale_balance_account_count, included, excluded]
       properties:
         currency:
           $ref: "#/components/schemas/Currency"
@@ -5869,6 +5877,9 @@ components:
         still_due:
           $ref: "#/components/schemas/Money"
         overdue:
+          $ref: "#/components/schemas/Money"
+        planned_total:
+          description: The per-currency planned_outflows.total converted with the same rate and rounding as still_due. The other planned figures (deferred in, beyond, fees, missed) are per currency only.
           $ref: "#/components/schemas/Money"
         balance:
           oneOf:
