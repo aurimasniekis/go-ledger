@@ -4,11 +4,14 @@ import type { Money } from '@/features/month/types'
 
 export type MatchState = 'suggested' | 'confirmed' | 'rejected' | 'reversed'
 export type MatchOrigin = 'auto_rule' | 'model_suggestion' | 'user'
-export type MatchAction = 'confirm' | 'reject' | 'unmatch' | 'correct' | 'reverse'
+export type MatchAction = 'confirm' | 'reject' | 'unmatch' | 'correct' | 'reverse' | 'unconfirm'
+/** How a change came (ADR-0045): a signed-in browser, an API token, an API token through MCP, or the server itself. Null before provenance was recorded. */
+export type Via = 'session' | 'token' | 'mcp' | 'system'
 
 export interface Decider {
   kind: string
   user_id: string | null
+  via?: Via | null
 }
 
 /** The bank fact a match refers to, as the provider reported it. description and counterparty are null without banking:read. */
