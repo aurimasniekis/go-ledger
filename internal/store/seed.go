@@ -3,13 +3,13 @@ package store
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
-	"testing"
 )
 
 var (
@@ -28,11 +28,16 @@ var (
 // test that injects either, or opens an existing database, runs the real
 // migrations as before.
 func UseSeedForNewDatabases(seed string) {
-	requireTest(testing.Testing(), "UseSeedForNewDatabases")
+	requireTest(inTestBinary(), "UseSeedForNewDatabases")
 	seedMu.Lock()
 	seedPath = seed
 	seedMu.Unlock()
 }
+
+// inTestBinary reports whether this is a "go test" binary, which registers the
+// test.* flags. It avoids testing.Testing so the production binary does not
+// link the testing package.
+func inTestBinary() bool { return flag.Lookup("test.v") != nil }
 
 // requireTest panics unless inTest, so the seed hook cannot be used by the
 // production binary: it would skip migrations and copy an arbitrary file.
@@ -46,7 +51,7 @@ func requireTest(inTest bool, name string) {
 // closes it and returns, for [UseSeedForNewDatabases]. It fails when the
 // closed database still has a write-ahead log, which a plain copy would lose.
 func NewSeed(path string) error {
-	requireTest(testing.Testing(), "NewSeed")
+	requireTest(inTestBinary(), "NewSeed")
 	UseSeedForNewDatabases("")
 	db, err := Open(context.Background(), path, Options{})
 	if err != nil {
