@@ -287,6 +287,24 @@ describe('merchant record', () => {
     expect(calls.find((c) => c.method === 'DELETE')!.headers).toMatchObject(etag(MAXIMA))
   })
 
+  it('says the result is unknown after a 500 on delete, never that nothing changed', async () => {
+    const user = userEvent.setup()
+    installApi(routes({ ['GET /api/v1/merchants/' + LIDL.id]: ok(LIDL), ['DELETE /api/v1/merchants/' + LIDL.id]: fail(500, 'internal', 'boom') }))
+    renderApp('/merchants/' + LIDL.id)
+    await user.click(await screen.findByRole('button', { name: 'Delete' }))
+    const dlg = await screen.findByRole('alertdialog')
+    await user.click(within(dlg).getByRole('button', { name: 'Delete Lidl' }))
+    expect(await within(dlg).findByText(/The result is unknown: reload the merchant to check/)).toBeInTheDocument()
+    expect(within(dlg).queryByText(/Nothing was changed/)).toBeNull()
+  })
+
+  it('focuses the list heading only when arriving with the delete flag, not on a plain visit', async () => {
+    installApi(routes({ ['GET /api/v1/merchants']: ok({ items: [LIDL], next_cursor: null }) }))
+    renderApp('/merchants')
+    const heading = await screen.findByRole('heading', { name: 'Merchants', level: 1 })
+    expect(document.activeElement).not.toBe(heading)
+  })
+
   it('previews what a merge moves, needs an acknowledgement that it cannot be undone, then merges with If-Match of the remaining merchant', async () => {
     const user = userEvent.setup()
     const calls = installApi(

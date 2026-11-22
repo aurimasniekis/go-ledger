@@ -15,6 +15,7 @@ export function ConfirmDialog({
   description,
   confirmLabel,
   onConfirm,
+  onCloseAutoFocus,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -22,6 +23,8 @@ export function ConfirmDialog({
   description: ReactNode
   confirmLabel: string
   onConfirm: () => Promise<unknown>
+  /** Runs as the dialog closes; preventDefault when the opener is gone and the action put focus somewhere better. */
+  onCloseAutoFocus?: (e: Event) => void
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
@@ -32,7 +35,7 @@ export function ConfirmDialog({
   }
   return (
     <AlertDialog open={open} onOpenChange={close}>
-      <AlertDialogContent title={title} description={description}>
+      <AlertDialogContent title={title} description={description} onCloseAutoFocus={onCloseAutoFocus}>
         <FormError message={error} />
         <div className="flex flex-wrap justify-end gap-2">
           <AlertDialogCancel asChild>

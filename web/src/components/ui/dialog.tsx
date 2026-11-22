@@ -69,15 +69,17 @@ export function AlertDialogContent({
   title,
   description,
   children,
+  onCloseAutoFocus,
 }: {
   title: ReactNode
   description: ReactNode
   children: ReactNode
+  onCloseAutoFocus?: (e: Event) => void
 }) {
   return (
     <AlertPrimitive.Portal>
       <AlertPrimitive.Overlay className={overlay} />
-      <ReturningAlertContent className={content}>
+      <ReturningAlertContent className={content} onCloseAutoFocus={onCloseAutoFocus}>
         <AlertPrimitive.Title className="text-lg font-semibold">{title}</AlertPrimitive.Title>
         <AlertPrimitive.Description className="text-sm text-muted-foreground">{description}</AlertPrimitive.Description>
         {children}

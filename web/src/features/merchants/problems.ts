@@ -1,8 +1,10 @@
 import { ApiError, NetworkError } from '@/lib/api'
 
+const UNKNOWN = 'The result is unknown: reload the merchant to check before trying again.'
+
 /** Why a merchant change was not saved, in words: nothing is shown as saved until the server accepted it. */
 export function merchantProblem(e: unknown): string {
-  if (e instanceof NetworkError) return 'Not saved: there is no connection to the server. Nothing was changed.'
+  if (e instanceof NetworkError) return `Not confirmed: there is no connection to the server. ${UNKNOWN}`
   if (e instanceof ApiError) {
     switch (e.code) {
       case 'version_conflict':
@@ -20,9 +22,11 @@ export function merchantProblem(e: unknown): string {
       case 'forbidden':
         return 'Not saved: your token or role does not hold merchants:write. Nothing was changed.'
     }
-    return `${e.message.replace(/[.\s]+$/, '')}. Nothing was changed.`
+    // Only a validated refusal (4xx) proves nothing was changed; a 5xx may have been applied before it failed.
+    const said = e.message.replace(/[.\s]+$/, '')
+    return e.status >= 400 && e.status < 500 ? `${said}. Nothing was changed.` : `${said}. ${UNKNOWN}`
   }
-  return e instanceof Error ? `${e.message.replace(/[.\s]+$/, '')}. Nothing was changed.` : 'Something went wrong. Nothing was changed.'
+  return e instanceof Error ? `${e.message.replace(/[.\s]+$/, '')}. ${UNKNOWN}` : `Something went wrong. ${UNKNOWN}`
 }
 
 export const isConflict = (e: unknown) => e instanceof ApiError && e.code === 'version_conflict'

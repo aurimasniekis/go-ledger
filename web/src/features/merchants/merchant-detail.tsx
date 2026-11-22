@@ -52,6 +52,7 @@ export function MerchantDetailPage({ id }: { id: string }) {
 function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const deleted = useRef(false)
   const [renaming, setRenaming] = useState(false)
   const [merging, setMerging] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -223,6 +224,10 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
         title={`Delete ${m.display_name}`}
         description="Deleting cannot be undone. It is refused while a decision, an assignment or a merged merchant still refers to this merchant: archive it to keep the history, or merge it into another."
         confirmLabel={`Delete ${m.display_name}`}
+        // Once deleted, the list heading takes focus when it mounts: the closing dialog must not pull it back to the main region.
+        onCloseAutoFocus={(e) => {
+          if (deleted.current) e.preventDefault()
+        }}
         onConfirm={async () => {
           try {
             await deleteMerchant(m)
@@ -232,10 +237,9 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
           }
           qc.removeQueries({ queryKey: merchantKey(m.id) })
           await qc.invalidateQueries({ queryKey: merchantsKey })
-          await navigate({ to: '/merchants' })
-          // The merchant's page is gone, so focus would fall to BODY or, once the closing dialog has been cleaned up, to the main region:
-          // land on the list's heading, after that cleanup.
-          setTimeout(() => document.getElementById('merchants-title')?.focus(), 0)
+          deleted.current = true
+          // The merchant's page is gone, so focus would fall to BODY: the list's heading takes it when it mounts (one-shot router state).
+          await navigate({ to: '/merchants', state: { focusTitle: true } as never })
         }}
       />
     </div>
