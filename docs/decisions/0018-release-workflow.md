@@ -6,11 +6,12 @@ release workflow.
 ## Context
 
 F10 delivers a tag-triggered release that produces the binaries (linux amd64 and arm64, darwin arm64) with the web UI
-embedded, checksums, SBOMs and the container image (D19). The operator chose Docker Hub for the image, `docker.io/aurimasniekis/ledger`,
-with a repository secret holding a push token (the login username is fixed in the workflow). A GitHub Release needs
-`contents: write`. ADR-0007 keeps every write scope out of `ci.yml`, and `scripts/check-workflow-permissions.sh` rejects a
-write scope in every workflow file. The release therefore needs an explicit, narrow exception. The Terraform provider's
-GPG signing belongs to `terraform-provider-ledger`, not to this repository.
+embedded, checksums, SBOMs and the container image (D19). The operator chose Docker Hub for the image,
+`docker.io/aurimasniekis/ledger`, with a repository secret holding a push token (the login username is fixed in the
+workflow). A GitHub Release needs `contents: write`. ADR-0007 keeps every write scope out of `ci.yml`, and
+`scripts/check-workflow-permissions.sh` rejects a write scope in every workflow file. The release therefore needs an
+explicit, narrow exception. The Terraform provider's GPG signing belongs to `terraform-provider-ledger`, not to this
+repository.
 
 ## Decision
 
