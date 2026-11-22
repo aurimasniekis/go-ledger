@@ -1,4 +1,4 @@
-# ADR-0057: Decision-provider layer and policy enforcement
+# ADR-0058: Decision-provider layer and policy enforcement
 
 Status: Accepted (2026-11-22)
 

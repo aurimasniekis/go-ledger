@@ -1914,4 +1914,1114 @@ Report whether an exchange-rate provider is configured (it is optional), which s
 
 </details>
 
+### `list_categories`
+
+List categories, one page at a time, with their version (needed to change one) and whether each is archived. A category is single-valued per object and has two levels: a top-level category and its children. Archived ones are included unless archived is false.
+
+- Kind: read
+- Operation: `GET /api/v1/categories`
+- Grant: `organisation:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "archived": {
+      "description": "Only archived (true) or only active (false) ones; omit for both.",
+      "type": "boolean"
+    },
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "name[prefix]": {
+      "description": "Only names starting with this text, ignoring case.",
+      "type": "string"
+    },
+    "parent_id": {
+      "description": "Only the children of this category (its identifier), or none for the top-level categories.",
+      "type": "string"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_category`
+
+Get one category with its version (needed to rename, archive or delete it).
+
+- Kind: read
+- Operation: `GET /api/v1/categories/{id}`
+- Grant: `organisation:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The category identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `create_category`
+
+Create a category. A category is single-valued per object and has two levels: a top-level category and its children. The same validation as the HTTP API applies. Not idempotent for a retry after an unclear answer: list categories by name first (a duplicate name is refused as duplicate_name).
+
+- Kind: write
+- Operation: `POST /api/v1/categories`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "The name: trimmed, unique ignoring case (among siblings for a category), archived ones included. Free text, never an identifier.",
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    },
+    "parent_id": {
+      "description": "The parent category, which must be an active top-level category; null for a top-level category.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `update_category`
+
+Rename a category or move it under another top-level category (parent_id). Only the members given change. The identifier never changes, so a rename reaches every assignment. A stale version is refused with a conflict that names the current one.
+
+- Kind: write
+- Operation: `PATCH /api/v1/categories/{id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The category identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "name": {
+      "description": "The name: trimmed, unique ignoring case (among siblings for a category), archived ones included. Free text, never an identifier.",
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    },
+    "parent_id": {
+      "description": "The parent category, which must be an active top-level category; null for a top-level category.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "description": "The version of the category this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `archive_category`
+
+Archive a category: it and every assignment to it are kept and shown as archived, and nothing new may use it. Reversible with unarchive_category. A category is archived after its children.
+
+- Kind: write
+- Operation: `POST /api/v1/categories/{id}/archive`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The category identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the category this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `unarchive_category`
+
+Make an archived category usable again by the person, rules and models. A child category is unarchived after its parent.
+
+- Kind: write
+- Operation: `POST /api/v1/categories/{id}/unarchive`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The category identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the category this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `delete_category`
+
+Delete a category that nothing is assigned to. Prefer archive_category, which keeps history. One that is still assigned is refused (definition_in_use, with the count) unless reassign_to names an active category the assignments move to. A category with children is never deleted.
+
+- Kind: destructive
+- Operation: `DELETE /api/v1/categories/{id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The category identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reassign_to": {
+      "description": "The active category the assignments move to, in the same transaction.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the category this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_labels`
+
+List labels, one page at a time, with their version (needed to change one) and whether each is archived. A label is many-valued and flat. Archived ones are included unless archived is false.
+
+- Kind: read
+- Operation: `GET /api/v1/labels`
+- Grant: `organisation:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "archived": {
+      "description": "Only archived (true) or only active (false) ones; omit for both.",
+      "type": "boolean"
+    },
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "name[prefix]": {
+      "description": "Only names starting with this text, ignoring case.",
+      "type": "string"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_label`
+
+Get one label with its version (needed to rename, archive or delete it).
+
+- Kind: read
+- Operation: `GET /api/v1/labels/{id}`
+- Grant: `organisation:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The label identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `create_label`
+
+Create a label. A label is many-valued and flat. The same validation as the HTTP API applies. Not idempotent for a retry after an unclear answer: list labels by name first (a duplicate name is refused as duplicate_name).
+
+- Kind: write
+- Operation: `POST /api/v1/labels`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "The name: trimmed, unique ignoring case (among siblings for a category), archived ones included. Free text, never an identifier.",
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `update_label`
+
+Rename a label. Only the members given change. The identifier never changes, so a rename reaches every assignment. A stale version is refused with a conflict that names the current one.
+
+- Kind: write
+- Operation: `PATCH /api/v1/labels/{id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The label identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "name": {
+      "description": "The name: trimmed, unique ignoring case (among siblings for a category), archived ones included. Free text, never an identifier.",
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the label this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `archive_label`
+
+Archive a label: it and every assignment to it are kept and shown as archived, and nothing new may use it. Reversible with unarchive_label.
+
+- Kind: write
+- Operation: `POST /api/v1/labels/{id}/archive`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The label identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the label this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `unarchive_label`
+
+Make an archived label usable again by the person, rules and models.
+
+- Kind: write
+- Operation: `POST /api/v1/labels/{id}/unarchive`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The label identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the label this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `delete_label`
+
+Delete a label that nothing is assigned to. Prefer archive_label, which keeps history. One that is still assigned is refused (definition_in_use, with the count) unless reassign_to names an active label the assignments move to.
+
+- Kind: destructive
+- Operation: `DELETE /api/v1/labels/{id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The label identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reassign_to": {
+      "description": "The active label the assignments move to, in the same transaction.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the label this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_buckets`
+
+List buckets, one page at a time, with their version (needed to change one) and whether each is archived. A bucket groups commitments and accounts to slice the outlook; it holds and allocates no money. Archived ones are included unless archived is false.
+
+- Kind: read
+- Operation: `GET /api/v1/buckets`
+- Grant: `organisation:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "archived": {
+      "description": "Only archived (true) or only active (false) ones; omit for both.",
+      "type": "boolean"
+    },
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "name[prefix]": {
+      "description": "Only names starting with this text, ignoring case.",
+      "type": "string"
+    }
+  },
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_bucket`
+
+Get one bucket with its version (needed to rename, archive or delete it).
+
+- Kind: read
+- Operation: `GET /api/v1/buckets/{id}`
+- Grant: `organisation:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `create_bucket`
+
+Create a bucket. A bucket groups commitments and accounts to slice the outlook; it holds and allocates no money. The same validation as the HTTP API applies. Not idempotent for a retry after an unclear answer: list buckets by name first (a duplicate name is refused as duplicate_name).
+
+- Kind: write
+- Operation: `POST /api/v1/buckets`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "description": "The name: trimmed, unique ignoring case (among siblings for a category), archived ones included. Free text, never an identifier.",
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `update_bucket`
+
+Rename a bucket. Only the members given change. The identifier never changes, so a rename reaches every assignment. A stale version is refused with a conflict that names the current one.
+
+- Kind: write
+- Operation: `PATCH /api/v1/buckets/{id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "name": {
+      "description": "The name: trimmed, unique ignoring case (among siblings for a category), archived ones included. Free text, never an identifier.",
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the bucket this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `archive_bucket`
+
+Archive a bucket: it and every assignment to it are kept and shown as archived, and nothing new may use it. Reversible with unarchive_bucket.
+
+- Kind: write
+- Operation: `POST /api/v1/buckets/{id}/archive`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the bucket this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `unarchive_bucket`
+
+Make an archived bucket usable again by the person, rules and models.
+
+- Kind: write
+- Operation: `POST /api/v1/buckets/{id}/unarchive`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the bucket this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `delete_bucket`
+
+Delete a bucket that nothing is assigned to. Prefer archive_bucket, which keeps history. One that is still assigned is refused (definition_in_use, with the count) unless reassign_to names an active bucket the assignments move to.
+
+- Kind: destructive
+- Operation: `DELETE /api/v1/buckets/{id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "reassign_to": {
+      "description": "The active bucket the assignments move to, in the same transaction.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "version": {
+      "description": "The version of the bucket this change is based on, as returned by a read. A stale version is refused with a conflict that names the current one.",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `list_bucket_members`
+
+List the commitments and accounts in a bucket, one page at a time. An archived bucket keeps its members.
+
+- Kind: read
+- Operation: `GET /api/v1/buckets/{id}/members`
+- Grant: `organisation:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "description": "The next_cursor of the previous page; valid only with the same filters.",
+      "type": "string"
+    },
+    "id": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "limit": {
+      "description": "Page size (default 50).",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `add_bucket_member`
+
+Put a commitment or account in an active bucket. Idempotent. A bucket holds no money: this only groups.
+
+- Kind: write
+- Operation: `PUT /api/v1/buckets/{id}/members/{object_type}/{object_id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_id": {
+      "description": "The commitment or account identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "commitment or account: the only objects a bucket holds.",
+      "enum": [
+        "commitment",
+        "account"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "object_type",
+    "object_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `remove_bucket_member`
+
+Take a commitment or account out of a bucket. Reversible with add_bucket_member.
+
+- Kind: destructive
+- Operation: `DELETE /api/v1/buckets/{id}/members/{object_type}/{object_id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "The bucket identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_id": {
+      "description": "The commitment or account identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "commitment or account: the only objects a bucket holds.",
+      "enum": [
+        "commitment",
+        "account"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "object_type",
+    "object_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `get_object_organisation`
+
+Read the category, labels (and the labels the person removed) and buckets of a transaction, commitment or account. Every category and label says its origin (user, rule or model: the person's word outranks a rule's, which outranks a model's), who set it, when, and whether it is inherited from the pending transaction this booking superseded.
+
+- Kind: read
+- Operation: `GET /api/v1/organisation/{object_type}/{object_id}`
+- Grant: `organisation:read`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "object_id": {
+      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "What the object is: transaction, commitment or account.",
+      "enum": [
+        "transaction",
+        "commitment",
+        "account"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "object_type",
+    "object_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `set_object_category`
+
+Set the category of a transaction, commitment or account as the person's choice: it is never replaced by a rule, a model or a bank refresh. category_id null records that the person chose no category. An archived category is refused (definition_archived). Last write wins; the audit log keeps the history.
+
+- Kind: write
+- Operation: `PUT /api/v1/organisation/{object_type}/{object_id}/category`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "category_id": {
+      "description": "The category identifier, or null for no category. Required: send null explicitly.",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "object_id": {
+      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "What the object is: transaction, commitment or account.",
+      "enum": [
+        "transaction",
+        "commitment",
+        "account"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "object_type",
+    "object_id",
+    "category_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `reset_object_category`
+
+Remove the person's category decision (a chosen category or a chosen none), so a rule or model may assign one again. A category that is only inherited from a pending transaction is refused (review_inherited): reset it on the pending transaction.
+
+- Kind: destructive
+- Operation: `DELETE /api/v1/organisation/{object_type}/{object_id}/category`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "object_id": {
+      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "What the object is: transaction, commitment or account.",
+      "enum": [
+        "transaction",
+        "commitment",
+        "account"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "object_type",
+    "object_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `add_object_label`
+
+Put an active label on a transaction, commitment or account as the person's choice. Idempotent; it undoes an earlier removal of the same label.
+
+- Kind: write
+- Operation: `PUT /api/v1/organisation/{object_type}/{object_id}/labels/{label_id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "label_id": {
+      "description": "The label identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_id": {
+      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "What the object is: transaction, commitment or account.",
+      "enum": [
+        "transaction",
+        "commitment",
+        "account"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "object_type",
+    "object_id",
+    "label_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
+### `remove_object_label`
+
+Take a label off an object as the person's choice; rules and models do not add it back. Reversible with add_object_label.
+
+- Kind: destructive
+- Operation: `DELETE /api/v1/organisation/{object_type}/{object_id}/labels/{label_id}`
+- Grant: `organisation:write`
+
+<details><summary>Input schema</summary>
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "label_id": {
+      "description": "The label identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_id": {
+      "description": "The transaction, commitment or account identifier (26 upper-case characters).",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "object_type": {
+      "description": "What the object is: transaction, commitment or account.",
+      "enum": [
+        "transaction",
+        "commitment",
+        "account"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "object_type",
+    "object_id",
+    "label_id"
+  ],
+  "type": "object"
+}
+```
+
+</details>
+
 <!-- tools:end -->

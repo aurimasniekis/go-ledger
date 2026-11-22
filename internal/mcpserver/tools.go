@@ -10,6 +10,7 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/deferrals"
 	"github.com/aurimasniekis/go-ledger/internal/domain/matches"
+	"github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 )
 
 // Kind classifies what a tool does, for the MCP tool annotations and for
@@ -124,7 +125,7 @@ var grantCommitmentsRead = authz.G(authz.ResourceCommitments, authz.ActionRead)
 var grantCommitmentsWrite = authz.G(authz.ResourceCommitments, authz.ActionWrite)
 
 func registry() []Tool {
-	return slices.Concat(coreTools(), matchTools(), deferralTools(), bankTools(), rateTools())
+	return slices.Concat(coreTools(), matchTools(), deferralTools(), bankTools(), rateTools(), organisationTools())
 }
 
 func coreTools() []Tool {
@@ -532,4 +533,122 @@ func Doc() string {
 		fmt.Fprintf(&b, "\n<details><summary>Input schema</summary>\n\n```json\n%s\n```\n\n</details>\n\n", schema)
 	}
 	return b.String()
+}
+
+var (
+	grantOrganisationRead  = authz.G(authz.ResourceOrganisation, authz.ActionRead)
+	grantOrganisationWrite = authz.G(authz.ResourceOrganisation, authz.ActionWrite)
+)
+
+// orgObjectTypes are the object types organisation tools take. A merchant is
+// left out: its assignments are keyed by a provisional name key (ADR-0053,
+// point 7) and need the admin-only merchants grant, which no organisation tool
+// declares.
+func orgObjectTypes() []string {
+	var out []string
+	for _, t := range organisation.ObjectTypes() {
+		if t != organisation.ObjectMerchant {
+			out = append(out, string(t))
+		}
+	}
+	return out
+}
+
+func objectArgs(extra map[string]any, required ...string) map[string]any {
+	props := map[string]any{
+		"object_type": map[string]any{"type": "string", "enum": orgObjectTypes(), "description": "What the object is: transaction, commitment or account."},
+		"object_id":   idArg("transaction, commitment or account"),
+	}
+	for k, v := range extra {
+		props[k] = v
+	}
+	return object(props, append([]string{"object_type", "object_id"}, required...)...)
+}
+
+// organisationTools are categories, labels and buckets and their assignments
+// (task O2, ADR-0053): each is a typed call of the Management API route, so
+// the HTTP validation, grants, archive and reassign rules and audit apply
+// unchanged. Assignments made here are the person's (origin user).
+func organisationTools() []Tool {
+	var out []Tool
+	for _, d := range []struct{ kind, one, many, path, gloss string }{
+		{"category", "category", "categories", "/categories", "A category is single-valued per object and has two levels: a top-level category and its children."},
+		{"label", "label", "labels", "/labels", "A label is many-valued and flat."},
+		{"bucket", "bucket", "buckets", "/buckets", "A bucket groups commitments and accounts to slice the outlook; it holds and allocates no money."},
+	} {
+		isCat := d.kind == "category"
+		listProps := map[string]any{
+			"archived":     map[string]any{"type": "boolean", "description": "Only archived (true) or only active (false) ones; omit for both."},
+			"name[prefix]": str("Only names starting with this text, ignoring case."),
+		}
+		if isCat {
+			listProps["parent_id"] = str("Only the children of this category (its identifier), or none for the top-level categories.")
+		}
+		writable := map[string]any{"name": map[string]any{"type": "string", "minLength": 1, "maxLength": organisation.MaxName, "description": "The name: trimmed, unique ignoring case (among siblings for a category), archived ones included. Free text, never an identifier."}}
+		if isCat {
+			writable["parent_id"] = map[string]any{"type": []string{"string", "null"}, "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$", "description": "The parent category, which must be an active top-level category; null for a top-level category."}
+		}
+		patch := map[string]any{"id": idArg(d.one), "version": versionArg(d.one)}
+		for k, v := range writable {
+			patch[k] = v
+		}
+		item := d.path + "/{id}"
+		out = append(out,
+			Tool{Name: "list_" + d.many, Title: "List " + d.many, Method: "GET", Path: d.path, Grant: grantOrganisationRead, Kind: KindRead,
+				Description: "List " + d.many + ", one page at a time, with their version (needed to change one) and whether each is archived. " + d.gloss + " Archived ones are included unless archived is false.",
+				Schema:      object(pagingArgs(listProps))},
+			Tool{Name: "get_" + d.one, Title: "Get a " + d.one, Method: "GET", Path: item, Grant: grantOrganisationRead, Kind: KindRead,
+				Description: "Get one " + d.one + " with its version (needed to rename, archive or delete it).",
+				Schema:      object(map[string]any{"id": idArg(d.one)}, "id")},
+			Tool{Name: "create_" + d.one, Title: "Create a " + d.one, Method: "POST", Path: d.path, Grant: grantOrganisationWrite, Kind: KindWrite,
+				Description: "Create a " + d.one + ". " + d.gloss + " The same validation as the HTTP API applies. Not idempotent for a retry after an unclear answer: list " + d.many + " by name first (a duplicate name is refused as duplicate_name).",
+				Schema:      object(writable, "name")},
+			Tool{Name: "update_" + d.one, Title: "Rename a " + d.one, Method: "PATCH", Path: item, Grant: grantOrganisationWrite, Kind: KindWrite, IfMatchArg: "version",
+				Description: "Rename a " + d.one + (map[bool]string{true: " or move it under another top-level category (parent_id)", false: ""})[isCat] + ". Only the members given change. The identifier never changes, so a rename reaches every assignment. A stale version is refused with a conflict that names the current one.",
+				Schema:      object(patch, "id", "version")},
+			Tool{Name: "archive_" + d.one, Title: "Archive a " + d.one, Method: "POST", Path: item + "/archive", Grant: grantOrganisationWrite, Kind: KindWrite, IfMatchArg: "version",
+				Description: "Archive a " + d.one + ": it and every assignment to it are kept and shown as archived, and nothing new may use it. Reversible with unarchive_" + d.one + "." + (map[bool]string{true: " A category is archived after its children.", false: ""})[isCat],
+				Schema:      object(map[string]any{"id": idArg(d.one), "version": versionArg(d.one)}, "id", "version")},
+			Tool{Name: "unarchive_" + d.one, Title: "Unarchive a " + d.one, Method: "POST", Path: item + "/unarchive", Grant: grantOrganisationWrite, Kind: KindWrite, IfMatchArg: "version",
+				Description: "Make an archived " + d.one + " usable again by the person, rules and models." + (map[bool]string{true: " A child category is unarchived after its parent.", false: ""})[isCat],
+				Schema:      object(map[string]any{"id": idArg(d.one), "version": versionArg(d.one)}, "id", "version")},
+			Tool{Name: "delete_" + d.one, Title: "Delete a " + d.one, Method: "DELETE", Path: item, Grant: grantOrganisationWrite, Kind: KindDestructive, IfMatchArg: "version",
+				Description: "Delete a " + d.one + " that nothing is assigned to. Prefer archive_" + d.one + ", which keeps history. One that is still assigned is refused (definition_in_use, with the count) unless reassign_to names an active " + d.one + " the assignments move to." + (map[bool]string{true: " A category with children is never deleted.", false: ""})[isCat],
+				Schema: object(map[string]any{"id": idArg(d.one), "version": versionArg(d.one),
+					"reassign_to": withDescription(idArg("active "+d.one+" the assignments move to"), "The active "+d.one+" the assignments move to, in the same transaction.")}, "id", "version")},
+		)
+	}
+	bucketMember := map[string]any{
+		"id":          idArg("bucket"),
+		"object_type": map[string]any{"type": "string", "enum": []string{string(organisation.ObjectCommitment), string(organisation.ObjectAccount)}, "description": "commitment or account: the only objects a bucket holds."},
+		"object_id":   idArg("commitment or account"),
+	}
+	out = append(out,
+		Tool{Name: "list_bucket_members", Title: "List the members of a bucket", Method: "GET", Path: "/buckets/{id}/members", Grant: grantOrganisationRead, Kind: KindRead,
+			Description: "List the commitments and accounts in a bucket, one page at a time. An archived bucket keeps its members.",
+			Schema:      object(pagingArgs(map[string]any{"id": idArg("bucket")}), "id")},
+		Tool{Name: "add_bucket_member", Title: "Put an object in a bucket", Method: "PUT", Path: "/buckets/{id}/members/{object_type}/{object_id}", Grant: grantOrganisationWrite, Kind: KindWrite,
+			Description: "Put a commitment or account in an active bucket. Idempotent. A bucket holds no money: this only groups.",
+			Schema:      object(bucketMember, "id", "object_type", "object_id")},
+		Tool{Name: "remove_bucket_member", Title: "Take an object out of a bucket", Method: "DELETE", Path: "/buckets/{id}/members/{object_type}/{object_id}", Grant: grantOrganisationWrite, Kind: KindDestructive,
+			Description: "Take a commitment or account out of a bucket. Reversible with add_bucket_member.",
+			Schema:      object(bucketMember, "id", "object_type", "object_id")},
+		Tool{Name: "get_object_organisation", Title: "Get what is assigned to an object", Method: "GET", Path: "/organisation/{object_type}/{object_id}", Grant: grantOrganisationRead, Kind: KindRead,
+			Description: "Read the category, labels (and the labels the person removed) and buckets of a transaction, commitment or account. Every category and label says its origin (user, rule or model: the person's word outranks a rule's, which outranks a model's), who set it, when, and whether it is inherited from the pending transaction this booking superseded.",
+			Schema:      objectArgs(nil)},
+		Tool{Name: "set_object_category", Title: "Set the category of an object", Method: "PUT", Path: "/organisation/{object_type}/{object_id}/category", Grant: grantOrganisationWrite, Kind: KindWrite,
+			Description: "Set the category of a transaction, commitment or account as the person's choice: it is never replaced by a rule, a model or a bank refresh. category_id null records that the person chose no category. An archived category is refused (definition_archived). Last write wins; the audit log keeps the history.",
+			Schema: objectArgs(map[string]any{"category_id": map[string]any{"type": []string{"string", "null"}, "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+				"description": "The category identifier, or null for no category. Required: send null explicitly."}}, "category_id")},
+		Tool{Name: "reset_object_category", Title: "Hand the category back to automatic assignment", Method: "DELETE", Path: "/organisation/{object_type}/{object_id}/category", Grant: grantOrganisationWrite, Kind: KindDestructive,
+			Description: "Remove the person's category decision (a chosen category or a chosen none), so a rule or model may assign one again. A category that is only inherited from a pending transaction is refused (review_inherited): reset it on the pending transaction.",
+			Schema:      objectArgs(nil)},
+		Tool{Name: "add_object_label", Title: "Put a label on an object", Method: "PUT", Path: "/organisation/{object_type}/{object_id}/labels/{label_id}", Grant: grantOrganisationWrite, Kind: KindWrite,
+			Description: "Put an active label on a transaction, commitment or account as the person's choice. Idempotent; it undoes an earlier removal of the same label.",
+			Schema:      objectArgs(map[string]any{"label_id": idArg("label")}, "label_id")},
+		Tool{Name: "remove_object_label", Title: "Take a label off an object", Method: "DELETE", Path: "/organisation/{object_type}/{object_id}/labels/{label_id}", Grant: grantOrganisationWrite, Kind: KindDestructive,
+			Description: "Take a label off an object as the person's choice; rules and models do not add it back. Reversible with add_object_label.",
+			Schema:      objectArgs(map[string]any{"label_id": idArg("label")}, "label_id")},
+	)
+	return out
 }

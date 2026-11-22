@@ -249,7 +249,7 @@ type KEK struct {
 	File  string `cfg:"file" desc:"Path of a file that contains the key-encryption key. Alternative to LEDGER_KEK_VALUE; trailing newlines are ignored."`
 }
 
-// Decisions configures the model-assisted decision layer (L1, ADR-0057,
+// Decisions configures the model-assisted decision layer (L1, ADR-0058,
 // decision D13). Every task is off by default and nothing is sent anywhere
 // while it is off.
 type Decisions struct {

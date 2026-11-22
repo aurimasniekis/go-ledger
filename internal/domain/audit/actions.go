@@ -111,7 +111,7 @@ const (
 	RatesRefreshRequested Action = "rates.refresh_requested"
 
 	// Consent to send data to a decision provider for one purpose (L1,
-	// ADR-0057). The target is the consent (target type "decision_consent").
+	// ADR-0058). The target is the consent (target type "decision_consent").
 	// Details: provider and purpose. Never the consent text or any field
 	// value.
 	DecisionConsentGranted Action = "decision_consent.granted"
@@ -142,7 +142,7 @@ var (
 	matchOrigins      = []string{"auto_rule", "model_suggestion", "user"}
 	matchFromStates   = []string{"none", "suggested", "confirmed", "rejected", "reversed"}
 	matchVias         = []string{string(ViaSession), string(ViaToken), string(ViaMCP), string(ViaSystem)}
-	// Decision providers and purposes (ADR-0057); the decisions package
+	// Decision providers and purposes (ADR-0058); the decisions package
 	// cannot be imported here, its test checks the lists agree.
 	decisionProviders = []string{"openrouter", "openai", "anthropic", "typesafe"}
 	decisionPurposes  = []string{"categorisation", "label_suggestion", "alerts", "payment_matching"}
