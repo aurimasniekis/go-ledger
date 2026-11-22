@@ -76,7 +76,7 @@ test('Refresh now shows success, then the retry time when rate limited', async (
   await expect(page.getByTestId('rates-refresh-result')).toContainText('Refreshed 2 currencies at')
   await button.click()
   await expect(page.getByRole('alert')).toContainText('You can try again at')
-  await expect(button).toBeDisabled()
+  await expect(button).toHaveAttribute('aria-disabled', 'true')
 })
 
 test('at 390 px nothing scrolls sideways', async ({ page }) => {

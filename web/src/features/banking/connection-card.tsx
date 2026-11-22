@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '@/lib/api'
 import { isNetworkError } from '@/lib/connection'
@@ -42,6 +42,7 @@ function outcomeText(c: BankConnection): string {
 
 function refreshProblem(e: unknown): string {
   if (e instanceof ApiError) {
+    if (e.code === 'refresh_cooldown') return 'This connection was refreshed a moment ago. Refreshing again on request is paused for a few minutes; Ledger still refreshes it by itself.'
     if (e.code === 'refresh_in_progress') return 'A refresh of this connection is already running. Wait a moment, then try again.'
     if (e.code === 'connection_not_active') return 'This connection can no longer be refreshed: it needs to be reconnected first.'
     return e.message
@@ -204,6 +205,29 @@ function DiagnosisPanel({ c, d }: { c: BankConnection; d: Diagnosis }) {
   }
 }
 
+/**
+ * Whole minutes (at least 1) until a refresh on request is allowed again, or 0 when it is allowed now (D-B6c).
+ * The server's clock decides: the wait is measured from the answer's own as_of and moves on with this page's timer,
+ * so a wrong clock on this device cannot unlock the button early or lock it for good.
+ */
+export function cooldownMinutes(c: Pick<BankConnection, 'refresh_available_at' | 'as_of'>, elapsedMs: number): number {
+  if (!c.refresh_available_at) return 0
+  const left = Date.parse(c.refresh_available_at) - (Date.parse(c.as_of) + elapsedMs)
+  return left > 0 ? Math.max(1, Math.ceil(left / 60_000)) : 0
+}
+
+function useCooldownMinutes(c: BankConnection): number {
+  const key = `${c.as_of}|${c.refresh_available_at ?? ''}`
+  const [tick, setTick] = useState({ key, elapsed: 0 })
+  useEffect(() => {
+    if (!c.refresh_available_at) return
+    const started = Date.now()
+    const t = setInterval(() => setTick({ key, elapsed: Date.now() - started }), 1000)
+    return () => clearInterval(t)
+  }, [key, c.refresh_available_at])
+  return cooldownMinutes(c, tick.key === key ? tick.elapsed : 0)
+}
+
 /** One bank connection: what it is, what it needs from the user, and each account's freshness. */
 export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: boolean }) {
   const qc = useQueryClient()
@@ -233,6 +257,7 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
   const canReconnect = needsReconnect || d.kind === 'disconnected' || (d.kind === 'ok' && c.consent_expires_soon)
   const reconnectPrimary = needsReconnect || d.kind === 'disconnected'
   const running = c.refresh_running
+  const cooldown = useCooldownMinutes(c)
   const busy = doRefresh.isPending || doReconnect.isPending || running
   const connectedFor = c.mode === 'developer' ? 'Developer mode: only accounts linked to the application at the provider appear.' : null
 
@@ -298,8 +323,14 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
             </Button>
           )}
           {canRefresh && (
-            <Button variant={d.kind === 'temporary' || d.kind === 'reconnected' ? 'default' : 'outline'} disabled={busy} onClick={() => doRefresh.mutate()}>
-              {doRefresh.isPending || running ? 'Refreshing…' : d.kind === 'temporary' ? 'Try again' : 'Refresh now'}
+            <Button variant={d.kind === 'temporary' || d.kind === 'reconnected' ? 'default' : 'outline'} disabled={busy || cooldown > 0} onClick={() => doRefresh.mutate()}>
+              {doRefresh.isPending || running
+                ? 'Refreshing…'
+                : cooldown > 0
+                  ? `Refreshed just now, try again in ${cooldown} min`
+                  : d.kind === 'temporary'
+                    ? 'Try again'
+                    : 'Refresh now'}
             </Button>
           )}
           {c.status !== 'disconnected' && (

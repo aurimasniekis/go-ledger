@@ -65,8 +65,11 @@ CLI, MCP read tool, UI) without making the optional rate provider a dependency.
    (provider and source, whether it is off, the stale rule, the last refresh and, after a failure, the last full
    success) and a table of the cached rates with exact values, ISO rate dates (D38), retrieval time in UTC, provider and
    source, and a stale badge with its reason. Loading, empty (with the provider-off explanation), failed and
-   load-more states are shown. It has no refresh button: refreshing is an administrator action through the CLI or API,
-   and the page is for seeing what the outlook converts with.
+   load-more states are shown. The page is for seeing what the outlook converts with. (Amended, decision D-FX-R 3b, task FX4:
+   administrators, who alone can open the page, also get a "Refresh now" button, which calls the same rate-limited and
+   single-flight refresh API as the CLI: it is disabled with the reason when no refresh can run, it keeps keyboard
+   focus while a request is pending or a Retry-After wait runs (aria-disabled, not disabled), and each outcome, a
+   refused one included, is said in words. It never deletes a cached rate.)
 9. **PR #92 follow-ups.** (N1) When the outlook's conversion deadline passes, a currency whose rate is already cached
    still converts: the outlook asks `fx.Service.ConvertCached` (cache only, same freshness rules) before it excludes the
    currency as `conversion_timed_out`. Only a currency that needs the provider and has no usable cached rate is

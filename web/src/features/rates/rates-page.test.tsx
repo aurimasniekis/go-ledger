@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fail, installApi, ok, renderApp, signedIn, type Handler, type Reply } from '@/test/fake-api'
@@ -150,7 +150,7 @@ describe('rates page', () => {
       renderApp('/rates')
       await userEvent.click(await screen.findByRole('button', { name: 'Refresh now' }))
       const pending = await screen.findByRole('button', { name: 'Refreshing…' })
-      expect(pending).toBeDisabled()
+      expect(pending).toHaveAttribute('aria-disabled', 'true')
       expect(screen.getByTestId('rates-refresh-result')).toHaveTextContent('Asking the rate provider')
       release(ok(run))
       expect(await screen.findByText(/Refreshed 2 currencies at/)).toHaveTextContent('2026-11-21 10:00:02 UTC'.slice(0, 16))
@@ -166,7 +166,80 @@ describe('rates page', () => {
       const alert = await screen.findByRole('alert')
       expect(alert).toHaveTextContent(/Nothing changed/)
       expect(alert).toHaveTextContent(/try again at \d{4}-\d\d-\d\d \d\d:\d\d UTC/)
-      expect(screen.getByRole('button', { name: 'Refresh now' })).toBeDisabled()
+      const btn = screen.getByRole('button', { name: 'Refresh now' })
+      expect(btn).toHaveAttribute('aria-disabled', 'true')
+    })
+
+    it('says a refresh is already running (409) and changes nothing', async () => {
+      page({ 'POST /api/v1/rates/refreshes': fail(409, 'refresh_in_progress', 'busy') })
+      renderApp('/rates')
+      await userEvent.click(await screen.findByRole('button', { name: 'Refresh now' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('A refresh is already running. Nothing changed; wait a moment and check the list.')
+    })
+
+    it('keeps keyboard focus on the button while pending and ignores clicks', async () => {
+      let release: (r: Reply) => void = () => {}
+      const calls = page({ 'POST /api/v1/rates/refreshes': () => new Promise<Reply>((r) => (release = r)) })
+      renderApp('/rates')
+      const btn = await screen.findByRole('button', { name: 'Refresh now' })
+      btn.focus()
+      await userEvent.keyboard('{Enter}')
+      const pending = await screen.findByRole('button', { name: 'Refreshing…' })
+      expect(pending).toHaveAttribute('aria-disabled', 'true')
+      expect(pending).not.toBeDisabled()
+      expect(pending).toHaveFocus()
+      await userEvent.keyboard('{Enter}')
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+      await act(async () => release(ok(run)))
+      expect(await screen.findByText(/Refreshed 2 currencies at/)).toBeInTheDocument()
+    })
+
+    it('re-enables the button after the Retry-After wait, and keeps focus while it waits', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        const calls = page({ 'POST /api/v1/rates/refreshes': { ...fail(429, 'rate_limited', 'slow down'), headers: { 'Retry-After': '45' } } })
+        renderApp('/rates')
+        const btn = await screen.findByRole('button', { name: 'Refresh now' })
+        btn.focus()
+        await userEvent.keyboard('{Enter}')
+        await screen.findByRole('alert')
+        expect(btn).toHaveAttribute('aria-disabled', 'true')
+        expect(btn).toHaveFocus()
+        await userEvent.keyboard('{Enter}')
+        expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+        await act(async () => { vi.advanceTimersByTime(44_000) })
+        expect(screen.getByRole('button', { name: 'Refresh now' })).toHaveAttribute('aria-disabled', 'true')
+        await act(async () => { vi.advanceTimersByTime(2_000) })
+        expect(screen.getByRole('button', { name: 'Refresh now' })).not.toHaveAttribute('aria-disabled')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('clears the retry timer when the page unmounts', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        page({ 'POST /api/v1/rates/refreshes': { ...fail(429, 'rate_limited', 'slow down'), headers: { 'Retry-After': '45' } } })
+        const view = renderApp('/rates')
+        const waits: unknown[] = []
+        const realSet = globalThis.setTimeout
+        const setSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
+          const id = (realSet as (...a: unknown[]) => unknown)(fn, ms, ...rest)
+          if ((ms ?? 0) >= 45_000 && (ms ?? 0) <= 45_100) waits.push(id)
+          return id
+        }) as typeof setTimeout)
+        const clearSpy = vi.spyOn(globalThis, 'clearTimeout')
+        await userEvent.click(await screen.findByRole('button', { name: 'Refresh now' }))
+        await screen.findByRole('alert')
+        expect(waits).toHaveLength(1)
+        clearSpy.mockClear()
+        view.unmount()
+        expect(clearSpy).toHaveBeenCalledWith(waits[0])
+        setSpy.mockRestore()
+        clearSpy.mockRestore()
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('says when refreshing is unavailable and changes nothing', async () => {
@@ -180,7 +253,7 @@ describe('rates page', () => {
       page({}, { enabled: false, refresh_available: false })
       renderApp('/rates')
       expect(await screen.findByText(/No refresh can run/)).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Refresh now' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Refresh now' })).toHaveAttribute('aria-disabled', 'true')
     })
   })
 })

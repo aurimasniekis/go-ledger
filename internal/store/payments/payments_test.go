@@ -15,11 +15,13 @@ import (
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/money"
 	"github.com/aurimasniekis/go-ledger/internal/domain/occurrences"
+	org "github.com/aurimasniekis/go-ledger/internal/domain/organisation"
 	"github.com/aurimasniekis/go-ledger/internal/domain/payments"
 	"github.com/aurimasniekis/go-ledger/internal/domain/resource"
 	"github.com/aurimasniekis/go-ledger/internal/store"
 	commitmentstore "github.com/aurimasniekis/go-ledger/internal/store/commitments"
 	occstore "github.com/aurimasniekis/go-ledger/internal/store/occurrences"
+	orgstore "github.com/aurimasniekis/go-ledger/internal/store/organisation"
 	paymentstore "github.com/aurimasniekis/go-ledger/internal/store/payments"
 )
 
@@ -620,5 +622,62 @@ func TestNotRecordedUsesTheInjectedReportingZone(t *testing.T) {
 	}
 	if got := read(f.ps); got.Status != payments.StatusOverdue {
 		t.Fatalf("WithZone must not change the original store: %+v", got)
+	}
+}
+
+// TestKeptCommitmentRowDropsItsOrganisation: when a commitment delete keeps the
+// row (D31: only deleted payments refer to an occurrence), the buckets,
+// category and labels it was filed under go with it, in the same transaction.
+// Otherwise a bucket would list, and a category refuse deletion over, a
+// commitment no read shows.
+func TestKeptCommitmentRowDropsItsOrganisation(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	c, o := f.commitment(t, "50.00", "2026-03")
+	p, _ := f.record(t, o.ID, "50.00", "2026-03-12")
+	os := orgstore.New(f.db, f.rec, func() time.Time { return clock }, nil)
+	mk := func(k org.Kind, name string) org.Definition {
+		t.Helper()
+		def, err := os.CreateDefinition(ctx, alice, k, org.Fields{Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return def
+	}
+	cat, lbl, bucket := mk(org.KindCategory, "Housing"), mk(org.KindLabel, "Fixed"), mk(org.KindBucket, "Essentials")
+	obj := org.ObjectRef{Type: org.ObjectCommitment, ID: c.ID}
+	if _, err := os.SetCategory(ctx, alice, obj, &cat.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.AddLabel(ctx, alice, obj, lbl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.AddToBucket(ctx, alice, bucket.ID, obj); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ps.DeleteManual(ctx, alice, o.ID, p.ID, p.Version); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.cs.Get(ctx, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cs.Delete(ctx, alice, c.ID, got.Version); err != nil {
+		t.Fatal(err)
+	}
+	var kept int
+	if err := f.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM commitments WHERE id = ? AND deleted_at IS NOT NULL", c.ID).Scan(&kept)
+	}); err != nil || kept != 1 {
+		t.Fatalf("the commitment row was not kept (the path under test): %d %v", kept, err)
+	}
+	members, err := os.ListMembers(ctx, bucket.ID, org.MemberFilter{Limit: 10})
+	if err != nil || len(members) != 0 {
+		t.Errorf("a deleted commitment is still a bucket member: %+v %v", members, err)
+	}
+	for _, d := range []org.Definition{cat, lbl, bucket} {
+		if _, err := os.DeleteDefinition(ctx, alice, d.Kind, d.ID, d.Version, ""); err != nil {
+			t.Errorf("a %s is still held by the deleted commitment: %v", d.Kind, err)
+		}
 	}
 }

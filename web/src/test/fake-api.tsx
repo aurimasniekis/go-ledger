@@ -71,7 +71,7 @@ export const sess = (over: Partial<Session> = {}): Session => ({
   address: '192.0.2.1',
   ...over,
 })
-export const ALL_GRANTS = ['audit:read', 'banking:read', 'commitments:read', 'commitments:write', 'connections:read', 'connections:write', 'merchants:read', 'merchants:write', 'rates:read', 'rates:write', 'tokens:read', 'tokens:write', 'users:read', 'users:write']
+export const ALL_GRANTS = ['audit:read', 'banking:read', 'commitments:read', 'commitments:write', 'connections:read', 'connections:write', 'merchants:read', 'merchants:write', 'organisation:read', 'organisation:write', 'rates:read', 'rates:write', 'tokens:read', 'tokens:write', 'users:read', 'users:write']
 export const admin = (grants = ALL_GRANTS): Principal => ({
   kind: 'user',
   user_id: '01JD3Y4C8V9M2Q7W5R6T0XZBNA',

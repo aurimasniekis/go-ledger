@@ -6,17 +6,16 @@ import type { CachedRate, RatesRun, RatesStatus } from './types'
 export const ratesKey = ['rates'] as const
 
 /** Provider, freshness policy and the last refresh (rates:read). The provider is optional; this never gates anything. */
-export function useRatesStatus(enabled = true) {
+export function useRatesStatus() {
   return useQuery({
-    enabled,
     queryKey: [...ratesKey, 'status'],
     queryFn: ({ signal }) => apiFetch<RatesStatus>('/api/v1/rates/status', { signal }),
   })
 }
 
 /** The cached rates, grouped by provider, source and pair with the newest rate date first (cursor-paged). */
-export function useRates(enabled = true) {
-  return usePagedList<CachedRate>([...ratesKey, 'list'], '/api/v1/rates', {}, { enabled })
+export function useRates() {
+  return usePagedList<CachedRate>([...ratesKey, 'list'], '/api/v1/rates')
 }
 
 /** Ask the provider for fresh rates now (rates:write, administrators; at most one a minute, never two at once). */

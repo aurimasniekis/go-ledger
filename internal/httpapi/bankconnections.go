@@ -40,6 +40,7 @@ const (
 	CodeBankRateLimited       Code = "bank_rate_limited"        // 429: the provider or bank asked for a pause; Retry-After says how long when known
 	CodeBankRejected          Code = "bank_request_rejected"    // 422: the provider refused the request; retrying the same request cannot work
 	CodeConnectionNotActive   Code = "connection_not_active"    // 409: the connection is pending, disconnected, failed or needs a new consent
+	CodeRefreshCooldown       Code = "refresh_cooldown"         // 429: this connection was refreshed a moment ago; Retry-After says how long until a refresh on request is allowed (D-B6c)
 	CodeRefreshInProgress     Code = "refresh_in_progress"      // 409: a refresh of this connection is already running
 	CodeConsentUnknown        Code = "consent_not_found"        // 409: the redirect matches no consent in progress (already used or replaced)
 	CodeConnectUnavailable    Code = "bank_connect_unavailable" // 409: banking.redirect_url is not configured
@@ -144,12 +145,15 @@ type bankConnectionJSON struct {
 	// RefreshRunning: a refresh is still going on in the background (its last
 	// run is running, or a refresh just requested outlived the wait). Poll the
 	// connection until it is false.
-	RefreshRunning bool              `json:"refresh_running"`
-	Schedule       *bankScheduleJSON `json:"schedule"`
-	AsOf           time.Time         `json:"as_of"`
-	Version        int64             `json:"version"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
+	RefreshRunning bool `json:"refresh_running"`
+	// RefreshAvailableAt: while set and in the future, a refresh on request
+	// is refused (429 refresh_cooldown) until then; null when allowed now.
+	RefreshAvailableAt *time.Time        `json:"refresh_available_at"`
+	Schedule           *bankScheduleJSON `json:"schedule"`
+	AsOf               time.Time         `json:"as_of"`
+	Version            int64             `json:"version"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 	// PreviousSessionEndFailed is only ever set by completeBankConnection:
 	// a reconnect replaced a provider session that could not be ended.
 	PreviousSessionEndFailed bool `json:"previous_session_end_failed,omitempty"`
@@ -168,6 +172,14 @@ func bankErr(kind banking.ErrorKind, code string) *bankErrorJSON {
 		return nil
 	}
 	return &bankErrorJSON{Kind: kind, Code: code}
+}
+
+// waitText says a wait in whole minutes (rounded up), or seconds under one.
+func waitText(d time.Duration) string {
+	if d < time.Minute {
+		return strconv.Itoa(int((d+time.Second-1)/time.Second)) + " s"
+	}
+	return strconv.Itoa(int((d+time.Minute-1)/time.Minute)) + " min"
 }
 
 func days(d time.Duration) int { return int(d / (24 * time.Hour)) }
@@ -245,6 +257,7 @@ func toBankConnectionJSON(v bankconnect.View) bankConnectionJSON {
 			AccountsFailed: r.AccountsFailed, TransactionsInserted: r.TransactionsInserted, TransactionsRejected: r.TransactionsRejected}
 	}
 	out.RefreshRunning = v.RefreshRunning
+	out.RefreshAvailableAt = timePtr(v.RefreshAvailableAt)
 	if s := v.Schedule; s != nil {
 		out.Schedule = &bankScheduleJSON{State: s.Schedule, NextAttemptAt: timePtr(s.NextAttemptAt), ConsecutiveFailures: s.ConsecutiveFailures}
 	}
@@ -285,6 +298,11 @@ func bankError(w http.ResponseWriter, err error) error {
 		return conflict(CodeConnectionNotActive, "the connection cannot be refreshed until its consent is renewed: reconnect it")
 	case errors.Is(err, bankconnect.ErrShuttingDown):
 		return &Error{Status: http.StatusServiceUnavailable, Code: CodeUnavailable, Message: "Ledger is shutting down; try again shortly", Cause: err}
+	case errors.Is(err, bankconnect.ErrRefreshCooldown):
+		var cd *bankconnect.CooldownError
+		errors.As(err, &cd)
+		retryAfter(cd.RetryAfter)
+		return &Error{Status: http.StatusTooManyRequests, Code: CodeRefreshCooldown, Message: "this connection was refreshed a moment ago; a refresh on request is allowed again in " + waitText(cd.RetryAfter), Cause: err}
 	case errors.Is(err, banking.ErrRefreshInProgress):
 		retryAfter(30 * time.Second)
 		return conflict(CodeRefreshInProgress, "a refresh of this connection is already running; try again shortly")

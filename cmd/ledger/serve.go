@@ -244,7 +244,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer, env serveEnv
 		})
 	}
 	connSvc := &bankconnect.Service{Facts: facts, Providers: providerMap(bankProviders), Engine: engine, Audit: auditLog, RedirectURL: cfg.Banking.RedirectURL,
-		ConsentTTL: cfg.Banking.ConsentTTL, StaleAfter: cfg.Banking.StaleAfter, Log: log, RefreshTimeout: refreshTimeout(cfg.HTTP.WriteTimeout)}
+		ConsentTTL: cfg.Banking.ConsentTTL, StaleAfter: cfg.Banking.StaleAfter, Log: log, RefreshTimeout: refreshTimeout(cfg.HTTP.WriteTimeout), RefreshCooldown: cfg.Banking.Refresh.RequestCooldown}
 	if sched != nil {
 		connSvc.Schedule = sched.Status
 	}
@@ -448,21 +448,22 @@ func registerAPI(srv *httpapi.Server, al auditLog, parts apiParts, zone calendar
 		banks = bankfacts.New(parts.db, nil)
 	}
 	httpapi.RegisterAPI(srv, httpapi.Deps{
-		Users:       parts.users,
-		Commitments: parts.commitments,
-		Grace:       parts.commitments.Grace(),
-		Occurrences: parts.commitments.Occurrences(),
-		Payments:    parts.payments,
-		Matches:     parts.matches,
-		Merchants:   parts.merchants,
-		Deferrals:   deferralsDep(parts.deferrals),
-		Banking:     parts.banking,
-		Matching:    matching,
-		Audit:       al,
-		Auth:        parts.auth,
-		Tokens:      parts.tokens,
-		OIDC:        parts.oidc,
-		MCP:         parts.mcp,
+		Users:        parts.users,
+		Commitments:  parts.commitments,
+		Grace:        parts.commitments.Grace(),
+		Occurrences:  parts.commitments.Occurrences(),
+		Payments:     parts.payments,
+		Matches:      parts.matches,
+		Merchants:    parts.merchants,
+		Organisation: parts.organisation,
+		Deferrals:    deferralsDep(parts.deferrals),
+		Banking:      parts.banking,
+		Matching:     matching,
+		Audit:        al,
+		Auth:         parts.auth,
+		Tokens:       parts.tokens,
+		OIDC:         parts.oidc,
+		MCP:          parts.mcp,
 		// The outlook (ADR-0044) reads stored bank facts. Rates is the cached
 		// rate service (FX2, ADR-0046); without one only amounts already in
 		// the reporting currency convert and the rest are excluded and

@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aurimasniekis/go-ledger/internal/httpapi"
 	"github.com/aurimasniekis/go-ledger/pkg/ledgerclient"
@@ -31,6 +33,9 @@ type Response struct {
 	Body   []byte
 	// Location is the Location header of the answer (the created resource).
 	Location string
+	// RetryAfter is the Retry-After header of the answer, in whole seconds as
+	// sent; empty when absent.
+	RetryAfter string
 	// Truncated reports that the body was too large to keep and is empty: the
 	// operation ran and Status is its real status.
 	Truncated bool
@@ -105,7 +110,7 @@ func (c inProcess) Call(ctx context.Context, hdr http.Header, r Request) (Respon
 	if rec.tooBig {
 		return Response{Status: rec.status, Location: rec.header.Get("Location"), Truncated: true}, nil
 	}
-	return Response{Status: rec.status, Body: rec.buf.Bytes(), Location: rec.header.Get("Location")}, nil
+	return Response{Status: rec.status, Body: rec.buf.Bytes(), Location: rec.header.Get("Location"), RetryAfter: rec.header.Get("Retry-After")}, nil
 }
 
 // recorder is a minimal http.ResponseWriter that keeps a bounded body.
@@ -152,5 +157,12 @@ func (c remote) Call(ctx context.Context, _ http.Header, r Request) (Response, e
 	}
 	// A too-large answer is not a failure either: the call completed (a write
 	// has happened), so it is reported as truncated, never as unavailable.
-	return Response{Status: resp.Status, Body: resp.Body, Location: resp.Location, Truncated: resp.Truncated}, nil
+	return Response{Status: resp.Status, Body: resp.Body, Location: resp.Location, RetryAfter: retryAfterSeconds(resp.RetryAfter), Truncated: resp.Truncated}, nil
+}
+
+func retryAfterSeconds(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return strconv.Itoa(int((d + time.Second - 1) / time.Second))
 }

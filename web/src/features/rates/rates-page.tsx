@@ -4,7 +4,7 @@ import { EmptyState } from '@/components/state-panels'
 import { QueryState } from '@/components/query-state'
 import { DateText } from '@/components/formatted'
 import { utcStamp } from '@/features/month/month'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '@/lib/api'
 import { holds, useMe } from '@/lib/auth'
 import { LoadingState } from '@/components/state-panels'
@@ -81,9 +81,15 @@ function RefreshControl({ status }: { status?: RatesStatus }) {
   // The wall-clock time a refused refresh may be retried: kept so the button stays off until then.
   const [retryAt, setRetryAt] = useState<number | null>(null)
   const [waiting, setWaiting] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // Do not set state on an unmounted page when the wait ends.
+  useEffect(() => () => clearTimeout(timer.current), [])
   const err = refresh.error instanceof ApiError ? refresh.error : undefined
   const notRunnable = status !== undefined && !status.refresh_available
-  const run = () =>
+  // The button stays focusable while it cannot act (aria-disabled, as the matches UI does), so keyboard focus is not lost.
+  const blocked = refresh.isPending || waiting || notRunnable
+  const run = () => {
+    if (blocked) return
     refresh.mutate(undefined, {
       onSuccess: () => {
         setRetryAt(null)
@@ -94,17 +100,20 @@ function RefreshControl({ status }: { status?: RatesStatus }) {
           const at = Date.now() + (e.retryAfter ?? 60) * 1000
           setRetryAt(at)
           setWaiting(true)
-          setTimeout(() => setWaiting(false), at - Date.now() + 50)
+          clearTimeout(timer.current)
+          timer.current = setTimeout(() => setWaiting(false), at - Date.now() + 50)
         }
       },
     })
+  }
   return (
     <section aria-label="Refresh exchange rates" className="space-y-2 rounded-md border border-border bg-surface p-3 text-sm">
       <div className="flex flex-wrap items-center gap-3">
         <Button
           variant="outline"
           size="sm"
-          disabled={refresh.isPending || waiting || notRunnable}
+          className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+          aria-disabled={blocked || undefined}
           aria-describedby="rates-refresh-help"
           onClick={run}
         >

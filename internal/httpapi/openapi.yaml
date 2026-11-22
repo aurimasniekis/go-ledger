@@ -2924,7 +2924,12 @@ paths:
         server shuts down, a run still going after the shutdown bound is cancelled
         and recorded as interrupted (outcome interrupted); the committed windows
         stay and a later refresh resumes them. A failed refresh never changes
-        stored balances or transactions. 409 connection_not_active for a connection that is pending,
+        stored balances or transactions. After a refresh of the connection
+        finished (any trigger, any outcome) another one on request is refused for
+        banking.refresh.request_cooldown (default 5 minutes): 429 refresh_cooldown
+        with Retry-After in seconds; the connection's refresh_available_at says
+        when it is allowed again. The background scheduler is never held back.
+        409 connection_not_active for a connection that is pending,
         disconnected, failed or needs a new consent. Audited as
         bank_connection.refresh_requested.
       tags: [bank-connections]
@@ -2938,6 +2943,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BankConnection"
+        "429":
+          description: |
+            refresh_cooldown: this connection was refreshed a moment ago. Retry-After
+            says in seconds when a refresh on request is allowed again. Nothing was
+            started or recorded. (bank_rate_limited is the bank asking for a pause.)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "503":
           description: |
             dependency_unavailable: the server is shutting down and starts no new
@@ -3687,6 +3705,1097 @@ paths:
                 $ref: "#/components/schemas/DeferralPlan"
         default:
           $ref: "#/components/responses/Error"
+  /categories:
+    get:
+      operationId: listCategories
+      x-ledger-access: organisation:read
+      summary: List categories
+      description: |
+        Categories (decision D12, ADR-0053): single-valued per object, with two levels (a category and its children). Archived ones are included unless archived=false.
+        Items come in ID order (creation order).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: archived
+          in: query
+          description: Only archived (true) or only active (false) ones.
+          schema:
+            type: boolean
+        - name: parent_id
+          in: query
+          description: Only the children of this category, or none for the top-level categories.
+          schema:
+            type: string
+        - name: name[prefix]
+          in: query
+          description: Only names starting with this text, ignoring case.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One page of categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrganisationDefinition"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createCategory
+      x-ledger-access: organisation:write
+      summary: Create a category
+      description: |
+        Creates a category at version 1. The name is trimmed and white space is
+        collapsed; names are unique ignoring case among siblings (the top level counts as one parent), archived ones included
+        (409 duplicate_name). Audited (organisation.definition_created with kind and
+        via, never the name).
+        A category with a parent_id becomes that category's child; the parent must be an
+        active top-level category (a child cannot be a parent: 400 on parent_id; an
+        archived parent: 409 definition_archived).
+      tags: [organisation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+                parent_id:
+                  oneOf:
+                    - $ref: "#/components/schemas/ID"
+                    - type: "null"
+      responses:
+        "201":
+          description: The created category.
+          headers:
+            Location:
+              schema:
+                type: string
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: duplicate_name or definition_archived (the parent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /categories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getCategory
+      x-ledger-access: organisation:read
+      summary: Get a category
+      tags: [organisation]
+      responses:
+        "200":
+          description: The category.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateCategory
+      x-ledger-access: organisation:write
+      summary: Rename or move a category
+      description: |
+        A JSON Merge Patch (RFC 7396) of the writable members: name, and parent_id (null makes it a top-level category). The id never
+        changes, so every assignment follows a rename. An archived one may be
+        renamed (that frees its name). The merged result is validated as a whole; a category with
+        children cannot become a child. Requires the version in If-Match or the body;
+        a stale version is a 409 version_conflict with reconciliation. A patch that changes
+        nothing is a no-op. Audited (organisation.definition_updated with the names of the
+        changed fields).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                version:
+                  $ref: "#/components/schemas/Version"
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+                parent_id:
+                  oneOf:
+                    - $ref: "#/components/schemas/ID"
+                    - type: "null"
+      responses:
+        "200":
+          description: The changed category.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict, duplicate_name or definition_archived (the new parent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteCategory
+      x-ledger-access: organisation:write
+      summary: Delete a category
+      description: |
+        Archive first: an archived category keeps every historical assignment. Deleting
+        is for a category that nothing is assigned to; one that is still assigned is refused with
+        409 definition_in_use unless reassign_to names an active category that the
+        assignments move to (they become the person's own, origin user).
+        A category with children is never deleted (409 conflict): delete or move the
+        children first.
+        Requires If-Match; a stale version is a 409 version_conflict. Audited
+        (organisation.definition_deleted with kind, via and reassigned).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - name: reassign_to
+          in: query
+          description: The category the assignments move to.
+          schema:
+            $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reassigned]
+                properties:
+                  reassigned:
+                    type: integer
+                    minimum: 0
+                    description: How many assignments moved to the replacement.
+        "409":
+          description: version_conflict, definition_in_use, definition_archived (the replacement) or conflict (a category with children).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /categories/{id}/archive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: archiveCategory
+      x-ledger-access: organisation:write
+      summary: Archive a category
+      description: |
+        Keeps the category and every assignment to it, and stops anything new from using it
+        (409 definition_archived), whether by the person or by a rule or model.
+        A category is archived after its children (409 conflict otherwise).
+        Archiving an archived one changes nothing. Requires If-Match. Audited
+        (organisation.definition_archived).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The archived category.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict or conflict (active children).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /categories/{id}/unarchive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: unarchiveCategory
+      x-ledger-access: organisation:write
+      summary: Unarchive a category
+      description: |
+        Makes the category usable again. A child category is unarchived after its parent (409 conflict otherwise).
+        Requires If-Match. Audited (organisation.definition_unarchived).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The unarchived category.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict or conflict (archived parent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /labels:
+    get:
+      operationId: listLabels
+      x-ledger-access: organisation:read
+      summary: List labels
+      description: |
+        Labels (decision D12, ADR-0053): many-valued and flat. Archived ones are included unless archived=false.
+        Items come in ID order (creation order).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: archived
+          in: query
+          description: Only archived (true) or only active (false) ones.
+          schema:
+            type: boolean
+        - name: name[prefix]
+          in: query
+          description: Only names starting with this text, ignoring case.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One page of labels.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrganisationDefinition"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createLabel
+      x-ledger-access: organisation:write
+      summary: Create a label
+      description: |
+        Creates a label at version 1. The name is trimmed and white space is
+        collapsed; names are unique ignoring case, archived ones included
+        (409 duplicate_name). Audited (organisation.definition_created with kind and
+        via, never the name).
+      tags: [organisation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+      responses:
+        "201":
+          description: The created label.
+          headers:
+            Location:
+              schema:
+                type: string
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: duplicate_name or definition_archived (the parent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /labels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getLabel
+      x-ledger-access: organisation:read
+      summary: Get a label
+      tags: [organisation]
+      responses:
+        "200":
+          description: The label.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateLabel
+      x-ledger-access: organisation:write
+      summary: Rename a label
+      description: |
+        A JSON Merge Patch (RFC 7396) of the writable members: name. The id never
+        changes, so every assignment follows a rename. An archived one may be
+        renamed (that frees its name). The merged result is validated as a whole. Requires the version in If-Match or the body;
+        a stale version is a 409 version_conflict with reconciliation. A patch that changes
+        nothing is a no-op. Audited (organisation.definition_updated with the names of the
+        changed fields).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                version:
+                  $ref: "#/components/schemas/Version"
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+      responses:
+        "200":
+          description: The changed label.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict, duplicate_name or definition_archived (the new parent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteLabel
+      x-ledger-access: organisation:write
+      summary: Delete a label
+      description: |
+        Archive first: an archived label keeps every historical assignment. Deleting
+        is for a label that nothing is assigned to; one that is still assigned is refused with
+        409 definition_in_use unless reassign_to names an active label that the
+        assignments move to (they become the person's own, origin user).
+        Where the person removed this label from an object (remembered so automatic runs
+        do not add it back), that record goes with the label.
+        Requires If-Match; a stale version is a 409 version_conflict. Audited
+        (organisation.definition_deleted with kind, via and reassigned).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - name: reassign_to
+          in: query
+          description: The label the assignments move to.
+          schema:
+            $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reassigned]
+                properties:
+                  reassigned:
+                    type: integer
+                    minimum: 0
+                    description: How many assignments moved to the replacement.
+        "409":
+          description: version_conflict, definition_in_use or definition_archived (the replacement).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /labels/{id}/archive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: archiveLabel
+      x-ledger-access: organisation:write
+      summary: Archive a label
+      description: |
+        Keeps the label and every assignment to it, and stops anything new from using it
+        (409 definition_archived), whether by the person or by a rule or model.
+        Archiving an archived one changes nothing. Requires If-Match. Audited
+        (organisation.definition_archived).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The archived label.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /labels/{id}/unarchive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: unarchiveLabel
+      x-ledger-access: organisation:write
+      summary: Unarchive a label
+      description: |
+        Makes the label usable again.
+        Requires If-Match. Audited (organisation.definition_unarchived).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The unarchived label.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /buckets:
+    get:
+      operationId: listBuckets
+      x-ledger-access: organisation:read
+      summary: List buckets
+      description: |
+        Buckets (decision D12, ADR-0053): user-defined groupings of commitments and accounts used to slice the outlook. A bucket never holds, allocates or reserves money and is not a budget envelope. Archived ones are included unless archived=false.
+        Items come in ID order (creation order).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: archived
+          in: query
+          description: Only archived (true) or only active (false) ones.
+          schema:
+            type: boolean
+        - name: name[prefix]
+          in: query
+          description: Only names starting with this text, ignoring case.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One page of buckets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrganisationDefinition"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createBucket
+      x-ledger-access: organisation:write
+      summary: Create a bucket
+      description: |
+        Creates a bucket at version 1. The name is trimmed and white space is
+        collapsed; names are unique ignoring case, archived ones included
+        (409 duplicate_name). Audited (organisation.definition_created with kind and
+        via, never the name).
+      tags: [organisation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+      responses:
+        "201":
+          description: The created bucket.
+          headers:
+            Location:
+              schema:
+                type: string
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: duplicate_name or definition_archived (the parent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /buckets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getBucket
+      x-ledger-access: organisation:read
+      summary: Get a bucket
+      tags: [organisation]
+      responses:
+        "200":
+          description: The bucket.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateBucket
+      x-ledger-access: organisation:write
+      summary: Rename a bucket
+      description: |
+        A JSON Merge Patch (RFC 7396) of the writable members: name. The id never
+        changes, so every assignment follows a rename. An archived one may be
+        renamed (that frees its name). The merged result is validated as a whole. Requires the version in If-Match or the body;
+        a stale version is a 409 version_conflict with reconciliation. A patch that changes
+        nothing is a no-op. Audited (organisation.definition_updated with the names of the
+        changed fields).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                version:
+                  $ref: "#/components/schemas/Version"
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+      responses:
+        "200":
+          description: The changed bucket.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict, duplicate_name or definition_archived (the new parent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteBucket
+      x-ledger-access: organisation:write
+      summary: Delete a bucket
+      description: |
+        Archive first: an archived bucket keeps every historical assignment. Deleting
+        is for a bucket that nothing is assigned to; one that is still assigned is refused with
+        409 definition_in_use unless reassign_to names an active bucket that the
+        assignments move to (they become the person's own, origin user).
+        Requires If-Match; a stale version is a 409 version_conflict. Audited
+        (organisation.definition_deleted with kind, via and reassigned).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - name: reassign_to
+          in: query
+          description: The bucket the assignments move to.
+          schema:
+            $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reassigned]
+                properties:
+                  reassigned:
+                    type: integer
+                    minimum: 0
+                    description: How many assignments moved to the replacement.
+        "409":
+          description: version_conflict, definition_in_use or definition_archived (the replacement).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /buckets/{id}/archive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: archiveBucket
+      x-ledger-access: organisation:write
+      summary: Archive a bucket
+      description: |
+        Keeps the bucket and every assignment to it, and stops anything new from using it
+        (409 definition_archived), whether by the person or by a rule or model.
+        Archiving an archived one changes nothing. Requires If-Match. Audited
+        (organisation.definition_archived).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The archived bucket.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /buckets/{id}/unarchive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: unarchiveBucket
+      x-ledger-access: organisation:write
+      summary: Unarchive a bucket
+      description: |
+        Makes the bucket usable again.
+        Requires If-Match. Audited (organisation.definition_unarchived).
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: The unarchived bucket.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganisationDefinition"
+        "409":
+          description: version_conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /buckets/{id}/members:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: listBucketMembers
+      x-ledger-access: organisation:read
+      summary: List the members of a bucket
+      description: Commitments and accounts in the bucket, ordered by object type then identifier. An archived bucket keeps its members.
+      tags: [organisation]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: One page of members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BucketMember"
+                  next_cursor:
+                    type: [string, "null"]
+        default:
+          $ref: "#/components/responses/Error"
+  /buckets/{id}/members/{object_type}/{object_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+      - name: object_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [commitment, account]
+      - name: object_id
+        in: path
+        required: true
+        description: |
+          The object's identifier; for a merchant its key: the merchant's name in lower case with
+          white space collapsed, at most 200 characters (merchants have no record of their own yet,
+          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
+        schema:
+          type: string
+    put:
+      operationId: addBucketMember
+      x-ledger-access: organisation:write
+      summary: Put a commitment or account in a bucket
+      description: |
+        Idempotent. Buckets hold commitments and accounts only (400 on object_type for anything
+        else); the bucket must be active (409 definition_archived). Audited
+        (organisation.assignment_changed, kind bucket, change added).
+      tags: [organisation]
+      responses:
+        "204":
+          description: The object is in the bucket.
+        "409":
+          description: definition_archived.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: removeBucketMember
+      x-ledger-access: organisation:write
+      summary: Take an object out of a bucket
+      description: Allowed for an archived bucket too. 404 when the object is not in the bucket. Audited (organisation.assignment_changed, kind bucket, change removed).
+      tags: [organisation]
+      responses:
+        "204":
+          description: The object is out of the bucket.
+        default:
+          $ref: "#/components/responses/Error"
+  /organisation/{object_type}/{object_id}:
+    parameters:
+      - name: object_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [transaction, commitment, account, merchant]
+      - name: object_id
+        in: path
+        required: true
+        description: |
+          The object's identifier; for a merchant its key: the merchant's name in lower case with
+          white space collapsed, at most 200 characters (merchants have no record of their own yet,
+          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
+        schema:
+          type: string
+    get:
+      operationId: getObjectOrganisation
+      x-ledger-access: organisation:read
+      summary: What is assigned to an object
+      description: |
+        The category (single-valued), the labels (many-valued), the labels the person removed and,
+        for a commitment or account, the buckets. Every assignment says where it came from (origin
+        user, rule or model, with the rule or provider/model as source), who and when. A booked
+        transaction that superseded a pending one shows the pending transaction's assignments as
+        inherited, except where the booking's own assignment is automatic and the inherited one is the
+        person's: the person's wins. A bank refresh never changes any of this. 404 for an object that does not exist.
+      tags: [organisation]
+      responses:
+        "200":
+          description: The assignments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectAssignments"
+        default:
+          $ref: "#/components/responses/Error"
+  /organisation/{object_type}/{object_id}/category:
+    parameters:
+      - name: object_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [transaction, commitment, account, merchant]
+      - name: object_id
+        in: path
+        required: true
+        description: |
+          The object's identifier; for a merchant its key: the merchant's name in lower case with
+          white space collapsed, at most 200 characters (merchants have no record of their own yet,
+          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
+        schema:
+          type: string
+    put:
+      operationId: setObjectCategory
+      x-ledger-access: organisation:write
+      summary: Set an object's category
+      description: |
+        Records the person's category (origin user), replacing any earlier one: a category is
+        single-valued. A null category_id records that the person chose none. Rules and models
+        never replace it, nor a "none" (the person's word stands through refreshes and automatic
+        runs); DELETE hands the decision back. Last write wins (no If-Match); the audit log keeps
+        the history (organisation.assignment_changed with change set or none, and the origin it
+        replaced). An archived category is refused (409 definition_archived).
+      tags: [organisation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [category_id]
+              properties:
+                category_id:
+                  oneOf:
+                    - $ref: "#/components/schemas/ID"
+                    - type: "null"
+      responses:
+        "200":
+          description: The assignments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectAssignments"
+        "409":
+          description: definition_archived.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: resetObjectCategory
+      x-ledger-access: organisation:write
+      summary: Forget the person's category choice
+      description: |
+        Removes the object's own category row (a category or "none"), so a rule or a model may assign
+        again, and a pending transaction's assignment applies again to its booking. 404 when the
+        object has no category. 409 review_inherited when the category is only inherited from the pending
+        transaction it replaces: reset it there. Audited (organisation.assignment_changed, change reset).
+      tags: [organisation]
+      responses:
+        "200":
+          description: The assignments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectAssignments"
+        "409":
+          description: review_inherited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /organisation/{object_type}/{object_id}/labels/{label_id}:
+    parameters:
+      - name: object_type
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [transaction, commitment, account, merchant]
+      - name: object_id
+        in: path
+        required: true
+        description: |
+          The object's identifier; for a merchant its key: the merchant's name in lower case with
+          white space collapsed, at most 200 characters (merchants have no record of their own yet,
+          ADR-0053, provisional). For a merchant every route here also needs the merchants grant
+          (merchants:read to read, merchants:write to change; administrators only), 403 otherwise.
+        schema:
+          type: string
+      - name: label_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    put:
+      operationId: addObjectLabel
+      x-ledger-access: organisation:write
+      summary: Put a label on an object
+      description: |
+        Adds the label as the person's (origin user); it replaces an automatic assignment of the same
+        label and a removal the person made earlier. An archived label is refused (409
+        definition_archived). Audited (organisation.assignment_changed, kind label, change added).
+      tags: [organisation]
+      responses:
+        "200":
+          description: The assignments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectAssignments"
+        "409":
+          description: definition_archived.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: removeObjectLabel
+      x-ledger-access: organisation:write
+      summary: Take a label off an object
+      description: |
+        Removes the label and remembers that the person did (removed_labels), so rules and models do
+        not add it back. 404 when the object does not have the label. Audited
+        (organisation.assignment_changed, kind label, change removed).
+      tags: [organisation]
+      responses:
+        "200":
+          description: The assignments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectAssignments"
+        default:
+          $ref: "#/components/responses/Error"
 tags:
   - name: mcp
     description: Model Context Protocol server.
@@ -3710,6 +4819,8 @@ tags:
     description: Connecting banks, consent, reconnecting, refreshing on request, and each account's freshness.
   - name: merchants
     description: Merchant identity of bank transactions, the enrichment, and confirming, correcting or rejecting it (administrators).
+  - name: organisation
+    description: Categories (two levels, single-valued), labels (flat, many-valued) and buckets (groupings of commitments and accounts), and assigning them to transactions, commitments, accounts and merchants, with the origin of every assignment.
   - name: outlook
     description: The outlook against recorded commitments, compared with bank balances; never money that is safe to spend.
   - name: payment-matches
@@ -5748,6 +6859,133 @@ components:
       description: A ULID.
       pattern: "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
       examples: ["01JD3Y4C8V9M2Q7W5R6T0XZBNA"]
+    OrganisationDefinition:
+      type: object
+      description: |
+        A category, label or bucket (decision D12, ADR-0053). Names are free text: never an identifier.
+        A bucket groups commitments and accounts to slice the outlook and never holds or allocates money.
+      required: [id, kind, name, parent_id, archived, archived_at, version, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        kind:
+          type: string
+          enum: [category, label, bucket]
+        name:
+          type: string
+        parent_id:
+          description: A category's parent (two levels only); null for a top-level category, a label and a bucket.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        archived:
+          type: boolean
+        archived_at:
+          type: [string, "null"]
+          format: date-time
+        version:
+          $ref: "#/components/schemas/Version"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    OrganisationActor:
+      type: object
+      required: [kind, user_id, via]
+      properties:
+        kind:
+          type: string
+          enum: [user, token, system]
+        user_id:
+          type: [string, "null"]
+        via:
+          type: [string, "null"]
+          enum: [session, token, mcp, system, null]
+    AssignmentOrigin:
+      type: string
+      enum: [user, rule, model]
+      description: Who made the assignment. The person's word outranks a rule's, which outranks a model's; nothing automatic replaces a user assignment.
+    CategoryAssignment:
+      type: object
+      required: [category, origin, source, by, at, inherited]
+      properties:
+        category:
+          description: The category; null when the person explicitly chose none.
+          oneOf:
+            - $ref: "#/components/schemas/OrganisationDefinition"
+            - type: "null"
+        origin:
+          $ref: "#/components/schemas/AssignmentOrigin"
+        source:
+          type: [string, "null"]
+          description: The rule or provider/model of an automatic origin; null for user.
+        by:
+          $ref: "#/components/schemas/OrganisationActor"
+        at:
+          type: string
+          format: date-time
+        inherited:
+          type: boolean
+          description: True when this is the assignment of the pending transaction this one superseded.
+    LabelAssignment:
+      type: object
+      required: [label, origin, source, by, at, inherited]
+      properties:
+        label:
+          $ref: "#/components/schemas/OrganisationDefinition"
+        origin:
+          $ref: "#/components/schemas/AssignmentOrigin"
+        source:
+          type: [string, "null"]
+        by:
+          $ref: "#/components/schemas/OrganisationActor"
+        at:
+          type: string
+          format: date-time
+        inherited:
+          type: boolean
+    ObjectAssignments:
+      type: object
+      required: [object_type, object_id, category, labels, removed_labels, buckets]
+      properties:
+        object_type:
+          type: string
+          enum: [transaction, commitment, account, merchant]
+        object_id:
+          type: string
+        category:
+          oneOf:
+            - $ref: "#/components/schemas/CategoryAssignment"
+            - type: "null"
+        labels:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabelAssignment"
+        removed_labels:
+          type: array
+          description: Labels the person took off; automatic runs do not add them back.
+          items:
+            $ref: "#/components/schemas/LabelAssignment"
+        buckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganisationDefinition"
+    BucketMember:
+      type: object
+      required: [object_type, object_id, added_by, added_at]
+      properties:
+        object_type:
+          type: string
+          enum: [commitment, account]
+        object_id:
+          $ref: "#/components/schemas/ID"
+        added_by:
+          $ref: "#/components/schemas/OrganisationActor"
+        added_at:
+          type: string
+          format: date-time
     Version:
       type: integer
       format: int64
@@ -5839,7 +7077,7 @@ components:
               obtained_at: {type: string, format: date-time}
     BankConnection:
       type: object
-      required: [id, provider, application, mode, environment, account_access, institution, status, needs_reconnect, freshness, consent_granted_at, consent_valid_until, consent_expires_soon, last_error, accounts, last_refresh_run, refresh_running, schedule, as_of, version, created_at, updated_at]
+      required: [id, provider, application, mode, environment, account_access, institution, status, needs_reconnect, freshness, consent_granted_at, consent_valid_until, consent_expires_soon, last_error, accounts, last_refresh_run, refresh_running, refresh_available_at, schedule, as_of, version, created_at, updated_at]
       properties:
         id: {$ref: "#/components/schemas/ID"}
         provider: {type: string}
@@ -5882,6 +7120,12 @@ components:
         refresh_running:
           type: boolean
           description: True while a refresh is still going on in the background (the last run is running, or a refresh just requested outlived the wait). Poll the connection until it is false.
+        refresh_available_at:
+          description: While in the future, a refresh on request is refused (429 refresh_cooldown) until this time, counted from when the last refresh finished. Null when a refresh on request is allowed now.
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
         schedule:
           description: The background scheduler's view; null when background refresh is off or has not seen the connection yet.
           oneOf:
@@ -5960,6 +7204,7 @@ components:
             - bank_request_rejected
             - connection_not_active
             - refresh_in_progress
+            - refresh_cooldown
             - consent_not_found
             - bank_connect_unavailable
             - occurrence_overpaid
@@ -5978,6 +7223,9 @@ components:
             - deferral_plan_undone
             - deferral_adjustment_removed
             - deferral_plan_currency
+            - definition_archived
+            - definition_in_use
+            - duplicate_name
         message:
           type: string
         field:
