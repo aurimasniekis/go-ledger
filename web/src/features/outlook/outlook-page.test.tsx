@@ -211,7 +211,7 @@ describe('Outlook page', () => {
   it('says how many occurrences before tracking started are not counted, and how fresh is fresh', async () => {
     responder = () => ({ status: 200, json: outlook({ window: { from: '2025-12', through: '2026-11', truncated: false, not_recorded_count: 3 }, balances: { ...outlook().balances, stale_after_seconds: 5400 } }) })
     renderApp('/outlook')
-    expect(await screen.findByTestId('outlook-not-recorded')).toHaveTextContent('3 occurrences due before tracking started are not counted (see the monthly view).')
+    expect(await screen.findByTestId('outlook-not-recorded')).toHaveTextContent('3 occurrences were due before the commitments they belong to were created, so they are left out of these figures. They show as "not recorded" in the monthly view for the month they were due.')
     expect(within(screen.getByTestId('outlook-GBP')).getByText('1 of 1 balance not refreshed in 90 min')).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Commitments counted through' })).toHaveTextContent('Everything still owed since your first commitment started (December 2025), through November 2026')
     expect(screen.getByRole('group', { name: 'Commitments counted through' }).className).not.toContain('flex-wrap')

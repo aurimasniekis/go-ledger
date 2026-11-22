@@ -44,7 +44,8 @@ const ARCHIVED = <span className="ml-1 rounded border border-border px-1 py-0.5 
  * opened. It is hidden without organisation:read. Every change is the person's choice (origin user) and is shown as saved only
  * after the server has answered.
  */
-export function OrganiseDisclosure({ objectType, objectId, subject, locked }: { objectType: ObjectType; objectId: string; subject: string; locked?: string }) {
+/** With inline, the button joins its parent's flex row and the opened panel takes a row of its own (the parent must be a wrapping flex container). */
+export function OrganiseDisclosure({ objectType, objectId, subject, locked, inline }: { objectType: ObjectType; objectId: string; subject: string; locked?: string; inline?: boolean }) {
   const me = useMe()
   const [open, setOpen] = useState(false)
   const panel = useId()
@@ -54,11 +55,11 @@ export function OrganiseDisclosure({ objectType, objectId, subject, locked }: { 
   if (!holds(grants, 'organisation:read') || (merchant && !holds(grants, 'merchants:read'))) return null
   const canWrite = holds(grants, 'organisation:write') && (!merchant || holds(grants, 'merchants:write')) && !locked
   return (
-    <div className="space-y-2">
+    <div className={inline ? 'contents' : 'space-y-2'}>
       <Button variant="ghost" size="sm" className="h-auto min-h-8 py-1 text-foreground underline underline-offset-4" aria-expanded={open} aria-controls={panel} aria-label={`Organise ${subject}`} onClick={() => setOpen(!open)}>
         Organise
       </Button>
-      <div id={panel} hidden={!open}>
+      <div id={panel} hidden={!open} className={inline ? 'basis-full' : undefined}>
         {open && <OrganisePanel objectType={objectType} objectId={objectId} subject={subject} canWrite={canWrite} locked={locked} />}
       </div>
     </div>

@@ -485,8 +485,10 @@ export function MatchCard({ match: listed, offline, competing = 1, onSaved, onHo
           </div>
         </div>
       )}
-      <MerchantDisclosure transactionId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}`} />
-      <OrganiseDisclosure objectType="transaction" objectId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}${name.data ? ` matched to ${name.data}` : ''}`} />
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-1">
+      <MerchantDisclosure inline transactionId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}`} />
+      <OrganiseDisclosure inline objectType="transaction" objectId={t.id} subject={`the ${t.amount.amount} ${t.amount.currency} bank transaction of ${when}${name.data ? ` matched to ${name.data}` : ''}`} />
+      </div>
     </article>
   )
 }

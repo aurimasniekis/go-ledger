@@ -197,11 +197,11 @@ export function OutlookPage({ through, currency, bucket }: { through?: string; c
           <Freshness data={q.data} status={q.status} error={q.error} isFetching={q.isFetching} dataUpdatedAt={q.dataUpdatedAt} now={now} offline={!online} onRetry={() => void q.refetch()} />
           {q.data.window.not_recorded_count > 0 && (
             <p data-testid="outlook-not-recorded" className="text-sm text-muted-foreground">
-              {q.data.window.not_recorded_count} {q.data.window.not_recorded_count === 1 ? 'occurrence' : 'occurrences'} due before tracking started {q.data.window.not_recorded_count === 1 ? 'is' : 'are'} not counted (see the{' '}
+              {q.data.window.not_recorded_count} {q.data.window.not_recorded_count === 1 ? 'occurrence was' : 'occurrences were'} due before the {q.data.window.not_recorded_count === 1 ? 'commitment it belongs to was' : 'commitments they belong to were'} created, so {q.data.window.not_recorded_count === 1 ? 'it is' : 'they are'} left out of these figures. {q.data.window.not_recorded_count === 1 ? 'It shows' : 'They show'} as "not recorded" in the{' '}
               <Link to="/month" className="underline">
                 monthly view
               </Link>
-              ).
+              {' '}for the month {q.data.window.not_recorded_count === 1 ? 'it was' : 'they were'} due.
             </p>
           )}
           {q.data.currencies.length === 0 ? (

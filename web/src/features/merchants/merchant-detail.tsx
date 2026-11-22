@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input, Select } from '@/components/ui/input'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { DateText } from '@/components/formatted'
+import { InstantText } from '@/components/formatted'
 import { Field } from '@/components/field'
 import { FormError } from '@/components/form-error'
 import { Mono } from '@/components/mono'
@@ -113,7 +113,7 @@ function Detail({ m, canWrite }: { m: MerchantRecord; canWrite: boolean }) {
           </span>
         </h1>
         <p className="text-xs text-muted-foreground">
-          Identifier <Mono>{m.id}</Mono> · created <DateText value={m.created_at} /> · changed <DateText value={m.updated_at} /> · version {m.version}
+          Identifier <Mono>{m.id}</Mono> · created <InstantText value={m.created_at} /> · changed <InstantText value={m.updated_at} /> · version {m.version}
         </p>
         {merged && (
           <p role="status" className="text-sm">
@@ -233,7 +233,7 @@ function Aliases({ m, canWrite, pending, onAdd, onRemove }: { m: MerchantRecord;
   return (
     <section aria-labelledby={headId} className="space-y-3">
       <h2 id={headId} className="text-xl font-semibold">Aliases</h2>
-      <p className="text-sm text-muted-foreground">A transaction whose merchant name matches an alias (ignoring case, spacing and accents) resolves to this merchant. An alias belongs to one merchant at most.</p>
+      <p className="text-sm text-muted-foreground">A transaction whose merchant name matches an alias (ignoring capital letters and extra spaces; accents and other characters must match exactly) resolves to this merchant. An alias belongs to one merchant at most.</p>
       {m.aliases.length === 0 ? (
         <p className="text-sm text-muted-foreground">This merchant has no aliases, so no transaction name resolves to it.</p>
       ) : (
@@ -241,7 +241,7 @@ function Aliases({ m, canWrite, pending, onAdd, onRemove }: { m: MerchantRecord;
           {m.aliases.map((a) => (
             <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface p-3 text-sm">
               <span className="min-w-0 break-words">
-                <span className="font-medium">{a.name}</span> <span className="text-xs text-muted-foreground">{ORIGIN[a.origin]}, <DateText value={a.created_at} /></span>
+                <span className="font-medium">{a.name}</span> <span className="text-xs text-muted-foreground">{ORIGIN[a.origin]}, <InstantText value={a.created_at} /></span>
               </span>
               {canWrite && (
                 <Button variant="outline" size="sm" disabled={pending} aria-label={`Remove the alias ${a.name}`} onClick={() => onRemove(a)}>

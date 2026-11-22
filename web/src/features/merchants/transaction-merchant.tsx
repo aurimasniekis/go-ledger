@@ -39,17 +39,17 @@ const WHY: Record<TransactionMerchant['state'], string> = {
  * not allow remote images, and loading one would tell a third party about the transaction. The neutral icon is used.
  * Hidden without merchants:read.
  */
-export function MerchantDisclosure({ transactionId, subject }: { transactionId: string; subject: string }) {
+export function MerchantDisclosure({ transactionId, subject, inline }: { transactionId: string; subject: string; inline?: boolean }) {
   const me = useMe()
   const [open, setOpen] = useState(false)
   const panel = useId()
   if (!holds(me.data?.grants, 'merchants:read')) return null
   return (
-    <div className="space-y-2">
+    <div className={inline ? 'contents' : 'space-y-2'}>
       <Button variant="ghost" size="sm" className="h-auto min-h-8 py-1 text-foreground underline underline-offset-4" aria-expanded={open} aria-controls={panel} aria-label={`Merchant of ${subject}`} onClick={() => setOpen(!open)}>
         Merchant
       </Button>
-      <div id={panel} hidden={!open}>
+      <div id={panel} hidden={!open} className={inline ? 'basis-full' : undefined}>
         {open && <MerchantPanel transactionId={transactionId} canWrite={holds(me.data?.grants, 'merchants:write')} />}
       </div>
     </div>

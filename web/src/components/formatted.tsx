@@ -1,4 +1,4 @@
-import { currencyName, formatAmount, formatDate } from '@/lib/format'
+import { currencyName, formatAmount, formatDate, formatInstantUtc } from '@/lib/format'
 
 /**
  * A money amount: the sighted text is "1 124.19 EUR" (fixed narrow no-break space grouping, D38-3a) and the spoken text
@@ -24,6 +24,15 @@ export function DateText({ value, className }: { value: string; className?: stri
   return (
     <time dateTime={value} className={`whitespace-nowrap ${className ?? ''}`.trim()}>
       {formatDate(value)}
+    </time>
+  )
+}
+
+/** A moment (RFC 3339 from the server), shown as ISO date and UTC time without seconds ("2026-11-22 15:10 UTC"); the full value stays in the <time> element. */
+export function InstantText({ value, className }: { value: string; className?: string }) {
+  return (
+    <time dateTime={value} className={'whitespace-nowrap ' + (className ?? '')}>
+      {formatInstantUtc(value)}
     </time>
   )
 }
