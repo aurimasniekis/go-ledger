@@ -56,8 +56,10 @@ func (s Subject) Key() string {
 // space and at the punctuation , / . and ;, every token that holds a digit
 // removed (IBANs and account numbers, amounts, dates, references, store
 // numbers) and the words iban, bic, swift, account and acct removed. The result
-// is sent only when it holds a company form (UAB, Ltd, GmbH, AB, AS, SIA, Inc
-// and the like) next to at least one other word, or a multi-word curated
+// is sent only when it starts or ends with a company form (UAB, Ltd, GmbH, AB,
+// AS, SIA, Inc and the like) as a whole token, with at least one other word;
+// a form inside the text does not count, and the ambiguous short forms (as, co,
+// sa, ab, ag, sp, oy, nv, bv) count only in capitals, or a multi-word curated
 // pattern ("apple com bill"). Business words and single curated words are not
 // markers: they also sit in personal names. It is empty, and nothing is sent,
 // for transfers, for names of people and for everything else without a marker.
@@ -90,18 +92,16 @@ func (s Subject) MerchantString() string {
 // hasMerchantMarker: a company form beside another word, or a multi-word
 // curated pattern.
 func hasMerchantMarker(toks []string) bool {
-	form, other := false, false
-	for _, t := range toks {
-		l := strings.ToLower(t)
-		switch {
-		case companyForms[l]:
-			form = true
-		case strings.IndexFunc(l, unicode.IsLetter) >= 0:
-			other = true
+	if len(toks) >= 2 && (isCompanyForm(toks[0]) || isCompanyForm(toks[len(toks)-1])) {
+		hasWord := false
+		for _, t := range toks[1 : len(toks)-1] {
+			hasWord = hasWord || strings.IndexFunc(t, unicode.IsLetter) >= 0
 		}
-	}
-	if form && other {
-		return true
+		if isCompanyForm(toks[0]) && isCompanyForm(toks[len(toks)-1]) && !hasWord {
+			// only forms: no name
+		} else {
+			return true
+		}
 	}
 	key := Key(strings.Join(toks, " "))
 	for _, e := range DefaultCurated() {
@@ -113,6 +113,21 @@ func hasMerchantMarker(toks []string) bool {
 	}
 	return false
 }
+
+// isCompanyForm: the token is a company form. The ambiguous short forms (they
+// are also ordinary words or initials) count only in capitals.
+func isCompanyForm(t string) bool {
+	l := strings.ToLower(t)
+	if !companyForms[l] {
+		return false
+	}
+	if ambiguousForms[l] {
+		return t == strings.ToUpper(t)
+	}
+	return true
+}
+
+var ambiguousForms = map[string]bool{"as": true, "co": true, "sa": true, "ab": true, "ag": true, "sp": true, "oy": true, "nv": true, "bv": true}
 
 var accountWords = map[string]bool{"iban": true, "bic": true, "swift": true, "account": true, "acct": true}
 

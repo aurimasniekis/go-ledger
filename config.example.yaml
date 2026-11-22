@@ -337,16 +337,18 @@ merchants:
       # numbers), the words iban, bic, swift and account removed (text is
       # split at white space and at , / . and ;), at most 100 characters.
       # Nothing is sent unless that text carries a positive merchant marker: a
-      # company form (UAB, Ltd, GmbH, AB, AS, SIA, Inc and the like) next to
-      # another word, or a multi-word curated pattern such as apple com bill.
-      # Business words and single curated words are not markers; names of
-      # people, transfers (transfer words such as sepa or transfer) and
-      # anything else without a marker send nothing. Merchants your own
-      # confirmations or rejections already cover are not asked about. If
-      # merchants.enrichment.remote.country is set, that country code is sent
-      # too. Never amounts, dates, IBANs, account holders or balances. Needs
-      # url, and you are responsible for the service's terms: see attribution,
-      # store_logo_ref and retention.
+      # company form (UAB, Ltd, GmbH, AB, AS, SIA, Inc and the like) as a
+      # whole token at the start or end of the text, next to another word (a
+      # form inside the text does not count, and the short forms as, co, sa,
+      # ab, ag, sp, oy, nv and bv count only in capitals), or a multi-word
+      # curated pattern such as apple com bill. Business words and single
+      # curated words are not markers; names of people, transfers (transfer
+      # words such as sepa or transfer) and anything else without a marker
+      # send nothing. Merchants your own confirmations or rejections already
+      # cover are not asked about. If merchants.enrichment.remote.country is
+      # set, that country code is sent too. Never amounts, dates, IBANs,
+      # account holders or balances. Needs url, and you are responsible for
+      # the service's terms: see attribution, store_logo_ref and retention.
       # Environment: LEDGER_MERCHANTS_ENRICHMENT_REMOTE_ENABLED  Flag: --merchants.enrichment.remote.enabled
       enabled: false
 
