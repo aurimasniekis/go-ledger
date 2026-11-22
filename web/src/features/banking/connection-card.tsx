@@ -12,7 +12,7 @@ import { Notice } from '@/components/notice'
 import { StatusBadge, type Status } from '@/components/status-badge'
 import { useAnnounce } from '@/components/announcer'
 import { connectionsKey, disconnect, reconnect, refresh } from './api'
-import { accountState, BALANCE_LABEL, diagnose, type AccountState, type Diagnosis } from './diagnosis'
+import { accountState, BALANCE_LABEL, diagnose, reconnectSuperseded, type AccountState, type Diagnosis } from './diagnosis'
 import { goToBank } from './redirect'
 import type { BankAccount, BankConnection, BankError } from './types'
 
@@ -60,9 +60,9 @@ const ACCOUNT_BADGE: Record<AccountState, { status: Status; label?: string }> = 
   disconnected: { status: 'disconnected', label: 'Bank disconnected' },
 }
 
-function AccountRow({ a, reconnected }: { a: BankAccount; reconnected: boolean }) {
+function AccountRow({ a, superseded }: { a: BankAccount; superseded: boolean }) {
   const f = a.freshness
-  const state = accountState(a, reconnected)
+  const state = accountState(a, superseded)
   return (
     <li className="space-y-2 rounded-md border border-border p-3" data-account-state={state}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -109,7 +109,7 @@ function AccountRow({ a, reconnected }: { a: BankAccount; reconnected: boolean }
           </div>
         )}
       </dl>
-      {f.last_error && state !== 'fresh' && !(reconnected && f.last_error.kind === 'reconnect_required') && (
+      {f.last_error && state !== 'fresh' && !superseded && (
         <p className="text-xs">
           Last error: {KIND_TEXT[f.last_error.kind]}
           {code(f.last_error)}. The figures above are from the last successful refresh.
@@ -266,7 +266,7 @@ export function ConnectionCard({ c, canWrite }: { c: BankConnection; canWrite: b
       {c.accounts.length > 0 ? (
         <ul aria-label={`Accounts at ${c.institution.name}`} className="space-y-2">
           {c.accounts.map((a) => (
-            <AccountRow key={a.id} a={a} reconnected={d.kind === 'reconnected'} />
+            <AccountRow key={a.id} a={a} superseded={reconnectSuperseded(a, c)} />
           ))}
         </ul>
       ) : (

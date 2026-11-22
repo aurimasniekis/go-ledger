@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountState, diagnose } from './diagnosis'
+import { accountState, diagnose, reconnectSuperseded } from './diagnosis'
 import { account, connection, outage, reconnectRequired, run } from './fixtures'
 import { isSafeBankUrl } from './redirect'
 
@@ -42,6 +42,43 @@ describe('diagnose', () => {
   it('a partial refresh is ok with a note, a succeeded one is plain ok', () => {
     expect(diagnose(connection({ last_refresh_run: run({ outcome: 'partial', accounts_failed: 1 }) }))).toEqual({ kind: 'ok', partial: true })
     expect(diagnose(connection())).toEqual({ kind: 'ok', partial: false })
+  })
+})
+
+describe('reconnectSuperseded', () => {
+  const reconnected = () => {
+    const stale = reconnectRequired()
+    return { ...stale, status: 'active' as const, needs_reconnect: false, consent_granted_at: '2026-11-21T10:00:00Z' }
+  }
+  const withAttempt = (at: string | null, over: Partial<ReturnType<typeof account>['freshness']> = {}) => {
+    const c = reconnected()
+    const a = account({ freshness: { ...c.accounts[0]!.freshness, last_attempt_at: at, ...over } })
+    return { c: { ...c, accounts: [a] }, a }
+  }
+  it('is decided per account while a refresh is running, even with no failed run', () => {
+    const { c, a } = withAttempt('2026-11-21T09:30:00Z')
+    const running = { ...c, refresh_running: true, last_refresh_run: run({ outcome: 'running', finished_at: null, started_at: '2026-11-21T10:05:00Z' }) }
+    expect(reconnectSuperseded(a, running)).toBe(true)
+    expect(accountState(a, true)).toBe('stale')
+  })
+  it('covers an account no longer reported that keeps its reconnect error', () => {
+    const { c, a } = withAttempt('2026-11-21T09:30:00Z')
+    const gone = { ...a, no_longer_reported: true }
+    expect(reconnectSuperseded(gone, c)).toBe(true)
+  })
+  it('an attempt at exactly the consent time is not superseded', () => {
+    const { c, a } = withAttempt('2026-11-21T10:00:00Z')
+    expect(reconnectSuperseded(a, c)).toBe(false)
+    expect(accountState(a, false)).toBe('reconnect')
+  })
+  it('needs an active connection and an attempt time', () => {
+    const { c, a } = withAttempt('2026-11-21T09:30:00Z')
+    expect(reconnectSuperseded(a, { ...c, status: 'reconnect_required' })).toBe(false)
+    expect(reconnectSuperseded(withAttempt(null).a, c)).toBe(false)
+  })
+  it('ignores accounts without a reconnect error', () => {
+    const { c } = withAttempt('2026-11-21T09:30:00Z', { state: 'failed', last_error: { kind: 'retryable', code: 'T' } })
+    expect(reconnectSuperseded(c.accounts[0]!, c)).toBe(false)
   })
 })
 

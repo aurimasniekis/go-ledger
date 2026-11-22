@@ -8,6 +8,7 @@ import { ApiError } from '@/lib/api'
 import { Amount, DateText } from '@/components/formatted'
 import { formatAmount, isIsoDate } from '@/lib/format'
 import { money } from './month-board'
+import { ReplacedRecords } from './replaced-records'
 import { isZeroAmount, monthLabel } from './month'
 import { deletePayment, monthKey, recordPayment } from './api'
 import type { ManualPayment, MonthItem } from './types'
@@ -94,6 +95,7 @@ export function PaymentPanel(p: PaymentPanelProps) {
         </span>
         <StatusBadge status={item.payment.status} />
       </p>
+      <ReplacedRecords occurrenceId={item.id} bankEvidenceCount={item.payment.bank_evidence_count} />
       {item.payment.timing === 'not_recorded' && (
         <p className="text-sm text-muted-foreground">
           Due before this commitment was created: not counted in the overdue or outstanding totals.

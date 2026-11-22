@@ -39,6 +39,10 @@ export interface MatchEvent {
   by: Decider
   reason: string | null
   at: string
+  /** On a confirmation made with "This is the payment I recorded" (ADR-0049): the manual records it replaced. */
+  replaced_manual_payment_ids?: string[]
+  /** On an unconfirm or unmatch: the records that count again. */
+  restored_manual_payment_ids?: string[]
 }
 
 export interface PaymentMatch {

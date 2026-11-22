@@ -5,6 +5,7 @@ import { setCsrfToken } from '@/lib/api'
 import { makeQueryClient } from '@/lib/query'
 import { fail, installApi, ok, renderApp, signedIn, type Handler, type Req } from '@/test/fake-api'
 import { match, occurrence } from './fixtures'
+import { replacedIds } from './replace-manual'
 import type { PaymentMatch } from './types'
 
 let calls: Req[]
@@ -770,6 +771,269 @@ describe('the page says offline once', () => {
     expect(card).not.toHaveTextContent(/offline/)
     expect(within(card).getByRole('button', { name: 'Confirm match' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Run matching now' })).toBeDisabled()
+  })
+})
+
+describe('"This is the payment I recorded" (D45)', () => {
+  const rec = (id: string, over: Record<string, unknown> = {}) => ({
+    id, occurrence_id: 'occ-a', amount: { amount: '10.00', currency: 'EUR' }, paid_on: '2026-11-20', note: null, version: 1, created_at: '2026-11-20T08:00:00Z', updated_at: '2026-11-20T08:00:00Z', replaced_by_match_id: null, ...over,
+  })
+  let records: ReturnType<typeof rec>[]
+  beforeEach(() => {
+    vi.restoreAllMocks() // the offline test above spies on navigator.onLine without restoring it
+    records = [rec('mp1')]
+    extra['GET /api/v1/occurrences/occ-a'] = () => ok({ ...occurrence('a'), payment: { status: 'paid', bank_evidence_count: 0, manual_evidence_count: 1, override: null } })
+    extra['GET /api/v1/occurrences/occ-a/manual-payments'] = () => ok({ items: records, next_cursor: null })
+  })
+  const confirmedRepl = () => match('a', { state: 'confirmed', version: 2, counts_as_evidence: true, history: [{ action: 'confirmed', state: 'confirmed', amount: { amount: '10.00', currency: 'EUR' }, by: { kind: 'user', user_id: 'u1' }, reason: null, at: '2026-11-24T09:00:00Z', replaced_manual_payment_ids: ['mp1'] }] })
+
+  it('offers it on a card whose occurrence is paid by a manual record, explains what happens, and sends confirm-replacing with the record', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => {
+      store = [confirmedRepl()]
+      records = [rec('mp1', { replaced_by_match_id: 'a' })]
+      return ok(store[0])
+    }
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    expect(await within(card).findByTestId('already-paid')).toHaveTextContent('choose "This is the payment I recorded"')
+    expect(card).not.toHaveTextContent('Ledger cannot link')
+    await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
+    const form = within(card).getByRole('form', { name: 'This is the payment I recorded' })
+    expect(form).toHaveTextContent('kept in history and no longer counted')
+    expect(within(form).getByRole('checkbox')).toBeChecked()
+    expect(form).toHaveTextContent('10.00')
+    expect(form).toHaveTextContent('2026-11-20')
+    expect(posts()).toHaveLength(0)
+    await userEvent.click(within(form).getByRole('button', { name: 'Confirm and replace my record' }))
+    const notice = await screen.findByTestId('replaced-notice')
+    expect(posts()[0]!.body).toEqual({ version: 1, manual_payment_ids: ['mp1'] })
+    expect(posts()[0]!.headers['If-Match']).toBe('"1"')
+    expect(notice).toHaveTextContent('Match confirmed for Rent, November 2026')
+    expect(notice).toHaveTextContent('Bank match')
+    expect(notice).toHaveTextContent('Manual record replaced')
+    expect(notice).toHaveTextContent('kept in history and no longer counted')
+  })
+
+  it('Undo uses unconfirm on the saved version and says the record counts again', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => { store = [confirmedRepl()]; return ok(store[0]) }
+    extra['POST /api/v1/payment-matches/a/unconfirm'] = () => {
+      store = [match('a', { version: 3 })]
+      return ok(store[0])
+    }
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Confirm and replace my record' }))
+    const undo = await screen.findByRole('button', { name: 'Undo: bring my record back' })
+    await userEvent.click(undo)
+    expect(await screen.findByText('Undone')).toBeInTheDocument()
+    expect(screen.getByTestId('replaced-notice')).toHaveTextContent('count as payment again'.replace('count', 'counts'))
+    const unconfirms = posts().filter((p) => p.path.endsWith('/unconfirm'))
+    expect(unconfirms).toHaveLength(1)
+    expect(unconfirms[0]!.headers['If-Match']).toBe('"2"')
+  })
+
+  it('is not offered when the manual records are already replaced, and a failed save says nothing was saved', async () => {
+    records = [rec('mp1', { replaced_by_match_id: 'zz' })]
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await within(card).findByTestId('already-paid')
+    expect(within(card).queryByRole('button', { name: 'This is the payment I recorded' })).not.toBeInTheDocument()
+  })
+
+  it('a refusal says nothing was saved and keeps the suggestion', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => fail(409, 'manual_payment_not_replaceable', 'A listed payment cannot be replaced.')
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
+    await userEvent.click(within(card).getByRole('button', { name: 'Confirm and replace my record' }))
+    const alert = await within(card).findByRole('alert')
+    expect(alert).toHaveTextContent('Nothing was saved')
+    expect(card).toHaveAttribute('data-state', 'suggested')
+    expect(screen.queryByTestId('replaced-notice')).not.toBeInTheDocument()
+  })
+
+  it('a confirmed card names the replaced records in its history, and Unmatch says the record comes back', async () => {
+    store = [confirmedRepl()]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    expect(card).toHaveTextContent('Replaced 1 manual record, kept in history.')
+    await userEvent.click(within(card).getByRole('button', { name: 'Unmatch (final)' }))
+    expect(within(card).getByRole('form')).toHaveTextContent('Your manual record of this payment comes back')
+  })
+
+  const openForm = async () => {
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await userEvent.click(await within(card).findByRole('button', { name: 'This is the payment I recorded' }))
+    return card
+  }
+  const submit = (card: HTMLElement) => userEvent.click(within(card).getByRole('button', { name: 'Confirm and replace my record' }))
+
+  it('Undo after the window closed says so, stays replaced, and is not offered again', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => { store = [confirmedRepl()]; return ok(store[0]) }
+    extra['POST /api/v1/payment-matches/a/unconfirm'] = () => fail(409, 'match_undo_window_closed', 'The undo window has passed.')
+    start()
+    await submit(await openForm())
+    await userEvent.click(await screen.findByRole('button', { name: 'Undo: bring my record back' }))
+    expect(await screen.findByText(/Undo not saved/)).toBeInTheDocument()
+    const notice = screen.getByTestId('replaced-notice')
+    expect(notice).toHaveTextContent('stays replaced')
+    expect(notice).toHaveTextContent('Undo is not available any more')
+    const undo = screen.getByRole('button', { name: 'Undo: bring my record back' })
+    expect(undo).toHaveAttribute('aria-disabled', 'true')
+    await userEvent.click(undo)
+    expect(posts().filter((p) => p.path.endsWith('/unconfirm'))).toHaveLength(1)
+  })
+
+  it('a version conflict offers no Try again', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => fail(409, 'version_conflict', 'Changed elsewhere.')
+    start()
+    const card = await openForm()
+    await submit(card)
+    const alert = await within(card).findByRole('alert')
+    expect(alert).toHaveTextContent('Nothing was saved')
+    expect(within(alert).queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    expect(within(alert).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
+  })
+
+  it('an overpayment refusal explains itself and only an explicit allow resends, with allow_overpayment', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = (r) => {
+      if (!(r.body as Record<string, unknown>).allow_overpayment) return fail(409, 'occurrence_overpaid', 'raw server words')
+      store = [confirmedRepl()]
+      return ok(store[0])
+    }
+    start()
+    const card = await openForm()
+    await submit(card)
+    const alert = await within(card).findByRole('alert')
+    expect(alert).toHaveTextContent('would pay more than the amount due')
+    expect(alert).not.toHaveTextContent('raw server words')
+    expect(within(alert).queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    await userEvent.click(within(alert).getByRole('button', { name: 'Allow overpayment and try again' }))
+    expect(await screen.findByTestId('replaced-notice')).toBeInTheDocument()
+    expect(posts()).toHaveLength(2)
+    expect(posts()[0]!.body).toEqual({ version: 1, manual_payment_ids: ['mp1'] })
+    expect(posts()[1]!.body).toEqual({ version: 1, manual_payment_ids: ['mp1'], allow_overpayment: true })
+  })
+
+  it.each([
+    ['manual_payment_not_replaceable', 'deleted or is already replaced'],
+    ['manual_payment_other_occurrence', 'belongs to a different payment'],
+    ['validation_failed', 'did not accept this choice'],
+  ])('%s is final: our own sentence, no Try again, and the occurrence data is refetched', async (code, sentence) => {
+    let gets = 0
+    extra['GET /api/v1/occurrences/occ-a/manual-payments'] = () => { gets++; return ok({ items: records, next_cursor: null }) }
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => fail(code === 'validation_failed' ? 422 : 409, code, 'raw server words')
+    start()
+    const card = await openForm()
+    const before = gets
+    await submit(card)
+    const alert = await within(card).findByRole('alert')
+    expect(alert).toHaveTextContent(sentence)
+    expect(alert).toHaveTextContent('Nothing was saved')
+    expect(alert).not.toHaveTextContent('raw server words')
+    expect(within(alert).queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    await waitFor(() => expect(gets).toBeGreaterThan(before))
+  })
+
+  it('a competing card stops offering a record once another card has replaced it', async () => {
+    store = [match('a'), match('b', { occurrence_id: 'occ-a' })]
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => {
+      store = [confirmedRepl(), store[1]!]
+      records = [rec('mp1', { replaced_by_match_id: 'a' })]
+      return ok(store[0])
+    }
+    start()
+    const cards = await screen.findAllByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    expect(cards).toHaveLength(2)
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'This is the payment I recorded' })).toHaveLength(2))
+    await userEvent.click(screen.getAllByRole('button', { name: 'This is the payment I recorded' })[0]!)
+    await submit(cards[0]!)
+    await screen.findByTestId('replaced-notice')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'This is the payment I recorded' })).not.toBeInTheDocument())
+  })
+
+  it('a final refusal on one card also clears the stale offer on its competitor', async () => {
+    store = [match('a'), match('b', { occurrence_id: 'occ-a' })]
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => {
+      records = [rec('mp1', { replaced_by_match_id: 'zz' })]
+      return fail(409, 'manual_payment_not_replaceable', 'x')
+    }
+    start()
+    const cards = await screen.findAllByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'This is the payment I recorded' })).toHaveLength(2))
+    await userEvent.click(screen.getAllByRole('button', { name: 'This is the payment I recorded' })[0]!)
+    await submit(cards[0]!)
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'This is the payment I recorded' })).not.toBeInTheDocument())
+  })
+
+  it('a final refusal stays visible in the card after the refetch removes the form, and focus moves to it', async () => {
+    extra['POST /api/v1/payment-matches/a/confirm-replacing'] = () => {
+      records = [rec('mp1', { replaced_by_match_id: 'zz' })]
+      return fail(409, 'manual_payment_not_replaceable', 'x')
+    }
+    start()
+    const card = await openForm()
+    await submit(card)
+    await waitFor(() => expect(within(card).queryByRole('form', { name: 'This is the payment I recorded' })).not.toBeInTheDocument())
+    await waitFor(() => expect(within(card).queryByRole('button', { name: 'This is the payment I recorded' })).not.toBeInTheDocument())
+    await new Promise((r) => setTimeout(r, 700))
+    const alert = within(card).getByRole('alert')
+    expect(alert).toHaveTextContent('deleted or is already replaced')
+    expect(alert).toHaveTextContent('Nothing was saved')
+    expect(alert).toHaveFocus()
+    await userEvent.click(within(alert).getByRole('button', { name: 'Dismiss' }))
+    expect(within(card).queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('puts the recorded-payment choice first and relabels Confirm as a separate payment', async () => {
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    const choice = await within(card).findByRole('button', { name: 'This is the payment I recorded' })
+    const sep = within(card).getByRole('button', { name: 'Confirm as a separate payment' })
+    expect(within(card).queryByRole('button', { name: 'Confirm match' })).not.toBeInTheDocument()
+    expect(choice.compareDocumentPosition(sep) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('a record in another currency is not offered, and neither is anything for a pending transaction', async () => {
+    records = [rec('mp1', { amount: { amount: '10.00', currency: 'USD' } })]
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await within(card).findByTestId('already-paid')
+    expect(within(card).queryByRole('button', { name: 'This is the payment I recorded' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['pending', { booking_status: 'pending', countable: false }],
+    ['not countable', { countable: false }],
+  ] as [string, Partial<PaymentMatch['transaction']>][])('is not offered for a transaction that is %s', async (_n, tx) => {
+    store = [match('a', { transaction: { ...match('a').transaction, ...tx } })]
+    start()
+    const card = await screen.findByRole('article', { name: 'Rent' }, { timeout: 5000 })
+    await within(card).findByTestId('already-paid')
+    // Give the manual-payments query time to answer: the offer must still be absent.
+    await waitFor(() => expect(calls.some((c) => c.path.endsWith('/manual-payments'))).toBe(true))
+    expect(within(card).queryByRole('button', { name: 'This is the payment I recorded' })).not.toBeInTheDocument()
+  })
+
+  it('Reverse on a card that replaced a record says the record stays replaced', async () => {
+    store = [confirmedRepl()]
+    start()
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirmed' }))
+    const card = await screen.findByRole('article', { name: 'Rent' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Reverse (payment bounced)' }))
+    expect(within(card).getByRole('form')).toHaveTextContent('stays replaced')
+  })
+})
+
+describe('replacedIds', () => {
+  const ev = (over: Record<string, unknown>) => ({ action: 'confirmed', state: 'confirmed', amount: { amount: '10.00', currency: 'EUR' }, by: { kind: 'user', user_id: 'u1' }, reason: null, at: '2026-11-24T09:00:00Z', ...over })
+  it('takes restored records out, and a re-confirmation puts them back', () => {
+    const h = (...e: unknown[]) => match('a', { history: e as PaymentMatch['history'] })
+    expect(replacedIds(h(ev({ replaced_manual_payment_ids: ['m1', 'm2'] })))).toEqual(['m1', 'm2'])
+    expect(replacedIds(h(ev({ replaced_manual_payment_ids: ['m1', 'm2'] }), ev({ action: 'unconfirmed', restored_manual_payment_ids: ['m1', 'm2'] })))).toEqual([])
+    expect(replacedIds(h(ev({ replaced_manual_payment_ids: ['m1'] }), ev({ action: 'unconfirmed', restored_manual_payment_ids: ['m1'] }), ev({ replaced_manual_payment_ids: ['m1'] })))).toEqual(['m1'])
   })
 })
 
