@@ -171,7 +171,7 @@ func registerPayments(s *Server, occ occurrences.Reader, st payments.Store, toda
 			return
 		}
 		SetVersion(w, ch.Occurrence.Version)
-		WriteJSON(w, http.StatusOK, toOccurrenceJSON(ch.Occurrence, payments.Derive(ch.Occurrence, ch.Facts, t, grace)))
+		WriteJSON(w, http.StatusOK, toOccurrenceJSON(ch.Occurrence, payments.Derive(r.Context(), ch.Occurrence, ch.Facts, t, grace)))
 	}
 	// occurrenceConflict answers a stale occurrence version with the
 	// occurrence as it is now.
@@ -188,7 +188,7 @@ func registerPayments(s *Server, occ occurrences.Reader, st payments.Store, toda
 			WriteError(w, r, VersionConflict(vc.Current, nil))
 			return true
 		}
-		WriteError(w, r, VersionConflict(o.Version, toOccurrenceJSON(o, payments.Derive(o, facts[id], t, grace))))
+		WriteError(w, r, VersionConflict(o.Version, toOccurrenceJSON(o, payments.Derive(r.Context(), o, facts[id], t, grace))))
 		return true
 	}
 

@@ -213,7 +213,7 @@ func (f *fixture) state(o occurrences.Occurrence) payments.State {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return payments.Derive(got, facts[o.ID], d("2026-11-01"), nil)
+	return payments.Derive(context.Background(), got, facts[o.ID], d("2026-11-01"), nil)
 }
 
 func (f *fixture) match(t banking.StoredTransaction, o occurrences.Occurrence, amount string, origin matches.Origin, st matches.State) (matches.Change, error) {

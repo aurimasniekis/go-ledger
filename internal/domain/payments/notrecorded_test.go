@@ -1,6 +1,7 @@
 package payments_test
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestNotRecordedBoundary(t *testing.T) {
 			if c.created != "" {
 				f.CommitmentCreatedOn = d(c.created)
 			}
-			st := payments.Derive(occ, f, d(c.today), nil)
+			st := payments.Derive(context.Background(), occ, f, d(c.today), nil)
 			if st.Status != c.status || st.Derived != c.status || st.Timing != c.status {
 				t.Fatalf("%+v", st)
 			}
@@ -47,22 +48,22 @@ func TestNotRecordedBoundary(t *testing.T) {
 func TestNotRecordedIsNotOverdueAndCanBePaid(t *testing.T) {
 	created := d("2026-04-01")
 	until := d("2026-04-30")
-	grace := func(_ occurrences.Occurrence) payments.Grace {
+	grace := func(ctx context.Context, _ occurrences.Occurrence) payments.Grace {
 		return payments.Grace{Recorded: true, Kind: "deadline", Until: &until}
 	}
-	st := payments.Derive(occ, payments.Facts{CommitmentCreatedOn: created}, d("2026-05-01"), grace)
+	st := payments.Derive(context.Background(), occ, payments.Facts{CommitmentCreatedOn: created}, d("2026-05-01"), grace)
 	if st.GraceUntil != nil || st.Status != payments.StatusNotRecorded || st.Outstanding.String() != "50.00 EUR" {
 		t.Fatalf("unpaid: %+v", st)
 	}
-	st = payments.Derive(occ, payments.Facts{CommitmentCreatedOn: created, Evidence: []payments.Evidence{ev("50.00", "EUR")}}, d("2026-05-01"), nil)
+	st = payments.Derive(context.Background(), occ, payments.Facts{CommitmentCreatedOn: created, Evidence: []payments.Evidence{ev("50.00", "EUR")}}, d("2026-05-01"), nil)
 	if st.Status != payments.StatusPaid || st.Timing != "" {
 		t.Fatalf("paid: %+v", st)
 	}
-	st = payments.Derive(occ, payments.Facts{CommitmentCreatedOn: created, Evidence: []payments.Evidence{ev("20.00", "EUR")}}, d("2026-05-01"), nil)
+	st = payments.Derive(context.Background(), occ, payments.Facts{CommitmentCreatedOn: created, Evidence: []payments.Evidence{ev("20.00", "EUR")}}, d("2026-05-01"), nil)
 	if st.Status != payments.StatusPartiallyPaid || st.Timing != payments.StatusNotRecorded {
 		t.Fatalf("partial: %+v", st)
 	}
-	st = payments.Derive(occ, payments.Facts{CommitmentCreatedOn: created, Override: ov(payments.OverrideUnpaid), Evidence: []payments.Evidence{ev("20.00", "EUR")}}, d("2026-05-01"), nil)
+	st = payments.Derive(context.Background(), occ, payments.Facts{CommitmentCreatedOn: created, Override: ov(payments.OverrideUnpaid), Evidence: []payments.Evidence{ev("20.00", "EUR")}}, d("2026-05-01"), nil)
 	if st.Status != payments.StatusNotRecorded {
 		t.Fatalf("unpaid override: %+v", st)
 	}
@@ -105,7 +106,7 @@ func TestToleranceBoundaries(t *testing.T) {
 					ev[i].ConfirmedWithin = c.tolerance // the tolerance recorded at confirmation
 				}
 			}
-			st := payments.Derive(occ, payments.Facts{Evidence: ev}, d("2026-03-20"), nil)
+			st := payments.Derive(context.Background(), occ, payments.Facts{Evidence: ev}, d("2026-03-20"), nil)
 			if st.Status != c.status || st.Shortfall.String() != c.shortfall || st.Outstanding.String() != c.out || st.Overpaid.String() != c.overpaid {
 				t.Fatalf("%+v", st)
 			}
@@ -118,7 +119,7 @@ func TestToleranceBoundaries(t *testing.T) {
 func TestToleranceUnpaidOverrideWins(t *testing.T) {
 	b := bank("49.70", "EUR")
 	b.ConfirmedWithin = tol("0.50")
-	st := payments.Derive(occ, payments.Facts{Evidence: []payments.Evidence{b}, Override: ov(payments.OverrideUnpaid)}, d("2026-03-20"), nil)
+	st := payments.Derive(context.Background(), occ, payments.Facts{Evidence: []payments.Evidence{b}, Override: ov(payments.OverrideUnpaid)}, d("2026-03-20"), nil)
 	if st.Status != payments.StatusOverdue || st.Derived != payments.StatusPaid || st.Outstanding.String() != "50.00 EUR" || st.Shortfall.String() != "0.30 EUR" {
 		t.Fatalf("%+v", st)
 	}

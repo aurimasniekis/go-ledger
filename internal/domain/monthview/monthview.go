@@ -200,7 +200,7 @@ func (s Service) Month(ctx context.Context, month calendar.YearMonth, today cale
 				if err != nil {
 					return Summary{}, err
 				}
-				row := Row{Occurrence: o, State: payments.Derive(o, facts[o.ID], today, s.Grace), CommitmentName: name, Evidence: facts[o.ID].Evidence}
+				row := Row{Occurrence: o, State: payments.Derive(ctx, o, facts[o.ID], today, s.Grace), CommitmentName: name, Evidence: facts[o.ID].Evidence}
 				if p, ok := plans[o.ID]; ok {
 					row.Deferral = &p
 				}
@@ -257,7 +257,7 @@ func (s Service) carriedIn(ctx context.Context, month calendar.YearMonth, today 
 			return nil, err
 		}
 		p := byID[id]
-		out = append(out, Row{Occurrence: o, State: payments.Derive(o, facts[id], today, s.Grace), CommitmentName: name, Evidence: facts[id].Evidence, Deferral: &p})
+		out = append(out, Row{Occurrence: o, State: payments.Derive(ctx, o, facts[id], today, s.Grace), CommitmentName: name, Evidence: facts[id].Evidence, Deferral: &p})
 	}
 	slices.SortStableFunc(out, func(a, b Row) int {
 		if c := a.Occurrence.DueDate.Compare(b.Occurrence.DueDate); c != 0 {

@@ -1,6 +1,7 @@
 package payments_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +88,7 @@ func TestDerive(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			st := payments.Derive(occ, c.facts, d(c.today), nil)
+			st := payments.Derive(context.Background(), occ, c.facts, d(c.today), nil)
 			var un []string
 			for _, cur := range st.Unconverted {
 				un = append(un, cur.Code())
@@ -141,7 +142,7 @@ func TestDeriveCountsEvidenceByKind(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			st := payments.Derive(occ, payments.Facts{Evidence: c.evidence}, d("2026-03-20"), nil)
+			st := payments.Derive(context.Background(), occ, payments.Facts{Evidence: c.evidence}, d("2026-03-20"), nil)
 			if st.ManualEvidenceCount != c.manual || st.BankEvidenceCount != c.bank || st.EvidenceCount != c.manual+c.bank {
 				t.Errorf("manual=%d bank=%d evidence=%d; want manual=%d bank=%d", st.ManualEvidenceCount, st.BankEvidenceCount, st.EvidenceCount, c.manual, c.bank)
 			}
@@ -152,7 +153,7 @@ func TestDeriveCountsEvidenceByKind(t *testing.T) {
 // TestDeriveOutstandingAndOverpaid: outstanding is never zero while the status
 // is not paid, and an overpayment is visible without changing the status.
 func TestDeriveOutstandingAndOverpaid(t *testing.T) {
-	st := payments.Derive(occ, payments.Facts{Evidence: []payments.Evidence{ev("50.00", "EUR"), ev("9.995", "EUR")}}, d("2026-03-20"), nil)
+	st := payments.Derive(context.Background(), occ, payments.Facts{Evidence: []payments.Evidence{ev("50.00", "EUR"), ev("9.995", "EUR")}}, d("2026-03-20"), nil)
 	if st.Status != payments.StatusPaid || st.Overpaid.String() != "9.995 EUR" || st.Outstanding.Sign() != 0 {
 		t.Errorf("overpaid: status=%s overpaid=%s outstanding=%s", st.Status, st.Overpaid, st.Outstanding)
 	}
@@ -162,12 +163,12 @@ func TestDeriveOutstandingAndOverpaid(t *testing.T) {
 		{Evidence: []payments.Evidence{ev("60.00", "EUR")}, Override: ov(payments.OverrideUnpaid)},
 		{Evidence: []payments.Evidence{ev("20.00", "EUR")}},
 	} {
-		st := payments.Derive(occ, f, d("2026-03-20"), nil)
+		st := payments.Derive(context.Background(), occ, f, d("2026-03-20"), nil)
 		if st.Status != payments.StatusPaid && st.Outstanding.Sign() <= 0 {
 			t.Errorf("status %s with outstanding %s", st.Status, st.Outstanding)
 		}
 	}
-	if st := payments.Derive(occ, payments.Facts{Evidence: []payments.Evidence{ev("20.00", "EUR")}}, d("2026-03-20"), nil); st.Overpaid.Sign() != 0 {
+	if st := payments.Derive(context.Background(), occ, payments.Facts{Evidence: []payments.Evidence{ev("20.00", "EUR")}}, d("2026-03-20"), nil); st.Overpaid.Sign() != 0 {
 		t.Errorf("overpaid = %s", st.Overpaid)
 	}
 }
@@ -177,7 +178,7 @@ func TestDeriveOutstandingAndOverpaid(t *testing.T) {
 func TestDeriveNeverPaysWithoutEvidence(t *testing.T) {
 	for _, o := range []*payments.Override{nil, ov(payments.OverridePaid), ov(payments.OverrideUnpaid)} {
 		for _, today := range []string{"2026-01-01", "2026-03-15", "2026-12-31"} {
-			st := payments.Derive(occ, payments.Facts{Override: o}, d(today), nil)
+			st := payments.Derive(context.Background(), occ, payments.Facts{Override: o}, d(today), nil)
 			if st.Status == payments.StatusPaid || st.Status == payments.StatusPartiallyPaid || st.Paid.Sign() != 0 {
 				t.Errorf("override %v, today %s: status %s, paid %s", o, today, st.Status, st.Paid)
 			}
@@ -187,7 +188,7 @@ func TestDeriveNeverPaysWithoutEvidence(t *testing.T) {
 
 func TestGraceAnnotatesButNeverHidesOverdue(t *testing.T) {
 	until25 := d("2026-03-25")
-	grace := func(o occurrences.Occurrence) payments.Grace {
+	grace := func(ctx context.Context, o occurrences.Occurrence) payments.Grace {
 		return payments.Grace{Recorded: o.ID == occ.ID, Kind: commitments.LeewayDeadline, Until: &until25}
 	}
 	for _, c := range []struct {
@@ -201,7 +202,7 @@ func TestGraceAnnotatesButNeverHidesOverdue(t *testing.T) {
 		{"2026-03-25", "overdue", "2026-03-25", true},
 		{"2026-03-26", "overdue", "2026-03-25", false},
 	} {
-		st := payments.Derive(occ, payments.Facts{}, d(c.today), grace)
+		st := payments.Derive(context.Background(), occ, payments.Facts{}, d(c.today), grace)
 		until := ""
 		if st.GraceUntil != nil {
 			until = st.GraceUntil.String()
@@ -211,11 +212,11 @@ func TestGraceAnnotatesButNeverHidesOverdue(t *testing.T) {
 		}
 	}
 	// A paid occurrence carries no grace annotation.
-	if st := payments.Derive(occ, payments.Facts{Evidence: []payments.Evidence{ev("50", "EUR")}}, d("2026-03-20"), grace); st.GraceUntil != nil {
+	if st := payments.Derive(context.Background(), occ, payments.Facts{Evidence: []payments.Evidence{ev("50", "EUR")}}, d("2026-03-20"), grace); st.GraceUntil != nil {
 		t.Errorf("paid occurrence annotated with grace")
 	}
 	// No hook, no grace: there is no default length.
-	if st := payments.Derive(occ, payments.Facts{}, d("2026-03-20"), nil); st.GraceUntil != nil || st.WithinGrace {
+	if st := payments.Derive(context.Background(), occ, payments.Facts{}, d("2026-03-20"), nil); st.GraceUntil != nil || st.WithinGrace {
 		t.Errorf("grace without a hook")
 	}
 }

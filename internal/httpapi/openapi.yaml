@@ -561,7 +561,9 @@ paths:
                     default length. It only annotates an overdue occurrence; it never moves a
                     due date or hides an obligation.
                   oneOf:
-                    - $ref: "#/components/schemas/Leeway"
+                    - allOf:
+                        - $ref: "#/components/schemas/LeewayInput"
+                        - required: [kind]
                     - type: "null"
       responses:
         "201":
@@ -722,7 +724,7 @@ paths:
                     default length. It only annotates an overdue occurrence; it never moves a
                     due date or hides an obligation. In a patch the object merges member by member; send null to clear it.
                   oneOf:
-                    - $ref: "#/components/schemas/Leeway"
+                    - $ref: "#/components/schemas/LeewayInput"
                     - type: "null"
       responses:
         "200":
@@ -3971,6 +3973,47 @@ components:
         days. A period counts days from each occurrence's due date; a deadline
         covers the occurrences due on or before until.
       required: [kind, days, until, conditions, consequences, source]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [unknown, none, period, deadline]
+        days:
+          description: Required for kind period (1 to 365), null otherwise.
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 365
+        until:
+          description: Required for kind deadline, null otherwise.
+          oneOf:
+            - $ref: "#/components/schemas/Date"
+            - type: "null"
+        conditions:
+          description: What the grace depends on, as the user knows it.
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 500
+        consequences:
+          description: Fees or other consequences of paying late that the user knows of. Free text; record a fee as a deferral plan adjustment to count it.
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 500
+        source:
+          description: Where the information comes from (a contract clause, a letter, a call).
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 200
+    LeewayInput:
+      type: object
+      description: |
+        The leeway a client writes (task DF2, ADR-0052); the request form of
+        Leeway. A create must give kind; the other members it leaves out are
+        null. A merge patch merges member by member into the recorded leeway,
+        so it may send only the members that change. When no leeway is
+        recorded, a patch must give kind too. A patch that changes kind
+        must also send null for each member the new kind does not use (days
+        unless kind is period, until unless kind is deadline). Unknown members
+        are refused.
       additionalProperties: false
       properties:
         kind:

@@ -198,7 +198,7 @@ func (f *fixture) state(id string) payments.State {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return payments.Derive(o, facts[id], today, nil)
+	return payments.Derive(context.Background(), o, facts[id], today, nil)
 }
 
 func (f *fixture) plan(o occurrences.Occurrence, planned string, typ deferrals.PlanType) deferrals.Plan {
