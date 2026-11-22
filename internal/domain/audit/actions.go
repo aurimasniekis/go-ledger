@@ -54,6 +54,15 @@ const (
 	// (ADR-0045).
 	PaymentMatchUnconfirmed Action = "payment_match.unconfirmed"
 
+	// Merchant decisions (E1, ADR-0050). The target is the bank transaction
+	// (target type "transaction"). Details: from (the decision before: none,
+	// confirmed, corrected or rejected) and via. Never the merchant name: it is
+	// free text the person typed or a source returned.
+	MerchantConfirmed     Action = "merchant.confirmed"
+	MerchantCorrected     Action = "merchant.corrected"
+	MerchantRejected      Action = "merchant.rejected"
+	MerchantReviewCleared Action = "merchant.review_cleared"
+
 	// Bank connections (B4, ADR-0040). The target is the connection. Details:
 	// provider and application (names only: never a session, code, account or
 	// institution), reconnect (true when the consent renewed an existing
@@ -112,6 +121,10 @@ var (
 
 func matchFields() []Field {
 	return []Field{f("occurrence_id"), f("transaction_id"), f("origin", matchOrigins...), f("from", matchFromStates...), f("currency"), f("via", matchVias...)}
+}
+
+func merchantFields() []Field {
+	return []Field{f("from", "none", "confirmed", "corrected", "rejected"), f("via", matchVias...)}
 }
 
 // Field declares one allowed detail field. Enum, when set, lists the only
@@ -188,6 +201,11 @@ var Definitions = map[Action][]Field{
 	PaymentMatchCorrected:   matchFields(),
 	PaymentMatchReversed:    matchFields(),
 	PaymentMatchUnconfirmed: matchFields(),
+
+	MerchantConfirmed:     merchantFields(),
+	MerchantCorrected:     merchantFields(),
+	MerchantRejected:      merchantFields(),
+	MerchantReviewCleared: merchantFields(),
 
 	BankConnectionStarted:          {f("provider"), f("application")},
 	BankConnectionReconnectStarted: {f("provider"), f("application")},

@@ -50,6 +50,12 @@ const (
 	ResourceConnections Resource = "connections"
 	// ResourceCommitments is recurring commitment definitions (task C1).
 	ResourceCommitments Resource = "commitments"
+	// ResourceMerchants is the merchant identity of bank transactions (task E1,
+	// ADR-0050): reading a transaction's merchant, its enrichment and the
+	// decision about it, and confirming, correcting, rejecting or clearing that
+	// decision. Merchant names derive from bank text, so like banking:read it is
+	// for administrators.
+	ResourceMerchants Resource = "merchants"
 	// ResourceRates is the cached exchange rates and their refresh (task FX2c,
 	// ADR-0048): reading lists the rates, their provenance and freshness (public
 	// reference data, so the read-only role holds it); writing asks the provider
@@ -79,6 +85,7 @@ var vocabulary = []ResourceInfo{
 	{Name: ResourceBanking, Description: "Bank-sourced transaction text: raw descriptions and counterparty names.", Actions: []Action{ActionRead}, AdminOnly: true},
 	{Name: ResourceCommitments, Description: "Recurring commitment definitions: kind, amount, schedule, dates, priority and notes.", Actions: []Action{ActionRead, ActionWrite}},
 	{Name: ResourceConnections, Description: "Bank connections: connect, reconnect, refresh, disconnect, and read accounts, balances and freshness.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
+	{Name: ResourceMerchants, Description: "Merchant identity of bank transactions: the enrichment, and confirming, correcting or rejecting it.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceRates, Description: "Cached exchange rates with provider, source, rate date and freshness; write asks the rate provider for fresh rates.", Actions: []Action{ActionRead, ActionWrite}},
 	{Name: ResourceTokens, Description: "Every user's API tokens: list them and revoke them. Never the tokens themselves.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
 	{Name: ResourceUsers, Description: "User accounts, their roles and whether they are disabled.", Actions: []Action{ActionRead, ActionWrite}, AdminOnly: true},
