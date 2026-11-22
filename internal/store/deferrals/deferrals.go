@@ -375,7 +375,7 @@ func (s *Store) stateTx(ctx context.Context, tx *sql.Tx, occurrenceID string, to
 	if err != nil {
 		return payments.State{}, err
 	}
-	return payments.Derive(o, facts[o.ID], today, nil), nil
+	return payments.Derive(ctx, o, facts[o.ID], today, nil), nil
 }
 
 func validation(errs []commitments.FieldError) error {

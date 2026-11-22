@@ -1,6 +1,7 @@
 package payments_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/aurimasniekis/go-ledger/internal/domain/commitments"
@@ -19,24 +20,24 @@ func TestLeewayStateIsDistinct(t *testing.T) {
 		date   bool
 	}{
 		{"no source", nil, "", false},
-		{"not recorded", func(occurrences.Occurrence) payments.Grace { return payments.Grace{} }, payments.LeewayNotRecorded, false},
-		{"unknown", func(occurrences.Occurrence) payments.Grace {
+		{"not recorded", func(context.Context, occurrences.Occurrence) payments.Grace { return payments.Grace{} }, payments.LeewayNotRecorded, false},
+		{"unknown", func(context.Context, occurrences.Occurrence) payments.Grace {
 			return payments.Grace{Recorded: true, Kind: commitments.LeewayUnknown}
 		}, "unknown", false},
-		{"none", func(occurrences.Occurrence) payments.Grace {
+		{"none", func(context.Context, occurrences.Occurrence) payments.Grace {
 			return payments.Grace{Recorded: true, Kind: commitments.LeewayNone}
 		}, "none", false},
-		{"period", func(occurrences.Occurrence) payments.Grace {
+		{"period", func(context.Context, occurrences.Occurrence) payments.Grace {
 			return payments.Grace{Recorded: true, Kind: commitments.LeewayPeriod, Until: &until}
 		}, "period", true},
 	} {
-		st := payments.Derive(occ, payments.Facts{}, d("2026-03-20"), c.grace)
+		st := payments.Derive(context.Background(), occ, payments.Facts{}, d("2026-03-20"), c.grace)
 		if st.Status != payments.StatusOverdue && c.grace != nil || st.Leeway != c.leeway || (st.GraceUntil != nil) != c.date || st.WithinGrace != c.date {
 			t.Errorf("%s: status %s leeway %q until %v within %v", c.name, st.Status, st.Leeway, st.GraceUntil, st.WithinGrace)
 		}
 	}
 	// Not overdue: nothing is said about leeway.
-	st := payments.Derive(occ, payments.Facts{}, d("2026-03-10"), func(occurrences.Occurrence) payments.Grace { return payments.Grace{} })
+	st := payments.Derive(context.Background(), occ, payments.Facts{}, d("2026-03-10"), func(context.Context, occurrences.Occurrence) payments.Grace { return payments.Grace{} })
 	if st.Leeway != "" {
 		t.Errorf("leeway %q before the due date", st.Leeway)
 	}

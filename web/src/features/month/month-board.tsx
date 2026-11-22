@@ -383,6 +383,9 @@ function OccurrenceRow({ item: i, onRecord, offline, form, suggestionWaiting }: 
       {p.timing === 'overdue' && !p.grace_until && p.leeway === 'none' && (
         <p className="text-sm" data-testid="leeway-none">Overdue since the original due date. You recorded that no grace period applies.</p>
       )}
+      {p.timing === 'overdue' && !p.grace_until && p.leeway === 'deadline' && (
+        <p className="text-sm" data-testid="leeway-deadline-uncovered">Overdue since the original due date. The grace deadline you recorded does not cover this occurrence, so no grace is assumed.</p>
+      )}
       {suggestionWaiting && !settled && (
         <p className="text-sm" data-testid="suggestion-waiting">
           A bank suggestion is waiting for this occurrence.{' '}

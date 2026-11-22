@@ -103,21 +103,44 @@ func TestGraceHookReadsOnlyWhatWasRecorded(t *testing.T) {
 		return occurrences.Occurrence{CommitmentID: c.ID, DueDate: calendar.MustDate(2026, time.January, 5)}
 	}
 	grace := st.Grace()
-	if g := grace(mk(nil)); g.Recorded || g.Until != nil || g.Kind != "" {
+	if g := grace(ctx, mk(nil)); g.Recorded || g.Until != nil || g.Kind != "" {
 		t.Errorf("nothing recorded: %+v", g)
 	}
-	if g := grace(mk(&commitments.Leeway{Kind: commitments.LeewayUnknown})); !g.Recorded || g.Kind != commitments.LeewayUnknown || g.Until != nil {
+	if g := grace(ctx, mk(&commitments.Leeway{Kind: commitments.LeewayUnknown})); !g.Recorded || g.Kind != commitments.LeewayUnknown || g.Until != nil {
 		t.Errorf("unknown: %+v", g)
 	}
-	if g := grace(mk(&commitments.Leeway{Kind: commitments.LeewayNone})); !g.Recorded || g.Until != nil {
+	if g := grace(ctx, mk(&commitments.Leeway{Kind: commitments.LeewayNone})); !g.Recorded || g.Until != nil {
 		t.Errorf("none: %+v", g)
 	}
-	g := grace(mk(&commitments.Leeway{Kind: commitments.LeewayPeriod, Days: &days}))
+	g := grace(ctx, mk(&commitments.Leeway{Kind: commitments.LeewayPeriod, Days: &days}))
 	if !g.Recorded || g.Until == nil || g.Until.String() != "2026-01-10" {
 		t.Errorf("period: %+v", g)
 	}
 	// An unreadable commitment reports nothing recorded, never a date.
-	if g := grace(occurrences.Occurrence{CommitmentID: "01JD3Y4C8V9M2Q7W5R6T0XZBNZ"}); g != (payments.Grace{}) {
+	if g := grace(ctx, occurrences.Occurrence{CommitmentID: "01JD3Y4C8V9M2Q7W5R6T0XZBNZ"}); g != (payments.Grace{}) {
 		t.Errorf("missing commitment: %+v", g)
+	}
+}
+
+// TestGraceHookUsesTheCallersContext: a read the caller's context has stopped
+// reports nothing recorded instead of reading the leeway anyway.
+func TestGraceHookUsesTheCallersContext(t *testing.T) {
+	ctx := context.Background()
+	st, _, _ := newStore(t)
+	days := 5
+	f := vps()
+	f.Leeway = &commitments.Leeway{Kind: commitments.LeewayPeriod, Days: &days}
+	c, err := st.Create(ctx, alice, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := occurrences.Occurrence{CommitmentID: c.ID, DueDate: calendar.MustDate(2026, time.January, 5)}
+	if g := st.Grace()(ctx, o); !g.Recorded || g.Kind != commitments.LeewayPeriod || g.Until == nil {
+		t.Fatalf("live context: %+v", g)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if g := st.Grace()(cancelled, o); g.Recorded || g.Kind != "" || g.Until != nil {
+		t.Errorf("cancelled context: %+v, want nothing recorded", g)
 	}
 }

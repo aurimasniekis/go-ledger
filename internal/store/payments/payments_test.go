@@ -134,7 +134,7 @@ func (f *fixture) state(t *testing.T, o occurrences.Occurrence) payments.State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return payments.Derive(o, facts[o.ID], today, nil)
+	return payments.Derive(context.Background(), o, facts[o.ID], today, nil)
 }
 
 func (f *fixture) record(t *testing.T, occurrenceID, amount, paidOn string) (payments.ManualPayment, payments.Change) {
@@ -161,7 +161,7 @@ func TestManualPaymentsDecideStatusAndSurviveReload(t *testing.T) {
 	if ch.Occurrence.Version != o.Version+1 || p1.Version != 1 || *p1.Note != note {
 		t.Fatalf("after recording: occurrence v%d, payment %+v", ch.Occurrence.Version, p1)
 	}
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPartiallyPaid || st.Outstanding.String() != "30.00 EUR" || st.Timing != payments.StatusOverdue {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPartiallyPaid || st.Outstanding.String() != "30.00 EUR" || st.Timing != payments.StatusOverdue {
 		t.Fatalf("after 20.00: %+v", st)
 	}
 	f.record(t, o.ID, "30.00", "2026-03-15")
@@ -196,7 +196,7 @@ func TestManualPaymentsDecideStatusAndSurviveReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Derived != payments.StatusPartiallyPaid || ch.Occurrence.Version != o2.Version+1 {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Derived != payments.StatusPartiallyPaid || ch.Occurrence.Version != o2.Version+1 {
 		t.Fatalf("after delete: v%d %+v", ch.Occurrence.Version, st)
 	}
 	if _, err := g.ps.GetManual(ctx, o.ID, list[1].ID); !errors.Is(err, resource.ErrNotFound) {
@@ -267,7 +267,7 @@ func TestOverrideUndoRestoresPriorState(t *testing.T) {
 	}
 	_, ch = f.record(t, o.ID, "45.00", "2026-03-14") // the creditor accepted 45.00
 	v++
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusOverdue || st.Derived != payments.StatusPartiallyPaid {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusOverdue || st.Derived != payments.StatusPartiallyPaid {
 		t.Fatalf("unpaid override over partial evidence: %+v", st)
 	}
 	ch, err = f.ps.SetOverride(ctx, alice, o.ID, v, payments.OverridePaid, "creditor accepted 45.00")
@@ -275,7 +275,7 @@ func TestOverrideUndoRestoresPriorState(t *testing.T) {
 		t.Fatal(err)
 	}
 	v++
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || *st.Override.Previous != payments.OverrideUnpaid {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || *st.Override.Previous != payments.OverrideUnpaid {
 		t.Fatalf("paid override: %+v", st)
 	}
 
@@ -294,7 +294,7 @@ func TestOverrideUndoRestoresPriorState(t *testing.T) {
 		t.Fatal(err)
 	}
 	v++
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); ch.Facts.Override != nil || st.Status != payments.StatusPartiallyPaid {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); ch.Facts.Override != nil || st.Status != payments.StatusPartiallyPaid {
 		t.Fatalf("after the second undo: %+v", st)
 	}
 	if _, err := f.ps.UndoOverride(ctx, alice, o.ID, v); !errors.Is(err, payments.ErrNoOverride) {
@@ -454,7 +454,7 @@ func TestDeleteManualKeepsTheRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := payments.Derive(ch.Occurrence, ch.Facts, today, nil)
+	st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil)
 	if st.Paid.String() != "20.00 EUR" || st.EvidenceCount != 1 || st.Derived != payments.StatusPartiallyPaid {
 		t.Errorf("totals still count the deleted payment: %+v", st)
 	}
@@ -536,7 +536,7 @@ func TestPaidOverrideNeedsAnyEvidenceWhateverItsCurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("paid override with other-currency evidence: %v", err)
 	}
-	if st := payments.Derive(ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || st.Paid.String() != "0.00 EUR" || !st.OverrideApplied {
+	if st := payments.Derive(context.Background(), ch.Occurrence, ch.Facts, today, nil); st.Status != payments.StatusPaid || st.Paid.String() != "0.00 EUR" || !st.OverrideApplied {
 		t.Errorf("state: %+v", st)
 	}
 }
@@ -608,7 +608,7 @@ func TestNotRecordedUsesTheInjectedReportingZone(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return payments.Derive(march, facts[march.ID], today, nil)
+		return payments.Derive(context.Background(), march, facts[march.ID], today, nil)
 	}
 	if st := read(f.ps); st.Status != payments.StatusOverdue {
 		t.Fatalf("UTC: %+v", st)

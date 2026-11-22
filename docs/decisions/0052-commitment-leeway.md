@@ -29,8 +29,9 @@ answer into a number. Overdue stays counted from the original due date (D7, ADR-
 5. **User-entered only.** Nothing writes leeway from payment history, bank data, merchant data or model output; there is no
    default length and no suggestion path (D14 option b was not chosen). The MCP tool says so to the model: use `unknown`
    when the person says they do not know, omit it when they said nothing.
-6. **Effect on state.** `payments.GraceFunc` now returns a `payments.Grace` (was a date and a flag): whether leeway was
-   recorded, its kind and the grace date if it is a period or a covering deadline. For an overdue occurrence the payment state
+6. **Effect on state.** `payments.GraceFunc` now takes the caller's context and returns a `payments.Grace` (was a date and a
+   flag): whether leeway was recorded, its kind and the grace date if it is a period or a covering deadline. A read that fails
+   is logged with the identifiers only and reports nothing recorded. For an overdue occurrence the payment state
    gains `leeway` (`not_recorded`, `unknown`, `none`, `period`, `deadline`; null when not overdue) beside the existing
    `grace_until` and `within_grace`, which are set only for a period or deadline. Status, outstanding and overdue are
    unchanged. `cmd/ledger` wires the store-backed hook (`store/commitments.Store.Grace`).
