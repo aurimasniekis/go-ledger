@@ -43,6 +43,7 @@ type Suggestions interface {
 	Decide(ctx context.Context, actor audit.Actor, id string, to decisions.SuggestionState, action audit.Action) (decisions.Suggestion, error)
 	RecordReversal(ctx context.Context, actor audit.Actor, id string) error
 	Declined(ctx context.Context, task decisions.TaskName, obj decisions.ObjectRef) (bool, error)
+	Pending(ctx context.Context, task decisions.TaskName, obj decisions.ObjectRef) (bool, error)
 }
 
 // Organisation is the part of the organisation store the tasks use.
@@ -51,8 +52,8 @@ type Organisation interface {
 	ListDefinitions(ctx context.Context, k organisation.Kind, f organisation.ListFilter) ([]organisation.Definition, error)
 	ApplyAutomatic(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, a organisation.Automatic) (organisation.AutomaticResult, error)
 	SetCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, categoryID *string) (organisation.Assignments, error)
-	ResetCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef) (organisation.Assignments, error)
-	AddLabel(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, labelID string) (organisation.Assignments, error)
+	ResetAutomaticCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, source, categoryID string) error
+	AddLabels(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, labelIDs []string) (organisation.Assignments, error)
 }
 
 // Errors (beyond those of the decisions and organisation packages).
@@ -107,6 +108,7 @@ type Skip string
 const (
 	SkipAssigned     Skip = "assigned"      // a person or a rule already decided
 	SkipDeclined     Skip = "declined"      // a person turned a suggestion down before
+	SkipPending      Skip = "pending"       // a suggestion for the object still awaits review
 	SkipNoCandidates Skip = "no_candidates" // nothing to choose from
 	SkipTooMany      Skip = "too_many"      // more candidates than the task offers
 )
@@ -255,6 +257,11 @@ func (s *Service) ask(ctx context.Context, name decisions.TaskName, f Facts, can
 	} else if declined {
 		return Outcome{Skipped: SkipDeclined}, nil
 	}
+	if pending, err := s.sugg.Pending(ctx, name, ref); err != nil {
+		return Outcome{}, err
+	} else if pending {
+		return Outcome{Skipped: SkipPending}, nil
+	}
 	res, err := s.runner.Run(ctx, name, decisions.Input{Object: ref, Values: f.values(), Candidates: cands})
 	if err != nil {
 		return Outcome{}, err
@@ -333,10 +340,8 @@ func (s *Service) Accept(ctx context.Context, actor audit.Actor, id string) (dec
 		if len(sg.Decision.Choices) == 0 {
 			return sg, ErrNothingToApply
 		}
-		for _, l := range sg.Decision.Choices {
-			if _, err := s.org.AddLabel(ctx, actor, obj, l); err != nil {
-				return sg, err
-			}
+		if _, err := s.org.AddLabels(ctx, actor, obj, sg.Decision.Choices); err != nil {
+			return sg, err
 		}
 	}
 	return s.sugg.Decide(ctx, actor, id, decisions.StateAccepted, audit.DecisionSuggestionAccepted)
@@ -365,10 +370,8 @@ func (s *Service) Correct(ctx context.Context, actor audit.Actor, id string, c C
 			return sg, err
 		}
 	default:
-		for _, l := range c.LabelIDs {
-			if _, err := s.org.AddLabel(ctx, actor, obj, l); err != nil {
-				return sg, err
-			}
+		if _, err := s.org.AddLabels(ctx, actor, obj, c.LabelIDs); err != nil {
+			return sg, err
 		}
 	}
 	return s.sugg.Decide(ctx, actor, id, decisions.StateRejected, audit.DecisionSuggestionCorrected)
@@ -398,15 +401,11 @@ func (s *Service) Revert(ctx context.Context, actor audit.Actor, id string) erro
 		return decisions.ErrNotReversible
 	}
 	obj := organisation.ObjectRef{Type: organisation.ObjectType(sg.Object.Type), ID: sg.Object.ID}
-	cur, err := s.org.Get(ctx, obj)
-	if err != nil {
-		return err
-	}
-	c := cur.Category
-	if c == nil || c.Inherited || c.Origin != organisation.OriginModel || c.Source != SourceOf(sg) || c.Category == nil || c.Category.ID != *sg.Decision.Choice {
+	// The check and the reset are one transaction in the organisation store:
+	// a decision made in between is never undone.
+	if err := s.org.ResetAutomaticCategory(ctx, actor, obj, SourceOf(sg), *sg.Decision.Choice); errors.Is(err, organisation.ErrAssignmentChanged) {
 		return decisions.ErrNotReversible
-	}
-	if _, err := s.org.ResetCategory(ctx, actor, obj); err != nil {
+	} else if err != nil {
 		return err
 	}
 	return s.sugg.RecordReversal(ctx, actor, id)

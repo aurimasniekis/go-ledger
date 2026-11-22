@@ -49,8 +49,11 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
 7. **Alerts** (`internal/domain/alerts`, store `internal/store/alerts`, migration 0032): three kinds from D13. Conditions
    are built by Ledger code (`ConsentExpiring`, `AmountChanged`, `UnmatchedOverdue`) with exact decimal facts and their
    currencies (a currency change is shown as itself, never converted) and a deterministic message. Raising is idempotent
-   by a key that includes what makes the situation new (expiry date, new amount, due date); an alert is only ever closed
-   (dismissed by a person, resolved when the condition stops holding), never edited or deleted, and audited.
+   by a key that includes what makes the situation new (expiry date, new amount, due date). An open alert **or a dismissed
+   one** for the key counts as existing (raising it returns `created=false`, sends nothing): a person's dismissal sticks
+   and a scheduled detector cannot bring it back. Only a `resolved` alert lets the same key be raised again (the condition
+   stopped holding and returned). An alert is only ever closed (dismissed by a person, resolved when the condition stops
+   holding), never edited or deleted, and audited; its model wording, once written, is frozen by a trigger.
 8. **Alerts are in-app only.** A `Channel` (name and notify function) receives a newly raised alert only when the operator
    selected it; without one nothing leaves the process, and a channel failure never loses the alert.
 9. **Model wording is optional and labelled.** With the `alerts` task enabled (a `generate` task, with consent) a model may
@@ -58,6 +61,12 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
    message with its provider and model, never replaces the message and is never needed to raise an alert. The suggestion
    row it came from is marked `superseded` since the text is attached to the alert (review-by-default is satisfied
    because the text is informational and the deterministic message is always shown).
+
+10. **Integrity of review actions.** A suggestion is not requested again while one for the same task and object is pending
+   (`SkipPending`), so no paid request supersedes unreviewed work. A revert checks and resets the category in one
+   organisation-store transaction (`ResetAutomaticCategory`, refused as not reversible if the category is no longer the
+   exact model-origin one), and accepting or correcting label suggestions adds all labels in one transaction
+   (`AddLabels`). A wording failure is reported in the raise result (`WordingErr`) and never skips the channels.
 
 ## Limitations and what is not built (kept visible)
 

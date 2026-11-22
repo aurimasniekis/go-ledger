@@ -130,6 +130,17 @@ func (s *Store) Reverted(ctx context.Context, id string) (bool, error) {
 	return n > 0, err
 }
 
+// Pending reports whether a suggestion of the task for the object is still
+// waiting for review: asking again would only supersede it.
+func (s *Store) Pending(ctx context.Context, task decisions.TaskName, obj decisions.ObjectRef) (bool, error) {
+	var n int
+	err := s.db.ReadTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM decision_suggestions WHERE task = ? AND object_type = ? AND object_id = ? AND state = 'pending'",
+			string(task), obj.Type, obj.ID).Scan(&n)
+	})
+	return n > 0, err
+}
+
 // Declined reports whether a person has turned down a suggestion of the task
 // for the object: rejected, corrected (a rejection with their own answer) or
 // reverted. A model run does not ask the same question again.

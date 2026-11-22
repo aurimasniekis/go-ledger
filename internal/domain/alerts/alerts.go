@@ -130,7 +130,8 @@ var ErrNotOpen = errors.New("the alert is not open")
 // Store persists alerts (internal/store/alerts).
 type Store interface {
 	// Raise stores the condition as an open alert unless one with its key is
-	// open; created says which happened.
+	// open or dismissed (a dismissal sticks); a resolved alert lets the key be
+	// raised anew. created says which happened.
 	Raise(ctx context.Context, actor audit.Actor, c Condition) (a Alert, created bool, err error)
 	// SetWording attaches wording to an open alert that has none.
 	SetWording(ctx context.Context, id string, w Wording) error
@@ -170,16 +171,19 @@ func New(s Store, words Wordsmith, channels ...Channel) *Service {
 // Result is what raising did.
 type Result struct {
 	Alert Alert
-	// Created is false when an open alert for the key already existed (nothing
-	// was reworded or sent again).
+	// Created is false when an open or a dismissed alert for the key already
+	// existed (nothing was reworded or sent again; a dismissal sticks).
 	Created bool
+	// WordingErr is set when the optional model wording failed or could not be
+	// stored; the alert stands without it and the channels still got it.
+	WordingErr error
 	// Delivery lists channel failures by name; the alert is stored regardless.
 	Delivery map[string]error
 }
 
 // Raise stores the condition as an in-app alert, adds model wording when a
 // wordsmith is set and answers, then hands it to each selected channel. A
-// wording or channel failure never loses the alert.
+// wording failure (reported in the result) or channel failure never loses the alert nor skips the channels.
 func (s *Service) Raise(ctx context.Context, actor audit.Actor, c Condition) (Result, error) {
 	if strings.TrimSpace(c.Message) == "" || c.Key == "" || c.ObjectID == "" {
 		return Result{}, errors.New("alerts: a condition needs an object, a key and a message")
@@ -194,12 +198,13 @@ func (s *Service) Raise(ctx context.Context, actor audit.Actor, c Condition) (Re
 	}
 	if s.words != nil {
 		if w, ok, err := s.words.Word(ctx, a); err != nil {
-			return res, err
+			res.WordingErr = err
 		} else if ok {
 			if err := s.store.SetWording(ctx, a.ID, w); err != nil {
-				return res, err
+				res.WordingErr = err
+			} else {
+				res.Alert.Wording = &w
 			}
-			res.Alert.Wording = &w
 		}
 	}
 	for _, ch := range s.channels {

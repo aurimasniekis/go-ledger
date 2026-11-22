@@ -926,6 +926,34 @@ func (s *Store) ResetCategory(ctx context.Context, actor audit.Actor, obj organi
 	return out, err
 }
 
+// ResetAutomaticCategory resets an object's own category only while it is
+// still the model-origin assignment of source naming categoryID, checked and
+// deleted in one transaction, so a person's or a rule's later decision is never
+// undone. It returns [organisation.ErrAssignmentChanged] when the category is
+// anything else (or absent or inherited).
+func (s *Store) ResetAutomaticCategory(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, source, categoryID string) error {
+	if err := checkObject(obj); err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	return s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if err := objectExists(ctx, tx, obj); err != nil {
+			return err
+		}
+		prev, err := readCategoryRow(ctx, tx, obj.Type, obj.ID)
+		if err != nil {
+			return err
+		}
+		if prev == nil || prev.origin != organisation.OriginModel || prev.source != source || !prev.categoryID.Valid || prev.categoryID.V != categoryID {
+			return organisation.ErrAssignmentChanged
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM category_assignments WHERE object_type = ? AND object_id = ?", string(obj.Type), obj.ID); err != nil {
+			return err
+		}
+		return s.assignmentEvent(ctx, tx, actor, obj, organisation.KindCategory, "reset", organisation.OriginUser, originName(prev), now)
+	})
+}
+
 func upsertLabel(ctx context.Context, tx *sql.Tx, obj organisation.ObjectRef, labelID string, removed bool, origin organisation.Origin, source string, actor audit.Actor, at time.Time) error {
 	cols, vals := objectColumns(obj)
 	kind, user, via := whoOf(actor)
@@ -953,30 +981,48 @@ func (s *Store) AddLabel(ctx context.Context, actor audit.Actor, obj organisatio
 	if !resource.ValidID(labelID) {
 		return organisation.Assignments{}, fieldErr("label_id", "label_id must be an identifier")
 	}
+	return s.AddLabels(ctx, actor, obj, []string{labelID})
+}
+
+// AddLabels puts several labels on an object as the person's, all in one
+// transaction: when one is refused (an unknown or archived label) none is
+// added.
+func (s *Store) AddLabels(ctx context.Context, actor audit.Actor, obj organisation.ObjectRef, labelIDs []string) (organisation.Assignments, error) {
+	if err := checkObject(obj); err != nil {
+		return organisation.Assignments{}, err
+	}
+	for _, id := range labelIDs {
+		if !resource.ValidID(id) {
+			return organisation.Assignments{}, fieldErr("label_id", "label_id must be an identifier")
+		}
+	}
 	now := s.now().UTC()
 	var out organisation.Assignments
 	err := s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := objectWritable(ctx, tx, obj); err != nil {
 			return err
 		}
-		d, err := getDef(ctx, tx, organisation.KindLabel, labelID)
-		if err != nil {
-			return err
+		for _, labelID := range labelIDs {
+			d, err := getDef(ctx, tx, organisation.KindLabel, labelID)
+			if err != nil {
+				return err
+			}
+			if d.Archived() {
+				return organisation.ErrArchived
+			}
+			e, err := loadEffective(ctx, tx, obj)
+			if err != nil {
+				return err
+			}
+			prev, ok := e.labels[labelID]
+			if err := upsertLabel(ctx, tx, obj, labelID, false, organisation.OriginUser, "", actor, now); err != nil {
+				return err
+			}
+			if err := s.assignmentEvent(ctx, tx, actor, obj, organisation.KindLabel, "added", organisation.OriginUser, labelFrom(prev, ok), now); err != nil {
+				return err
+			}
 		}
-		if d.Archived() {
-			return organisation.ErrArchived
-		}
-		e, err := loadEffective(ctx, tx, obj)
-		if err != nil {
-			return err
-		}
-		prev, ok := e.labels[labelID]
-		if err := upsertLabel(ctx, tx, obj, labelID, false, organisation.OriginUser, "", actor, now); err != nil {
-			return err
-		}
-		if err := s.assignmentEvent(ctx, tx, actor, obj, organisation.KindLabel, "added", organisation.OriginUser, labelFrom(prev, ok), now); err != nil {
-			return err
-		}
+		var err error
 		out, err = readAssignments(ctx, tx, obj)
 		return err
 	})

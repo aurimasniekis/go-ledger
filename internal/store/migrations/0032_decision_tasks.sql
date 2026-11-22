@@ -30,7 +30,10 @@ END;
 -- by Ledger's own code (amounts as exact decimal text with their currency); message
 -- is Ledger's own wording. model_text is optional wording a model wrote for the
 -- alerts task: it never replaces message, and carries its provider and model.
--- dedupe_key makes raising idempotent: at most one open alert per key.
+-- dedupe_key makes raising idempotent: at most one open alert per key, and a
+-- dismissed alert keeps its key (raising it again is not a new alert); only a
+-- resolved one lets the same key be raised anew. Once written, the model
+-- wording is never changed.
 CREATE TABLE alerts (
     id             TEXT PRIMARY KEY CHECK (length(id) = 26 AND id GLOB '[0-7][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z][0-9A-HJKMNP-TV-Z]'),
     kind           TEXT NOT NULL CHECK (kind IN ('consent_expiring', 'commitment_amount_changed', 'unmatched_overdue')),
@@ -58,6 +61,7 @@ BEFORE UPDATE ON alerts
 WHEN (OLD.state <> 'open' AND (NEW.state IS NOT OLD.state OR NEW.closed_at IS NOT OLD.closed_at))
   OR NEW.id IS NOT OLD.id OR NEW.kind IS NOT OLD.kind OR NEW.object_type IS NOT OLD.object_type OR NEW.object_id IS NOT OLD.object_id
   OR NEW.dedupe_key IS NOT OLD.dedupe_key OR NEW.facts IS NOT OLD.facts OR NEW.message IS NOT OLD.message OR NEW.created_at IS NOT OLD.created_at
+  OR (OLD.model_text IS NOT NULL AND (NEW.model_text IS NOT OLD.model_text OR NEW.model_provider IS NOT OLD.model_provider OR NEW.model_name IS NOT OLD.model_name))
 BEGIN
     SELECT RAISE(ABORT, 'an alert only changes by being closed (and its model wording added once)');
 END;

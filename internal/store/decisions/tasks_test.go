@@ -3,6 +3,7 @@ package decisions_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
@@ -443,4 +444,112 @@ func TestAlertWordingIsLabelledAndOptional(t *testing.T) {
 	if p, _ := f.ds.Suggestions(f.ctx, decstoreFilterTask(decisions.TaskAlerts)); len(p) != 1 || p[0].State != decisions.StateSuperseded {
 		t.Fatalf("%+v", p)
 	}
+}
+
+func TestADismissedAlertStaysDismissedAndAResolvedOneMayReturn(t *testing.T) {
+	f := newFixture(t, false)
+	st := alertstore.New(f.db, f.rec, func() time.Time { return t0 }, nil)
+	var sent int
+	svc := alerts.New(st, nil, alerts.Channel{Name: "pulse", Notify: func(context.Context, alerts.Alert) error { sent++; return nil }})
+	today := calendar.MustDate(2026, 11, 1)
+	c, _ := alerts.ConsentExpiring("01JD3Y4C8V9M2Q7W5R6T0XZBNE", calendar.MustDate(2026, 11, 8), today, 14)
+	first, err := svc.Raise(f.ctx, decisiontasks.SystemActor, c)
+	if err != nil || !first.Created {
+		t.Fatalf("%+v %v", first, err)
+	}
+	if _, err := svc.Dismiss(f.ctx, alice, first.Alert.ID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := svc.Raise(f.ctx, decisiontasks.SystemActor, c)
+	if err != nil || again.Created || again.Alert.ID != first.Alert.ID || again.Alert.State != alerts.StateDismissed || sent != 1 {
+		t.Fatalf("a dismissal did not stick: %+v sent=%d %v", again, sent, err)
+	}
+	if open, _ := st.List(f.ctx, alerts.StateOpen, 10); len(open) != 0 {
+		t.Fatalf("%+v", open)
+	}
+	// A resolved alert lets the same condition be raised anew.
+	c2, _ := alerts.ConsentExpiring("01JD3Y4C8V9M2Q7W5R6T0XZBNF", calendar.MustDate(2026, 11, 8), today, 14)
+	r1, _ := svc.Raise(f.ctx, decisiontasks.SystemActor, c2)
+	if _, err := svc.Resolve(f.ctx, decisiontasks.SystemActor, r1.Alert.ID); err != nil {
+		t.Fatal(err)
+	}
+	r2, err := svc.Raise(f.ctx, decisiontasks.SystemActor, c2)
+	if err != nil || !r2.Created || r2.Alert.ID == r1.Alert.ID || r2.Alert.State != alerts.StateOpen {
+		t.Fatalf("%+v %v", r2, err)
+	}
+}
+
+func TestWordingFailureDoesNotSkipChannelsAndModelTextIsFrozen(t *testing.T) {
+	f := newFixture(t, false)
+	st := alertstore.New(f.db, f.rec, func() time.Time { return t0 }, nil)
+	var sent int
+	svc := alerts.New(st, failingWords{}, alerts.Channel{Name: "pulse", Notify: func(context.Context, alerts.Alert) error { sent++; return nil }})
+	c, _ := alerts.AmountChanged("01JD3Y4C8V9M2Q7W5R6T0XZBNG", money.MustParse("10.00", "EUR"), money.MustParse("12.00", "EUR"))
+	r, err := svc.Raise(f.ctx, decisiontasks.SystemActor, c)
+	if err != nil || !r.Created || r.WordingErr == nil || sent != 1 {
+		t.Fatalf("%+v sent=%d %v", r, sent, err)
+	}
+	if err := st.SetWording(f.ctx, r.Alert.ID, alerts.Wording{Text: "once", Provider: "openai", Model: "m1"}); err != nil {
+		t.Fatal(err)
+	}
+	// The store refuses a second write, and so does the table itself.
+	if err := st.SetWording(f.ctx, r.Alert.ID, alerts.Wording{Text: "twice", Provider: "openai", Model: "m1"}); !errors.Is(err, alerts.ErrNotOpen) {
+		t.Fatalf("second wording: %v", err)
+	}
+	if _, err := execWrite(f, "UPDATE alerts SET model_text = 'x' WHERE id = ?", r.Alert.ID); err == nil {
+		t.Fatal("the trigger allowed the model text to change")
+	}
+	if _, err := svc.Dismiss(f.ctx, alice, r.Alert.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execWrite(f, "UPDATE alerts SET model_text = 'x' WHERE id = ?", r.Alert.ID); err == nil {
+		t.Fatal("the trigger allowed the model text of a closed alert to change")
+	}
+}
+
+type failingWords struct{}
+
+func (failingWords) Word(context.Context, alerts.Alert) (alerts.Wording, bool, error) {
+	return alerts.Wording{}, false, errors.New("wording broke")
+}
+
+func TestNoSecondQuestionWhileASuggestionIsPending(t *testing.T) {
+	f := newFixture(t, true)
+	te, svc := f.newTasks(t, false, decisionstest.Reply{Output: pickFirst}, decisionstest.Reply{Output: pickFirst})
+	if out, err := svc.SuggestCategory(f.ctx, te.facts()); err != nil || out.Result.Suggestion == nil {
+		t.Fatalf("%+v %v", out, err)
+	}
+	again, err := svc.SuggestCategory(f.ctx, te.facts())
+	if err != nil || again.Skipped != decisiontasks.SkipPending || te.provider.Calls() != 1 {
+		t.Fatalf("%+v calls=%d %v", again, te.provider.Calls(), err)
+	}
+}
+
+func TestLabelAcceptIsAllOrNothing(t *testing.T) {
+	f := newFixture(t, true)
+	te, svc := f.newTasks(t, false, decisionstest.Reply{Output: `{"choices":["c1","c2"],"confidence":0.7}`})
+	a, _ := te.os.CreateDefinition(f.ctx, alice, org.KindLabel, org.Fields{Name: "Aaa"})
+	b, _ := te.os.CreateDefinition(f.ctx, alice, org.KindLabel, org.Fields{Name: "Bbb"})
+	out, err := svc.SuggestLabels(f.ctx, te.facts())
+	if err != nil || out.Result.Suggestion == nil {
+		t.Fatalf("%+v %v", out, err)
+	}
+	// One of the two is archived after the suggestion was made.
+	if _, err := te.os.SetArchived(f.ctx, alice, org.KindLabel, b.ID, b.Version, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Accept(f.ctx, alice, out.Result.Suggestion.ID); err == nil {
+		t.Fatal("accept succeeded with an archived label")
+	}
+	if got, _ := te.os.Get(f.ctx, te.obj); len(got.Labels) != 0 {
+		t.Fatalf("a partial accept left labels behind: %+v (%s)", got.Labels, a.ID)
+	}
+	if sg, _ := f.ds.Suggestion(f.ctx, out.Result.Suggestion.ID); sg.State != decisions.StatePending {
+		t.Fatalf("state %s", sg.State)
+	}
+}
+
+func execWrite(f *fixture, q string, args ...any) (int, error) {
+	err := f.db.WriteTx(f.ctx, func(ctx context.Context, tx *sql.Tx) error { _, err := tx.ExecContext(ctx, q, args...); return err })
+	return 0, err
 }

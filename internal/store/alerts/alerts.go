@@ -70,7 +70,9 @@ func who(a audit.Actor) string {
 	return string(a.Channel())
 }
 
-// Raise implements [alerts.Store].
+// Raise implements [alerts.Store]. An open alert, or one a person dismissed,
+// for the same key already exists (created is false and nothing is written):
+// a dismissal sticks. Only a resolved alert lets the key be raised again.
 func (s *Store) Raise(ctx context.Context, actor audit.Actor, c alerts.Condition) (alerts.Alert, bool, error) {
 	facts, err := json.Marshal(c.Facts)
 	if err != nil {
@@ -83,7 +85,7 @@ func (s *Store) Raise(ctx context.Context, actor audit.Actor, c alerts.Condition
 	var out alerts.Alert
 	var created bool
 	err = s.db.WriteTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		existing, err := scan(tx.QueryRowContext(ctx, "SELECT "+columns+" FROM alerts WHERE dedupe_key = ? AND state = 'open'", c.Key))
+		existing, err := scan(tx.QueryRowContext(ctx, "SELECT "+columns+" FROM alerts WHERE dedupe_key = ? AND state IN ('open', 'dismissed') ORDER BY state = 'open' DESC LIMIT 1", c.Key))
 		if err == nil {
 			out, created = existing, false
 			return nil
