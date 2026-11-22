@@ -116,7 +116,8 @@ acceptance criteria are that suggestions are correctable and that auto-apply, wh
   `SuggestLabels` for each enabled task. `serve` runs it in a background goroutine, one pass at a time, so the import
   never waits for a model and never fails because of one; a failure (an error or a reason such as an outage, no consent
   or an exhausted budget) is logged, counted in `RefreshStats` and on the `ledger_decision_questions_total` metric (by task
-  and outcome, no transaction data). **A failed question is not retried:** the transaction is not in a later refresh's
+  and outcome, no transaction data); a question cut short by shutdown is counted in `RefreshStats` only (no metric, no
+  `OnError`). **A failed question is not retried:** the transaction is not in a later refresh's
   inserted set, so it gets no suggestion and is not asked about again. A re-ask or backfill action for such transactions is
   planned with L7. Pending and declined objects are skipped by the
   tasks themselves, so a repeated refresh asks nothing new. Nothing classifies a merchant as a transfer yet, so `serve`

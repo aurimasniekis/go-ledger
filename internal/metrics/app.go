@@ -70,7 +70,7 @@ func NewApp(version string) *App {
 	a.RatesProvider = r.NewGauge("ledger_rates_provider_enabled",
 		"1 when an exchange-rate provider is configured (rates.enabled), else 0. The provider is optional and never gates readiness.")
 	a.DecisionQuestions = r.NewCounter("ledger_decision_questions_total",
-		"Decision-task questions asked after a bank refresh, by task (categorisation, label_suggestion, or transactions when the stored transactions could not be read) and outcome: asked (answered), skipped (nothing to ask: already pending or decided) or failed (not answered: provider error, outage, no consent or an exhausted budget). Labels carry no transaction data.", "task", "outcome")
+		"Decision-task questions asked after a bank refresh, by task (categorisation, label_suggestion, or transactions when the stored transactions could not be read) and outcome: asked (answered), skipped (nothing to ask: already pending or decided, no candidates, or too many to ask) or failed (not answered: provider error, outage, no consent or an exhausted budget). Labels carry no transaction data.", "task", "outcome")
 	a.eventsPublished = r.NewCounter("ledger_events_published_total", "Events acknowledged by Pulse.")
 	a.eventsDuplicate = r.NewCounter("ledger_events_duplicate_total", "Published events Pulse reported as already stored (deduplicated by event id); a subset of published.")
 	a.eventsFailed = r.NewCounter("ledger_events_failed_total", "Events given up on: not delivered within the retry window, or never publishable.")
