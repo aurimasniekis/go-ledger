@@ -65,5 +65,6 @@ Significant tradeoffs are recorded here as numbered ADRs. Start from [0000-templ
 - [ADR-0061: Merchant screens and the merchant client](0061-merchant-ui.md)
 - [ADR-0062: Organising merchants: UI and MCP](0062-merchant-organisation-ui-and-mcp.md)
 - [ADR-0064: Primary navigation and the mobile menu](0064-primary-navigation.md)
+- [ADR-0066: Runtime settings through the Management API (D18 blanket coverage)](0066-runtime-settings-api.md)
 
 An accepted ADR is not rewritten. Supersede it with a new ADR and link the two.
